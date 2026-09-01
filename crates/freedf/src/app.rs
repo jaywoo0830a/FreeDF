@@ -241,6 +241,8 @@ pub struct FreeDfApp {
     view: ViewTransform,
     page_align: PageAlign,
     last_canvas: [f32; 2],
+    /// Canvas size from the previous frame (detects panel toggles / resizes).
+    prev_canvas: [f32; 2],
     pending_fit: Option<FitMode>,
     texture: Option<egui::TextureHandle>,
     render_dirty: bool,
@@ -383,6 +385,7 @@ impl FreeDfApp {
             view: ViewTransform::default(),
             page_align: PageAlign::Center,
             last_canvas: [1280.0, 600.0],
+            prev_canvas: [1280.0, 600.0],
             pending_fit: None,
             texture: None,
             render_dirty: true,
@@ -1734,7 +1737,7 @@ impl FreeDfApp {
                     .on_hover_text("Library (notes, PDFs, recents)")
                     .changed()
                 {
-                    self.pending_fit = Some(FitMode::Width);
+                    // Zoom is preserved; the canvas re-centers on resize.
                     self.save_session();
                 }
                 if ui
@@ -1742,12 +1745,9 @@ impl FreeDfApp {
                     .on_hover_text("Outline")
                     .changed()
                 {
-                    self.pending_fit = Some(FitMode::Width);
+                    // Zoom is preserved; the canvas re-centers on resize.
                     self.save_session();
                 }
-                ui.separator();
-
-                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 ui.separator();
 
                 // Bookmark the current page + jump list.
@@ -1783,22 +1783,6 @@ impl FreeDfApp {
                         self.clear_bookmarks();
                     }
                 });
-                ui.separator();
-
-                if ui
-                    .add_enabled(page_count > 0, egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)))
-                    .on_hover_text("Add blank page at the end")
-                    .clicked()
-                {
-                    self.add_page_action();
-                }
-                if ui
-                    .add_enabled(page_count > 1, egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)))
-                    .on_hover_text("Delete this page")
-                    .clicked()
-                {
-                    self.delete_page_action();
-                }
                 ui.separator();
 
                 if !self.show_library && !self.show_outline {
@@ -2016,9 +2000,34 @@ impl FreeDfApp {
                     ToolType::Pan => {}
                 }
 
+                // --- Page group: page structure + paper styling ---
+                ui.separator();
+                ui.label(icon_text(ui, "Page", icons::FILES));
+                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+                if ui
+                    .add_enabled(
+                        page_count > 0,
+                        egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)),
+                    )
+                    .on_hover_text("Add blank page at the end")
+                    .clicked()
+                {
+                    self.add_page_action();
+                }
+                if ui
+                    .add_enabled(
+                        page_count > 1,
+                        egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
+                    )
+                    .on_hover_text("Delete this page")
+                    .clicked()
+                {
+                    self.delete_page_action();
+                }
+                ui.separator();
+
                 // Paper (grid / ruling / color) — applied per page;
                 // paper size selects the size for new pages & notes.
-                ui.separator();
                 ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
                 egui::ComboBox::from_id_salt("paper_style")
                     .selected_text(self.paper_style.label())
@@ -2362,6 +2371,16 @@ impl FreeDfApp {
         let canvas = response.rect;
         let origin = canvas.min;
         let canvas_size = [canvas.width(), canvas.height()];
+        // Preserve the zoom when the canvas resizes (panel toggles / window
+        // resize): re-center the page at the current zoom instead of re-fitting.
+        let resized = (self.prev_canvas[0] - canvas_size[0]).abs() > 2.0
+            || (self.prev_canvas[1] - canvas_size[1]).abs() > 2.0;
+        if self.document.is_some() && self.pending_fit.is_none() && resized {
+            self.view
+                .align_page(self.page_size_pts, canvas_size, TOP_MARGIN, self.page_align);
+            self.render_dirty = true;
+        }
+        self.prev_canvas = canvas_size;
         self.last_canvas = canvas_size;
 
         // Background behind the page (Nord canvas surround — dark mode)

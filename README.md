@@ -45,9 +45,12 @@ native file dialogs, Windows Ink pressure).
   note titles, search) render correctly
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
-- 🗂️ **Two-tier toolbar** — panels / page tools / bookmarks / undo-save on the
-  first row, drawing tools & pen settings on the second row (the search bar
-  appears only on `Ctrl+F`)
+- 🗂️ **Two-tier toolbar** — panels / bookmarks / undo-save on the first row;
+  drawing tools on the second row together with a **Page** group (Add/Delete
+  page + paper grid & color). The search bar appears only on `Ctrl+F`
+- 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
+  resizing the window re-centers the page at the **current zoom** instead of
+  resetting it
 - 🎨 **Design system** — 1rem (16 px) base font scale, 4 px spacing grid, rounded
   corners, and a **Nord** dark theme built from primitive + semantic design
   tokens (Polar Night / Snow Storm / Frost / Aurora palette)
