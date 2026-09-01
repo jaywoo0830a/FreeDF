@@ -1093,9 +1093,10 @@ impl FreeDfApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
-            // Compact spacing + padding
+            // Compact spacing + padding; uniform control height for tidy rows
             ui.spacing_mut().button_padding = egui::vec2(9.0, 5.0);
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
             // Row 1: file / page / zoom / tools
             ui.horizontal_wrapped(|ui| {
@@ -1308,7 +1309,9 @@ impl FreeDfApp {
                                 }
                             });
                         let swatches = Palette::swatches(self.color_family);
-                        // Even, square color swatches forming a neat color bar
+                        // Even, square color swatches forming a neat color bar.
+                        // Each sits in a 24×28 cell so the square's center lines
+                        // up with the other 28px-tall controls on the row.
                         for swatch in &swatches {
                             let color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
@@ -1317,19 +1320,24 @@ impl FreeDfApp {
                                 swatch[3],
                             );
                             let selected = *swatch == self.pen_color;
-                            let mut btn = egui::Button::new("")
-                                .fill(color)
-                                .corner_radius(2);
-                            if selected {
-                                // Brand-colored selection ring (drawn inside,
-                                // so the swatch keeps its exact size)
-                                btn = btn
-                                    .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
-                            }
-                            let resp = ui.add_sized([20.0, 20.0], btn);
-                            if resp.clicked() {
-                                self.pen_color = *swatch;
-                            }
+                            let cell = egui::Layout::centered_and_justified(
+                                egui::Direction::LeftToRight,
+                            );
+                            ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
+                                let mut btn =
+                                    egui::Button::new("").fill(color).corner_radius(2);
+                                if selected {
+                                    // Brand-colored selection ring (drawn inside,
+                                    // so the swatch keeps its exact size)
+                                    btn = btn.stroke(Stroke::new(
+                                        2.0,
+                                        ui.visuals().selection.stroke.color,
+                                    ));
+                                }
+                                if ui.add_sized([20.0, 20.0], btn).clicked() {
+                                    self.pen_color = *swatch;
+                                }
+                            });
                         }
                         ui.add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"));
                         ui.checkbox(&mut self.pressure_enabled, "Pressure");
