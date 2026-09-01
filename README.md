@@ -33,6 +33,7 @@ native file dialogs, Windows Ink pressure).
 - 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
   stays smooth on 120 Hz+ displays
 - 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
+- 🔤 **Typography** — the entire UI uses a single bundled **PT Serif** font
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
   integration tests, all runnable without a GUI or PDFium
 

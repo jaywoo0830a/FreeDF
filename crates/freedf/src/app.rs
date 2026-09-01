@@ -1394,6 +1394,20 @@ impl FreeDfApp {
             Vec2::new(page_view[0], page_view[1]),
         );
 
+        // Tool cursor while hovering the page area
+        if self.document.is_some() {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                if page_rect.contains(pos) {
+                    let icon = match self.tool {
+                        ToolType::Pen | ToolType::Highlighter => egui::CursorIcon::Crosshair,
+                        ToolType::Eraser => egui::CursorIcon::NotAllowed,
+                        ToolType::Pan => egui::CursorIcon::Grab,
+                    };
+                    ctx.set_cursor_icon(icon);
+                }
+            }
+        }
+
         // Page shadow
         painter.rect_filled(
             page_rect.expand(6.0),
@@ -1492,7 +1506,9 @@ impl FreeDfApp {
         let pointer_abs = response.interact_pointer_pos();
 
         // Zoom (pinch / Ctrl+wheel)
-        let (zoom_delta, scroll_y) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.y));
+        let (zoom_delta, scroll) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
+        let scroll_x = scroll.x;
+        let scroll_y = scroll.y;
         let ctrl_down = ctx.input(|i| i.modifiers.ctrl);
         if (zoom_delta - 1.0).abs() > 1e-4 && response.hovered() {
             if let Some(abs) = pointer_abs {
@@ -1500,17 +1516,20 @@ impl FreeDfApp {
                 self.view.zoom_at(anchor, zoom_delta, MIN_ZOOM, MAX_ZOOM);
                 self.render_dirty = true;
             }
-        } else if scroll_y.abs() > 0.0 && response.hovered() && !ctrl_down {
+        } else if (scroll_x.abs() + scroll_y.abs()) > 0.0 && response.hovered() && !ctrl_down {
             let page_h_px = self.page_size_pts[1] * self.view.zoom;
-            if page_h_px <= canvas_size[1] {
-                // Whole page visible -> page flip
-                if scroll_y < 0.0 {
-                    self.next_page();
-                } else {
+            if page_h_px <= canvas_size[1] && scroll_x.abs() <= scroll_y.abs() {
+                // Whole page height visible & mostly-vertical gesture -> page flip.
+                // Content follows the fingers (natural scrolling): positive
+                // scroll_y (fingers down) shows earlier content -> previous page.
+                if scroll_y > 0.0 {
                     self.prev_page();
+                } else {
+                    self.next_page();
                 }
             } else {
-                self.view.pan_by(0.0, -scroll_y);
+                // Otherwise pan both axes; content follows the gesture.
+                self.view.pan_by(scroll_x, scroll_y);
             }
         }
 

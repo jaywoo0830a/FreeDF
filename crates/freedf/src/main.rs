@@ -8,6 +8,7 @@
 
 mod app;
 mod export;
+mod fonts;
 mod pdf;
 
 use eframe::egui;
@@ -43,6 +44,9 @@ fn main() -> eframe::Result<()> {
         "FreeDF",
         options,
         Box::new(|cc| {
+            // Single UI font: PT Serif (bundled)
+            fonts::install_pt_serif(&cc.egui_ctx);
+
             // App data layout: <data>/notes + <data>/logs
             let data_dir = app_data_dir();
             let notes_dir = data_dir.join("notes");
