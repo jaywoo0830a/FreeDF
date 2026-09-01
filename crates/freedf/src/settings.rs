@@ -44,12 +44,43 @@ pub struct SessionState {
     pub show_notes: bool,
     pub show_outline: bool,
     /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
+    #[serde(default = "default_library_width")]
     pub library_width: f32,
+    #[serde(default = "default_outline_width")]
     pub outline_width: f32,
     /// 캔버스 오른쪽 필기구/색상 팔레트 표시 여부 (전역 기본값)
+    #[serde(default = "default_show_palette")]
     pub show_palette: bool,
     /// 자주 쓰는 펜 색상 팔레트 (전역 기본값)
+    #[serde(default = "default_favorite_colors")]
     pub favorite_colors: Vec<[u8; 4]>,
+}
+
+/// 이전 버전 세션 파일(필드 없음)에서도 팔레트를 기본 표시.
+fn default_show_palette() -> bool {
+    true
+}
+
+fn default_library_width() -> f32 {
+    260.0
+}
+
+fn default_outline_width() -> f32 {
+    240.0
+}
+
+/// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 8개.
+fn default_favorite_colors() -> Vec<[u8; 4]> {
+    vec![
+        [20, 20, 20, 255],   // Black
+        [90, 90, 90, 255],   // Gray
+        [29, 78, 216, 255],  // Blue
+        [200, 40, 40, 255],  // Red
+        [46, 160, 67, 255],  // Green
+        [240, 180, 0, 255],  // Amber
+        [232, 120, 30, 255], // Orange
+        [128, 80, 200, 255], // Purple
+    ]
 }
 
 impl Default for SessionState {
