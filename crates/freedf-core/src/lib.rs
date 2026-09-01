@@ -12,6 +12,7 @@
 //! - [`outline`]: PDF 아웃라인(북마크) 트리 모델
 //! - [`search`]: 페이지 내 단어 검색 + 하이라이트 사각형
 //! - [`pen`]: 색상 팔레트(빨강/파랑/검정 계열) + 필압→두께 곡선
+//! - [`paper`]: 용지 스타일(그리드/줄/점선) + 배경 색
 //! - [`logging`]: 분석용 구조적 로그(JSON Lines)
 
 pub mod history;
@@ -20,6 +21,7 @@ pub mod model;
 pub mod notes;
 pub mod outline;
 pub mod pages;
+pub mod paper;
 pub mod pen;
 pub mod search;
 pub mod store;

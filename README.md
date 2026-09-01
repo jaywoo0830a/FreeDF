@@ -46,12 +46,14 @@ native file dialogs, Windows Ink pressure).
   two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
+- 📄 **Paper styles & colors** — new notes/pages can use blank, ruled, grid, or
+  dotted paper in white, cream, ice blue, mint, or light gray (also exported)
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
-- 🖊️ **Custom cursors** — Pen = translucent gray circle, Highlighter = colored
-  rectangle, Eraser = animated red circle, Pan = small move crosshair; the OS
-  cursor is restored outside the page
+- 🖊️ **Custom cursors** — Pen = small 4×4 dot, Highlighter = colored rectangle,
+  Eraser = animated red circle, Pan = small move crosshair; the OS cursor is
+  restored outside the page
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end

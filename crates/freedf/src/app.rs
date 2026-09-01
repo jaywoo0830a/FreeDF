@@ -14,6 +14,7 @@ use freedf_core::logging::{AppEvent, Logger};
 use freedf_core::model::{PageIndex, StrokePoint, ToolType};
 use freedf_core::notes::NotesManager;
 use freedf_core::outline::{flatten, OutlineNode};
+use freedf_core::paper::{paper_dots, paper_lines, PaperStyle, PAPER_COLORS, PAPER_WHITE};
 use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
 use freedf_core::search::{find_matches, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
@@ -217,6 +218,10 @@ pub struct FreeDfApp {
     pressure_enabled: bool,
     pressure_curve: PressureCurve,
 
+    // ---------- Paper (grid / color) ----------
+    paper_style: PaperStyle,
+    paper_color: [u8; 4],
+
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
     pan_last: Option<Pos2>,
@@ -296,6 +301,8 @@ impl FreeDfApp {
             eraser_radius: 16.0,
             pressure_enabled: true,
             pressure_curve: PressureCurve::default(),
+            paper_style: PaperStyle::Blank,
+            paper_color: PAPER_WHITE,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1077,6 +1084,17 @@ impl FreeDfApp {
                     }
                 };
                 let scale = rendered.width as f32 / page_pts[0];
+                // Paper tint + grid for notes
+                if self.current_note.is_some() {
+                    crate::export::draw_paper(
+                        &mut img,
+                        page_pts[0],
+                        page_pts[1],
+                        scale,
+                        self.paper_style,
+                        self.paper_color,
+                    );
+                }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
                 draw_strokes_on_image(&mut img, &strokes, scale);
                 match img.save(path) {
@@ -1398,6 +1416,33 @@ impl FreeDfApp {
                     }
                     ToolType::Pan => {}
                 }
+
+                // Paper (grid / ruling / color) applied to new notes & pages
+                ui.separator();
+                ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
+                egui::ComboBox::from_id_salt("paper_style")
+                    .selected_text(self.paper_style.label())
+                    .show_ui(ui, |ui| {
+                        for style in PaperStyle::all() {
+                            ui.selectable_value(&mut self.paper_style, style, style.label());
+                        }
+                    });
+                for paper in PAPER_COLORS {
+                    let color =
+                        Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
+                    let selected = self.paper_color == *paper;
+                    let cell = egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
+                    ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
+                        let mut btn = egui::Button::new("").fill(color).corner_radius(2);
+                        if selected {
+                            btn = btn
+                                .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
+                        }
+                        if ui.add_sized([20.0, 20.0], btn).clicked() {
+                            self.paper_color = *paper;
+                        }
+                    });
+                }
             });
 
             ui.add_space(4.0);
@@ -1668,6 +1713,14 @@ impl FreeDfApp {
             Vec2::new(page_view[0], page_view[1]),
         );
 
+        // Paper color tint applied to the page image (colored paper).
+        let paper_tint = Color32::from_rgba_unmultiplied(
+            self.paper_color[0],
+            self.paper_color[1],
+            self.paper_color[2],
+            255,
+        );
+
         // During a transition, draw the outgoing + incoming pages sliding.
         let mut anim_dx = 0.0_f32;
         if let (Some(anim), Some(prev)) = (&self.page_anim, &self.prev_texture) {
@@ -1689,7 +1742,7 @@ impl FreeDfApp {
                 prev.id(),
                 page_rect.translate(Vec2::new(old_off, 0.0)),
                 uv,
-                Color32::WHITE,
+                paper_tint,
             );
             // Incoming page (new texture)
             painter.rect_filled(
@@ -1702,7 +1755,7 @@ impl FreeDfApp {
                     tex.id(),
                     page_rect.translate(Vec2::new(new_off, 0.0)),
                     uv,
-                    Color32::WHITE,
+                    paper_tint,
                 );
             }
         }
@@ -1723,7 +1776,7 @@ impl FreeDfApp {
                     tex.id(),
                     draw_rect,
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
+                    paper_tint,
                 );
             }
             painter.rect_stroke(
@@ -1732,6 +1785,10 @@ impl FreeDfApp {
                 Stroke::new(1.0, Color32::from_gray(120)),
                 egui::StrokeKind::Inside,
             );
+            // Paper grid / ruling (only for notes)
+            if self.current_note.is_some() {
+                self.paint_paper(&painter, draw_origin);
+            }
         }
 
         // Search highlights (under ink so annotations stay readable)
@@ -1795,6 +1852,25 @@ impl FreeDfApp {
             } else {
                 painter.rect_filled(rect, 2.0, match_fill);
             }
+        }
+    }
+
+    /// Draws the paper grid / ruling / dots onto the page (notes only).
+    fn paint_paper(&self, painter: &egui::Painter, origin: Pos2) {
+        let w = self.page_size_pts[0];
+        let h = self.page_size_pts[1];
+        let line = Color32::from_rgba_unmultiplied(120, 120, 140, 70);
+        for [x0, y0, x1, y1] in paper_lines(w, h, self.paper_style) {
+            let a = self.view.page_to_view([x0, y0]);
+            let b = self.view.page_to_view([x1, y1]);
+            painter.line_segment(
+                [origin + Vec2::new(a[0], a[1]), origin + Vec2::new(b[0], b[1])],
+                Stroke::new(1.0, line),
+            );
+        }
+        for [x, y] in paper_dots(w, h, self.paper_style) {
+            let v = self.view.page_to_view([x, y]);
+            painter.circle_filled(origin + Vec2::new(v[0], v[1]), 1.2, line);
         }
     }
 
@@ -2013,13 +2089,18 @@ impl FreeDfApp {
     fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
         match self.tool {
             ToolType::Pen => {
-                // Small semi-transparent gray circle with a crisp rim.
-                let r = 9.0;
-                painter.circle_filled(pos, r, Color32::from_rgba_unmultiplied(128, 128, 128, 120));
-                painter.circle_stroke(
-                    pos,
-                    r,
-                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(90, 90, 90, 200)),
+                // Small 4×4 pen dot.
+                let rect = Rect::from_center_size(pos, Vec2::splat(4.0));
+                painter.rect_filled(
+                    rect,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(120, 120, 120, 230),
+                );
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(70, 70, 70, 220)),
+                    egui::StrokeKind::Outside,
                 );
             }
             ToolType::Highlighter => {

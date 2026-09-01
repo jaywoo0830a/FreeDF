@@ -4,6 +4,7 @@
 //! "메모한 페이지 내보내기" 기능을 제공합니다.
 
 use freedf_core::model::{Stroke, StrokePoint};
+use freedf_core::paper::{paper_dots, paper_lines, PaperStyle};
 use freedf_core::pen::PressureCurve;
 use image::{Rgba, RgbaImage};
 
@@ -11,6 +12,49 @@ use image::{Rgba, RgbaImage};
 pub fn draw_strokes_on_image(img: &mut RgbaImage, strokes: &[Stroke], scale: f32) {
     for stroke in strokes {
         draw_one_stroke(img, stroke, scale);
+    }
+}
+
+/// 용지 배경 색(틴트)과 그리드/줄/점선을 렌더링된 이미지에 적용합니다.
+pub fn draw_paper(
+    img: &mut RgbaImage,
+    w_pts: f32,
+    h_pts: f32,
+    scale: f32,
+    style: PaperStyle,
+    color: [u8; 4],
+) {
+    // 배경 색 틴트 (흰색이 아닐 때만)
+    if color != [255, 255, 255, 255] {
+        let (w, h) = (img.width(), img.height());
+        let t = [
+            color[0] as f32 / 255.0,
+            color[1] as f32 / 255.0,
+            color[2] as f32 / 255.0,
+        ];
+        for y in 0..h {
+            for x in 0..w {
+                let px = img.get_pixel_mut(x, y);
+                px.0[0] = (px.0[0] as f32 * t[0]) as u8;
+                px.0[1] = (px.0[1] as f32 * t[1]) as u8;
+                px.0[2] = (px.0[2] as f32 * t[2]) as u8;
+            }
+        }
+    }
+    // 그리드/줄 선
+    let line = [120, 120, 140, 70];
+    for [x0, y0, x1, y1] in paper_lines(w_pts, h_pts, style) {
+        draw_segment(
+            img,
+            [x0 * scale, y0 * scale],
+            [x1 * scale, y1 * scale],
+            1.0,
+            line,
+        );
+    }
+    // 점선
+    for [x, y] in paper_dots(w_pts, h_pts, style) {
+        draw_disk(img, [x * scale, y * scale], 1.2, line);
     }
 }
 
