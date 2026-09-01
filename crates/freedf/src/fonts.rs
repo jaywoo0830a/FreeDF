@@ -1,18 +1,24 @@
-//! Font setup — bundle **Inter** as the app's single UI font, plus Phosphor icons.
+//! Font setup — bundle **Inter** (Latin UI) + **NanumGothic** (Hangul / CJK)
+//! as the app's fonts, plus Phosphor icons.
 //!
-//! Inter is OFL-licensed (The Inter Project Authors). We embed the regular face
-//! so the app works without external font files; egui synthesizes bold/italic
-//! from it.
+//! Inter is OFL-licensed (The Inter Project Authors); NanumGothic is
+//! OFL-licensed (NAVER Corp.). We embed the regular faces so the app works
+//! without external font files; egui synthesizes bold/italic from them.
 
 use eframe::egui;
 use std::sync::Arc;
 
-/// Inter Regular (TrueType).
+/// Inter Regular (TrueType) — Latin UI font.
 pub const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 
-/// Replaces egui's default proportional/monospace fonts with Inter so the
-/// whole UI uses a single font family. The built-in fonts are kept as
-/// fallbacks for glyphs Inter lacks (emoji, symbols, CJK, etc.), and the
+/// NanumGothic Regular (TrueType) — Hangul / Korean fallback.
+pub const NANUM_GOTHIC_REGULAR: &[u8] =
+    include_bytes!("../assets/fonts/NanumGothic-Regular.ttf");
+
+/// Replaces egui's default proportional/monospace fonts with Inter, then adds
+/// NanumGothic as a fallback so Hangul (and other CJK) glyphs render correctly
+/// (e.g. Korean PDF outlines / note titles). The built-in fonts stay as
+/// fallbacks for glyphs both fonts lack (emoji, symbols, etc.), and the
 /// Phosphor icon font is registered for toolbar icons.
 pub fn install_inter(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -21,9 +27,14 @@ pub fn install_inter(ctx: &egui::Context) {
         "inter".to_owned(),
         Arc::new(egui::FontData::from_static(INTER_REGULAR)),
     );
+    fonts.font_data.insert(
+        "nanum_gothic".to_owned(),
+        Arc::new(egui::FontData::from_static(NANUM_GOTHIC_REGULAR)),
+    );
 
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        let mut list = vec!["inter".to_owned()];
+        // Inter first (Latin), NanumGothic second (Hangul / CJK fallback).
+        let mut list = vec!["inter".to_owned(), "nanum_gothic".to_owned()];
         if let Some(existing) = fonts.families.get(&family) {
             for name in existing {
                 if !list.contains(name) {

@@ -40,7 +40,9 @@ native file dialogs, Windows Ink pressure).
 - 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
   stays smooth on 120 Hz+ displays
 - 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
-- 🔤 **Typography** — the entire UI uses a single bundled **Inter** font
+- 🔤 **Typography** — the entire UI uses a bundled **Inter** font, with
+  **NanumGothic** as an automatic fallback so **Hangul / Korean** (PDF outlines,
+  note titles, search) render correctly
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
 - 🗂️ **Two-tier toolbar** — panels / page tools / bookmarks / undo-save on the
