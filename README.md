@@ -30,7 +30,8 @@ native file dialogs, Windows Ink pressure).
   page**; delete the current page; annotations stay aligned and page changes
   are persisted back into the note's PDF
 - 🔄 **Rotate pages** — rotate the **current page** or **all pages** 90° CW / CCW;
-  existing ink is rotated along with the page so nothing drifts
+  existing ink is rotated along with the page so nothing drifts, and the rendered
+  aspect ratio is preserved (rotated pages no longer look squashed)
 - 🧭 **Outline panel** — browse the PDF bookmark tree and jump to a page on click
 - 🔍 **In-page word search** — case-insensitive; press **Ctrl+F** to toggle the
   search bar (with focus), yellow highlights for matches, an orange border for
@@ -39,6 +40,10 @@ native file dialogs, Windows Ink pressure).
   so they never drift under zoom/pan
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   swatch palettes for one-tap color picking
+- 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
+  the right edge of the canvas holds the writing tools + your favorite colors;
+  click a swatch to ink with it, **+** to add the current color, right-click a
+  swatch to remove it (saved in `session.json`)
 - 🖊️ **Pen pressure** — pressure is read from touch events (Windows Ink) and mapped
   to stroke width via an adjustable `min/max` pressure curve (0.4×–1.4× by default)
 - ↩️ **Undo / Redo** — diff-based, up to 256 steps; eraser and clear are undoable

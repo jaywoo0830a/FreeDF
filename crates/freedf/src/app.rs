@@ -382,6 +382,10 @@ pub struct FreeDfApp {
     /// Library / Outline panel widths (tracked per tab & persisted in session)
     library_width: f32,
     outline_width: f32,
+    /// Canvas right-side writing-tool / color palette (global pref)
+    show_palette: bool,
+    /// Frequently-used pen colors (global pref)
+    favorite_colors: Vec<[u8; 4]>,
 
     // ---------- Logging / status ----------
     logger: Logger,
@@ -455,6 +459,12 @@ impl FreeDfApp {
         let show_outline = if has { s.show_outline } else { false };
         let library_width = if has { s.library_width } else { 260.0 };
         let outline_width = if has { s.outline_width } else { 240.0 };
+        let show_palette = if has { s.show_palette } else { true };
+        let favorite_colors = if has {
+            s.favorite_colors.clone()
+        } else {
+            crate::settings::SessionState::default().favorite_colors
+        };
         // Recent files live next to the default session file in the app data folder.
         let recent_path = default_session_path
             .parent()
@@ -518,6 +528,8 @@ impl FreeDfApp {
             show_outline,
             library_width,
             outline_width,
+            show_palette,
+            favorite_colors,
             logger,
             file_name: String::new(),
             status: None,
@@ -552,6 +564,8 @@ impl FreeDfApp {
             show_outline: self.show_outline,
             library_width: self.library_width,
             outline_width: self.outline_width,
+            show_palette: self.show_palette,
+            favorite_colors: self.favorite_colors.clone(),
         }
         .save(&self.default_session_path);
     }
@@ -609,6 +623,8 @@ impl FreeDfApp {
             show_outline: self.show_outline,
             library_width: self.library_width,
             outline_width: self.outline_width,
+            show_palette: self.show_palette,
+            favorite_colors: self.favorite_colors.clone(),
         }
     }
 
@@ -2030,6 +2046,13 @@ impl FreeDfApp {
                     // Zoom is preserved; the canvas re-centers on resize.
                     self.save_session();
                 }
+                if ui
+                    .toggle_value(&mut self.show_palette, icon_text(ui, "Palette", icons::PALETTE))
+                    .on_hover_text("Writing-tool color palette (right side of canvas)")
+                    .changed()
+                {
+                    self.save_default_session();
+                }
                 ui.separator();
 
                 // Bookmark the current page + jump list.
@@ -2883,6 +2906,8 @@ impl FreeDfApp {
 
         // Floating page navigation overlay (bottom-center, semi-transparent).
         self.canvas_nav_overlay(&ctx, canvas);
+        // Floating writing-tool / color palette (right-center of the canvas).
+        self.canvas_palette_overlay(&ctx, canvas);
     }
 
     /// 페이지 내비게이션 오버레이: Prev/Next, 줌, Fit Width/Height를
@@ -2976,6 +3001,131 @@ impl FreeDfApp {
                         });
                     });
             });
+    }
+
+    /// 굿노트식 필기구 전용 세로 팔레트: 캔버스 오른쪽 중앙에 도구 선택과
+    /// 자주 쓰는 색상(즐겨찾기)을 반투명 오버레이로 띄웁니다.
+    fn canvas_palette_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
+        if !self.show_palette || self.document.is_none() {
+            return;
+        }
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
+        // 캔버스 오른쪽 끝에 붙도록 화면 대비 오프셋.
+        let screen = ctx.input(|i| i.raw.screen_rect).unwrap_or(canvas);
+        let dx = canvas.right() - screen.right() - 14.0;
+
+        let mut to_add = false;
+        let mut to_remove: Option<usize> = None;
+
+        egui::Area::new(egui::Id::new("canvas_palette_overlay"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(dx, 0.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0, stroke))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(5))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                        // 도구 선택 (세로).
+                        let tools = [
+                            (ToolType::Pen, icons::PEN, "Pen (P)"),
+                            (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlighter (H)"),
+                            (ToolType::Eraser, icons::ERASER, "Eraser (E)"),
+                            (ToolType::Pan, icons::HAND, "Pan (V)"),
+                        ];
+                        for (tool, ic, label) in tools {
+                            if ui
+                                .selectable_label(self.tool == tool, icon_text(ui, "", ic))
+                                .on_hover_text(label)
+                                .clicked()
+                            {
+                                self.tool = tool;
+                                self.save_session();
+                            }
+                        }
+                        ui.separator();
+
+                        // 현재 펜 색 + 즐겨찾기에 추가 버튼.
+                        let cur = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            self.pen_color[3],
+                        );
+                        let cell =
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
+                        ui.allocate_ui_with_layout(egui::vec2(24.0, 24.0), cell, |ui| {
+                            let btn = egui::Button::new("")
+                                .fill(cur)
+                                .corner_radius(2)
+                                .stroke(Stroke::new(1.0, stroke));
+                            if ui
+                                .add_sized([20.0, 20.0], btn)
+                                .on_hover_text("Current pen color")
+                                .clicked()
+                            {
+                                self.tool = ToolType::Pen;
+                                self.save_session();
+                            }
+                        });
+                        if ui
+                            .add(egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false))
+                            .on_hover_text("Add current color to favorites")
+                            .clicked()
+                        {
+                            to_add = true;
+                        }
+                        ui.separator();
+
+                        // 자주 쓰는 색상 (클릭 = 적용, 우클릭 = 제거).
+                        for i in 0..self.favorite_colors.len() {
+                            let c = self.favorite_colors[i]; // Copy
+                            let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+                            let selected = self.pen_color == c;
+                            let cell = egui::Layout::centered_and_justified(
+                                egui::Direction::LeftToRight,
+                            );
+                            ui.allocate_ui_with_layout(egui::vec2(24.0, 24.0), cell, |ui| {
+                                let mut btn = egui::Button::new("").fill(col).corner_radius(2);
+                                if selected {
+                                    btn = btn.stroke(Stroke::new(2.0, accent));
+                                }
+                                let resp = ui.add_sized([20.0, 20.0], btn);
+                                if resp
+                                    .clone()
+                                    .on_hover_text("Set pen color (right-click to remove)")
+                                    .clicked()
+                                {
+                                    self.pen_color = c;
+                                    self.tool = ToolType::Pen;
+                                    self.save_default_session();
+                                    self.save_session();
+                                }
+                                if resp.secondary_clicked() {
+                                    to_remove = Some(i);
+                                }
+                            });
+                        }
+                    });
+            });
+
+        if to_add {
+            let c = self.pen_color;
+            if !self.favorite_colors.contains(&c) && self.favorite_colors.len() < 16 {
+                self.favorite_colors.push(c);
+                self.save_default_session();
+            }
+        }
+        if let Some(i) = to_remove {
+            if i < self.favorite_colors.len() {
+                self.favorite_colors.remove(i);
+                self.save_default_session();
+            }
+        }
     }
 
     fn paint_search_highlights(&self, painter: &egui::Painter, origin: Pos2) {

@@ -18,7 +18,7 @@ use std::path::Path;
 ///   문서를 다시 열 때 마지막 페이지·줌/팬·도구·펜·용지를 복원합니다.
 ///
 /// `#[serde(default)]`라 과거 버전 파일(필드 누락)도 안전하게 로드됩니다.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SessionState {
     /// 마지막으로 열었던 페이지 인덱스
@@ -46,6 +46,10 @@ pub struct SessionState {
     /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
     pub library_width: f32,
     pub outline_width: f32,
+    /// 캔버스 오른쪽 필기구/색상 팔레트 표시 여부 (전역 기본값)
+    pub show_palette: bool,
+    /// 자주 쓰는 펜 색상 팔레트 (전역 기본값)
+    pub favorite_colors: Vec<[u8; 4]>,
 }
 
 impl Default for SessionState {
@@ -72,6 +76,17 @@ impl Default for SessionState {
             show_outline: false,
             library_width: 260.0,
             outline_width: 240.0,
+            show_palette: true,
+            favorite_colors: vec![
+                [20, 20, 20, 255],   // Black
+                [90, 90, 90, 255],   // Gray
+                [29, 78, 216, 255],  // Blue
+                [200, 40, 40, 255],  // Red
+                [46, 160, 67, 255],  // Green
+                [240, 180, 0, 255],  // Amber
+                [232, 120, 30, 255], // Orange
+                [128, 80, 200, 255], // Purple
+            ],
         }
     }
 }

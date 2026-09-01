@@ -181,11 +181,17 @@ impl DocumentView {
             .get(index as i32)
             .map_err(|e| format!("Could not read page: {e}"))?;
 
+        let [w_pts, h_pts] = self.page_size_pts(index);
         let w = (target_width.round().clamp(1.0, 65_000.0)) as Pixels;
+        // 회전된 페이지의 표시 종횡비(너비/높이)에 맞는 높이를 명시해야 합니다.
+        // target_width만 주면 pdfium-render가 회전 전(미디어박스) 종횡비로
+        // 비트맵을 만들어 회전 페이지가 찌그러집니다.
+        let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, 65_000.0)) as Pixels;
         let m = (max_dimension.round().clamp(1.0, 65_000.0)) as Pixels;
 
         let config = PdfRenderConfig::new()
             .set_target_width(w)
+            .set_target_height(h)
             .set_maximum_width(m)
             .set_maximum_height(m)
             .render_annotations(true)
