@@ -107,6 +107,20 @@ fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui:
     job.into()
 }
 
+/// Renders a horizontally-centered row of controls in the toolbar.
+/// The row shrinks to its content and is centered; if the controls are wider
+/// than the available space, a horizontal scrollbar lets the user reach them.
+fn centered_toolbar_row<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        egui::ScrollArea::horizontal()
+            .id_salt(id)
+            .auto_shrink([true, true])
+            .show(ui, |ui| add(ui))
+            .inner
+    })
+    .inner
+}
+
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1148,6 +1162,35 @@ impl FreeDfApp {
         self.sync_note_meta();
     }
 
+    /// 현재 페이지 바로 다음에 빈 페이지를 삽입합니다.
+    fn insert_page_after_action(&mut self) {
+        let Some(doc) = &mut self.document else {
+            return;
+        };
+        let idx = self.current_page + 1;
+        let size = self.paper_size.size_pts();
+        if let Err(e) = doc.insert_page_at(idx, size) {
+            self.status = Some(e);
+            return;
+        }
+        self.store.insert_page(idx);
+        // 새 페이지에는 현재 용지 설정(스타일/색)을 적용합니다.
+        self.store.set_paper(
+            idx,
+            PagePaper {
+                style: self.paper_style,
+                color: self.paper_color,
+            },
+        );
+        self.current_page = idx;
+        let total = doc.page_count();
+        self.logger.log(AppEvent::PageAdded { page: idx, total });
+        self.on_page_changed();
+        self.autosave();
+        self.save_pdf_if_note();
+        self.sync_note_meta();
+    }
+
     fn delete_page_action(&mut self) {
         let Some(doc) = &mut self.document else {
             return;
@@ -1865,19 +1908,31 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 2: Page (structure + paper styling)
-            ui.horizontal_wrapped(|ui| {
+            centered_toolbar_row(ui, "row2", |ui| {
+                ui.horizontal(|ui| {
                 ui.label(icon_text(ui, "Page", icons::FILES));
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-                if ui
-                    .add_enabled(
-                        page_count > 0,
-                        egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)),
-                    )
-                    .on_hover_text("Add blank page at the end")
-                    .clicked()
-                {
-                    self.add_page_action();
-                }
+                ui.menu_button(icon_text(ui, "Add Page", icons::PLUS_SQUARE), |ui| {
+                    if ui
+                        .add_enabled(
+                            page_count > 0,
+                            egui::Button::new("Insert after current page"),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.insert_page_after_action();
+                    }
+                    if ui
+                        .add_enabled(page_count > 0, egui::Button::new("Insert at end"))
+                        .clicked()
+                    {
+                        ui.close();
+                        self.add_page_action();
+                    }
+                })
+                .response
+                .on_hover_text("Insert a blank page");
                 if ui
                     .add_enabled(
                         page_count > 1,
@@ -1943,6 +1998,7 @@ impl FreeDfApp {
                     })
                     .response
                     .on_hover_text("Size of new pages & new notes");
+                });
             });
 
             ui.add_space(4.0);
@@ -1950,7 +2006,8 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 3: drawing tools (icon-only picker + settings)
-            ui.horizontal_wrapped(|ui| {
+            centered_toolbar_row(ui, "row3", |ui| {
+                ui.horizontal(|ui| {
                 let tool_buttons = [
                     (ToolType::Pen, icons::PEN, "Pen"),
                     (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlight"),
@@ -2084,6 +2141,7 @@ impl FreeDfApp {
                     }
                     ToolType::Pan => {}
                 }
+                });
             });
 
             ui.add_space(4.0);
@@ -2092,7 +2150,8 @@ impl FreeDfApp {
 
             // Row 4: search (only while Ctrl+F is pressed)
             if self.show_search {
-                ui.horizontal_wrapped(|ui| {
+                centered_toolbar_row(ui, "row4", |ui| {
+                    ui.horizontal(|ui| {
                     ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.search_query)
@@ -2135,6 +2194,7 @@ impl FreeDfApp {
                         self.show_search = false;
                         self.search_clear();
                     }
+                });
                 });
                 ui.add_space(4.0);
             }
@@ -3140,13 +3200,15 @@ impl eframe::App for FreeDfApp {
         if self.show_library {
             egui::Panel::left("library_panel")
                 .resizable(true)
-                .default_size(230.0)
+                .default_size(260.0)
+                .max_size(460.0)
                 .show(ui, |ui| self.library_panel(ui));
         }
         if self.show_outline {
             egui::Panel::left("outline_panel")
                 .resizable(true)
-                .default_size(220.0)
+                .default_size(240.0)
+                .max_size(460.0)
                 .show(ui, |ui| self.outline_panel(ui));
         }
 

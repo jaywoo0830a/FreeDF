@@ -23,8 +23,9 @@ native file dialogs, Windows Ink pressure).
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
   stores its own PDF, annotations and metadata under the app data folder
-- ➕➖ **Page CRUD** — add a blank page or delete the current page; annotations are
-  kept aligned and page changes are persisted back into the note's PDF
+- ➕➖ **Page CRUD** — insert a blank page **after the current page** or **at the
+  end**, or delete the current page; annotations stay aligned and page changes
+  are persisted back into the note's PDF
 - 🧭 **Outline panel** — browse the PDF bookmark tree and jump to a page on click
 - 🔍 **In-page word search** — case-insensitive; press **Ctrl+F** to toggle the
   search bar (with focus), yellow highlights for matches, an orange border for
@@ -46,9 +47,9 @@ native file dialogs, Windows Ink pressure).
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
 - 🗂️ **Three-tier toolbar** — panels / bookmarks / undo-save on the first row;
-  **Page** tools (Add/Delete page + paper grid & color) on the second row; ink
+  **Page** tools (insert / delete + paper grid & color) on the second row; ink
   tool picker & settings (icon-only Pen / Highlighter / Eraser / Pan) on the
-  third row. The search bar appears only on `Ctrl+F`
+  third row. Rows 2–4 are **centered**. The search bar appears only on `Ctrl+F`
 - 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
   resizing the window re-centers the page at the **current zoom** instead of
   resetting it

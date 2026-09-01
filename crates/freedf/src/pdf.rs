@@ -286,6 +286,18 @@ impl DocumentView {
         Ok(())
     }
 
+    /// 지정한 인덱스에 빈 페이지를 삽입합니다.
+    pub fn insert_page_at(&mut self, index: usize, size_pts: [f32; 2]) -> Result<(), String> {
+        let paper =
+            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
+        self.document
+            .pages_mut()
+            .create_page_at_index(paper, index as i32)
+            .map_err(|e| format!("Could not insert page: {e}"))?;
+        self.refresh_sizes();
+        Ok(())
+    }
+
     /// 페이지를 삭제합니다. 마지막 한 장은 삭제할 수 없습니다.
     pub fn delete_page(&mut self, index: usize) -> Result<(), String> {
         if self.page_count() <= 1 {
