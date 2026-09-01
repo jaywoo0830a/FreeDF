@@ -1,0 +1,8 @@
+/target
+*.pdf
+*.freedf.json
+*.annotations.json
+*.png
+pdfium.dll
+libpdfium.so
+libpdfium.dylib
