@@ -43,15 +43,15 @@ fn apply(style: &mut egui::Style, theme: egui::Theme) {
         FontId::new(BASE * 0.9375, egui::FontFamily::Monospace), // 15
     );
 
-    // --- Spacing: 4 px grid, generous controls -------------------------
-    style.spacing.item_spacing = Vec2::new(SP * 2.5, SP * 2.0); // 10, 8
-    style.spacing.window_margin = Margin::same(12); // 12
-    style.spacing.button_padding = Vec2::new(SP * 3.5, SP * 1.75); // 14, 7
-    style.spacing.interact_size = Vec2::new(0.0, SP * 8.5); // min height 34
-    style.spacing.indent = SP * 6.0; // 24
+    // --- Spacing: 4 px grid, compact controls -------------------------
+    style.spacing.item_spacing = Vec2::new(SP * 2.0, SP * 1.5); // 8, 6
+    style.spacing.window_margin = Margin::same(8); // 8
+    style.spacing.button_padding = Vec2::new(SP * 2.5, SP * 1.25); // 10, 5
+    style.spacing.interact_size = Vec2::new(0.0, SP * 7.0); // min height 28
+    style.spacing.indent = SP * 4.0; // 16
     style.spacing.icon_width = 18.0;
     style.spacing.icon_width_inner = 14.0;
-    style.spacing.slider_width = 120.0;
+    style.spacing.slider_width = 100.0;
     style.spacing.slider_rail_height = 5.0;
 
     // --- Brand accent (dark brown) --------------------------------------

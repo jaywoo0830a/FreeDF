@@ -1093,10 +1093,10 @@ impl FreeDfApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
-            // Generous spacing + padding (larger click targets)
-            ui.spacing_mut().button_padding = egui::vec2(10.0, 7.0);
-            ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-            ui.add_space(8.0);
+            // Compact spacing + padding
+            ui.spacing_mut().button_padding = egui::vec2(9.0, 5.0);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.add_space(4.0);
             // Row 1: file / page / zoom / tools
             ui.horizontal_wrapped(|ui| {
                 if ui
@@ -1271,9 +1271,9 @@ impl FreeDfApp {
                 }
             });
 
-            ui.add_space(8.0);
-            ui.separator();
             ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
 
             // Row 2: drawing tools (tool picker + tool settings)
             ui.horizontal_wrapped(|ui| {
@@ -1357,9 +1357,9 @@ impl FreeDfApp {
                 }
             });
 
-            ui.add_space(8.0);
-            ui.separator();
             ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
 
             // Row 3: search
             ui.horizontal_wrapped(|ui| {
@@ -1401,17 +1401,17 @@ impl FreeDfApp {
                     ui.label(format!("{cur}/{}", self.search_matches.len()));
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(4.0);
         });
     }
 
     // ---------- UI: notes panel ----------
 
     fn notes_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-        ui.add_space(8.0);
-        ui.heading("Notes");
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
         ui.add_space(4.0);
+        ui.heading("Notes");
+        ui.add_space(2.0);
         ui.horizontal(|ui| {
             if ui
                 .button(icon_text(ui, "New", icons::PLUS))
@@ -1488,10 +1488,10 @@ impl FreeDfApp {
     // ---------- UI: outline panel ----------
 
     fn outline_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-        ui.add_space(8.0);
-        ui.heading("Outline");
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
         ui.add_space(4.0);
+        ui.heading("Outline");
+        ui.add_space(2.0);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }
