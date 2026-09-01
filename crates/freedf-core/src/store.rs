@@ -22,6 +22,8 @@ pub struct PageAnnotations {
 pub struct AnnotationStore {
     pub(crate) pages: BTreeMap<PageIndex, PageAnnotations>,
     pub(crate) paper: BTreeMap<PageIndex, PagePaper>,
+    /// 사용자 북마크 페이지 (정렬 유지).
+    pub(crate) bookmarks: Vec<PageIndex>,
     next_stroke_id: u64,
 }
 
@@ -76,6 +78,33 @@ impl AnnotationStore {
     /// 페이지의 용지 설정을 저장합니다.
     pub fn set_paper(&mut self, page_index: PageIndex, paper: PagePaper) {
         self.paper.insert(page_index, paper);
+    }
+
+    /// 북마크된 페이지 목록 (정렬).
+    pub fn bookmarks(&self) -> &[PageIndex] {
+        &self.bookmarks
+    }
+
+    /// 페이지가 북마크되어 있는지.
+    pub fn is_bookmarked(&self, page_index: PageIndex) -> bool {
+        self.bookmarks.contains(&page_index)
+    }
+
+    /// 페이지 북마크 토글. 추가되면 true, 해제되면 false.
+    pub fn toggle_bookmark(&mut self, page_index: PageIndex) -> bool {
+        if let Some(pos) = self.bookmarks.iter().position(|p| *p == page_index) {
+            self.bookmarks.remove(pos);
+            false
+        } else {
+            self.bookmarks.push(page_index);
+            self.bookmarks.sort_unstable();
+            true
+        }
+    }
+
+    /// 모든 북마크 제거.
+    pub fn clear_bookmarks(&mut self) {
+        self.bookmarks.clear();
     }
 
     /// 새 스트로크 추가. 고유 ID를 부여해 반환합니다.

@@ -15,6 +15,12 @@ native file dialogs, Windows Ink pressure).
 ## Features
 
 - 📄 **PDF open / render** — high-resolution page rendering via PDFium (HiDPI aware)
+- 🗂️ **Tabs — multiple documents** — open several notes and PDFs at once and switch
+  between them; every tab keeps its own page, zoom/pan, annotations, search and outline
+- 🕘 **Recent files** — a combined list of the notes and PDFs you opened recently,
+  one click reopens (or switches to the already-open tab)
+- 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
+  bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
   stores its own PDF, annotations and metadata under the app data folder
 - ➕➖ **Page CRUD** — add a blank page or delete the current page; annotations are

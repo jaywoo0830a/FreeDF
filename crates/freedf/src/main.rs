@@ -10,6 +10,7 @@ mod app;
 mod export;
 mod fonts;
 mod pdf;
+mod recent;
 mod session;
 mod settings;
 mod style;

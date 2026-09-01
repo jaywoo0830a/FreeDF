@@ -24,6 +24,7 @@ use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_
 
 use crate::export::draw_strokes_on_image;
 use crate::pdf::DocumentView;
+use crate::recent::{RecentItem, RecentKind, RecentList};
 use egui_phosphor_icons::icons;
 use pdfium_render::prelude::Pdfium;
 
@@ -182,10 +183,53 @@ impl ModalState {
     }
 }
 
+/// 열려 있는 문서 탭의 종류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabKind {
+    /// FreeDF 노트 (id).
+    Note(u64),
+    /// 외부 PDF 파일 (경로).
+    Pdf(PathBuf),
+}
+
+/// 하나의 열린 문서에 대한 전체 상태.
+///
+/// 앱의 활성 문서 상태(`self.document`, `self.store`, …)는 항상
+/// `tabs[active]`와 동기화됩니다. 활성 탭은 `document`가 `None`이고
+/// (실제 핸들은 `self.document`에 있음), 비활성 탭은 `document`가 `Some`입니다.
+/// 탭 전환 시 capture/restore로 상태를 주고받습니다.
+pub struct TabEntry {
+    kind: TabKind,
+    label: String,
+    file_path: Option<PathBuf>,
+    current_note: Option<u64>,
+    /// 활성 탭이 아니면 실제 문서 핸들 보관.
+    document: Option<DocumentView>,
+    current_page: usize,
+    page_size_pts: [f32; 2],
+    view: ViewTransform,
+    page_align: PageAlign,
+    store: AnnotationStore,
+    history: History,
+    search_query: String,
+    search_matches: Vec<TextMatch>,
+    search_current: Option<usize>,
+    outline: Vec<OutlineNode>,
+    outline_loaded: bool,
+}
+
 pub struct FreeDfApp {
     // ---------- Notes ----------
     notes: NotesManager,
     current_note: Option<u64>,
+
+    // ---------- Tabs (multiple open documents) ----------
+    tabs: Vec<TabEntry>,
+    active: usize,
+
+    // ---------- Recent files ----------
+    recents: RecentList,
+    recent_path: PathBuf,
 
     // ---------- Document ----------
     document: Option<DocumentView>,
@@ -303,9 +347,19 @@ impl FreeDfApp {
         } else {
             Palette::default_highlighter()
         };
+        // Recent files live next to settings.json in the app data folder.
+        let recent_path = settings_path
+            .parent()
+            .map(|p| p.join("recent.json"))
+            .unwrap_or_else(|| PathBuf::from("recent.json"));
+        let recents = RecentList::load(&recent_path);
         Self {
             notes,
             settings_path,
+            tabs: Vec::new(),
+            active: 0,
+            recents,
+            recent_path,
             current_note: None,
             document: None,
             pdfium: crate::pdf::load_pdfium().map(Box::new),
@@ -472,6 +526,214 @@ impl FreeDfApp {
         self.search_update();
     }
 
+    // ---------- Tabs (multiple open documents) ----------
+
+    /// 같은 대상(노트 id 또는 파일 경로)이 이미 열려 있으면 탭 인덱스 반환.
+    fn find_tab(&self, kind: &TabKind) -> Option<usize> {
+        self.tabs.iter().position(|t| &t.kind == kind)
+    }
+
+    /// 현재 활성 문서 상태를 `tabs[idx]`에 복사해 둡니다.
+    fn capture_into(&mut self, idx: usize) {
+        let Some(tab) = self.tabs.get_mut(idx) else {
+            return;
+        };
+        tab.label = self.file_name.clone();
+        tab.file_path = self.file_path.clone();
+        tab.current_note = self.current_note;
+        tab.document = self.document.take();
+        tab.current_page = self.current_page;
+        tab.page_size_pts = self.page_size_pts;
+        tab.view = self.view;
+        tab.page_align = self.page_align;
+        tab.store = std::mem::take(&mut self.store);
+        tab.history = std::mem::take(&mut self.history);
+        tab.search_query = std::mem::take(&mut self.search_query);
+        tab.search_matches = std::mem::take(&mut self.search_matches);
+        tab.search_current = self.search_current.take();
+        tab.outline = std::mem::take(&mut self.outline);
+        tab.outline_loaded = self.outline_loaded;
+    }
+
+    /// `tabs[idx]`의 상태를 활성 문서로 복원합니다. (활성 탭의 document는 None이 됨)
+    fn restore_from(&mut self, idx: usize) {
+        let (
+            label,
+            file_path,
+            current_note,
+            document,
+            current_page,
+            page_size_pts,
+            view,
+            page_align,
+            store,
+            history,
+            search_query,
+            search_matches,
+            search_current,
+            outline,
+            outline_loaded,
+        ) = {
+            let tab = self.tabs.get_mut(idx).expect("tab index in range");
+            (
+                std::mem::take(&mut tab.label),
+                tab.file_path.clone(),
+                tab.current_note,
+                tab.document.take(),
+                tab.current_page,
+                tab.page_size_pts,
+                tab.view,
+                tab.page_align,
+                std::mem::take(&mut tab.store),
+                std::mem::take(&mut tab.history),
+                std::mem::take(&mut tab.search_query),
+                std::mem::take(&mut tab.search_matches),
+                tab.search_current.take(),
+                std::mem::take(&mut tab.outline),
+                tab.outline_loaded,
+            )
+        };
+        // 일시적인 렌더/입력 상태 초기화.
+        self.texture = None;
+        self.render_dirty = true;
+        self.pending_fit = None;
+        self.page_anim = None;
+        self.prev_texture = None;
+        self.active_stroke = None;
+        self.pan_last = None;
+        self.middle_pan_last = None;
+        self.scroll_vel = Vec2::ZERO;
+        self.transition_last_page = current_page;
+        self.file_name = label;
+        self.file_path = file_path;
+        self.current_note = current_note;
+        self.document = document;
+        self.current_page = current_page;
+        self.page_size_pts = page_size_pts;
+        self.view = view;
+        self.page_align = page_align;
+        self.store = store;
+        self.history = history;
+        self.search_query = search_query;
+        self.search_matches = search_matches;
+        self.search_current = search_current;
+        self.outline = outline;
+        self.outline_loaded = outline_loaded;
+        self.search_runs = Vec::new();
+        self.status = None;
+        self.search_update();
+    }
+
+    /// 활성 탭을 `idx`로 전환합니다.
+    fn switch_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() || idx == self.active {
+            return;
+        }
+        self.save_session();
+        self.capture_into(self.active);
+        self.restore_from(idx);
+        self.active = idx;
+    }
+
+    /// 탭을 닫습니다. 활성 탭이면 인접 탭으로 전환합니다.
+    fn close_tab(&mut self, idx: usize) {
+        if idx >= self.tabs.len() {
+            return;
+        }
+        if idx == self.active {
+            self.close_document();
+            self.tabs.remove(idx);
+            if self.tabs.is_empty() {
+                return;
+            }
+            let new_active = idx.min(self.tabs.len() - 1);
+            self.restore_from(new_active);
+            self.active = new_active;
+        } else {
+            self.tabs.remove(idx);
+            if idx < self.active {
+                self.active -= 1;
+            }
+        }
+    }
+
+    /// 현재 활성 문서를 새 탭으로 추가합니다 (document는 self에 남아 활성 상태).
+    fn add_current_as_tab(&mut self, kind: TabKind) {
+        let label = self.file_name.clone();
+        // 활성 탭의 실제 데이터는 self에 유지합니다 (document/store/…).
+        // 탭 항목에는 전환 시 capture_into가 채워 넣으므로 빈 값으로 둡니다.
+        let tab = TabEntry {
+            kind,
+            label,
+            file_path: self.file_path.clone(),
+            current_note: self.current_note,
+            document: None,
+            current_page: self.current_page,
+            page_size_pts: self.page_size_pts,
+            view: self.view,
+            page_align: self.page_align,
+            store: AnnotationStore::new(),
+            history: History::new(256),
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+            outline: Vec::new(),
+            outline_loaded: false,
+        };
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
+    }
+
+    // ---------- Recent files ----------
+
+    fn note_recent(
+        &mut self,
+        kind: RecentKind,
+        title: String,
+        note_id: Option<u64>,
+        path: Option<PathBuf>,
+    ) {
+        let opened_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        self.recents
+            .touch(RecentItem {
+                kind,
+                note_id,
+                path,
+                title,
+                opened_at_ms,
+            });
+        self.recents.save(&self.recent_path);
+    }
+
+    // ---------- Bookmarks ----------
+
+    /// 현재 페이지 북마크 토글 (애노테이션에 저장).
+    fn toggle_bookmark(&mut self, page: PageIndex) {
+        self.store.toggle_bookmark(page);
+        self.persist_bookmarks();
+    }
+
+    /// 모든 북마크 제거.
+    fn clear_bookmarks(&mut self) {
+        self.store.clear_bookmarks();
+        self.persist_bookmarks();
+    }
+
+    /// 북마크를 디스크에 반영합니다 (노트는 자동저장, 일반 PDF는 사이드카).
+    fn persist_bookmarks(&mut self) {
+        if self.current_note.is_some() {
+            self.autosave();
+        } else if let Some(path) = self.file_path.clone() {
+            let ann_path = annotation_path_for(&path);
+            let json = self.store.to_json();
+            let _ = std::fs::write(&ann_path, json);
+        }
+        self.save_session();
+    }
+
     // ---------- Notes ----------
 
     /// Shows an error both in the status bar and as a popup alert.
@@ -545,9 +807,17 @@ impl FreeDfApp {
         match self.notes.delete_note(id) {
             Ok(()) => {
                 self.logger.log(AppEvent::NoteDeleted { note_id: id, title });
-                if self.current_note == Some(id) {
+                // 열려 있는 탭이면 닫고, 아니면 문서 상태 정리.
+                if let Some(idx) = self.find_tab(&TabKind::Note(id)) {
+                    self.close_tab(idx);
+                } else if self.current_note == Some(id) {
                     self.close_document();
                 }
+                // 최근 목록에서도 제거.
+                self.recents
+                    .items
+                    .retain(|r| !(r.kind == RecentKind::Note && r.note_id == Some(id)));
+                self.recents.save(&self.recent_path);
                 let _ = self.notes.save();
             }
             Err(e) => self.status = Some(format!("Delete failed: {e}")),
@@ -578,6 +848,16 @@ impl FreeDfApp {
         let Some(meta) = self.notes.get(id).cloned() else {
             return;
         };
+        // 이미 열려 있으면 해당 탭으로 전환만 합니다.
+        if let Some(idx) = self.find_tab(&TabKind::Note(id)) {
+            self.switch_tab(idx);
+            return;
+        }
+        // 현재 활성 문서 상태를 탭에 보존하고 새 문서를 엽니다.
+        self.save_session();
+        if self.document.is_some() {
+            self.capture_into(self.active);
+        }
         let pdf_path = self.notes.pdf_path(id);
         if !pdf_path.exists() {
             if let Err(e) = self.create_blank_pdf_for_note(&pdf_path) {
@@ -633,6 +913,8 @@ impl FreeDfApp {
                     page_count,
                 });
                 self.load_outline_if_needed();
+                self.add_current_as_tab(TabKind::Note(id));
+                self.note_recent(RecentKind::Note, meta.title.clone(), Some(id), None);
             }
             Err(e) => self.show_error(e),
         }
@@ -661,6 +943,16 @@ impl FreeDfApp {
     }
 
     fn open_pdf(&mut self, path: &Path) {
+        // 이미 열려 있으면 해당 탭으로 전환만 합니다.
+        if let Some(idx) = self.find_tab(&TabKind::Pdf(path.to_path_buf())) {
+            self.switch_tab(idx);
+            return;
+        }
+        // 현재 활성 문서 상태를 탭에 보존하고 새 문서를 엽니다.
+        self.save_session();
+        if self.document.is_some() {
+            self.capture_into(self.active);
+        }
         let opened = self.pdfium().and_then(|p| DocumentView::open(p, path));
         match opened {
             Ok(doc) => {
@@ -707,6 +999,13 @@ impl FreeDfApp {
                     self.pending_fit = None;
                 }
                 self.load_outline_if_needed();
+                self.add_current_as_tab(TabKind::Pdf(path.to_path_buf()));
+                self.note_recent(
+                    RecentKind::File,
+                    self.file_name.clone(),
+                    None,
+                    Some(path.to_path_buf()),
+                );
             }
             Err(e) => self.show_error(e),
         }
@@ -1310,6 +1609,63 @@ impl FreeDfApp {
         }
     }
 
+    // ---------- UI: tabs bar ----------
+
+    fn tabs_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("tabs_bar").show(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .button(icon_text(ui, "New", icons::PLUS))
+                    .on_hover_text("New note (Ctrl+N)")
+                    .clicked()
+                {
+                    self.modal = Some(ModalState::ask_text(
+                        "New Note",
+                        "Note title:",
+                        TextAction::NewNote,
+                    ));
+                }
+                if ui
+                    .button(icon_text(ui, "Open", icons::FOLDER_OPEN))
+                    .on_hover_text("Open PDF (Ctrl+O)")
+                    .clicked()
+                {
+                    self.open_file_dialog();
+                }
+                ui.separator();
+
+                if self.tabs.is_empty() {
+                    ui.label(egui::RichText::new("No documents open").weak());
+                    return;
+                }
+                let mut to_switch: Option<usize> = None;
+                let mut to_close: Option<usize> = None;
+                for (i, tab) in self.tabs.iter().enumerate() {
+                    let selected = i == self.active;
+                    let resp = ui.selectable_label(selected, &tab.label);
+                    if resp.clicked() {
+                        to_switch = Some(i);
+                    }
+                    if ui
+                        .button(egui::RichText::new("✕").small())
+                        .on_hover_text("Close document")
+                        .clicked()
+                    {
+                        to_close = Some(i);
+                    }
+                }
+                if let Some(i) = to_close {
+                    self.close_tab(i);
+                }
+                if let Some(i) = to_switch {
+                    self.switch_tab(i);
+                }
+            });
+        });
+    }
+
     // ---------- UI: toolbar ----------
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -1328,6 +1684,38 @@ impl FreeDfApp {
                 {
                     self.open_file_dialog();
                 }
+                ui.menu_button(icon_text(ui, "Recent", icons::CLOCK_COUNTER_CLOCKWISE), |ui| {
+                    let recents: Vec<RecentItem> =
+                        self.recents.sorted().into_iter().cloned().collect();
+                    if recents.is_empty() {
+                        ui.label("No recent files yet");
+                        return;
+                    }
+                    for item in &recents {
+                        let label = match item.kind {
+                            RecentKind::Note => format!("📄 {}", item.title),
+                            RecentKind::File => format!("📎 {}", item.title),
+                        };
+                        if ui.button(label).clicked() {
+                            let kind = item.kind;
+                            let note_id = item.note_id;
+                            let path = item.path.clone();
+                            ui.close();
+                            match kind {
+                                RecentKind::Note => {
+                                    if let Some(id) = note_id {
+                                        self.open_note(id);
+                                    }
+                                }
+                                RecentKind::File => {
+                                    if let Some(p) = path {
+                                        self.open_pdf(&p);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
                 ui.separator();
 
                 if ui
@@ -1374,6 +1762,41 @@ impl FreeDfApp {
                     self.next_page();
                 }
                 ui.label(format!("/ {}", page_count.max(1)));
+                ui.separator();
+
+                // Bookmark the current page + jump list.
+                let bookmarked = self.store.is_bookmarked(self.current_page);
+                if ui
+                    .selectable_label(
+                        bookmarked,
+                        icon_text(ui, "Bookmark", icons::BOOKMARK_SIMPLE),
+                    )
+                    .on_hover_text(if bookmarked {
+                        "Remove bookmark from this page"
+                    } else {
+                        "Bookmark this page"
+                    })
+                    .clicked()
+                {
+                    self.toggle_bookmark(self.current_page);
+                }
+                ui.menu_button(icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE), |ui| {
+                    let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
+                    if pages.is_empty() {
+                        ui.label("No bookmarks yet");
+                        return;
+                    }
+                    for p in pages {
+                        if ui.button(format!("Page {}", p + 1)).clicked() {
+                            ui.close();
+                            self.goto_page(p);
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Clear all bookmarks").clicked() {
+                        self.clear_bookmarks();
+                    }
+                });
                 ui.separator();
 
                 if ui
@@ -2556,6 +2979,7 @@ impl eframe::App for FreeDfApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
+        self.tabs_bar(ui);
         self.toolbar(ui);
         self.status_bar(ui);
 
@@ -2617,6 +3041,7 @@ impl eframe::App for FreeDfApp {
                 }
                 self.save_settings();
                 self.save_session();
+                self.recents.save(&self.recent_path);
                 self.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 impl AnnotationStore {
     /// 페이지 삭제: 해당 페이지의 주석을 반환하고, 이후 페이지 인덱스를 -1 이동.
-    /// 용지 설정도 함께 이동/제거합니다.
+    /// 용지 설정과 북마크도 함께 이동/제거합니다.
     pub fn remove_page(&mut self, page_index: PageIndex) -> Vec<Stroke> {
         let removed = self
             .pages
@@ -17,12 +17,24 @@ impl AnnotationStore {
             .map(|p| p.strokes)
             .unwrap_or_default();
         self.paper.remove(&page_index);
+        // 북마크: 삭제된 페이지는 제거, 이후 페이지는 -1 이동.
+        self.bookmarks.retain(|b| *b != page_index);
+        for b in self.bookmarks.iter_mut() {
+            if *b > page_index {
+                *b -= 1;
+            }
+        }
         self.shift_pages(page_index + 1, -1);
         removed
     }
 
     /// 빈 페이지 삽입: `at` 위치부터 이후 페이지 인덱스를 +1 이동.
     pub fn insert_page(&mut self, at: PageIndex) {
+        for b in self.bookmarks.iter_mut() {
+            if *b >= at {
+                *b += 1;
+            }
+        }
         self.shift_pages(at, 1);
         self.ensure_page(at);
     }
@@ -158,5 +170,44 @@ mod tests {
         // 1번 삭제 → 3번 용지가 2번으로 복귀
         store.remove_page(1);
         assert_eq!(store.paper_on(2).map(|p| p.style), Some(PaperStyle::Ruled));
+    }
+
+    #[test]
+    fn bookmarks_shift_with_pages() {
+        let mut store = AnnotationStore::new();
+        assert!(store.toggle_bookmark(0));
+        assert!(store.toggle_bookmark(2));
+        assert!(store.is_bookmarked(0));
+        assert!(store.is_bookmarked(2));
+
+        // 1번 삽입 → 2번 북마크가 3번으로 이동
+        store.insert_page(1);
+        assert!(store.is_bookmarked(0));
+        assert!(store.is_bookmarked(3));
+        assert!(!store.is_bookmarked(2));
+
+        // 1번 삭제 → 3번 북마크가 2번으로 복귀
+        store.remove_page(1);
+        assert!(store.is_bookmarked(0));
+        assert!(store.is_bookmarked(2));
+
+        // 삭제된 페이지의 북마크는 제거되고, 이후 페이지 북마크는 아래로 이동
+        store.toggle_bookmark(1);
+        store.remove_page(1);
+        // 옛 2번 페이지의 북마크가 새 1번으로 이동
+        assert!(store.is_bookmarked(1));
+        assert!(!store.is_bookmarked(2));
+    }
+
+    #[test]
+    fn bookmark_toggle_and_clear() {
+        let mut store = AnnotationStore::new();
+        assert!(store.toggle_bookmark(3));
+        assert!(!store.toggle_bookmark(3)); // 해제
+        assert!(store.toggle_bookmark(1));
+        assert!(store.toggle_bookmark(5));
+        assert_eq!(store.bookmarks(), &[1, 5]);
+        store.clear_bookmarks();
+        assert!(store.bookmarks().is_empty());
     }
 }
