@@ -156,7 +156,7 @@ impl AnnotationStore {
 
     /// JSON 직렬화.
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("AnnotationStore 직렬화 실패")
+        serde_json::to_string(self).expect("AnnotationStore serialization failed")
     }
 
     /// JSON 역직렬화.

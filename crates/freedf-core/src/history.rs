@@ -168,7 +168,7 @@ mod tests {
         let first = h.undo().expect("undo");
         match first {
             Edit::RemoveStrokes { strokes, .. } => assert_eq!(strokes[0].id, 4),
-            _ => panic!("잘못된 edit"),
+            _ => panic!("invalid edit"),
         }
     }
 

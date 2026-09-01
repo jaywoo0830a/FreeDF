@@ -28,11 +28,28 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
+# GitHub API requires TLS 1.2 (needed on older Windows PowerShell 5.1)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 Write-Host "== FreeDF PDFium installer ==" -ForegroundColor Cyan
 
-# 1) Download the archive once -------------------------------------------
-$url = "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-windows-$Arch.tgz"
-$tmp = Join-Path $env:TEMP "pdfium-windows-$Arch.tgz"
+# 1) Resolve the latest release and pick the Windows asset -----------------
+$apiUrl = "https://api.github.com/repos/bblanchon/pdfium-binaries/releases/latest"
+Write-Host "Resolving latest PDFium release..."
+$release = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "FreeDF-installer" }
+
+# Recent releases name the assets pdfium-win-<arch>.tgz; older ones used
+# pdfium-windows-<arch>.tgz. Try the current name first, then the legacy one.
+$assetName = "pdfium-win-$Arch.tgz"
+$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+if (-not $asset) {
+    $asset = $release.assets | Where-Object { $_.name -eq "pdfium-windows-$Arch.tgz" } | Select-Object -First 1
+}
+if (-not $asset) {
+    throw "Could not find asset '$assetName' in release $($release.tag_name)."
+}
+$url = $asset.browser_download_url
+$tmp = Join-Path $env:TEMP "pdfium-$Arch.tgz"
 $extract = Join-Path $env:TEMP "pdfium-extract"
 
 Write-Host "Downloading: $url"

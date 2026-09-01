@@ -50,10 +50,10 @@ Run the provided installer script from the project root (PowerShell 5.1+ / Windo
 .\scripts\install-pdfium.ps1
 ```
 
-Or do it manually:
+Or do it manually (note: current releases name the asset `pdfium-win-x64.tgz`):
 
 ```powershell
-Invoke-WebRequest https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-windows-x64.tgz -OutFile pdfium.tgz
+Invoke-WebRequest https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-win-x64.tgz -OutFile pdfium.tgz
 tar -xzf pdfium.tgz
 copy bin\pdfium.dll .
 ```

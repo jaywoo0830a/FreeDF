@@ -19,13 +19,13 @@ pub enum ToolType {
 }
 
 impl ToolType {
-    /// 툴바 표시용 한글 이름.
+    /// English display label (used by the app toolbar).
     pub fn label(self) -> &'static str {
         match self {
-            ToolType::Pen => "펜",
-            ToolType::Highlighter => "형광펜",
-            ToolType::Eraser => "지우개",
-            ToolType::Pan => "이동",
+            ToolType::Pen => "Pen",
+            ToolType::Highlighter => "Highlighter",
+            ToolType::Eraser => "Eraser",
+            ToolType::Pan => "Pan",
         }
     }
 }

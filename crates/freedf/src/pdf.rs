@@ -60,7 +60,7 @@ impl DocumentView {
         let pdfium = Box::new(load_pdfium()?);
         let document = pdfium
             .load_pdf_from_file(path, None)
-            .map_err(|e| format!("PDF를 열 수 없습니다: {e}"))?;
+            .map_err(|e| format!("Could not open PDF: {e}"))?;
 
         // 안전성: `document`는 `pdfium`을 가리키는 수명 표시만 가집니다.
         // 둘은 같은 구조체에 함께 살며, pdfium은 힙(Box)에 있어 이동에 안전하고,
@@ -114,7 +114,7 @@ impl DocumentView {
             .document
             .pages()
             .get(index as i32)
-            .map_err(|e| format!("페이지를 읽을 수 없습니다: {e}"))?;
+            .map_err(|e| format!("Could not read page: {e}"))?;
 
         let w = (target_width.round().clamp(1.0, 65_000.0)) as Pixels;
         let m = (max_dimension.round().clamp(1.0, 65_000.0)) as Pixels;
@@ -128,14 +128,14 @@ impl DocumentView {
 
         let bitmap = page
             .render_with_config(&config)
-            .map_err(|e| format!("페이지 렌더링 실패: {e}"))?;
+            .map_err(|e| format!("Page render failed: {e}"))?;
 
         let width = bitmap.width() as usize;
         let height = bitmap.height() as usize;
         let rgba = bitmap.as_rgba_bytes();
 
         if width == 0 || height == 0 || rgba.len() != width * height * 4 {
-            return Err("렌더링 결과가 비정상입니다.".to_string());
+            return Err("Render result is invalid.".to_string());
         }
 
         Ok(RenderedPage {
@@ -172,8 +172,8 @@ impl DocumentView {
             .document
             .pages()
             .get(index as i32)
-            .map_err(|e| format!("페이지를 읽을 수 없습니다: {e}"))?;
-        let text = page.text().map_err(|e| format!("텍스트 추출 실패: {e}"))?;
+            .map_err(|e| format!("Could not read page: {e}"))?;
+        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
             let txt = seg.text();
@@ -193,7 +193,7 @@ impl DocumentView {
         self.document
             .pages_mut()
             .create_page_at_end(paper)
-            .map_err(|e| format!("페이지 추가 실패: {e}"))?;
+            .map_err(|e| format!("Could not add page: {e}"))?;
         self.refresh_sizes();
         Ok(())
     }
@@ -209,9 +209,9 @@ impl DocumentView {
         self.document
             .pages_mut()
             .get(index as i32)
-            .map_err(|e| format!("페이지를 읽을 수 없습니다: {e}"))?
+            .map_err(|e| format!("Could not read page: {e}"))?
             .delete()
-            .map_err(|e| format!("페이지 삭제 실패: {e}"))?;
+            .map_err(|e| format!("Could not delete page: {e}"))?;
         self.refresh_sizes();
         Ok(())
     }
@@ -220,7 +220,7 @@ impl DocumentView {
     pub fn save(&self, path: &Path) -> Result<(), String> {
         self.document
             .save_to_file(path)
-            .map_err(|e| format!("저장 실패: {e}"))
+            .map_err(|e| format!("Save failed: {e}"))
     }
 
     /// 빈 PDF 문서를 생성해 저장합니다 (기본 A4).
@@ -228,7 +228,7 @@ impl DocumentView {
         let pdfium = Box::new(load_pdfium()?);
         let document = pdfium
             .create_new_pdf()
-            .map_err(|e| format!("새 PDF 생성 실패: {e}"))?;
+            .map_err(|e| format!("Could not create new PDF: {e}"))?;
         // open()과 동일한 수명 확장 패턴.
         let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
         let paper =
@@ -236,10 +236,10 @@ impl DocumentView {
         document
             .pages_mut()
             .create_page_at_end(paper)
-            .map_err(|e| format!("페이지 생성 실패: {e}"))?;
+            .map_err(|e| format!("Could not create page: {e}"))?;
         document
             .save_to_file(path)
-            .map_err(|e| format!("저장 실패: {e}"))
+            .map_err(|e| format!("Save failed: {e}"))
     }
 
     /// 페이지 크기 캐시를 문서 상태에 맞게 다시 계산합니다.
