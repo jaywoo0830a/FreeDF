@@ -217,24 +217,41 @@ impl DocumentView {
     }
 
     /// 문서의 책갈피(목차) 트리를 `OutlineNode` 목록으로 변환합니다.
+    ///
+    /// pdfium-render의 `PdfBookmarks::root()`는 **합성 루트가 아니라 첫 번째
+    /// 최상위 북마크**를 반환합니다. 따라서 최상위 항목들을 `next_sibling()`으로
+    /// 이어가며, 각 항목의 하위 항목들은 `iter_direct_children()`으로 순회합니다.
     pub fn outline(&self) -> Vec<OutlineNode> {
+        fn page_index_of(bookmark: &PdfBookmark) -> Option<usize> {
+            bookmark
+                .destination()
+                .and_then(|d| d.page_index().ok())
+                .filter(|i| *i >= 0)
+                .map(|i| i as usize)
+        }
+
         fn walk(bookmark: &PdfBookmark) -> Vec<OutlineNode> {
             let mut nodes = Vec::new();
             for child in bookmark.iter_direct_children() {
                 let title = child.title().unwrap_or_default();
-                let page_index = child
-                    .destination()
-                    .and_then(|d| d.page_index().ok())
-                    .filter(|i| *i >= 0)
-                    .map(|i| i as usize);
-                nodes.push(OutlineNode::new(title, page_index, walk(&child)));
+                nodes.push(OutlineNode::new(title, page_index_of(&child), walk(&child)));
             }
             nodes
         }
-        let Some(root) = self.document.bookmarks().root() else {
-            return Vec::new();
-        };
-        walk(&root)
+
+        let mut nodes = Vec::new();
+        // 최상위 북마크 체인: root() = 첫 최상위, 나머지는 next_sibling().
+        let mut current = self.document.bookmarks().root();
+        while let Some(bookmark) = current {
+            let title = bookmark.title().unwrap_or_default();
+            nodes.push(OutlineNode::new(
+                title,
+                page_index_of(&bookmark),
+                walk(&bookmark),
+            ));
+            current = bookmark.next_sibling();
+        }
+        nodes
     }
 
     /// 페이지의 텍스트 세그먼트를 검색용 `TextRun` 목록으로 변환합니다.
