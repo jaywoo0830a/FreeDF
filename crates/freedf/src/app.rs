@@ -117,11 +117,14 @@ fn centered_toolbar_row<R>(ui: &mut egui::Ui, id: &str, add: impl FnMut(&mut egu
     let mut add = add;
 
     // 1) sizing pass: 위젯을 등록하지 않고(부모 커서도 이동시키지 않고) 내용 폭 측정.
+    //    `invisible()`로 페인팅을 막아, 실측 패스의 위젯이 실제 행 위에
+    //    겹쳐 그려지는 것을 방지합니다 (측정만 하고 화면에는 안 보임).
     let content_w = {
         let mut measure = ui.new_child(
             egui::UiBuilder::new()
                 .layout(egui::Layout::left_to_right(egui::Align::Center))
-                .sizing_pass(),
+                .sizing_pass()
+                .invisible(),
         );
         add(&mut measure);
         measure.min_rect().width()
