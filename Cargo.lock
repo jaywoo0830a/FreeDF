@@ -1183,6 +1183,8 @@ dependencies = [
  "image",
  "pdfium-render",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

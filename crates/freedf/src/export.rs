@@ -42,19 +42,19 @@ pub fn draw_paper(
         }
     }
     // 그리드/줄 선
-    let line = [120, 120, 140, 70];
+    let line = [120, 120, 140, 100];
     for [x0, y0, x1, y1] in paper_lines(w_pts, h_pts, style) {
         draw_segment(
             img,
             [x0 * scale, y0 * scale],
             [x1 * scale, y1 * scale],
-            1.0,
+            2.0,
             line,
         );
     }
     // 점선
     for [x, y] in paper_dots(w_pts, h_pts, style) {
-        draw_disk(img, [x * scale, y * scale], 1.2, line);
+        draw_disk(img, [x * scale, y * scale], 2.0, line);
     }
 }
 

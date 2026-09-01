@@ -1,18 +1,22 @@
 //! 페이지 CRUD에 맞춘 주석 저장소의 페이지 연산.
 //!
-//! PDF 페이지를 삽입/삭제하면 주석의 페이지 인덱스가 함께 이동해야 합니다.
+//! PDF 페이지를 삽입/삭제하면 주석(스트로크)과 용지 설정의
+//! 페이지 인덱스가 함께 이동해야 합니다.
 
 use crate::model::{PageIndex, Stroke};
 use crate::store::AnnotationStore;
+use std::collections::BTreeMap;
 
 impl AnnotationStore {
     /// 페이지 삭제: 해당 페이지의 주석을 반환하고, 이후 페이지 인덱스를 -1 이동.
+    /// 용지 설정도 함께 이동/제거합니다.
     pub fn remove_page(&mut self, page_index: PageIndex) -> Vec<Stroke> {
         let removed = self
             .pages
             .remove(&page_index)
             .map(|p| p.strokes)
             .unwrap_or_default();
+        self.paper.remove(&page_index);
         self.shift_pages(page_index + 1, -1);
         removed
     }
@@ -26,23 +30,34 @@ impl AnnotationStore {
     /// `from` 이상의 페이지 인덱스를 `delta`만큼 이동.
     /// 충돌을 피하기 위해 증가는 내림차순, 감소는 오름차순으로 처리합니다.
     fn shift_pages(&mut self, from: PageIndex, delta: i32) {
-        let mut keys: Vec<PageIndex> = self.pages.keys().copied().filter(|k| *k >= from).collect();
-        if delta >= 0 {
-            keys.sort_unstable_by(|a, b| b.cmp(a));
-        } else {
-            keys.sort_unstable();
-        }
-        for k in keys {
-            if let Some(mut page) = self.pages.remove(&k) {
-                let new_key = if delta >= 0 {
-                    k.checked_add(delta as usize)
-                } else {
-                    k.checked_sub(delta.unsigned_abs() as usize)
-                };
-                if let Some(new_key) = new_key {
-                    page.page_index = new_key;
-                    self.pages.insert(new_key, page);
-                }
+        shift_map(&mut self.pages, from, delta, |k, page| page.page_index = k);
+        shift_map(&mut self.paper, from, delta, |_k, _paper| {});
+    }
+}
+
+/// 맵의 `from` 이상 키를 `delta`만큼 이동합니다.
+fn shift_map<V>(
+    map: &mut BTreeMap<PageIndex, V>,
+    from: PageIndex,
+    delta: i32,
+    mut on_move: impl FnMut(PageIndex, &mut V),
+) {
+    let mut keys: Vec<PageIndex> = map.keys().copied().filter(|k| *k >= from).collect();
+    if delta >= 0 {
+        keys.sort_unstable_by(|a, b| b.cmp(a));
+    } else {
+        keys.sort_unstable();
+    }
+    for k in keys {
+        if let Some(mut v) = map.remove(&k) {
+            let new_key = if delta >= 0 {
+                k.checked_add(delta as usize)
+            } else {
+                k.checked_sub(delta.unsigned_abs() as usize)
+            };
+            if let Some(new_key) = new_key {
+                on_move(new_key, &mut v);
+                map.insert(new_key, v);
             }
         }
     }
@@ -125,5 +140,23 @@ mod tests {
         let p = store.pages().find(|p| p.page_index == 3).expect("이동된 페이지");
         assert_eq!(p.strokes.len(), 1);
         assert_eq!(p.strokes[0].points[0].x, 99.0);
+    }
+
+    #[test]
+    fn paper_settings_shift_with_pages() {
+        use crate::paper::{PagePaper, PaperStyle, PAPER_WHITE};
+        let mut store = AnnotationStore::new();
+        store.set_paper(0, PagePaper { style: PaperStyle::Grid, color: PAPER_WHITE });
+        store.set_paper(2, PagePaper { style: PaperStyle::Ruled, color: PAPER_WHITE });
+
+        // 1번 페이지 삽입 → 기존 2번 용지는 3번으로 이동
+        store.insert_page(1);
+        assert_eq!(store.paper_on(0).map(|p| p.style), Some(PaperStyle::Grid));
+        assert_eq!(store.paper_on(1), None);
+        assert_eq!(store.paper_on(3).map(|p| p.style), Some(PaperStyle::Ruled));
+
+        // 1번 삭제 → 3번 용지가 2번으로 복귀
+        store.remove_page(1);
+        assert_eq!(store.paper_on(2).map(|p| p.style), Some(PaperStyle::Ruled));
     }
 }

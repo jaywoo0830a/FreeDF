@@ -2,6 +2,7 @@
 
 use crate::history::Edit;
 use crate::model::{PageIndex, Stroke, StrokePoint, ToolType};
+use crate::paper::PagePaper;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -16,9 +17,11 @@ pub struct PageAnnotations {
 ///
 /// 스트로크는 ID 부여 후 페이지 좌표계로 저장되며,
 /// `Edit`(history)와 함께 사용하면 실행취소/다시실행이 가능합니다.
+/// `paper`는 페이지별 용지 설정(그리드/색)으로, 페이지마다 독립적입니다.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnnotationStore {
     pub(crate) pages: BTreeMap<PageIndex, PageAnnotations>,
+    pub(crate) paper: BTreeMap<PageIndex, PagePaper>,
     next_stroke_id: u64,
 }
 
@@ -58,6 +61,21 @@ impl AnnotationStore {
     /// 스트로크 ID 조회.
     pub fn stroke(&self, page_index: PageIndex, stroke_id: u64) -> Option<&Stroke> {
         self.strokes_on(page_index).iter().find(|s| s.id == stroke_id)
+    }
+
+    /// 페이지의 용지 설정 (없으면 None).
+    pub fn paper_on(&self, page_index: PageIndex) -> Option<PagePaper> {
+        self.paper.get(&page_index).copied()
+    }
+
+    /// 페이지의 용지 설정. 없으면 `default`를 반환합니다.
+    pub fn paper_on_or(&self, page_index: PageIndex, default: PagePaper) -> PagePaper {
+        self.paper_on(page_index).unwrap_or(default)
+    }
+
+    /// 페이지의 용지 설정을 저장합니다.
+    pub fn set_paper(&mut self, page_index: PageIndex, paper: PagePaper) {
+        self.paper.insert(page_index, paper);
     }
 
     /// 새 스트로크 추가. 고유 ID를 부여해 반환합니다.
@@ -288,6 +306,42 @@ mod tests {
     #[test]
     fn json_parse_error_is_reported() {
         assert!(AnnotationStore::from_json("not json").is_err());
+    }
+
+    #[test]
+    fn paper_settings_are_per_page() {
+        let mut store = AnnotationStore::new();
+        assert_eq!(store.paper_on(0), None);
+        let grid = PagePaper {
+            style: crate::paper::PaperStyle::Grid,
+            color: [240, 248, 241, 255],
+        };
+        store.set_paper(0, grid);
+        store.set_paper(2, PagePaper::default());
+        assert_eq!(store.paper_on(0), Some(grid));
+        assert_eq!(store.paper_on(1), None);
+        assert_eq!(
+            store.paper_on_or(1, PagePaper::default()),
+            PagePaper::default()
+        );
+        assert_eq!(store.paper_on(2), Some(PagePaper::default()));
+    }
+
+    #[test]
+    fn paper_settings_survive_json_round_trip() {
+        let mut store = AnnotationStore::new();
+        store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, sample_points());
+        store.set_paper(0, PagePaper {
+            style: crate::paper::PaperStyle::Ruled,
+            color: [253, 247, 231, 255],
+        });
+        let json = store.to_json();
+        let restored = AnnotationStore::from_json(&json).expect("JSON 파싱 실패");
+        assert_eq!(restored, store);
+        assert_eq!(
+            restored.paper_on(0).map(|p| p.style),
+            Some(crate::paper::PaperStyle::Ruled)
+        );
     }
 
     #[test]

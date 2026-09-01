@@ -15,6 +15,8 @@ eframe.workspace = true
 egui.workspace = true
 pdfium-render.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
+serde.workspace = true
+serde_json.workspace = true
 # Phosphor icons for egui (only the regular style to keep the binary small)
 egui_phosphor_icons = { version = "0.5", default-features = false }
 

@@ -46,8 +46,12 @@ native file dialogs, Windows Ink pressure).
   two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
-- 📄 **Paper styles & colors** — new notes/pages can use blank, ruled, grid, or
-  dotted paper in white, cream, ice blue, mint, or light gray (also exported)
+- 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
+  dotted) and color (white, cream, ice blue, mint, light gray), applied
+  independently and exported to PNG
+- 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal for new notes and pages
+- 💾 **Remembers your last settings** — the most recently used pen ink color and
+  paper style/color/size are saved to `settings.json` and restored on startup
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right

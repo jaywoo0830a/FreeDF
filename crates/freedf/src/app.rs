@@ -14,7 +14,9 @@ use freedf_core::logging::{AppEvent, Logger};
 use freedf_core::model::{PageIndex, StrokePoint, ToolType};
 use freedf_core::notes::NotesManager;
 use freedf_core::outline::{flatten, OutlineNode};
-use freedf_core::paper::{paper_dots, paper_lines, PaperStyle, PAPER_COLORS, PAPER_WHITE};
+use freedf_core::paper::{
+    paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle, PAPER_COLORS, PAPER_WHITE,
+};
 use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
 use freedf_core::search::{find_matches, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
@@ -29,8 +31,6 @@ use pdfium_render::prelude::Pdfium;
 const CANVAS_MARGIN: f32 = 16.0;
 /// Page top margin
 const TOP_MARGIN: f32 = 16.0;
-/// Default blank page size (A4, points)
-const A4_PTS: [f32; 2] = [595.0, 842.0];
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
 /// Scroll momentum decay (1/second)
@@ -218,9 +218,11 @@ pub struct FreeDfApp {
     pressure_enabled: bool,
     pressure_curve: PressureCurve,
 
-    // ---------- Paper (grid / color) ----------
+    // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
     paper_color: [u8; 4],
+    /// 종이 크기 (새 페이지/노트 기본값)
+    paper_size: PaperSize,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -254,6 +256,9 @@ pub struct FreeDfApp {
     file_name: String,
     status: Option<String>,
 
+    // ---------- Settings ----------
+    settings_path: PathBuf,
+
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
     // ---------- Close confirmation ----------
@@ -262,12 +267,36 @@ pub struct FreeDfApp {
 }
 
 impl FreeDfApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, notes: NotesManager, logger: Logger) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        notes: NotesManager,
+        logger: Logger,
+        settings_path: PathBuf,
+    ) -> Self {
         let dark = matches!(cc.egui_ctx.theme(), egui::Theme::Dark);
-        let pen_color = if dark {
+        let theme_pen = if dark {
             [255, 255, 255, 255]
         } else {
             Palette::default_pen()
+        };
+        // Restore the most recently used pen/paper settings (if saved).
+        let settings = crate::settings::AppSettings::load(&settings_path);
+        let has_settings = settings_path.exists();
+        let pen_color = if has_settings { settings.pen_color } else { theme_pen };
+        let paper_style = if has_settings {
+            settings.paper_style
+        } else {
+            PaperStyle::Blank
+        };
+        let paper_color = if has_settings {
+            settings.paper_color
+        } else {
+            PAPER_WHITE
+        };
+        let paper_size = if has_settings {
+            settings.paper_size
+        } else {
+            PaperSize::A4
         };
         let hi_color = if dark {
             [255, 220, 60, 110]
@@ -276,12 +305,13 @@ impl FreeDfApp {
         };
         Self {
             notes,
+            settings_path,
             current_note: None,
             document: None,
             pdfium: crate::pdf::load_pdfium().map(Box::new),
             file_path: None,
             current_page: 0,
-            page_size_pts: A4_PTS,
+            page_size_pts: PaperSize::A4.size_pts(),
             view: ViewTransform::default(),
             page_align: PageAlign::Center,
             last_canvas: [1280.0, 600.0],
@@ -301,8 +331,9 @@ impl FreeDfApp {
             eraser_radius: 16.0,
             pressure_enabled: true,
             pressure_curve: PressureCurve::default(),
-            paper_style: PaperStyle::Blank,
-            paper_color: PAPER_WHITE,
+            paper_style,
+            paper_color,
+            paper_size,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -327,6 +358,44 @@ impl FreeDfApp {
         }
     }
 
+    /// Persists the current pen color and paper settings to disk.
+    fn save_settings(&self) {
+        crate::settings::AppSettings {
+            pen_color: self.pen_color,
+            paper_style: self.paper_style,
+            paper_color: self.paper_color,
+            paper_size: self.paper_size,
+        }
+        .save(&self.settings_path);
+    }
+
+    /// 현재 페이지의 용지 설정 (저장된 값, 없으면 툴바 기본값).
+    fn current_page_paper(&self) -> PagePaper {
+        self.store.paper_on_or(
+            self.current_page,
+            PagePaper {
+                style: self.paper_style,
+                color: self.paper_color,
+            },
+        )
+    }
+
+    /// 툴바의 용지 기본값을 현재 페이지에 저장하고 다시 그립니다.
+    fn apply_paper_to_current_page(&mut self) {
+        if let Some(doc) = &self.document {
+            if self.current_page < doc.page_count() {
+                self.store.set_paper(
+                    self.current_page,
+                    PagePaper {
+                        style: self.paper_style,
+                        color: self.paper_color,
+                    },
+                );
+                self.render_dirty = true;
+            }
+        }
+    }
+
     // ---------- Notes ----------
 
     /// Shows an error both in the status bar and as a popup alert.
@@ -338,7 +407,7 @@ impl FreeDfApp {
     /// Creates a note's blank PDF using the PDFium instance cached at startup.
     fn create_blank_pdf_for_note(&self, path: &Path) -> Result<(), String> {
         match &self.pdfium {
-            Ok(p) => DocumentView::create_blank_pdf_with(p, path, A4_PTS),
+            Ok(p) => DocumentView::create_blank_pdf_with(p, path, self.paper_size.size_pts()),
             Err(e) => Err(e.clone()),
         }
     }
@@ -626,7 +695,7 @@ impl FreeDfApp {
         let Some(doc) = &mut self.document else {
             return;
         };
-        let size = doc.page_size_pts(self.current_page);
+        let size = self.paper_size.size_pts();
         if let Err(e) = doc.add_page(size) {
             self.status = Some(e);
             return;
@@ -634,6 +703,14 @@ impl FreeDfApp {
         let total = doc.page_count();
         let new_index = total - 1;
         self.store.insert_page(new_index);
+        // 새 페이지에는 현재 용지 설정(스타일/색)을 적용합니다.
+        self.store.set_paper(
+            new_index,
+            PagePaper {
+                style: self.paper_style,
+                color: self.paper_color,
+            },
+        );
         self.current_page = new_index;
         self.logger.log(AppEvent::PageAdded {
             page: new_index,
@@ -1084,15 +1161,16 @@ impl FreeDfApp {
                     }
                 };
                 let scale = rendered.width as f32 / page_pts[0];
-                // Paper tint + grid for notes
+                // Paper tint + grid for notes (per-page settings)
                 if self.current_note.is_some() {
+                    let paper = self.current_page_paper();
                     crate::export::draw_paper(
                         &mut img,
                         page_pts[0],
                         page_pts[1],
                         scale,
-                        self.paper_style,
-                        self.paper_color,
+                        paper.style,
+                        paper.color,
                     );
                 }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
@@ -1383,6 +1461,7 @@ impl FreeDfApp {
                                 }
                                 if ui.add_sized([20.0, 20.0], btn).clicked() {
                                     self.pen_color = *swatch;
+                                    self.save_settings();
                                 }
                             });
                         }
@@ -1417,16 +1496,25 @@ impl FreeDfApp {
                     ToolType::Pan => {}
                 }
 
-                // Paper (grid / ruling / color) applied to new notes & pages
+                // Paper (grid / ruling / color) — applied per page;
+                // paper size selects the size for new pages & notes.
                 ui.separator();
                 ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
                 egui::ComboBox::from_id_salt("paper_style")
                     .selected_text(self.paper_style.label())
                     .show_ui(ui, |ui| {
                         for style in PaperStyle::all() {
-                            ui.selectable_value(&mut self.paper_style, style, style.label());
+                            let changed = ui
+                                .selectable_value(&mut self.paper_style, style, style.label())
+                                .changed();
+                            if changed {
+                                self.apply_paper_to_current_page();
+                                self.save_settings();
+                            }
                         }
-                    });
+                    })
+                    .response
+                    .on_hover_text("Style applied to the current page");
                 for paper in PAPER_COLORS {
                     let color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
@@ -1440,9 +1528,25 @@ impl FreeDfApp {
                         }
                         if ui.add_sized([20.0, 20.0], btn).clicked() {
                             self.paper_color = *paper;
+                            self.apply_paper_to_current_page();
+                            self.save_settings();
                         }
                     });
                 }
+                egui::ComboBox::from_id_salt("paper_size")
+                    .selected_text(self.paper_size.label())
+                    .show_ui(ui, |ui| {
+                        for size in PaperSize::all() {
+                            let changed = ui
+                                .selectable_value(&mut self.paper_size, size, size.label())
+                                .changed();
+                            if changed {
+                                self.save_settings();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Size of new pages & new notes");
             });
 
             ui.add_space(4.0);
@@ -1714,10 +1818,11 @@ impl FreeDfApp {
         );
 
         // Paper color tint applied to the page image (colored paper).
+        let paper = self.current_page_paper();
         let paper_tint = Color32::from_rgba_unmultiplied(
-            self.paper_color[0],
-            self.paper_color[1],
-            self.paper_color[2],
+            paper.color[0],
+            paper.color[1],
+            paper.color[2],
             255,
         );
 
@@ -1859,18 +1964,19 @@ impl FreeDfApp {
     fn paint_paper(&self, painter: &egui::Painter, origin: Pos2) {
         let w = self.page_size_pts[0];
         let h = self.page_size_pts[1];
-        let line = Color32::from_rgba_unmultiplied(120, 120, 140, 70);
-        for [x0, y0, x1, y1] in paper_lines(w, h, self.paper_style) {
+        let style = self.current_page_paper().style;
+        let line = Color32::from_rgba_unmultiplied(120, 120, 140, 100);
+        for [x0, y0, x1, y1] in paper_lines(w, h, style) {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);
             painter.line_segment(
                 [origin + Vec2::new(a[0], a[1]), origin + Vec2::new(b[0], b[1])],
-                Stroke::new(1.0, line),
+                Stroke::new(2.0, line),
             );
         }
-        for [x, y] in paper_dots(w, h, self.paper_style) {
+        for [x, y] in paper_dots(w, h, style) {
             let v = self.view.page_to_view([x, y]);
-            painter.circle_filled(origin + Vec2::new(v[0], v[1]), 1.2, line);
+            painter.circle_filled(origin + Vec2::new(v[0], v[1]), 2.0, line);
         }
     }
 
@@ -2366,6 +2472,7 @@ impl eframe::App for FreeDfApp {
                     let _ = self.notes.save();
                     self.save_pdf_if_note();
                 }
+                self.save_settings();
                 self.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
