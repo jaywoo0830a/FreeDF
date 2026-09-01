@@ -107,12 +107,13 @@ pub fn load_pdfium() -> Result<Pdfium, String> {
 }
 
 /// 열려 있는 PDF 문서. 렌더링 API에 필요한 문서 핸들과 페이지 크기를 보관합니다.
+///
+/// pdfium-render는 프로세스당 라이브러리를 **한 번만** 초기화할 수 있으므로,
+/// 이 구조체는 PDFium 인스턴스를 소유하지 않고 호출부가 넘겨준 인스턴스를
+/// 사용합니다. 호출부(앱)는 이 문서가 살아 있는 동안 그 PDFium을 계속 유지해야
+/// 합니다 (문서의 `'static` 수명 변환의 안전 불변식).
 pub struct DocumentView {
-    // 필드 선언 순서 = 드롭 순서. document가 pdfium보다 먼저 해제됩니다.
     document: PdfDocument<'static>,
-    // PDFium 라이브러리 수명을 유지하는 소유자. 직접 읽지 않지만
-    // document가 유효한 동안 반드시 살아 있어야 합니다.
-    _pdfium: Box<Pdfium>,
     pub file_name: String,
     /// 페이지별 크기(포인트)
     pub page_sizes_pts: Vec<[f32; 2]>,
@@ -126,16 +127,16 @@ pub struct RenderedPage {
 }
 
 impl DocumentView {
-    /// 파일에서 문서를 엽니다.
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let pdfium = Box::new(load_pdfium()?);
+    /// 이미 초기화된 `pdfium` 인스턴스로 파일에서 문서를 엽니다.
+    /// (pdfium은 프로세스당 한 번만 초기화되므로 재로딩하지 않습니다.)
+    pub fn open(pdfium: &Pdfium, path: &Path) -> Result<Self, String> {
         let document = pdfium
             .load_pdf_from_file(path, None)
             .map_err(|e| format!("Could not open PDF: {e}"))?;
 
         // 안전성: `document`는 `pdfium`을 가리키는 수명 표시만 가집니다.
-        // 둘은 같은 구조체에 함께 살며, pdfium은 힙(Box)에 있어 이동에 안전하고,
-        // 필드 선언 순서상 document가 먼저 드롭되므로 절대 사용 후 파괴되지 않습니다.
+        // 호출부가 pdfium을 문서보다 오래 유지하므로, 'static 변환 후에도
+        // document가 해제된 pdfium을 참조하지 않습니다.
         let document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
 
         let pages = document.pages();
@@ -156,7 +157,6 @@ impl DocumentView {
 
         Ok(Self {
             document,
-            _pdfium: pdfium,
             file_name,
             page_sizes_pts: sizes,
         })

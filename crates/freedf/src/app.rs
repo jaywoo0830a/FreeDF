@@ -336,6 +336,13 @@ impl FreeDfApp {
         }
     }
 
+    /// Returns a reference to the PDFium instance cached at startup.
+    /// pdfium-render only allows one initialization per process, so everything
+    /// must reuse this single instance (never call `load_pdfium` again).
+    fn pdfium(&self) -> Result<&Pdfium, String> {
+        self.pdfium.as_ref().map(|b| b.as_ref()).map_err(|e| e.clone())
+    }
+
     fn create_note_action(&mut self, title: &str) {
         match self.notes.create_note(title) {
             Ok(meta) => {
@@ -435,7 +442,8 @@ impl FreeDfApp {
         } else {
             AnnotationStore::new()
         };
-        match DocumentView::open(&pdf_path) {
+        let opened = self.pdfium().and_then(|p| DocumentView::open(p, &pdf_path));
+        match opened {
             Ok(doc) => {
                 self.current_note = Some(id);
                 self.current_page = 0;
@@ -494,7 +502,8 @@ impl FreeDfApp {
     }
 
     fn open_pdf(&mut self, path: &Path) {
-        match DocumentView::open(path) {
+        let opened = self.pdfium().and_then(|p| DocumentView::open(p, path));
+        match opened {
             Ok(doc) => {
                 self.current_note = None;
                 self.current_page = 0;
