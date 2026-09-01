@@ -83,6 +83,10 @@ if ($TargetDir) {
         if (Test-Path $d) { $destinations += $d }
     }
 }
+# The app also looks in its data folder, so install there unconditionally.
+if ($env:LOCALAPPDATA) {
+    $destinations += Join-Path $env:LOCALAPPDATA "FreeDF"
+}
 
 foreach ($dest in ($destinations | Select-Object -Unique)) {
     if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Force -Path $dest | Out-Null }

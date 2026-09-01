@@ -53,35 +53,57 @@ fn app_data_dir() -> PathBuf {
 /// PDFium 라이브러리를 로드합니다.
 ///
 /// 검색 순서: ① 시스템 등록 라이브러리 → ② 실행 파일/현재 폴더/앱 데이터 폴더의
-/// 명시적 경로 → ③ OS 기본 검색 경로. 실행 파일 옆에 `pdfium.dll`만 있어도 찾습니다.
+/// 명시적 경로 → ③ OS 기본 검색 경로. 실패 시 실제 검색 경로와 로드 오류를 표시합니다.
 pub fn load_pdfium() -> Result<Pdfium, String> {
     // 1) 시스템에 등록된 라이브러리 시도
     if let Ok(bindings) = Pdfium::bind_to_system_library() {
         return Ok(Pdfium::new(bindings));
     }
+
+    // 검색한 경로와, 파일은 있으나 로드에 실패한 오류를 수집합니다.
+    let mut tried: Vec<String> = Vec::new();
+    let mut load_errors: Vec<String> = Vec::new();
+
     // 2) 실행 파일/현재 폴더/앱 데이터 폴더에서 명시적 경로로 시도
     for dir in library_search_dirs() {
         for name in pdfium_names() {
             let path = dir.join(name);
+            tried.push(path.display().to_string());
             if path.exists() {
-                if let Ok(bindings) = Pdfium::bind_to_library(&path) {
-                    return Ok(Pdfium::new(bindings));
+                match Pdfium::bind_to_library(&path) {
+                    Ok(bindings) => return Ok(Pdfium::new(bindings)),
+                    Err(e) => load_errors.push(format!("{}: {e}", path.display())),
                 }
             }
         }
     }
+
     // 3) 플랫폼 기본 이름을 OS 검색 경로에서 시도
     for name in pdfium_names() {
         if let Ok(bindings) = Pdfium::bind_to_library(name) {
             return Ok(Pdfium::new(bindings));
         }
     }
-    Err(format!(
-        "PDFium library not found.\n\
-         Searched next to the executable, the current folder and the app data folder.\n\
-         Put `pdfium.dll` (Windows) or `libpdfium.so` (Linux) next to the program\n\
-         executable and restart. On Windows, run: scripts\\install-pdfium.ps1"
-    ))
+
+    let mut msg = String::from("PDFium library not found or could not be loaded.\n\n");
+    msg.push_str("Searched:\n");
+    for p in &tried {
+        msg.push_str(&format!("  • {p}\n"));
+    }
+    if !load_errors.is_empty() {
+        msg.push_str("\nFound file(s) but loading failed:\n");
+        for e in &load_errors {
+            msg.push_str(&format!("  • {e}\n"));
+        }
+        msg.push_str("\nThis usually means a missing Microsoft Visual C++ Redistributable,\n");
+        msg.push_str("or an architecture (x86 vs x64) mismatch with the executable.\n");
+    }
+    msg.push_str(
+        "\nPut `pdfium.dll` (Windows) or `libpdfium.so` (Linux) next to the program\n\
+         executable (or in the app data folder) and restart.\n\
+         On Windows, run: scripts\\install-pdfium.ps1",
+    );
+    Err(msg)
 }
 
 /// 열려 있는 PDF 문서. 렌더링 API에 필요한 문서 핸들과 페이지 크기를 보관합니다.

@@ -79,11 +79,14 @@ tar -xzf pdfium.tgz
 copy bin\pdfium.dll .
 ```
 
-> **Tip:** if pressing `Ctrl+O` and picking a PDF seems to "do nothing", it is almost
-> always because `pdfium.dll` is missing next to `freedf.exe` — run the installer
-> script above. The app shows the error in the bottom status bar.
+> **Tip:** if pressing `Ctrl+O` and picking a PDF (or creating a note) shows a
+> "PDFium library not found" popup, the DLL isn't being found. Run the installer
+> script above — it now also copies `pdfium.dll` into the app data folder
+> (`%LOCALAPPDATA%\FreeDF`), which the app always searches. If the error says a
+> file *was found but failed to load*, install the **Microsoft Visual C++
+> Redistributable** (x64).
 
-On Linux, place `libpdfium.so` next to the executable.
+On Linux, place `libpdfium.so` next to the executable (or in `~/.local/share/freedf`).
 
 ## Build & Run
 
