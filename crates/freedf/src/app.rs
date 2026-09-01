@@ -42,6 +42,8 @@ const SCROLL_DECAY: f32 = 6.0;
 enum FitMode {
     /// Fit page width
     Width,
+    /// Fit page height
+    Height,
     /// Fit whole page
     Page,
 }
@@ -300,8 +302,8 @@ pub struct FreeDfApp {
     file_name: String,
     status: Option<String>,
 
-    // ---------- Settings ----------
-    settings_path: PathBuf,
+    // ---------- Default session (global GUI state) ----------
+    default_session_path: PathBuf,
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
@@ -315,7 +317,7 @@ impl FreeDfApp {
         cc: &eframe::CreationContext<'_>,
         notes: NotesManager,
         logger: Logger,
-        settings_path: PathBuf,
+        default_session_path: PathBuf,
     ) -> Self {
         let dark = matches!(cc.egui_ctx.theme(), egui::Theme::Dark);
         let theme_pen = if dark {
@@ -323,39 +325,49 @@ impl FreeDfApp {
         } else {
             Palette::default_pen()
         };
-        // Restore the most recently used pen/paper settings (if saved).
-        let settings = crate::settings::AppSettings::load(&settings_path);
-        let has_settings = settings_path.exists();
-        let pen_color = if has_settings { settings.pen_color } else { theme_pen };
-        let paper_style = if has_settings {
-            settings.paper_style
-        } else {
-            PaperStyle::Blank
-        };
-        let paper_color = if has_settings {
-            settings.paper_color
-        } else {
-            PAPER_WHITE
-        };
-        let paper_size = if has_settings {
-            settings.paper_size
-        } else {
-            PaperSize::A4
-        };
-        let hi_color = if dark {
+        let theme_hi = if dark {
             [255, 220, 60, 110]
         } else {
             Palette::default_highlighter()
         };
-        // Recent files live next to settings.json in the app data folder.
-        let recent_path = settings_path
+        // 전역 기본 세션(마지막 펜 색/용지/도구 등)을 복원하고, 없으면 테마 기본값.
+        // (이전 버전의 settings.json이 있으면 session.json으로 마이그레이션)
+        if !default_session_path.exists() {
+            let old = default_session_path.with_file_name("settings.json");
+            if old.exists() {
+                let s: crate::settings::SessionState = crate::settings::load_json(&old);
+                s.save(&default_session_path);
+            }
+        }
+        let s = crate::settings::SessionState::load(&default_session_path);
+        let has = default_session_path.exists();
+        let pen_color = if has { s.pen_color } else { theme_pen };
+        let hi_color = if has { s.hi_color } else { theme_hi };
+        let tool = if has { s.tool } else { ToolType::Pen };
+        let color_family = if has { s.color_family } else { ColorFamily::Black };
+        let pen_width = if has { s.pen_width } else { 2.5 };
+        let hi_width = if has { s.hi_width } else { 16.0 };
+        let eraser_radius = if has { s.eraser_radius } else { 16.0 };
+        let pressure_enabled = if has { s.pressure_enabled } else { true };
+        let pressure_curve = if has {
+            s.pressure_curve
+        } else {
+            PressureCurve::default()
+        };
+        let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
+        let paper_color = if has { s.paper_color } else { PAPER_WHITE };
+        let paper_size = if has { s.paper_size } else { PaperSize::A4 };
+        let show_notes = if has { s.show_notes } else { true };
+        let show_outline = if has { s.show_outline } else { false };
+        // Recent files live next to the default session file in the app data folder.
+        let recent_path = default_session_path
             .parent()
             .map(|p| p.join("recent.json"))
             .unwrap_or_else(|| PathBuf::from("recent.json"));
         let recents = RecentList::load(&recent_path);
         Self {
             notes,
-            settings_path,
+            default_session_path,
             tabs: Vec::new(),
             active: 0,
             recents,
@@ -376,15 +388,15 @@ impl FreeDfApp {
             last_render_ppp: 0.0,
             store: AnnotationStore::new(),
             history: History::new(256),
-            tool: ToolType::Pen,
-            color_family: ColorFamily::Black,
+            tool,
+            color_family,
             pen_color,
-            pen_width: 2.5,
+            pen_width,
             hi_color,
-            hi_width: 16.0,
-            eraser_radius: 16.0,
-            pressure_enabled: true,
-            pressure_curve: PressureCurve::default(),
+            hi_width,
+            eraser_radius,
+            pressure_enabled,
+            pressure_curve,
             paper_style,
             paper_color,
             paper_size,
@@ -401,8 +413,8 @@ impl FreeDfApp {
             search_current: None,
             outline: Vec::new(),
             outline_loaded: false,
-            show_notes: true,
-            show_outline: false,
+            show_notes,
+            show_outline,
             logger,
             file_name: String::new(),
             status: None,
@@ -412,15 +424,30 @@ impl FreeDfApp {
         }
     }
 
-    /// Persists the current pen color and paper settings to disk.
-    fn save_settings(&self) {
-        crate::settings::AppSettings {
+    /// 전역 기본 세션(마지막 펜 색/용지/도구 등)을 저장해 다음 시작 시 복원합니다.
+    fn save_default_session(&self) {
+        crate::settings::SessionState {
+            page: 0,
+            tool: self.tool,
+            color_family: self.color_family,
             pen_color: self.pen_color,
+            pen_width: self.pen_width,
+            hi_color: self.hi_color,
+            hi_width: self.hi_width,
+            eraser_radius: self.eraser_radius,
+            pressure_enabled: self.pressure_enabled,
+            pressure_curve: self.pressure_curve,
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+            page_align: self.page_align,
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            show_notes: self.show_notes,
+            show_outline: self.show_outline,
         }
-        .save(&self.settings_path);
+        .save(&self.default_session_path);
     }
 
     /// 현재 페이지의 용지 설정 (저장된 값, 없으면 툴바 기본값).
@@ -453,8 +480,8 @@ impl FreeDfApp {
     // ---------- Session (per-document GUI state) ----------
 
     /// 현재 GUI 상태를 세션 구조체로 캡처합니다.
-    fn capture_session(&self) -> crate::session::SessionState {
-        crate::session::SessionState {
+    fn capture_session(&self) -> crate::settings::SessionState {
+        crate::settings::SessionState {
             page: self.current_page,
             tool: self.tool,
             color_family: self.color_family,
@@ -497,7 +524,7 @@ impl FreeDfApp {
     }
 
     /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
-    fn apply_session(&mut self, s: &crate::session::SessionState, page_count: usize) {
+    fn apply_session(&mut self, s: &crate::settings::SessionState, page_count: usize) {
         self.current_page = s.page.min(page_count.saturating_sub(1));
         self.tool = s.tool;
         self.color_family = s.color_family;
@@ -903,7 +930,7 @@ impl FreeDfApp {
                 // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
                 let session_path = self.notes.session_path(id);
                 if session_path.exists() {
-                    let session = crate::session::SessionState::load(&session_path);
+                    let session = crate::settings::SessionState::load(&session_path);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
                 }
@@ -994,7 +1021,7 @@ impl FreeDfApp {
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 let session_path = session_path_for(path);
                 if session_path.exists() {
-                    let session = crate::session::SessionState::load(&session_path);
+                    let session = crate::settings::SessionState::load(&session_path);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
                 }
@@ -1155,6 +1182,10 @@ impl FreeDfApp {
         self.pending_fit = Some(FitMode::Width);
     }
 
+    fn fit_height(&mut self) {
+        self.pending_fit = Some(FitMode::Height);
+    }
+
     fn fit_page(&mut self) {
         self.pending_fit = Some(FitMode::Page);
     }
@@ -1172,6 +1203,10 @@ impl FreeDfApp {
             FitMode::Width => {
                 self.view.zoom =
                     ViewTransform::fit_width_zoom(self.page_size_pts[0], canvas[0], CANVAS_MARGIN);
+            }
+            FitMode::Height => {
+                self.view.zoom =
+                    ViewTransform::fit_height_zoom(self.page_size_pts[1], canvas[1], CANVAS_MARGIN);
             }
             FitMode::Page => {
                 self.view.zoom =
@@ -1989,7 +2024,7 @@ impl FreeDfApp {
                                 }
                                 if ui.add_sized([20.0, 20.0], btn).clicked() {
                                     self.pen_color = *swatch;
-                                    self.save_settings();
+                                    self.save_default_session();
                                     self.save_session();
                                 }
                             });
@@ -2072,7 +2107,7 @@ impl FreeDfApp {
                                 .changed();
                             if changed {
                                 self.apply_paper_to_current_page();
-                                self.save_settings();
+                                self.save_default_session();
                                 self.save_session();
                             }
                         }
@@ -2093,7 +2128,7 @@ impl FreeDfApp {
                         if ui.add_sized([20.0, 20.0], btn).clicked() {
                             self.paper_color = *paper;
                             self.apply_paper_to_current_page();
-                            self.save_settings();
+                            self.save_default_session();
                             self.save_session();
                         }
                     });
@@ -2106,7 +2141,7 @@ impl FreeDfApp {
                                 .selectable_value(&mut self.paper_size, size, size.label())
                                 .changed();
                             if changed {
-                                self.save_settings();
+                                self.save_default_session();
                                 self.save_session();
                             }
                         }
@@ -2498,6 +2533,99 @@ impl FreeDfApp {
                 ui.visuals().text_color(),
             );
         }
+
+        // Floating page navigation overlay (bottom-center, semi-transparent).
+        self.canvas_nav_overlay(&ctx, canvas);
+    }
+
+    /// 페이지 내비게이션 오버레이: Prev/Next, 줌, Fit Width/Height를
+    /// 캔버스 중앙 하단에 반투명하게 고정 표시합니다.
+    fn canvas_nav_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
+        let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+        let can_prev = self.current_page > 0;
+        let can_next = self.current_page + 1 < page_count;
+        let dark = matches!(ctx.theme(), egui::Theme::Dark);
+        let fill = if dark {
+            Color32::from_rgba_unmultiplied(28, 28, 32, 205)
+        } else {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 215)
+        };
+        let stroke = if dark {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 45)
+        } else {
+            Color32::from_rgba_unmultiplied(0, 0, 0, 35)
+        };
+
+        // 캔버스 중앙(왼쪽 패널이 열려 있어도)에 정렬되도록 화면 중앙 대비 오프셋.
+        let screen = ctx.input(|i| i.raw.screen_rect).unwrap_or(canvas);
+        let dx = canvas.center().x - screen.center().x;
+
+        egui::Area::new(egui::Id::new("canvas_nav_overlay"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(dx, -12.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0, stroke))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(5))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                            if ui
+                                .add_enabled(
+                                    can_prev,
+                                    egui::Button::new(icon_text(ui, "Prev", icons::CARET_LEFT)),
+                                )
+                                .on_hover_text("Previous page")
+                                .clicked()
+                            {
+                                self.prev_page();
+                            }
+                            if ui
+                                .add_enabled(
+                                    can_next,
+                                    egui::Button::new(icon_text(ui, "Next", icons::CARET_RIGHT)),
+                                )
+                                .on_hover_text("Next page")
+                                .clicked()
+                            {
+                                self.next_page();
+                            }
+                            ui.separator();
+                            if ui
+                                .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_MINUS))
+                                .on_hover_text("Zoom out")
+                                .clicked()
+                            {
+                                self.zoom_by(1.0 / 1.25);
+                            }
+                            ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
+                            if ui
+                                .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_PLUS))
+                                .on_hover_text("Zoom in")
+                                .clicked()
+                            {
+                                self.zoom_by(1.25);
+                            }
+                            ui.separator();
+                            if ui
+                                .button(icon_text(ui, "Fit Width", icons::ARROWS_HORIZONTAL))
+                                .on_hover_text("Fit width")
+                                .clicked()
+                            {
+                                self.fit_width();
+                            }
+                            if ui
+                                .button(icon_text(ui, "Fit Height", icons::ARROWS_VERTICAL))
+                                .on_hover_text("Fit height")
+                                .clicked()
+                            {
+                                self.fit_height();
+                            }
+                        });
+                    });
+            });
     }
 
     fn paint_search_highlights(&self, painter: &egui::Painter, origin: Pos2) {
@@ -3039,7 +3167,7 @@ impl eframe::App for FreeDfApp {
                     let _ = self.notes.save();
                     self.save_pdf_if_note();
                 }
-                self.save_settings();
+                self.save_default_session();
                 self.save_session();
                 self.recents.save(&self.recent_path);
                 self.quitting = true;

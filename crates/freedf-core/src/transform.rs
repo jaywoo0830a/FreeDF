@@ -114,6 +114,12 @@ impl ViewTransform {
         (usable / page_w_pts.max(1.0)).clamp(MIN_ZOOM, MAX_ZOOM)
     }
 
+    /// 페이지가 캔버스에 세로로 꽉 차는 배율. (상하 여백 포함)
+    pub fn fit_height_zoom(page_h_pts: f32, canvas_h: f32, margin: f32) -> f32 {
+        let usable = (canvas_h - 2.0 * margin).max(1.0);
+        (usable / page_h_pts.max(1.0)).clamp(MIN_ZOOM, MAX_ZOOM)
+    }
+
     /// 페이지 전체(가로+세로)가 캔버스에 들어가는 배율.
     pub fn fit_page_zoom(page: [f32; 2], canvas: [f32; 2], margin: f32) -> f32 {
         let usable_w = (canvas[0] - 2.0 * margin).max(1.0);
@@ -322,6 +328,13 @@ mod tests {
         let zoom = ViewTransform::fit_width_zoom(595.0, 1200.0, 16.0);
         let view_w = 595.0 * zoom;
         assert!((view_w - 1168.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn fit_height_zoom_respects_aspect() {
+        let zoom = ViewTransform::fit_height_zoom(842.0, 800.0, 16.0);
+        let view_h = 842.0 * zoom;
+        assert!((view_h - 768.0).abs() < 1.0);
     }
 
     #[test]

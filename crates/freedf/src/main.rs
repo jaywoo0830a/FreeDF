@@ -11,7 +11,6 @@ mod export;
 mod fonts;
 mod pdf;
 mod recent;
-mod session;
 mod settings;
 mod style;
 
@@ -52,13 +51,13 @@ fn main() -> eframe::Result<()> {
             fonts::install_pt_serif(&cc.egui_ctx);
             style::install(&cc.egui_ctx);
 
-            // App data layout: <data>/notes + <data>/logs + <data>/settings.json
+            // App data layout: <data>/notes + <data>/logs + <data>/session.json
             let data_dir = app_data_dir();
             let notes_dir = data_dir.join("notes");
             let logs_dir = data_dir.join("logs");
             let _ = std::fs::create_dir_all(&notes_dir);
             let _ = std::fs::create_dir_all(&logs_dir);
-            let settings_path = data_dir.join("settings.json");
+            let default_session_path = data_dir.join("session.json");
 
             let notes = NotesManager::load_or_create(notes_dir);
 
@@ -68,7 +67,12 @@ fn main() -> eframe::Result<()> {
                 version: env!("CARGO_PKG_VERSION").to_string(),
             });
 
-            Ok(Box::new(app::FreeDfApp::new(cc, notes, logger, settings_path)))
+            Ok(Box::new(app::FreeDfApp::new(
+                cc,
+                notes,
+                logger,
+                default_session_path,
+            )))
         }),
     )
 }

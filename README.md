@@ -52,12 +52,16 @@ native file dialogs, Windows Ink pressure).
   two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
+- 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
+  of the canvas gives quick access to Prev/Next page, zoom in/out, and
+  Fit Width / Fit Height
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
   dotted) and color (white, cream, ice blue, mint, light gray), applied
   independently and exported to PNG
 - 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal for new notes and pages
 - 💾 **Remembers your last settings** — the most recently used pen ink color and
-  paper style/color/size are saved to `settings.json` and restored on startup
+  paper style/color/size are saved to the default `session.json` and restored on
+  startup
 - 🗂️ **Per-document session** — reopening a note/PDF restores exactly where you
   left off: the last page, tool, pen/highlighter/eraser settings, zoom & pan,
   page alignment, paper choices, and open panels (stored per document)
