@@ -290,6 +290,10 @@ pub struct FreeDfApp {
     middle_pan_last: Option<Pos2>,
     /// Trackpad/wheel momentum (points/sec) for inertial panning
     scroll_vel: Vec2,
+    /// Ctrl+wheel zoom acceleration ramp (0.01 per notch, capped)
+    zoom_accel: f32,
+    /// Time of the last Ctrl+wheel notch (used to restart the ramp)
+    zoom_accel_last: f64,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// Texture of the outgoing page during a transition
@@ -319,6 +323,8 @@ pub struct FreeDfApp {
     logger: Logger,
     file_name: String,
     status: Option<String>,
+    /// (message, time set) so the transient status line auto-clears
+    status_since: Option<(String, f64)>,
 
     // ---------- Default session (global GUI state) ----------
     default_session_path: PathBuf,
@@ -337,6 +343,12 @@ impl FreeDfApp {
         logger: Logger,
         default_session_path: PathBuf,
     ) -> Self {
+        // Disable egui's built-in Ctrl+scroll zoom folding: it multiplies the
+        // zoom by exp(speed * scroll), which jumps ~28% per wheel notch. We do
+        // discrete +1% zoom ourselves (see handle_canvas_input), so keep egui's
+        // fold a no-op while still allowing real pinch (Event::Zoom).
+        cc.egui_ctx.options_mut(|o| o.input_options.scroll_zoom_speed = 0.0);
+
         let dark = matches!(cc.egui_ctx.theme(), egui::Theme::Dark);
         let theme_pen = if dark {
             [255, 255, 255, 255]
@@ -423,6 +435,8 @@ impl FreeDfApp {
             pan_last: None,
             middle_pan_last: None,
             scroll_vel: Vec2::ZERO,
+            zoom_accel: 0.0,
+            zoom_accel_last: 0.0,
             page_anim: None,
             prev_texture: None,
             transition_last_page: 0,
@@ -439,6 +453,7 @@ impl FreeDfApp {
             logger,
             file_name: String::new(),
             status: None,
+            status_since: None,
             modal: None,
             asking_close: false,
             quitting: false,
@@ -1721,39 +1736,55 @@ impl FreeDfApp {
                 let mut to_close: Option<usize> = None;
                 let active_fill = crate::theme::nord::semantic::BG_SURFACE;
                 let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
-                for (i, tab) in self.tabs.iter().enumerate() {
-                    let selected = i == self.active;
-                    egui::Frame::new()
-                        .fill(if selected {
-                            active_fill
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        })
-                        .stroke(if selected {
-                            Stroke::new(1.0, accent)
-                        } else {
-                            Stroke::NONE
-                        })
-                        .corner_radius(6)
-                        .inner_margin(egui::Margin::symmetric(8, 3))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                                let title = ui.add(egui::Button::new(&tab.label).frame(false));
-                                if title.clicked() {
-                                    to_switch = Some(i);
-                                }
-                                let close = ui.add(
-                                    egui::Button::new(icon_text(ui, "", icons::X))
-                                        .frame(false)
-                                        .small(),
-                                );
-                                if close.on_hover_text("Close document").clicked() {
-                                    to_close = Some(i);
-                                }
-                            });
+                // Scrollable tab strip: many tabs or long titles scroll
+                // instead of wrapping to a new line ("folding").
+                egui::ScrollArea::horizontal()
+                    .id_salt("tabs_scroll")
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for (i, tab) in self.tabs.iter().enumerate() {
+                                let selected = i == self.active;
+                                egui::Frame::new()
+                                    .fill(if selected {
+                                        active_fill
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .stroke(if selected {
+                                        Stroke::new(1.0, accent)
+                                    } else {
+                                        Stroke::NONE
+                                    })
+                                    .corner_radius(6)
+                                    .inner_margin(egui::Margin::symmetric(8, 3))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                                            // Fixed-width truncated title; full
+                                            // name is shown on hover.
+                                            let title = ui.add_sized(
+                                                egui::vec2(180.0, 22.0),
+                                                egui::Label::new(egui::RichText::new(&tab.label))
+                                                    .truncate()
+                                                    .sense(egui::Sense::click()),
+                                            );
+                                            if title.on_hover_text(&tab.label).clicked() {
+                                                to_switch = Some(i);
+                                            }
+                                            let close = ui.add(
+                                                egui::Button::new(icon_text(ui, "", icons::X))
+                                                    .frame(false)
+                                                    .small(),
+                                            );
+                                            if close.on_hover_text("Close document").clicked() {
+                                                to_close = Some(i);
+                                            }
+                                        });
+                                    });
+                            }
                         });
-                }
+                    });
                 if let Some(i) = to_close {
                     self.close_tab(i);
                 }
@@ -2389,43 +2420,40 @@ impl FreeDfApp {
 
     // ---------- UI: status bar ----------
 
+    /// Shows only transient status messages (errors, export results, ...) and
+    /// auto-clears them after a few seconds. Document title / page / zoom are
+    /// intentionally not shown here.
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-        let zoom_pct = self.view.zoom / ZOOM_100_PERCENT * 100.0;
-        let stroke_count = self.store.total_stroke_count();
-        let file_name = self.file_name.clone();
+        let now = ui.ctx().input(|i| i.time);
         let status = self.status.clone();
-        let ink = if self.pressure_enabled { "Ink: On" } else { "Ink: Off" };
-
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                if file_name.is_empty() {
-                    ui.label(egui::RichText::new("No document").weak());
+        match &status {
+            None => self.status_since = None,
+            Some(msg) => {
+                // Restart the timer whenever the message text changes.
+                let restart = match &self.status_since {
+                    Some((prev, _)) => prev != msg,
+                    None => true,
+                };
+                let since = if restart {
+                    now
                 } else {
-                    ui.label(egui::RichText::new(&file_name).strong());
+                    self.status_since.as_ref().unwrap().1
+                };
+                self.status_since = Some((msg.clone(), since));
+                if now - since > 5.0 {
+                    self.status = None;
+                    self.status_since = None;
+                    return;
                 }
-                ui.separator();
-                ui.label(format!(
-                    "{}/{} pages",
-                    (self.current_page + 1).min(page_count.max(1)),
-                    page_count.max(1)
-                ));
-                ui.separator();
-                ui.label(format!("Zoom {zoom_pct:.0}%"));
-                ui.separator();
-                ui.label(format!("Strokes: {stroke_count}"));
-                ui.separator();
-                ui.label(ink);
-                if let Some(s) = &status {
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(s).color(ui.visuals().error_fg_color),
-                    );
-                }
-            });
-            ui.add_space(2.0);
-        });
+                egui::Panel::bottom("status").show(ui, |ui| {
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(msg));
+                    });
+                    ui.add_space(2.0);
+                });
+            }
+        }
     }
 
     // ---------- UI: canvas ----------
@@ -2773,17 +2801,49 @@ impl FreeDfApp {
         let pointer_any_down = ctx.input(|i| i.pointer.any_down());
 
         // If egui already folded a pinch / Ctrl+scroll into zoom_delta, use it.
-        // Otherwise synthesize zoom from Ctrl + two-finger scroll for trackpads
-        // whose pinch gesture is not reported to the windowing system.
+        // Otherwise synthesize zoom from Ctrl + wheel: discrete +1% per notch
+        // that slowly accelerates (up to +8%) while you keep scrolling.
         let mut zoom_factor = zoom_delta;
         let mut scroll_zoom = false;
-        if ctrl_down
-            && (scroll_x.abs() + scroll_y.abs()) > 1e-4
-            && (zoom_delta - 1.0).abs() <= 1e-4
+        let mut ctrl_wheel_notches = 0.0f32;
         {
-            let step = (scroll_x + scroll_y) * 0.01;
-            zoom_factor = (1.0 + step).clamp(0.5, 2.0);
+            // Count raw wheel notches this frame (egui's smooth_scroll_delta is
+            // smoothed, so a single notch can look like a huge jump).
+            let events: Vec<egui::Event> = ctx.input(|i| i.events.iter().cloned().collect());
+            for ev in &events {
+                if let egui::Event::MouseWheel {
+                    unit,
+                    delta,
+                    modifiers,
+                    ..
+                } = ev
+                {
+                    if modifiers.ctrl {
+                        let n = match unit {
+                            egui::MouseWheelUnit::Line => delta.y,
+                            egui::MouseWheelUnit::Point => delta.y / 50.0,
+                            egui::MouseWheelUnit::Page => delta.y,
+                        };
+                        ctrl_wheel_notches += n;
+                    }
+                }
+            }
+        }
+        if ctrl_down && ctrl_wheel_notches.abs() > 1e-4 && (zoom_delta - 1.0).abs() <= 1e-4 {
+            // Restart the ramp if the user paused between notches, then
+            // accelerate from +1% up to +8% per notch while scrolling fast.
+            let now = ctx.input(|i| i.time);
+            if now - self.zoom_accel_last > 0.3 {
+                self.zoom_accel = 0.0;
+            }
+            self.zoom_accel = (self.zoom_accel + 0.01 * ctrl_wheel_notches.abs()).min(0.08);
+            self.zoom_accel_last = now;
+            let dir = ctrl_wheel_notches.signum();
+            zoom_factor = (1.0 + self.zoom_accel * dir).clamp(0.5, 2.0);
             scroll_zoom = true;
+        } else if ctrl_down && ctx.input(|i| i.time) - self.zoom_accel_last > 0.3 {
+            // Reset the acceleration ramp once scrolling pauses.
+            self.zoom_accel = 0.0;
         }
 
         let zooming = (zoom_factor - 1.0).abs() > 1e-4;
@@ -2964,8 +3024,8 @@ impl FreeDfApp {
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the
     /// current tool's shape and color (Pen = translucent gray circle,
-    /// Highlighter = colored rectangle, Eraser = animated red circle).
-    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
+    /// Highlighter = colored rectangle, Eraser = white translucent circle).
+    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, _time: f32) {
         match self.tool {
             ToolType::Pen => {
                 // Small 4×4 pen dot.
@@ -3000,16 +3060,10 @@ impl FreeDfApp {
                 );
             }
             ToolType::Eraser => {
-                // Animated red circle: radius pulses with time.
-                let base = self.eraser_radius;
-                let pulse = 1.0 + 0.12 * (time * 6.0).sin();
-                let r = (base * pulse).max(6.0);
-                painter.circle_stroke(
-                    pos,
-                    r,
-                    Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 70, 70, 230)),
-                );
-                painter.circle_filled(pos, 2.5, Color32::from_rgb(255, 60, 60));
+                // Plain white semi-transparent circle previewing the erase radius.
+                let r = self.eraser_radius.max(6.0);
+                painter.circle_filled(pos, r, Color32::from_white_alpha(70));
+                painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(200)));
             }
             ToolType::Pan => {
                 // Small, compact "move" crosshair (much smaller than the OS grab hand).

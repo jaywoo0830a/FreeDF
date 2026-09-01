@@ -16,7 +16,8 @@ native file dialogs, Windows Ink pressure).
 
 - 📄 **PDF open / render** — high-resolution page rendering via PDFium (HiDPI aware)
 - 🗂️ **Tabs — multiple documents** — open several notes and PDFs at once and switch
-  between them; every tab keeps its own page, zoom/pan, annotations, search and outline
+  between them; every tab keeps its own page, zoom/pan, annotations, search and outline.
+  The tab strip scrolls horizontally and long titles are truncated (full name on hover)
 - �️ **Library panel** — one collapsible side panel groups **Notes**, **PDFs** and
   **Recents** so you can jump between notebooks and recently opened files
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
@@ -60,8 +61,10 @@ native file dialogs, Windows Ink pressure).
   sessions; the PDF page itself stays white for contrast
 - ♿ **Accessible (WCAG)** — theme-aware high-contrast text, error colors, text
   alternatives for icons, and roomy click targets
-- 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + two-finger scroll zoom,
-  two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
+- 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + wheel zoom in small steps
+  (+1 % per notch, gently accelerating while you scroll), Ctrl + two-finger
+  scroll zoom, two-finger pan/flip, horizontal scroll, and momentum (inertial)
+  scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
 - 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
@@ -82,7 +85,7 @@ native file dialogs, Windows Ink pressure).
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
 - 🖊️ **Custom cursors** — Pen = small 4×4 dot, Highlighter = colored rectangle,
-  Eraser = animated red circle, Pan = small move crosshair; the OS cursor is
+  Eraser = white translucent circle, Pan = small move crosshair; the OS cursor is
   restored outside the page
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
