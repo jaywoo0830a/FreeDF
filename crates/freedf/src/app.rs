@@ -107,49 +107,33 @@ fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui:
     job.into()
 }
 
-/// Renders a horizontally-centered row of controls in the toolbar.
-///
-/// egui의 `ui.horizontal`과 `ScrollArea`는 중앙 정렬 레이아웃 안에서도
-/// **좌측**에 붙습니다(ScrollArea는 스스로 좌상단에 위치해 부모 정렬을 무시).
-/// 따라서 `sizing_pass`로 내용 폭을 먼저 측정한 뒤, 남는 폭을 좌우로 나눠
-/// 중앙에 배치합니다. 내용이 창보다 넓으면 좌측 기준 가로 스크롤로 폴백합니다.
-fn centered_toolbar_row<R>(ui: &mut egui::Ui, id: &str, add: impl FnMut(&mut egui::Ui) -> R) -> R {
-    let mut add = add;
+/// Renders a left-aligned row of controls in the toolbar.
+fn toolbar_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal(|ui| add(ui)).inner
+}
 
-    // 1) sizing pass: 위젯을 등록하지 않고(부모 커서도 이동시키지 않고) 내용 폭 측정.
-    //    `invisible()`로 페인팅을 막아, 실측 패스의 위젯이 실제 행 위에
-    //    겹쳐 그려지는 것을 방지합니다 (측정만 하고 화면에는 안 보임).
-    let content_w = {
-        let mut measure = ui.new_child(
-            egui::UiBuilder::new()
-                .layout(egui::Layout::left_to_right(egui::Align::Center))
-                .sizing_pass()
-                .invisible(),
-        );
-        add(&mut measure);
-        measure.min_rect().width()
-    };
-
-    let avail = ui.available_width();
-    if content_w < avail {
-        // 남는 폭을 좌우로 나눠 중앙 정렬.
-        let left = ((avail - content_w) * 0.5).max(0.0);
-        ui.horizontal(|ui| {
-            ui.add_space(left);
-            add(ui)
-        })
-        .inner
+/// 동그란 색상 스와치를 그립니다. `selected`면 강조 링, 아니면 옅은 테두리.
+/// `id_salt`는 호출 지점마다 고유해야 합니다 (예: 인덱스 포함).
+/// 반환된 `Response`로 클릭/우클릭을 처리합니다.
+fn color_circle_swatch(
+    ui: &mut egui::Ui,
+    id_salt: impl egui::AsIdSalt,
+    color: Color32,
+    selected: bool,
+) -> egui::Response {
+    let size = egui::vec2(24.0, 24.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    let center = rect.center();
+    let r = 9.0;
+    painter.circle_filled(center, r, color);
+    let ring = if selected {
+        ui.visuals().selection.stroke.color
     } else {
-        // 창보다 넓으면 좌측 기준 가로 스크롤 스트립.
-        egui::ScrollArea::horizontal()
-            .id_salt(id)
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                ui.horizontal(|ui| add(ui))
-            })
-            .inner
-            .inner
-    }
+        Color32::from_gray(110)
+    };
+    painter.circle_stroke(center, r, egui::Stroke::new(if selected { 2.0 } else { 1.0 }, ring));
+    ui.interact(rect, ui.id().with(id_salt), egui::Sense::click())
 }
 
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
@@ -2030,8 +2014,8 @@ impl FreeDfApp {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
-            // Row 1: panels / page tools / ink tools (centered)
-            centered_toolbar_row(ui, "row1", |ui| {
+            // Row 1: panels / page tools / ink tools
+            toolbar_row(ui, |ui| {
                 ui.horizontal(|ui| {
                 if ui
                     .toggle_value(&mut self.show_library, icon_text(ui, "Library", icons::NOTEBOOK))
@@ -2174,7 +2158,7 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 2: Page (structure + paper styling)
-            centered_toolbar_row(ui, "row2", |ui| {
+            toolbar_row(ui, |ui| {
                 ui.horizontal(|ui| {
                 ui.label(icon_text(ui, "Page", icons::FILES));
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
@@ -2264,24 +2248,19 @@ impl FreeDfApp {
                     })
                     .response
                     .on_hover_text("Style applied to the current page");
-                for paper in PAPER_COLORS {
+                for (i, paper) in PAPER_COLORS.iter().enumerate() {
                     let color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
                     let selected = self.paper_color == *paper;
-                    let cell = egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
-                    ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
-                        let mut btn = egui::Button::new("").fill(color).corner_radius(2);
-                        if selected {
-                            btn = btn
-                                .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
-                        }
-                        if ui.add_sized([20.0, 20.0], btn).clicked() {
-                            self.paper_color = *paper;
-                            self.apply_paper_to_current_page();
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                    });
+                    if color_circle_swatch(ui, ("paper_swatch", i), color, selected)
+                        .on_hover_text("Paper color")
+                        .clicked()
+                    {
+                        self.paper_color = *paper;
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    }
                 }
                 egui::ComboBox::from_id_salt("paper_size")
                     .selected_text(self.paper_size.label())
@@ -2306,7 +2285,7 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 3: drawing tools (icon-only picker + settings)
-            centered_toolbar_row(ui, "row3", |ui| {
+            toolbar_row(ui, |ui| {
                 ui.horizontal(|ui| {
                 let tool_buttons = [
                     (ToolType::Pen, icons::PEN, "Pen"),
@@ -2345,10 +2324,8 @@ impl FreeDfApp {
                                 }
                             });
                         let swatches = Palette::swatches(self.color_family);
-                        // Even, square color swatches forming a neat color bar.
-                        // Each sits in a 24×28 cell so the square's center lines
-                        // up with the other 28px-tall controls on the row.
-                        for swatch in &swatches {
+                        // Round color swatches forming a neat color bar.
+                        for (i, swatch) in swatches.iter().enumerate() {
                             let color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
                                 swatch[1],
@@ -2356,26 +2333,14 @@ impl FreeDfApp {
                                 swatch[3],
                             );
                             let selected = *swatch == self.pen_color;
-                            let cell = egui::Layout::centered_and_justified(
-                                egui::Direction::LeftToRight,
-                            );
-                            ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
-                                let mut btn =
-                                    egui::Button::new("").fill(color).corner_radius(2);
-                                if selected {
-                                    // Brand-colored selection ring (drawn inside,
-                                    // so the swatch keeps its exact size)
-                                    btn = btn.stroke(Stroke::new(
-                                        2.0,
-                                        ui.visuals().selection.stroke.color,
-                                    ));
-                                }
-                                if ui.add_sized([20.0, 20.0], btn).clicked() {
-                                    self.pen_color = *swatch;
-                                    self.save_default_session();
-                                    self.save_session();
-                                }
-                            });
+                            if color_circle_swatch(ui, ("pen_swatch", i), color, selected)
+                                .on_hover_text("Pen color")
+                                .clicked()
+                            {
+                                self.pen_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            }
                         }
                         if ui
                             .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
@@ -2450,7 +2415,7 @@ impl FreeDfApp {
 
             // Row 4: search (only while Ctrl+F is pressed)
             if self.show_search {
-                centered_toolbar_row(ui, "row4", |ui| {
+                toolbar_row(ui, |ui| {
                     ui.horizontal(|ui| {
                     ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
                     let resp = ui.add(
@@ -3014,7 +2979,6 @@ impl FreeDfApp {
         }
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
         // 캔버스 오른쪽 끝에 붙도록 화면 대비 오프셋.
         let screen = ctx.input(|i| i.raw.screen_rect).unwrap_or(canvas);
         let dx = canvas.right() - screen.right() - 14.0;
@@ -3059,22 +3023,13 @@ impl FreeDfApp {
                             self.pen_color[2],
                             self.pen_color[3],
                         );
-                        let cell =
-                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
-                        ui.allocate_ui_with_layout(egui::vec2(24.0, 24.0), cell, |ui| {
-                            let btn = egui::Button::new("")
-                                .fill(cur)
-                                .corner_radius(2)
-                                .stroke(Stroke::new(1.0, stroke));
-                            if ui
-                                .add_sized([20.0, 20.0], btn)
-                                .on_hover_text("Current pen color")
-                                .clicked()
-                            {
-                                self.tool = ToolType::Pen;
-                                self.save_session();
-                            }
-                        });
+                        if color_circle_swatch(ui, "current_color", cur, false)
+                            .on_hover_text("Current pen color")
+                            .clicked()
+                        {
+                            self.tool = ToolType::Pen;
+                            self.save_session();
+                        }
                         if ui
                             .add(egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false))
                             .on_hover_text("Add current color to favorites")
@@ -3089,29 +3044,20 @@ impl FreeDfApp {
                             let c = self.favorite_colors[i]; // Copy
                             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
                             let selected = self.pen_color == c;
-                            let cell = egui::Layout::centered_and_justified(
-                                egui::Direction::LeftToRight,
-                            );
-                            ui.allocate_ui_with_layout(egui::vec2(24.0, 24.0), cell, |ui| {
-                                let mut btn = egui::Button::new("").fill(col).corner_radius(2);
-                                if selected {
-                                    btn = btn.stroke(Stroke::new(2.0, accent));
-                                }
-                                let resp = ui.add_sized([20.0, 20.0], btn);
-                                if resp
-                                    .clone()
-                                    .on_hover_text("Set pen color (right-click to remove)")
-                                    .clicked()
-                                {
-                                    self.pen_color = c;
-                                    self.tool = ToolType::Pen;
-                                    self.save_default_session();
-                                    self.save_session();
-                                }
-                                if resp.secondary_clicked() {
-                                    to_remove = Some(i);
-                                }
-                            });
+                            let resp = color_circle_swatch(ui, ("fav_swatch", i), col, selected);
+                            if resp
+                                .clone()
+                                .on_hover_text("Set pen color (right-click to remove)")
+                                .clicked()
+                            {
+                                self.pen_color = c;
+                                self.tool = ToolType::Pen;
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                            if resp.secondary_clicked() {
+                                to_remove = Some(i);
+                            }
                         }
                     });
             });

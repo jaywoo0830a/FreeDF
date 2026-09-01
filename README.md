@@ -39,11 +39,11 @@ native file dialogs, Windows Ink pressure).
 - ✏️ **Pen / Highlighter / Eraser / Pan** — strokes are stored in page coordinates,
   so they never drift under zoom/pan
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
-  swatch palettes for one-tap color picking
+  **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
   the right edge of the canvas holds the writing tools + your favorite colors;
-  click a swatch to ink with it, **+** to add the current color, right-click a
-  swatch to remove it (saved in `session.json`)
+  click a **round** swatch to ink with it, **+** to add the current color,
+  right-click a swatch to remove it (saved in `session.json`)
 - 🖊️ **Pen pressure** — pressure is read from touch events (Windows Ink) and mapped
   to stroke width via an adjustable `min/max` pressure curve (0.4×–1.4× by default)
 - ↩️ **Undo / Redo** — diff-based, up to 256 steps; eraser and clear are undoable
@@ -59,7 +59,7 @@ native file dialogs, Windows Ink pressure).
 - 🗂️ **Three-tier toolbar** — panels / bookmarks / undo-save on the first row;
   **Page** tools (insert / delete + paper grid & color) on the second row; ink
   tool picker & settings (icon-only Pen / Highlighter / Eraser / Pan) on the
-  third row. **Every row is centered**. The search bar appears only on `Ctrl+F`
+  third row. The search bar appears only on `Ctrl+F`
 - 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
   resizing the window re-centers the page at the **current zoom** instead of
   resetting it
