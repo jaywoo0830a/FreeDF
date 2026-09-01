@@ -10,6 +10,24 @@ pub const MAX_ZOOM: f32 = 16.0;
 /// 72포인트 = 1인치, 96픽셀 = 1인치 이므로 96/72.
 pub const ZOOM_100_PERCENT: f32 = 96.0 / 72.0;
 
+/// 캔버스에서 페이지의 가로 정렬.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageAlign {
+    Left,
+    Center,
+    Right,
+}
+
+impl PageAlign {
+    pub fn label(self) -> &'static str {
+        match self {
+            PageAlign::Left => "Left",
+            PageAlign::Center => "Center",
+            PageAlign::Right => "Right",
+        }
+    }
+}
+
 /// 뷰 변환. 페이지 좌상단이 캔버스의 `(pan_x, pan_y)`에 놓이고,
 /// 1페이지 포인트가 `zoom` 논리 픽셀로 표시됩니다.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,6 +126,19 @@ impl ViewTransform {
         let view_size = self.page_size_to_view(page[0], page[1]);
         self.pan_x = ((canvas[0] - view_size[0]) / 2.0).max(0.0);
         self.pan_y = top_margin;
+    }
+
+    /// 페이지를 캔버스에 세로 위쪽 정렬 + 가로 정렬(왼쪽/가운데/오른쪽)로 배치합니다.
+    /// `top_margin`은 캔버스 위쪽에서 페이지까지의 여백.
+    pub fn align_page(&mut self, page: [f32; 2], canvas: [f32; 2], top_margin: f32, align: PageAlign) {
+        let view_size = self.page_size_to_view(page[0], page[1]);
+        let m = top_margin;
+        self.pan_x = match align {
+            PageAlign::Left => m,
+            PageAlign::Center => ((canvas[0] - view_size[0]) / 2.0).max(m),
+            PageAlign::Right => (canvas[0] - view_size[0] - m).max(m),
+        };
+        self.pan_y = m;
     }
 
     /// 팬을 제한해 페이지가 캔버스 밖으로 무한정 사라지지 않게 합니다.
@@ -225,6 +256,45 @@ mod tests {
         t.clamp_pan(page, canvas, 16.0);
         assert!((t.pan_x - before.0).abs() < 1e-3);
         assert!((t.pan_y - before.1).abs() < 1e-3);
+    }
+
+    #[test]
+    fn align_page_positions_left_center_right() {
+        let page = [400.0, 600.0];
+        let canvas = [1000.0, 800.0];
+        let m = 20.0;
+
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Left);
+        assert!((t.pan_x - m).abs() < 1e-3);
+
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Right);
+        // pan_x = canvas_w - page_w - margin
+        assert!((t.pan_x - (canvas[0] - 400.0 - m)).abs() < 1e-3);
+
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Center);
+        assert!((t.pan_x - (canvas[0] - 400.0) / 2.0).abs() < 1e-3);
+
+        // 세로는 항상 위쪽 정렬
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Right);
+        assert!((t.pan_y - m).abs() < 1e-3);
+    }
+
+    #[test]
+    fn align_page_wide_page_fills_canvas() {
+        // 페이지가 캔버스보다 넓으면 margin 이상으로 벌어지지 않음
+        let page = [2000.0, 600.0];
+        let canvas = [1000.0, 800.0];
+        let m = 20.0;
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Right);
+        assert!(t.pan_x >= m);
+        let mut t = ViewTransform::identity();
+        t.align_page(page, canvas, m, PageAlign::Left);
+        assert!((t.pan_x - m).abs() < 1e-3);
     }
 
     #[test]

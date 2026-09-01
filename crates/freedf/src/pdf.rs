@@ -4,32 +4,65 @@
 //! 실행 파일 옆에 두면 자동으로 찾습니다.
 
 use pdfium_render::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use freedf_core::outline::OutlineNode;
 use freedf_core::search::TextRun;
 
-/// PDFium 라이브러리를 로드합니다.
-pub fn load_pdfium() -> Result<Pdfium, String> {
-    // 1) 시스템에 등록된 라이브러리 시도
-    if let Ok(bindings) = Pdfium::bind_to_system_library() {
-        return Ok(Pdfium::new(bindings));
-    }
-    // 2) 플랫폼 기본 이름을 현재 디렉터리/검색 경로에서 시도
-    let names: &[&str] = if cfg!(target_os = "windows") {
+/// 플랫폼별 PDFium 라이브러리 파일 이름 후보.
+fn pdfium_names() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
         &["pdfium.dll", "pdfium"]
     } else if cfg!(target_os = "macos") {
         &["libpdfium.dylib", "libpdfium"]
     } else {
         &["libpdfium.so", "libpdfium"]
-    };
-    for name in names {
+    }
+}
+
+/// PDFium 라이브러리를 찾을 후보 디렉터리 (실행 파일 폴더 우선, 그 다음 현재 폴더).
+fn library_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            dirs.push(dir.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd);
+    }
+    dirs
+}
+
+/// PDFium 라이브러리를 로드합니다.
+///
+/// 검색 순서: ① 시스템 등록 라이브러리 → ② 실행 파일 폴더/현재 폴더의 명시적 경로
+/// → ③ OS 기본 검색 경로. 실행 파일 옆에 `pdfium.dll`만 있어도 항상 찾습니다.
+pub fn load_pdfium() -> Result<Pdfium, String> {
+    // 1) 시스템에 등록된 라이브러리 시도
+    if let Ok(bindings) = Pdfium::bind_to_system_library() {
+        return Ok(Pdfium::new(bindings));
+    }
+    // 2) 실행 파일 폴더/현재 폴더에서 명시적 경로로 시도
+    for dir in library_search_dirs() {
+        for name in pdfium_names() {
+            let path = dir.join(name);
+            if path.exists() {
+                if let Ok(bindings) = Pdfium::bind_to_library(&path) {
+                    return Ok(Pdfium::new(bindings));
+                }
+            }
+        }
+    }
+    // 3) 플랫폼 기본 이름을 OS 검색 경로에서 시도
+    for name in pdfium_names() {
         if let Ok(bindings) = Pdfium::bind_to_library(name) {
             return Ok(Pdfium::new(bindings));
         }
     }
     Err(format!(
         "PDFium library not found.\n\
+         Searched next to the executable and in the current folder.\n\
          Put `pdfium.dll` (Windows) or `libpdfium.so` (Linux) next to the program\n\
          executable and restart. On Windows, run: scripts\\install-pdfium.ps1"
     ))

@@ -17,10 +17,11 @@ use freedf_core::outline::{flatten, OutlineNode};
 use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
 use freedf_core::search::{find_matches, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
-use freedf_core::transform::{ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
+use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
 use crate::export::draw_strokes_on_image;
 use crate::pdf::DocumentView;
+use egui_phosphor_icons::icons;
 
 /// Canvas margin around the page
 const CANVAS_MARGIN: f32 = 16.0;
@@ -71,6 +72,13 @@ fn tool_label(tool: ToolType) -> &'static str {
         ToolType::Eraser => "Eraser",
         ToolType::Pan => "Pan",
     }
+}
+
+/// RichText for an icon glyph rendered in the Phosphor icon font.
+/// Icons render icon-only (human-readable labels live in tooltips), so the
+/// `label` parameter is only kept for call-site readability.
+fn icon_label(_label: &str, ic: egui_phosphor_icons::Icon) -> egui::RichText {
+    ic.regular().size(18.0)
 }
 
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
@@ -160,6 +168,7 @@ pub struct FreeDfApp {
     current_page: usize,
     page_size_pts: [f32; 2],
     view: ViewTransform,
+    page_align: PageAlign,
     last_canvas: [f32; 2],
     pending_fit: Option<FitMode>,
     texture: Option<egui::TextureHandle>,
@@ -239,6 +248,7 @@ impl FreeDfApp {
             current_page: 0,
             page_size_pts: A4_PTS,
             view: ViewTransform::default(),
+            page_align: PageAlign::Center,
             last_canvas: [1280.0, 600.0],
             pending_fit: None,
             texture: None,
@@ -639,8 +649,18 @@ impl FreeDfApp {
                     ViewTransform::fit_page_zoom(self.page_size_pts, canvas, CANVAS_MARGIN);
             }
         }
-        self.view.center_page(self.page_size_pts, canvas, TOP_MARGIN);
+        self.view
+            .align_page(self.page_size_pts, canvas, TOP_MARGIN, self.page_align);
         self.render_dirty = true;
+    }
+
+    /// Re-applies the current horizontal alignment without changing the zoom.
+    fn realign(&mut self) {
+        if self.document.is_none() {
+            return;
+        }
+        self.view
+            .align_page(self.page_size_pts, self.last_canvas, TOP_MARGIN, self.page_align);
     }
 
     // ---------- Undo / redo / clear ----------
@@ -1053,20 +1073,36 @@ impl FreeDfApp {
             ui.add_space(4.0);
             // Row 1: file / page / zoom / tools
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
+                if ui
+                    .button(icon_label("", icons::FOLDER_OPEN))
+                    .on_hover_text("Open PDF (Ctrl+O)")
+                    .clicked()
+                {
                     self.open_file_dialog();
                 }
                 ui.separator();
 
-                ui.toggle_value(&mut self.show_notes, "Notes");
-                ui.toggle_value(&mut self.show_outline, "Outline");
+                if ui
+                    .toggle_value(&mut self.show_notes, icon_label("", icons::NOTE_PENCIL))
+                    .on_hover_text("Notes")
+                    .changed()
+                {
+                    self.pending_fit = Some(FitMode::Width);
+                }
+                if ui
+                    .toggle_value(&mut self.show_outline, icon_label("", icons::LIST_BULLETS))
+                    .on_hover_text("Outline")
+                    .changed()
+                {
+                    self.pending_fit = Some(FitMode::Width);
+                }
                 ui.separator();
 
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 let can_prev = self.current_page > 0;
                 let can_next = self.current_page + 1 < page_count;
                 if ui
-                    .add_enabled(can_prev, egui::Button::new("◀"))
+                    .add_enabled(can_prev, egui::Button::new(icon_label("", icons::CARET_LEFT)))
                     .on_hover_text("Previous page")
                     .clicked()
                 {
@@ -1081,7 +1117,7 @@ impl FreeDfApp {
                     self.goto_page(page_num.saturating_sub(1));
                 }
                 if ui
-                    .add_enabled(can_next, egui::Button::new("▶"))
+                    .add_enabled(can_next, egui::Button::new(icon_label("", icons::CARET_RIGHT)))
                     .on_hover_text("Next page")
                     .clicked()
                 {
@@ -1091,14 +1127,14 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .add_enabled(page_count > 0, egui::Button::new("＋ Page"))
+                    .add_enabled(page_count > 0, egui::Button::new(icon_label("", icons::PLUS_SQUARE)))
                     .on_hover_text("Add blank page at the end")
                     .clicked()
                 {
                     self.add_page_action();
                 }
                 if ui
-                    .add_enabled(page_count > 1, egui::Button::new("－ Page"))
+                    .add_enabled(page_count > 1, egui::Button::new(icon_label("", icons::TRASH_SIMPLE)))
                     .on_hover_text("Delete this page")
                     .clicked()
                 {
@@ -1106,28 +1142,69 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                if ui.button("−").on_hover_text("Zoom out").clicked() {
+                if ui
+                    .button(icon_label("", icons::MAGNIFYING_GLASS_MINUS))
+                    .on_hover_text("Zoom out")
+                    .clicked()
+                {
                     self.zoom_by(1.0 / 1.25);
                 }
                 ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
-                if ui.button("+").on_hover_text("Zoom in").clicked() {
+                if ui
+                    .button(icon_label("", icons::MAGNIFYING_GLASS_PLUS))
+                    .on_hover_text("Zoom in")
+                    .clicked()
+                {
                     self.zoom_by(1.25);
                 }
-                if ui.button("Fit Width").clicked() {
+                if ui
+                    .button(icon_label("", icons::ARROWS_HORIZONTAL))
+                    .on_hover_text("Fit width")
+                    .clicked()
+                {
                     self.fit_width();
                 }
-                if ui.button("Fit Page").clicked() {
+                if ui
+                    .button(icon_label("", icons::ARROWS_IN_CARDINAL))
+                    .on_hover_text("Fit page")
+                    .clicked()
+                {
                     self.fit_page();
+                }
+                if !self.show_notes && !self.show_outline {
+                    // With the side panels collapsed the canvas is wide, so let
+                    // the page be aligned left / center / right.
+                    ui.separator();
+                    let aligns = [
+                        (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
+                        (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
+                        (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
+                    ];
+                    for (a, ic, hint) in aligns {
+                        if ui
+                            .selectable_label(self.page_align == a, icon_label("", ic))
+                            .on_hover_text(hint)
+                            .clicked()
+                        {
+                            self.page_align = a;
+                            self.realign();
+                        }
+                    }
                 }
                 ui.separator();
 
-                for tool in [
-                    ToolType::Pen,
-                    ToolType::Highlighter,
-                    ToolType::Eraser,
-                    ToolType::Pan,
-                ] {
-                    if ui.selectable_label(self.tool == tool, tool_label(tool)).clicked() {
+                let tool_icons = [
+                    (ToolType::Pen, icons::PEN, "Pen (P)"),
+                    (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlighter (H)"),
+                    (ToolType::Eraser, icons::ERASER, "Eraser (E)"),
+                    (ToolType::Pan, icons::HAND, "Pan (V)"),
+                ];
+                for (tool, ic, hint) in tool_icons {
+                    if ui
+                        .selectable_label(self.tool == tool, icon_label("", ic))
+                        .on_hover_text(hint)
+                        .clicked()
+                    {
                         self.tool = tool;
                     }
                 }
@@ -1196,31 +1273,53 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .add_enabled(self.history.can_undo(), egui::Button::new("Undo"))
-                    .on_hover_text("Ctrl+Z")
+                    .add_enabled(
+                        self.history.can_undo(),
+                        egui::Button::new(icon_label("", icons::ARROW_COUNTER_CLOCKWISE)),
+                    )
+                    .on_hover_text("Undo (Ctrl+Z)")
                     .clicked()
                 {
                     self.undo();
                 }
                 if ui
-                    .add_enabled(self.history.can_redo(), egui::Button::new("Redo"))
-                    .on_hover_text("Ctrl+Y")
+                    .add_enabled(
+                        self.history.can_redo(),
+                        egui::Button::new(icon_label("", icons::ARROW_CLOCKWISE)),
+                    )
+                    .on_hover_text("Redo (Ctrl+Y)")
                     .clicked()
                 {
                     self.redo();
                 }
-                if ui.button("Clear Page").clicked() {
+                if ui
+                    .button(icon_label("", icons::X_CIRCLE))
+                    .on_hover_text("Clear page")
+                    .clicked()
+                {
                     self.clear_page();
                 }
                 ui.separator();
 
-                if ui.button("Save Ann.").on_hover_text("Ctrl+S — save annotations").clicked() {
+                if ui
+                    .button(icon_label("", icons::FLOPPY_DISK))
+                    .on_hover_text("Save annotations (Ctrl+S)")
+                    .clicked()
+                {
                     self.save_annotations();
                 }
-                if ui.button("Load Ann.").clicked() {
+                if ui
+                    .button(icon_label("", icons::FOLDER_SIMPLE))
+                    .on_hover_text("Load annotations")
+                    .clicked()
+                {
                     self.load_annotations();
                 }
-                if ui.button("Export PNG").on_hover_text("Ctrl+E").clicked() {
+                if ui
+                    .button(icon_label("", icons::IMAGE))
+                    .on_hover_text("Export current page as PNG (Ctrl+E)")
+                    .clicked()
+                {
                     self.export_png();
                 }
             });
@@ -1231,7 +1330,7 @@ impl FreeDfApp {
 
             // Row 2: search
             ui.horizontal_wrapped(|ui| {
-                ui.label("Find:");
+                ui.label(icon_label("", icons::MAGNIFYING_GLASS));
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
                         .hint_text("Search text in this page...")
@@ -1244,21 +1343,21 @@ impl FreeDfApp {
                 }
                 let can = !self.search_matches.is_empty();
                 if ui
-                    .add_enabled(can, egui::Button::new("◀"))
+                    .add_enabled(can, egui::Button::new(icon_label("", icons::CARET_UP)))
                     .on_hover_text("Previous match")
                     .clicked()
                 {
                     self.search_find(false);
                 }
                 if ui
-                    .add_enabled(can, egui::Button::new("▶"))
+                    .add_enabled(can, egui::Button::new(icon_label("", icons::CARET_DOWN)))
                     .on_hover_text("Next match")
                     .clicked()
                 {
                     self.search_find(true);
                 }
                 if ui
-                    .add_enabled(can, egui::Button::new("Clear"))
+                    .add_enabled(can, egui::Button::new(icon_label("", icons::X)))
                     .on_hover_text("Clear search")
                     .clicked()
                 {
@@ -1278,7 +1377,11 @@ impl FreeDfApp {
     fn notes_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Notes");
         ui.horizontal(|ui| {
-            if ui.button("＋ New").clicked() {
+            if ui
+                .button(icon_label("", icons::PLUS))
+                .on_hover_text("New note (Ctrl+N)")
+                .clicked()
+            {
                 self.modal = Some(ModalState::ask_text(
                     "New Note",
                     "Note title:",
@@ -1286,7 +1389,11 @@ impl FreeDfApp {
                 ));
             }
             let has_note = self.current_note.is_some();
-            if ui.add_enabled(has_note, egui::Button::new("Rename")).clicked() {
+            if ui
+                .add_enabled(has_note, egui::Button::new(icon_label("", icons::PENCIL_SIMPLE)))
+                .on_hover_text("Rename note")
+                .clicked()
+            {
                 if let Some(id) = self.current_note {
                     let current = self
                         .notes
@@ -1299,7 +1406,11 @@ impl FreeDfApp {
                     self.modal = Some(modal);
                 }
             }
-            if ui.add_enabled(has_note, egui::Button::new("Delete")).clicked() {
+            if ui
+                .add_enabled(has_note, egui::Button::new(icon_label("", icons::TRASH_SIMPLE)))
+                .on_hover_text("Delete note")
+                .clicked()
+            {
                 if let Some(id) = self.current_note {
                     let mut modal = ModalState::confirm(
                         "Delete Note",
@@ -1516,15 +1627,17 @@ impl FreeDfApp {
         let draw_rect = page_rect.translate(Vec2::new(anim_dx, 0.0));
         let draw_origin = origin + Vec2::new(anim_dx, 0.0);
 
-        // Tool cursor while hovering the page area
+        // Custom tool cursor while hovering the page area
         if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
             if draw_rect.contains(pos) {
-                let icon = match self.tool {
-                    ToolType::Pen | ToolType::Highlighter => egui::CursorIcon::Crosshair,
-                    ToolType::Eraser => egui::CursorIcon::NotAllowed,
-                    ToolType::Pan => egui::CursorIcon::Grab,
-                };
-                ctx.set_cursor_icon(icon);
+                match self.tool {
+                    ToolType::Pan => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+                    _ => {
+                        // Hide the OS cursor and draw a custom one
+                        ctx.set_cursor_icon(egui::CursorIcon::None);
+                        self.paint_custom_cursor(&painter, pos);
+                    }
+                }
             }
         }
 
@@ -1561,19 +1674,6 @@ impl FreeDfApp {
         }
         if let Some(active) = &self.active_stroke {
             self.paint_active(&painter, active, draw_origin);
-        }
-
-        // Eraser cursor
-        if self.tool == ToolType::Eraser {
-            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                if canvas.contains(pos) {
-                    painter.circle_stroke(
-                        pos,
-                        self.eraser_radius,
-                        Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 90, 90, 200)),
-                    );
-                }
-            }
         }
 
         // Zoom hint
@@ -1803,6 +1903,61 @@ impl FreeDfApp {
             let pa = origin + Vec2::new(a[0], a[1]);
             let pb = origin + Vec2::new(b[0], b[1]);
             painter.line_segment([pa, pb], Stroke::new(wpx, color));
+        }
+    }
+
+    /// Draws a custom cursor that previews the current tool (size + color).
+    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2) {
+        let zoom = self.view.zoom;
+        match self.tool {
+            ToolType::Pen => {
+                let color = Color32::from_rgba_unmultiplied(
+                    self.pen_color[0],
+                    self.pen_color[1],
+                    self.pen_color[2],
+                    255,
+                );
+                let r = (self.pen_width * zoom * 0.5).clamp(1.5, 14.0);
+                // Crosshair guides
+                let cross = Stroke::new(1.0, Color32::from_gray(150));
+                painter.line_segment([pos - Vec2::new(13.0, 0.0), pos + Vec2::new(13.0, 0.0)], cross);
+                painter.line_segment([pos - Vec2::new(0.0, 13.0), pos + Vec2::new(0.0, 13.0)], cross);
+                // Nib sized to the pen width
+                painter.circle_stroke(pos, r + 1.0, Stroke::new(1.0, Color32::from_black_alpha(90)));
+                painter.circle_filled(pos, r, color);
+            }
+            ToolType::Highlighter => {
+                let w = (self.hi_width * zoom).clamp(3.0, 60.0);
+                let color = Color32::from_rgba_unmultiplied(
+                    self.hi_color[0],
+                    self.hi_color[1],
+                    self.hi_color[2],
+                    130,
+                );
+                let bar = Rect::from_center_size(pos, Vec2::new(w, 30.0));
+                painter.rect_filled(bar, 4.0, color);
+                painter.rect_stroke(
+                    bar,
+                    4.0,
+                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 160)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            ToolType::Eraser => {
+                // Red ring showing the erase radius, plus a center dot
+                painter.circle_stroke(
+                    pos,
+                    self.eraser_radius,
+                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 90, 90, 220)),
+                );
+                painter.circle_stroke(
+                    pos,
+                    self.eraser_radius + 1.0,
+                    Stroke::new(1.0, Color32::from_black_alpha(60)),
+                );
+                painter.circle_filled(pos, 2.0, Color32::from_rgb(255, 90, 90));
+            }
+            ToolType::Pan => {}
         }
     }
 
