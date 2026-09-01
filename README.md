@@ -17,8 +17,8 @@ native file dialogs, Windows Ink pressure).
 - 📄 **PDF open / render** — high-resolution page rendering via PDFium (HiDPI aware)
 - 🗂️ **Tabs — multiple documents** — open several notes and PDFs at once and switch
   between them; every tab keeps its own page, zoom/pan, annotations, search and outline
-- 🕘 **Recent files** — a combined list of the notes and PDFs you opened recently,
-  one click reopens (or switches to the already-open tab)
+- �️ **Library panel** — one collapsible side panel groups **Notes**, **PDFs** and
+  **Recents** so you can jump between notebooks and recently opened files
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
@@ -26,8 +26,9 @@ native file dialogs, Windows Ink pressure).
 - ➕➖ **Page CRUD** — add a blank page or delete the current page; annotations are
   kept aligned and page changes are persisted back into the note's PDF
 - 🧭 **Outline panel** — browse the PDF bookmark tree and jump to a page on click
-- 🔍 **In-page word search** — case-insensitive; yellow highlights for matches, an
-  orange border for the current one, with prev/next/clear and a result counter
+- 🔍 **In-page word search** — case-insensitive; press **Ctrl+F** to toggle the
+  search bar (with focus), yellow highlights for matches, an orange border for
+  the current one, prev/next and a result counter
 - ✏️ **Pen / Highlighter / Eraser / Pan** — strokes are stored in page coordinates,
   so they never drift under zoom/pan
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
@@ -42,8 +43,9 @@ native file dialogs, Windows Ink pressure).
 - 🔤 **Typography** — the entire UI uses a single bundled **Inter** font
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
-- 🗂️ **Two-tier toolbar** — file/notes/bookmark/page-tools on the first row,
-  drawing tools & pen settings on the second row, search on the third
+- 🗂️ **Two-tier toolbar** — panels / page tools / bookmarks / undo-save on the
+  first row, drawing tools & pen settings on the second row (the search bar
+  appears only on `Ctrl+F`)
 - 🎨 **Design system** — 1rem (16 px) base font scale, 4 px spacing grid, rounded
   corners, and a **Nord** dark theme built from primitive + semantic design
   tokens (Polar Night / Snow Storm / Frost / Aurora palette)
@@ -132,7 +134,7 @@ cargo build --release -p freedf
 |---|---|
 | `Ctrl+O` | Open PDF |
 | `Ctrl+N` | New note |
-| `Ctrl+F` | Search in current page |
+| `Ctrl+F` | Toggle search bar |
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |
 | `Ctrl+S` | Save annotations |
 | `Ctrl+E` | Export current page as PNG |

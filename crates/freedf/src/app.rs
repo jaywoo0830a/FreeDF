@@ -286,13 +286,17 @@ pub struct FreeDfApp {
     search_runs: Vec<TextRun>,
     search_matches: Vec<TextMatch>,
     search_current: Option<usize>,
+    /// Search row visible only while Ctrl+F was pressed.
+    show_search: bool,
+    /// Request focus on the search box next frame.
+    focus_search: bool,
 
     // ---------- Outline ----------
     outline: Vec<OutlineNode>,
     outline_loaded: bool,
 
     // ---------- Panels ----------
-    show_notes: bool,
+    show_library: bool,
     show_outline: bool,
 
     // ---------- Logging / status ----------
@@ -355,7 +359,7 @@ impl FreeDfApp {
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
         let paper_size = if has { s.paper_size } else { PaperSize::A4 };
-        let show_notes = if has { s.show_notes } else { true };
+        let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
         // Recent files live next to the default session file in the app data folder.
         let recent_path = default_session_path
@@ -409,9 +413,11 @@ impl FreeDfApp {
             search_runs: Vec::new(),
             search_matches: Vec::new(),
             search_current: None,
+            show_search: false,
+            focus_search: false,
             outline: Vec::new(),
             outline_loaded: false,
-            show_notes,
+            show_library,
             show_outline,
             logger,
             file_name: String::new(),
@@ -442,7 +448,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
-            show_notes: self.show_notes,
+            show_notes: self.show_library,
             show_outline: self.show_outline,
         }
         .save(&self.default_session_path);
@@ -497,7 +503,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
-            show_notes: self.show_notes,
+            show_notes: self.show_library,
             show_outline: self.show_outline,
         }
     }
@@ -537,7 +543,7 @@ impl FreeDfApp {
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
         self.paper_size = s.paper_size;
-        self.show_notes = s.show_notes;
+        self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
@@ -1667,19 +1673,40 @@ impl FreeDfApp {
                 }
                 let mut to_switch: Option<usize> = None;
                 let mut to_close: Option<usize> = None;
+                let active_fill = crate::theme::nord::semantic::BG_SURFACE;
+                let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
                 for (i, tab) in self.tabs.iter().enumerate() {
                     let selected = i == self.active;
-                    let resp = ui.selectable_label(selected, &tab.label);
-                    if resp.clicked() {
-                        to_switch = Some(i);
-                    }
-                    if ui
-                        .button(egui::RichText::new("✕").small())
-                        .on_hover_text("Close document")
-                        .clicked()
-                    {
-                        to_close = Some(i);
-                    }
+                    egui::Frame::new()
+                        .fill(if selected {
+                            active_fill
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
+                        .stroke(if selected {
+                            Stroke::new(1.0, accent)
+                        } else {
+                            Stroke::NONE
+                        })
+                        .corner_radius(6)
+                        .inner_margin(egui::Margin::symmetric(8, 3))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                                let title = ui.add(egui::Button::new(&tab.label).frame(false));
+                                if title.clicked() {
+                                    to_switch = Some(i);
+                                }
+                                let close = ui.add(
+                                    egui::Button::new(icon_text(ui, "", icons::X))
+                                        .frame(false)
+                                        .small(),
+                                );
+                                if close.on_hover_text("Close document").clicked() {
+                                    to_close = Some(i);
+                                }
+                            });
+                        });
                 }
                 if let Some(i) = to_close {
                     self.close_tab(i);
@@ -1700,52 +1727,11 @@ impl FreeDfApp {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
-            // Row 1: file / page / zoom / tools
+            // Row 1: panels / page tools / ink tools
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(icon_text(ui, "Open", icons::FOLDER_OPEN))
-                    .on_hover_text("Open PDF (Ctrl+O)")
-                    .clicked()
-                {
-                    self.open_file_dialog();
-                }
-                ui.menu_button(icon_text(ui, "Recent", icons::CLOCK_COUNTER_CLOCKWISE), |ui| {
-                    let recents: Vec<RecentItem> =
-                        self.recents.sorted().into_iter().cloned().collect();
-                    if recents.is_empty() {
-                        ui.label("No recent files yet");
-                        return;
-                    }
-                    for item in &recents {
-                        let label = match item.kind {
-                            RecentKind::Note => format!("📄 {}", item.title),
-                            RecentKind::File => format!("📎 {}", item.title),
-                        };
-                        if ui.button(label).clicked() {
-                            let kind = item.kind;
-                            let note_id = item.note_id;
-                            let path = item.path.clone();
-                            ui.close();
-                            match kind {
-                                RecentKind::Note => {
-                                    if let Some(id) = note_id {
-                                        self.open_note(id);
-                                    }
-                                }
-                                RecentKind::File => {
-                                    if let Some(p) = path {
-                                        self.open_pdf(&p);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-                ui.separator();
-
-                if ui
-                    .toggle_value(&mut self.show_notes, icon_text(ui, "Notes", icons::NOTE_PENCIL))
-                    .on_hover_text("Notes")
+                    .toggle_value(&mut self.show_library, icon_text(ui, "Library", icons::NOTEBOOK))
+                    .on_hover_text("Library (notes, PDFs, recents)")
                     .changed()
                 {
                     self.pending_fit = Some(FitMode::Width);
@@ -1815,7 +1801,7 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                if !self.show_notes && !self.show_outline {
+                if !self.show_library && !self.show_outline {
                     // With the side panels collapsed the canvas is wide, so let
                     // the page be aligned left / center / right.
                     ui.separator();
@@ -1826,7 +1812,7 @@ impl FreeDfApp {
                     ];
                     for (a, ic, hint) in aligns {
                         if ui
-                            .selectable_label(self.page_align == a, icon_text(ui, a.label(), ic))
+                            .selectable_label(self.page_align == a, icon_text(ui, "", ic))
                             .on_hover_text(hint)
                             .clicked()
                         {
@@ -2090,125 +2076,198 @@ impl FreeDfApp {
             ui.separator();
             ui.add_space(2.0);
 
-            // Row 3: search
-            ui.horizontal_wrapped(|ui| {
-                ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("Search text in this page...")
-                        .desired_width(180.0),
-                );
-                let submitted =
-                    resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if ui.button("Find").clicked() || submitted {
-                    self.search_update();
-                }
-                let can = !self.search_matches.is_empty();
-                if ui
-                    .add_enabled(can, egui::Button::new(icon_text(ui, "Prev", icons::CARET_UP)))
-                    .on_hover_text("Previous match")
-                    .clicked()
-                {
-                    self.search_find(false);
-                }
-                if ui
-                    .add_enabled(can, egui::Button::new(icon_text(ui, "Next", icons::CARET_DOWN)))
-                    .on_hover_text("Next match")
-                    .clicked()
-                {
-                    self.search_find(true);
-                }
-                if ui
-                    .add_enabled(can, egui::Button::new(icon_text(ui, "Clear", icons::X)))
-                    .on_hover_text("Clear search")
-                    .clicked()
-                {
-                    self.search_clear();
-                }
-                if !self.search_matches.is_empty() {
-                    let cur = self.search_current.map(|c| c + 1).unwrap_or(0);
-                    ui.label(format!("{cur}/{}", self.search_matches.len()));
-                }
-            });
-            ui.add_space(4.0);
+            // Row 3: search (only while Ctrl+F is pressed)
+            if self.show_search {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("Search in this page...")
+                            .desired_width(200.0),
+                    );
+                    let submitted =
+                        resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if self.focus_search {
+                        resp.request_focus();
+                        self.focus_search = false;
+                    }
+                    if ui.button("Find").clicked() || submitted {
+                        self.search_update();
+                    }
+                    let can = !self.search_matches.is_empty();
+                    if ui
+                        .add_enabled(can, egui::Button::new(icon_text(ui, "", icons::CARET_UP)))
+                        .on_hover_text("Previous match")
+                        .clicked()
+                    {
+                        self.search_find(false);
+                    }
+                    if ui
+                        .add_enabled(can, egui::Button::new(icon_text(ui, "", icons::CARET_DOWN)))
+                        .on_hover_text("Next match")
+                        .clicked()
+                    {
+                        self.search_find(true);
+                    }
+                    if !self.search_matches.is_empty() {
+                        let cur = self.search_current.map(|c| c + 1).unwrap_or(0);
+                        ui.label(format!("{cur}/{}", self.search_matches.len()));
+                    }
+                    if ui
+                        .add(egui::Button::new(icon_text(ui, "", icons::X)).frame(false))
+                        .on_hover_text("Close search (Ctrl+F)")
+                        .clicked()
+                    {
+                        self.show_search = false;
+                        self.search_clear();
+                    }
+                });
+                ui.add_space(4.0);
+            }
         });
     }
 
-    // ---------- UI: notes panel ----------
+    // ---------- UI: library panel (Notes / PDFs / Recents) ----------
 
-    fn notes_panel(&mut self, ui: &mut egui::Ui) {
+    fn library_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
         ui.add_space(4.0);
-        ui.heading("Notes");
+        ui.heading("Library");
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            if ui
-                .button(icon_text(ui, "New", icons::PLUS))
-                .on_hover_text("New note (Ctrl+N)")
-                .clicked()
-            {
-                self.modal = Some(ModalState::ask_text(
-                    "New Note",
-                    "Note title:",
-                    TextAction::NewNote,
-                ));
-            }
-            let has_note = self.current_note.is_some();
-            if ui
-                .add_enabled(has_note, egui::Button::new(icon_text(ui, "Rename", icons::PENCIL_SIMPLE)))
-                .on_hover_text("Rename note")
-                .clicked()
-            {
-                if let Some(id) = self.current_note {
-                    let current = self
-                        .notes
-                        .get(id)
-                        .map(|m| m.title.clone())
-                        .unwrap_or_default();
-                    let mut modal =
-                        ModalState::ask_text("Rename Note", "New title:", TextAction::RenameNote);
-                    modal.text = current;
-                    self.modal = Some(modal);
-                }
-            }
-            if ui
-                .add_enabled(has_note, egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)))
-                .on_hover_text("Delete note")
-                .clicked()
-            {
-                if let Some(id) = self.current_note {
-                    let mut modal = ModalState::confirm(
-                        "Delete Note",
-                        "Delete this note and all its annotations? This cannot be undone.",
-                        ConfirmAction::DeleteNote,
-                    );
-                    modal.text = id.to_string();
-                    self.modal = Some(modal);
-                }
-            }
-        });
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
+
+        // --- Notes ------------------------------------------------------
+        egui::CollapsingHeader::new(icon_text(ui, "Notes", icons::NOTE_PENCIL))
+            .default_open(true)
             .show(ui, |ui| {
-                let notes: Vec<(u64, String, usize)> = self
-                    .notes
-                    .list()
-                    .iter()
-                    .map(|m| (m.id, m.title.clone(), m.page_count))
+                ui.horizontal(|ui| {
+                    let has_note = self.current_note.is_some();
+                    if ui
+                        .add_enabled(
+                            has_note,
+                            egui::Button::new(icon_text(ui, "Rename", icons::PENCIL_SIMPLE)),
+                        )
+                        .on_hover_text("Rename note")
+                        .clicked()
+                    {
+                        if let Some(id) = self.current_note {
+                            let current = self
+                                .notes
+                                .get(id)
+                                .map(|m| m.title.clone())
+                                .unwrap_or_default();
+                            let mut modal = ModalState::ask_text(
+                                "Rename Note",
+                                "New title:",
+                                TextAction::RenameNote,
+                            );
+                            modal.text = current;
+                            self.modal = Some(modal);
+                        }
+                    }
+                    if ui
+                        .add_enabled(
+                            has_note,
+                            egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
+                        )
+                        .on_hover_text("Delete note")
+                        .clicked()
+                    {
+                        if let Some(id) = self.current_note {
+                            let mut modal = ModalState::confirm(
+                                "Delete Note",
+                                "Delete this note and all its annotations? This cannot be undone.",
+                                ConfirmAction::DeleteNote,
+                            );
+                            modal.text = id.to_string();
+                            self.modal = Some(modal);
+                        }
+                    }
+                });
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        let notes: Vec<(u64, String, usize)> = self
+                            .notes
+                            .list()
+                            .iter()
+                            .map(|m| (m.id, m.title.clone(), m.page_count))
+                            .collect();
+                        if notes.is_empty() {
+                            ui.label("No notes yet. Use ＋ New to create one.");
+                        }
+                        for (id, title, page_count) in notes {
+                            let selected = self.current_note == Some(id);
+                            let text = if page_count > 0 {
+                                format!("{title}  ({}p)", page_count)
+                            } else {
+                                title
+                            };
+                            if ui.selectable_label(selected, text).clicked() {
+                                self.open_note(id);
+                            }
+                        }
+                    });
+            });
+        ui.separator();
+
+        // --- PDFs (recently opened files) --------------------------------
+        egui::CollapsingHeader::new(icon_text(ui, "PDFs", icons::FILE_PDF))
+            .default_open(false)
+            .show(ui, |ui| {
+                let files: Vec<RecentItem> = self
+                    .recents
+                    .sorted()
+                    .into_iter()
+                    .filter(|r| r.kind == RecentKind::File)
+                    .cloned()
                     .collect();
-                if notes.is_empty() {
-                    ui.label("No notes yet. Click ＋ New to create one.");
+                if files.is_empty() {
+                    ui.label("No PDFs opened yet.");
                 }
-                for (id, title, page_count) in notes {
-                    let selected = self.current_note == Some(id);
-                    let text = if page_count > 0 {
-                        format!("{title}  ({}p)", page_count)
-                    } else {
-                        title
+                let mut open: Option<PathBuf> = None;
+                for f in &files {
+                    let path = f.path.clone().unwrap_or_default();
+                    if ui.button(&f.title).clicked() {
+                        open = Some(path);
+                    }
+                }
+                if let Some(p) = open {
+                    self.open_pdf(&p);
+                }
+            });
+        ui.separator();
+
+        // --- Recents (notes + PDFs) --------------------------------------
+        egui::CollapsingHeader::new(icon_text(ui, "Recents", icons::CLOCK_COUNTER_CLOCKWISE))
+            .default_open(false)
+            .show(ui, |ui| {
+                let recents: Vec<RecentItem> =
+                    self.recents.sorted().into_iter().cloned().collect();
+                if recents.is_empty() {
+                    ui.label("No recent files yet.");
+                }
+                let mut act: Option<(RecentKind, Option<u64>, Option<PathBuf>)> = None;
+                for item in &recents {
+                    let label = match item.kind {
+                        RecentKind::Note => format!("📄 {}", item.title),
+                        RecentKind::File => format!("📎 {}", item.title),
                     };
-                    if ui.selectable_label(selected, text).clicked() {
-                        self.open_note(id);
+                    if ui.button(label).clicked() {
+                        act = Some((item.kind, item.note_id, item.path.clone()));
+                    }
+                }
+                if let Some((kind, id, path)) = act {
+                    match kind {
+                        RecentKind::Note => {
+                            if let Some(id) = id {
+                                self.open_note(id);
+                            }
+                        }
+                        RecentKind::File => {
+                            if let Some(p) = path {
+                                self.open_pdf(&p);
+                            }
+                        }
                     }
                 }
             });
@@ -2918,7 +2977,14 @@ impl FreeDfApp {
             self.export_png();
         }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            self.search_update();
+            // Toggle the search row; Ctrl+F shows it and focuses the box.
+            self.show_search = !self.show_search;
+            if self.show_search {
+                self.focus_search = true;
+                self.search_update();
+            } else {
+                self.search_clear();
+            }
         }
         if ctx
             .input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::ArrowRight))
@@ -3047,11 +3113,11 @@ impl eframe::App for FreeDfApp {
         self.toolbar(ui);
         self.status_bar(ui);
 
-        if self.show_notes {
-            egui::Panel::left("notes_panel")
+        if self.show_library {
+            egui::Panel::left("library_panel")
                 .resizable(true)
                 .default_size(230.0)
-                .show(ui, |ui| self.notes_panel(ui));
+                .show(ui, |ui| self.library_panel(ui));
         }
         if self.show_outline {
             egui::Panel::left("outline_panel")
