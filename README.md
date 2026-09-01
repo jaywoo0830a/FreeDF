@@ -36,10 +36,14 @@ native file dialogs, Windows Ink pressure).
 - 🔤 **Typography** — the entire UI uses a single bundled **PT Serif** font
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
+- 🗂️ **Two-tier toolbar** — file/page/zoom controls on the first row, drawing
+  tools & pen settings on the second row, search on the third
+- 🎨 **Design system** — 1rem (16 px) base font scale, 4 px spacing grid, rounded
+  corners, and a **dark-brown brand accent** across both themes
 - ♿ **Accessible (WCAG)** — theme-aware high-contrast text, error colors, text
   alternatives for icons, and roomy click targets
-- 🖱️ **Trackpad & gestures** — pinch zoom, two-finger pan/flip, horizontal scroll,
-  and momentum (inertial) scrolling
+- 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + two-finger scroll zoom,
+  two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page

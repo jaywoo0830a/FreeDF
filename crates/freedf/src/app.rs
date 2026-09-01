@@ -1219,6 +1219,64 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
+                if ui
+                    .add_enabled(
+                        self.history.can_undo(),
+                        egui::Button::new(icon_text(ui, "Undo", icons::ARROW_COUNTER_CLOCKWISE)),
+                    )
+                    .on_hover_text("Undo (Ctrl+Z)")
+                    .clicked()
+                {
+                    self.undo();
+                }
+                if ui
+                    .add_enabled(
+                        self.history.can_redo(),
+                        egui::Button::new(icon_text(ui, "Redo", icons::ARROW_CLOCKWISE)),
+                    )
+                    .on_hover_text("Redo (Ctrl+Y)")
+                    .clicked()
+                {
+                    self.redo();
+                }
+                if ui
+                    .button(icon_text(ui, "Clear", icons::X_CIRCLE))
+                    .on_hover_text("Clear page")
+                    .clicked()
+                {
+                    self.clear_page();
+                }
+                ui.separator();
+
+                if ui
+                    .button(icon_text(ui, "Save", icons::FLOPPY_DISK))
+                    .on_hover_text("Save annotations (Ctrl+S)")
+                    .clicked()
+                {
+                    self.save_annotations();
+                }
+                if ui
+                    .button(icon_text(ui, "Load", icons::FOLDER_SIMPLE))
+                    .on_hover_text("Load annotations")
+                    .clicked()
+                {
+                    self.load_annotations();
+                }
+                if ui
+                    .button(icon_text(ui, "Export", icons::IMAGE))
+                    .on_hover_text("Export current page as PNG (Ctrl+E)")
+                    .clicked()
+                {
+                    self.export_png();
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Row 2: drawing tools (tool picker + tool settings)
+            ui.horizontal_wrapped(|ui| {
                 let tool_buttons = [
                     (ToolType::Pen, icons::PEN, "Pen"),
                     (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlight"),
@@ -1234,6 +1292,7 @@ impl FreeDfApp {
                         self.tool = tool;
                     }
                 }
+                ui.separator();
 
                 match self.tool {
                     ToolType::Pen => {
@@ -1296,65 +1355,13 @@ impl FreeDfApp {
                     }
                     ToolType::Pan => {}
                 }
-                ui.separator();
-
-                if ui
-                    .add_enabled(
-                        self.history.can_undo(),
-                        egui::Button::new(icon_text(ui, "Undo", icons::ARROW_COUNTER_CLOCKWISE)),
-                    )
-                    .on_hover_text("Undo (Ctrl+Z)")
-                    .clicked()
-                {
-                    self.undo();
-                }
-                if ui
-                    .add_enabled(
-                        self.history.can_redo(),
-                        egui::Button::new(icon_text(ui, "Redo", icons::ARROW_CLOCKWISE)),
-                    )
-                    .on_hover_text("Redo (Ctrl+Y)")
-                    .clicked()
-                {
-                    self.redo();
-                }
-                if ui
-                    .button(icon_text(ui, "Clear", icons::X_CIRCLE))
-                    .on_hover_text("Clear page")
-                    .clicked()
-                {
-                    self.clear_page();
-                }
-                ui.separator();
-
-                if ui
-                    .button(icon_text(ui, "Save", icons::FLOPPY_DISK))
-                    .on_hover_text("Save annotations (Ctrl+S)")
-                    .clicked()
-                {
-                    self.save_annotations();
-                }
-                if ui
-                    .button(icon_text(ui, "Load", icons::FOLDER_SIMPLE))
-                    .on_hover_text("Load annotations")
-                    .clicked()
-                {
-                    self.load_annotations();
-                }
-                if ui
-                    .button(icon_text(ui, "Export", icons::IMAGE))
-                    .on_hover_text("Export current page as PNG (Ctrl+E)")
-                    .clicked()
-                {
-                    self.export_png();
-                }
             });
 
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
 
-            // Row 2: search
+            // Row 3: search
             ui.horizontal_wrapped(|ui| {
                 ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
                 let resp = ui.add(
@@ -1661,21 +1668,6 @@ impl FreeDfApp {
         let draw_rect = page_rect.translate(Vec2::new(anim_dx, 0.0));
         let draw_origin = origin + Vec2::new(anim_dx, 0.0);
 
-        // Custom tool cursor while hovering the page area
-        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-            if draw_rect.contains(pos) {
-                match self.tool {
-                    ToolType::Pan => ctx.set_cursor_icon(egui::CursorIcon::Grab),
-                    _ => {
-                        // Hide the OS cursor and draw a custom sprite on the canvas
-                        ctx.set_cursor_icon(egui::CursorIcon::None);
-                        let time = ctx.input(|i| i.time) as f32;
-                        self.paint_custom_cursor(&painter, pos, time);
-                    }
-                }
-            }
-        }
-
         // Page shadow, image and border (single page when not mid-transition)
         if self.page_anim.is_none() {
             painter.rect_filled(
@@ -1709,6 +1701,20 @@ impl FreeDfApp {
         }
         if let Some(active) = &self.active_stroke {
             self.paint_active(&painter, active, draw_origin);
+        }
+
+        // Custom tool cursor — drawn last so it stays on top of the page
+        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            if draw_rect.contains(pos) {
+                match self.tool {
+                    ToolType::Pan => ctx.set_cursor_icon(egui::CursorIcon::Grab),
+                    _ => {
+                        ctx.set_cursor_icon(egui::CursorIcon::None);
+                        let time = ctx.input(|i| i.time) as f32;
+                        self.paint_custom_cursor(&painter, pos, time);
+                    }
+                }
+            }
         }
 
         // Zoom hint
@@ -1760,7 +1766,7 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
-        // Zoom (pinch / Ctrl+wheel)
+        // Zoom (pinch / trackpad pinch / Ctrl+wheel / Ctrl+two-finger scroll)
         let (zoom_delta, scroll) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
         let scroll_x = scroll.x;
         let scroll_y = scroll.y;
@@ -1768,12 +1774,29 @@ impl FreeDfApp {
         let dt = ctx.input(|i| i.stable_dt).max(1e-4);
         let pointer_any_down = ctx.input(|i| i.pointer.any_down());
 
-        if (zoom_delta - 1.0).abs() > 1e-4 && response.hovered() {
-            if let Some(abs) = pointer_abs {
-                let anchor = [abs.x - origin.x, abs.y - origin.y];
-                self.view.zoom_at(anchor, zoom_delta, MIN_ZOOM, MAX_ZOOM);
-                self.render_dirty = true;
-            }
+        // If egui already folded a pinch / Ctrl+scroll into zoom_delta, use it.
+        // Otherwise synthesize zoom from Ctrl + two-finger scroll for trackpads
+        // whose pinch gesture is not reported to the windowing system.
+        let mut zoom_factor = zoom_delta;
+        let mut scroll_zoom = false;
+        if ctrl_down
+            && (scroll_x.abs() + scroll_y.abs()) > 1e-4
+            && (zoom_delta - 1.0).abs() <= 1e-4
+        {
+            let step = (scroll_x + scroll_y) * 0.01;
+            zoom_factor = (1.0 + step).clamp(0.5, 2.0);
+            scroll_zoom = true;
+        }
+
+        let zooming = (zoom_factor - 1.0).abs() > 1e-4;
+        if zooming && (response.hovered() || scroll_zoom) {
+            // Anchor at the pointer when available, otherwise the canvas center.
+            let anchor = pointer_abs
+                .map(|abs| [abs.x - origin.x, abs.y - origin.y])
+                .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+            self.view.zoom_at(anchor, zoom_factor, MIN_ZOOM, MAX_ZOOM);
+            self.render_dirty = true;
+            ctx.request_repaint();
         } else if (scroll_x.abs() + scroll_y.abs()) > 0.0 && response.hovered() && !ctrl_down {
             // Trackpad/wheel scroll: remember velocity for momentum, then pan/flip.
             self.scroll_vel = Vec2::new(scroll_x, scroll_y) / dt.max(1e-3);
