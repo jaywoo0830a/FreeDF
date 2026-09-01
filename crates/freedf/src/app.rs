@@ -1169,7 +1169,7 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .button(icon_text(ui, "Zoom Out", icons::MAGNIFYING_GLASS_MINUS))
+                    .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_MINUS))
                     .on_hover_text("Zoom out")
                     .clicked()
                 {
@@ -1177,7 +1177,7 @@ impl FreeDfApp {
                 }
                 ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
                 if ui
-                    .button(icon_text(ui, "Zoom In", icons::MAGNIFYING_GLASS_PLUS))
+                    .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_PLUS))
                     .on_hover_text("Zoom in")
                     .clicked()
                 {
@@ -1308,6 +1308,7 @@ impl FreeDfApp {
                                 }
                             });
                         let swatches = Palette::swatches(self.color_family);
+                        // Even, square color swatches forming a neat color bar
                         for swatch in &swatches {
                             let color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
@@ -1316,12 +1317,17 @@ impl FreeDfApp {
                                 swatch[3],
                             );
                             let selected = *swatch == self.pen_color;
-                            let mut btn = egui::Button::new(egui::RichText::new("").color(color))
-                                .fill(color);
+                            let mut btn = egui::Button::new("")
+                                .fill(color)
+                                .corner_radius(2);
                             if selected {
-                                btn = btn.stroke(Stroke::new(2.0, Color32::WHITE));
+                                // Brand-colored selection ring (drawn inside,
+                                // so the swatch keeps its exact size)
+                                btn = btn
+                                    .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
                             }
-                            if ui.add_sized([18.0, 18.0], btn).clicked() {
+                            let resp = ui.add_sized([20.0, 20.0], btn);
+                            if resp.clicked() {
                                 self.pen_color = *swatch;
                             }
                         }
