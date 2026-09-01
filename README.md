@@ -45,9 +45,10 @@ native file dialogs, Windows Ink pressure).
   note titles, search) render correctly
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
-- 🗂️ **Two-tier toolbar** — panels / bookmarks / undo-save on the first row;
-  drawing tools on the second row together with a **Page** group (Add/Delete
-  page + paper grid & color). The search bar appears only on `Ctrl+F`
+- 🗂️ **Three-tier toolbar** — panels / bookmarks / undo-save on the first row;
+  **Page** tools (Add/Delete page + paper grid & color) on the second row; ink
+  tool picker & settings (icon-only Pen / Highlighter / Eraser / Pan) on the
+  third row. The search bar appears only on `Ctrl+F`
 - 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
   resizing the window re-centers the page at the **current zoom** instead of
   resetting it

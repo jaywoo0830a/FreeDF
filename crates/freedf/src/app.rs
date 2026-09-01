@@ -1864,7 +1864,92 @@ impl FreeDfApp {
             ui.separator();
             ui.add_space(2.0);
 
-            // Row 2: drawing tools (tool picker + tool settings)
+            // Row 2: Page (structure + paper styling)
+            ui.horizontal_wrapped(|ui| {
+                ui.label(icon_text(ui, "Page", icons::FILES));
+                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+                if ui
+                    .add_enabled(
+                        page_count > 0,
+                        egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)),
+                    )
+                    .on_hover_text("Add blank page at the end")
+                    .clicked()
+                {
+                    self.add_page_action();
+                }
+                if ui
+                    .add_enabled(
+                        page_count > 1,
+                        egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
+                    )
+                    .on_hover_text("Delete this page")
+                    .clicked()
+                {
+                    self.delete_page_action();
+                }
+                ui.separator();
+
+                // Paper (grid / ruling / color) — applied per page;
+                // paper size selects the size for new pages & notes.
+                ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
+                egui::ComboBox::from_id_salt("paper_style")
+                    .selected_text(self.paper_style.label())
+                    .show_ui(ui, |ui| {
+                        for style in PaperStyle::all() {
+                            let changed = ui
+                                .selectable_value(&mut self.paper_style, style, style.label())
+                                .changed();
+                            if changed {
+                                self.apply_paper_to_current_page();
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Style applied to the current page");
+                for paper in PAPER_COLORS {
+                    let color =
+                        Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
+                    let selected = self.paper_color == *paper;
+                    let cell = egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
+                    ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
+                        let mut btn = egui::Button::new("").fill(color).corner_radius(2);
+                        if selected {
+                            btn = btn
+                                .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
+                        }
+                        if ui.add_sized([20.0, 20.0], btn).clicked() {
+                            self.paper_color = *paper;
+                            self.apply_paper_to_current_page();
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                    });
+                }
+                egui::ComboBox::from_id_salt("paper_size")
+                    .selected_text(self.paper_size.label())
+                    .show_ui(ui, |ui| {
+                        for size in PaperSize::all() {
+                            let changed = ui
+                                .selectable_value(&mut self.paper_size, size, size.label())
+                                .changed();
+                            if changed {
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Size of new pages & new notes");
+            });
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            // Row 3: drawing tools (icon-only picker + settings)
             ui.horizontal_wrapped(|ui| {
                 let tool_buttons = [
                     (ToolType::Pen, icons::PEN, "Pen"),
@@ -1874,7 +1959,7 @@ impl FreeDfApp {
                 ];
                 for (tool, ic, label) in tool_buttons {
                     if ui
-                        .selectable_label(self.tool == tool, icon_text(ui, label, ic))
+                        .selectable_label(self.tool == tool, icon_text(ui, "", ic))
                         .on_hover_text(format!("{label} (P / H / E / V)"))
                         .clicked()
                     {
@@ -1999,93 +2084,13 @@ impl FreeDfApp {
                     }
                     ToolType::Pan => {}
                 }
-
-                // --- Page group: page structure + paper styling ---
-                ui.separator();
-                ui.label(icon_text(ui, "Page", icons::FILES));
-                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-                if ui
-                    .add_enabled(
-                        page_count > 0,
-                        egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)),
-                    )
-                    .on_hover_text("Add blank page at the end")
-                    .clicked()
-                {
-                    self.add_page_action();
-                }
-                if ui
-                    .add_enabled(
-                        page_count > 1,
-                        egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
-                    )
-                    .on_hover_text("Delete this page")
-                    .clicked()
-                {
-                    self.delete_page_action();
-                }
-                ui.separator();
-
-                // Paper (grid / ruling / color) — applied per page;
-                // paper size selects the size for new pages & notes.
-                ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
-                egui::ComboBox::from_id_salt("paper_style")
-                    .selected_text(self.paper_style.label())
-                    .show_ui(ui, |ui| {
-                        for style in PaperStyle::all() {
-                            let changed = ui
-                                .selectable_value(&mut self.paper_style, style, style.label())
-                                .changed();
-                            if changed {
-                                self.apply_paper_to_current_page();
-                                self.save_default_session();
-                                self.save_session();
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("Style applied to the current page");
-                for paper in PAPER_COLORS {
-                    let color =
-                        Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
-                    let selected = self.paper_color == *paper;
-                    let cell = egui::Layout::centered_and_justified(egui::Direction::LeftToRight);
-                    ui.allocate_ui_with_layout(egui::vec2(24.0, 28.0), cell, |ui| {
-                        let mut btn = egui::Button::new("").fill(color).corner_radius(2);
-                        if selected {
-                            btn = btn
-                                .stroke(Stroke::new(2.0, ui.visuals().selection.stroke.color));
-                        }
-                        if ui.add_sized([20.0, 20.0], btn).clicked() {
-                            self.paper_color = *paper;
-                            self.apply_paper_to_current_page();
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                    });
-                }
-                egui::ComboBox::from_id_salt("paper_size")
-                    .selected_text(self.paper_size.label())
-                    .show_ui(ui, |ui| {
-                        for size in PaperSize::all() {
-                            let changed = ui
-                                .selectable_value(&mut self.paper_size, size, size.label())
-                                .changed();
-                            if changed {
-                                self.save_default_session();
-                                self.save_session();
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("Size of new pages & new notes");
             });
 
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(2.0);
 
-            // Row 3: search (only while Ctrl+F is pressed)
+            // Row 4: search (only while Ctrl+F is pressed)
             if self.show_search {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
