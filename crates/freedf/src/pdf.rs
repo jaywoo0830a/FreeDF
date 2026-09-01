@@ -29,8 +29,9 @@ pub fn load_pdfium() -> Result<Pdfium, String> {
         }
     }
     Err(format!(
-        "PDFium 라이브러리를 찾지 못했습니다.\n\
-         (Windows: `pdfium.dll` / Linux: `libpdfium.so`) 파일을 프로그램 실행 파일 옆에 둔 뒤 다시 실행해 주세요."
+        "PDFium library not found.\n\
+         Put `pdfium.dll` (Windows) or `libpdfium.so` (Linux) next to the program\n\
+         executable and restart. On Windows, run: scripts\\install-pdfium.ps1"
     ))
 }
 

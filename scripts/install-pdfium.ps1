@@ -1,0 +1,82 @@
+# install-pdfium.ps1
+# ============================================================
+#  FreeDF — installs the PDFium DLL next to the FreeDF executables.
+#
+#  FreeDF needs `pdfium.dll` next to the executable to open PDF files.
+#  This script downloads the latest prebuilt PDFium (bblanchon/pdfium-binaries)
+#  and copies the DLL to:
+#    - the project root
+#    - target\release  (if it exists)
+#    - target\debug    (if it exists)
+#  or to a directory you pass with -TargetDir.
+#
+#  Usage:
+#    .\scripts\install-pdfium.ps1
+#    .\scripts\install-pdfium.ps1 -TargetDir C:\apps\FreeDF
+#    .\scripts\install-pdfium.ps1 -Arch arm64
+# ============================================================
+
+[CmdletBinding()]
+param(
+    # Optional explicit install directory (e.g. -TargetDir C:\apps\FreeDF)
+    [string]$TargetDir = "",
+
+    # CPU architecture: x64 (default), x86, arm64, etc.
+    [string]$Arch = "x64"
+)
+
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent $PSScriptRoot
+
+Write-Host "== FreeDF PDFium installer ==" -ForegroundColor Cyan
+
+# 1) Download the archive once -------------------------------------------
+$url = "https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-windows-$Arch.tgz"
+$tmp = Join-Path $env:TEMP "pdfium-windows-$Arch.tgz"
+$extract = Join-Path $env:TEMP "pdfium-extract"
+
+Write-Host "Downloading: $url"
+curl.exe -L --fail --output $tmp $url
+if ($LASTEXITCODE -ne 0) {
+    throw "Download failed (curl exit code: $LASTEXITCODE). Check your internet connection."
+}
+
+# 2) Extract --------------------------------------------------------------
+if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Write-Host "Extracting archive..."
+tar -xzf $tmp -C $extract
+if ($LASTEXITCODE -ne 0) {
+    throw "Extract failed (tar exit code: $LASTEXITCODE). On older Windows run in PowerShell 5.1+ or update tar."
+}
+
+$dll = Get-ChildItem -Recurse -Path $extract -Filter "pdfium.dll" | Select-Object -First 1
+if (-not $dll) {
+    throw "pdfium.dll was not found inside the archive."
+}
+
+# 3) Copy to destinations -------------------------------------------------
+$destinations = @()
+if ($TargetDir) {
+    $destinations += $TargetDir
+} else {
+    $destinations += $root
+    foreach ($profile in @("release", "debug")) {
+        $d = Join-Path $root "target\$profile"
+        if (Test-Path $d) { $destinations += $d }
+    }
+}
+
+foreach ($dest in ($destinations | Select-Object -Unique)) {
+    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Force -Path $dest | Out-Null }
+    Copy-Item $dll.FullName -Destination (Join-Path $dest "pdfium.dll") -Force
+    Write-Host ("Installed pdfium.dll -> {0}" -f (Join-Path $dest "pdfium.dll")) -ForegroundColor Green
+}
+
+# 4) Cleanup ---------------------------------------------------------------
+Remove-Item -Recurse -Force $extract
+Remove-Item -Force $tmp
+
+Write-Host ""
+Write-Host "Done. Rebuild/restart FreeDF and press Ctrl+O to open a PDF." -ForegroundColor Cyan
+Write-Host "If you installed to a custom folder, keep pdfium.dll next to freedf.exe."

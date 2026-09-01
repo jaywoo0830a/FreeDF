@@ -43,12 +43,24 @@ native file dialogs, Windows Ink pressure).
 
 ### Windows 11: getting pdfium.dll
 
+Run the provided installer script from the project root (PowerShell 5.1+ / Windows 10+):
+
 ```powershell
-# Run from the project root (or copy next to target/release/freedf.exe)
+# Downloads the latest pdfium.dll and copies it next to the executable(s)
+.\scripts\install-pdfium.ps1
+```
+
+Or do it manually:
+
+```powershell
 Invoke-WebRequest https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-windows-x64.tgz -OutFile pdfium.tgz
 tar -xzf pdfium.tgz
 copy bin\pdfium.dll .
 ```
+
+> **Tip:** if pressing `Ctrl+O` and picking a PDF seems to "do nothing", it is almost
+> always because `pdfium.dll` is missing next to `freedf.exe` — run the installer
+> script above. The app shows the error in the bottom status bar.
 
 On Linux, place `libpdfium.so` next to the executable.
 

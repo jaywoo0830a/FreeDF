@@ -90,6 +90,11 @@ enum ModalKind {
         message: String,
         action: ConfirmAction,
     },
+    /// Non-blocking error popup.
+    Alert {
+        title: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +121,16 @@ impl ModalState {
                 title: title.into(),
                 message: message.into(),
                 action,
+            },
+            text: String::new(),
+        }
+    }
+
+    fn alert(title: &str, message: &str) -> Self {
+        Self {
+            kind: ModalKind::Alert {
+                title: title.into(),
+                message: message.into(),
             },
             text: String::new(),
         }
@@ -241,12 +256,18 @@ impl FreeDfApp {
 
     // ---------- Notes ----------
 
+    /// Shows an error both in the status bar and as a popup alert.
+    fn show_error(&mut self, msg: String) {
+        self.status = Some(msg.clone());
+        self.modal = Some(ModalState::alert("Error", &msg));
+    }
+
     fn create_note_action(&mut self, title: &str) {
         match self.notes.create_note(title) {
             Ok(meta) => {
                 let pdf_path = self.notes.pdf_path(meta.id);
                 if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
-                    self.status = Some(e);
+                    self.show_error(e);
                     return;
                 }
                 let _ = self.notes.set_page_count(meta.id, 1);
@@ -323,7 +344,7 @@ impl FreeDfApp {
         let pdf_path = self.notes.pdf_path(id);
         if !pdf_path.exists() {
             if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
-                self.status = Some(e);
+                self.show_error(e);
                 return;
             }
         }
@@ -364,7 +385,7 @@ impl FreeDfApp {
                 });
                 self.load_outline_if_needed();
             }
-            Err(e) => self.status = Some(e),
+            Err(e) => self.show_error(e),
         }
     }
 
@@ -425,7 +446,7 @@ impl FreeDfApp {
                 }
                 self.load_outline_if_needed();
             }
-            Err(e) => self.status = Some(e),
+            Err(e) => self.show_error(e),
         }
     }
 
@@ -1737,6 +1758,22 @@ impl FreeDfApp {
                             ok = ui.button("Delete").clicked();
                             cancel = ui.button("Cancel").clicked();
                         });
+                    });
+            }
+            ModalKind::Alert { title, message } => {
+                egui::Window::new(title)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(message);
+                        ui.add_space(6.0);
+                        if ui.button("OK").clicked() {
+                            ok = true;
+                        }
+                        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            ok = true;
+                        }
                     });
             }
         }
