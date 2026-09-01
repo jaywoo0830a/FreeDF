@@ -20,7 +20,7 @@ fn pdfium_names() -> &'static [&'static str] {
     }
 }
 
-/// PDFium 라이브러리를 찾을 후보 디렉터리 (실행 파일 폴더 우선, 그 다음 현재 폴더).
+/// PDFium 라이브러리를 찾을 후보 디렉터리 (실행 파일 폴더, 현재 폴더, 앱 데이터 폴더).
 fn library_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -31,19 +31,35 @@ fn library_search_dirs() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd);
     }
+    // 앱 데이터 폴더 (%LOCALAPPDATA%/FreeDF 또는 ~/.local/share/freedf)
+    let data = app_data_dir();
+    if !data.as_os_str().is_empty() {
+        dirs.push(data);
+    }
     dirs
+}
+
+/// Per-user app data directory (mirrors main.rs).
+fn app_data_dir() -> PathBuf {
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(local).join("FreeDF");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".local").join("share").join("freedf");
+    }
+    PathBuf::new()
 }
 
 /// PDFium 라이브러리를 로드합니다.
 ///
-/// 검색 순서: ① 시스템 등록 라이브러리 → ② 실행 파일 폴더/현재 폴더의 명시적 경로
-/// → ③ OS 기본 검색 경로. 실행 파일 옆에 `pdfium.dll`만 있어도 항상 찾습니다.
+/// 검색 순서: ① 시스템 등록 라이브러리 → ② 실행 파일/현재 폴더/앱 데이터 폴더의
+/// 명시적 경로 → ③ OS 기본 검색 경로. 실행 파일 옆에 `pdfium.dll`만 있어도 찾습니다.
 pub fn load_pdfium() -> Result<Pdfium, String> {
     // 1) 시스템에 등록된 라이브러리 시도
     if let Ok(bindings) = Pdfium::bind_to_system_library() {
         return Ok(Pdfium::new(bindings));
     }
-    // 2) 실행 파일 폴더/현재 폴더에서 명시적 경로로 시도
+    // 2) 실행 파일/현재 폴더/앱 데이터 폴더에서 명시적 경로로 시도
     for dir in library_search_dirs() {
         for name in pdfium_names() {
             let path = dir.join(name);
@@ -62,7 +78,7 @@ pub fn load_pdfium() -> Result<Pdfium, String> {
     }
     Err(format!(
         "PDFium library not found.\n\
-         Searched next to the executable and in the current folder.\n\
+         Searched next to the executable, the current folder and the app data folder.\n\
          Put `pdfium.dll` (Windows) or `libpdfium.so` (Linux) next to the program\n\
          executable and restart. On Windows, run: scripts\\install-pdfium.ps1"
     ))
@@ -256,13 +272,17 @@ impl DocumentView {
             .map_err(|e| format!("Save failed: {e}"))
     }
 
-    /// 빈 PDF 문서를 생성해 저장합니다 (기본 A4).
-    pub fn create_blank_pdf(path: &Path, size_pts: [f32; 2]) -> Result<(), String> {
-        let pdfium = Box::new(load_pdfium()?);
+    /// 이미 로드된 PDFium 인스턴스로 빈 PDF 문서를 생성해 저장합니다.
+    /// 노트 생성처럼 로딩을 다시 하지 않고 캐시된 인스턴스를 재사용할 때 씁니다.
+    pub fn create_blank_pdf_with(
+        pdfium: &Pdfium,
+        path: &Path,
+        size_pts: [f32; 2],
+    ) -> Result<(), String> {
         let document = pdfium
             .create_new_pdf()
             .map_err(|e| format!("Could not create new PDF: {e}"))?;
-        // open()과 동일한 수명 확장 패턴.
+        // open()과 동일한 수명 확장 패턴 (pdfium은 호출부에서 수명이 보장됨).
         let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
         let paper =
             PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));

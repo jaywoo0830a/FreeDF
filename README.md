@@ -44,12 +44,16 @@ native file dialogs, Windows Ink pressure).
   alternatives for icons, and roomy click targets
 - 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + two-finger scroll zoom,
   two-finger pan/flip, horizontal scroll, and momentum (inertial) scrolling
-- 🎞️ **Page transitions** — smooth slide animation when flipping pages
+- 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
+  level is preserved when moving between pages
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
 - 🖊️ **Custom cursors** — Pen = translucent gray circle, Highlighter = colored
-  rectangle, Eraser = animated red circle, drawn only on the canvas
+  rectangle, Eraser = animated red circle, Pan = small move crosshair; the OS
+  cursor is restored outside the page
+- 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
+  quitting asks whether to save first
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
   integration tests, all runnable without a GUI or PDFium
 

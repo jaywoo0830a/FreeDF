@@ -22,6 +22,7 @@ use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_
 use crate::export::draw_strokes_on_image;
 use crate::pdf::DocumentView;
 use egui_phosphor_icons::icons;
+use pdfium_render::prelude::Pdfium;
 
 /// Canvas margin around the page
 const CANVAS_MARGIN: f32 = 16.0;
@@ -187,6 +188,8 @@ pub struct FreeDfApp {
 
     // ---------- Document ----------
     document: Option<DocumentView>,
+    /// PDFium loaded once at startup; reused for creating blank note PDFs.
+    pdfium: Result<Box<Pdfium>, String>,
     file_path: Option<PathBuf>,
     current_page: usize,
     page_size_pts: [f32; 2],
@@ -248,6 +251,9 @@ pub struct FreeDfApp {
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
+    // ---------- Close confirmation ----------
+    asking_close: bool,
+    quitting: bool,
 }
 
 impl FreeDfApp {
@@ -267,6 +273,7 @@ impl FreeDfApp {
             notes,
             current_note: None,
             document: None,
+            pdfium: crate::pdf::load_pdfium().map(Box::new),
             file_path: None,
             current_page: 0,
             page_size_pts: A4_PTS,
@@ -308,6 +315,8 @@ impl FreeDfApp {
             file_name: String::new(),
             status: None,
             modal: None,
+            asking_close: false,
+            quitting: false,
         }
     }
 
@@ -319,11 +328,19 @@ impl FreeDfApp {
         self.modal = Some(ModalState::alert("Error", &msg));
     }
 
+    /// Creates a note's blank PDF using the PDFium instance cached at startup.
+    fn create_blank_pdf_for_note(&self, path: &Path) -> Result<(), String> {
+        match &self.pdfium {
+            Ok(p) => DocumentView::create_blank_pdf_with(p, path, A4_PTS),
+            Err(e) => Err(e.clone()),
+        }
+    }
+
     fn create_note_action(&mut self, title: &str) {
         match self.notes.create_note(title) {
             Ok(meta) => {
                 let pdf_path = self.notes.pdf_path(meta.id);
-                if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
+                if let Err(e) = self.create_blank_pdf_for_note(&pdf_path) {
                     self.show_error(e);
                     return;
                 }
@@ -404,7 +421,7 @@ impl FreeDfApp {
         };
         let pdf_path = self.notes.pdf_path(id);
         if !pdf_path.exists() {
-            if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
+            if let Err(e) = self.create_blank_pdf_for_note(&pdf_path) {
                 self.show_error(e);
                 return;
             }
@@ -556,7 +573,10 @@ impl FreeDfApp {
             self.page_size_pts = doc.page_size_pts(self.current_page);
         }
         self.render_dirty = true;
-        self.pending_fit = Some(FitMode::Width);
+        // Keep the current zoom across page changes; just re-align the new page
+        // (instead of resetting the zoom to fit-width).
+        self.view
+            .align_page(self.page_size_pts, self.last_canvas, TOP_MARGIN, self.page_align);
         self.search_update();
         if let Some(doc) = &self.document {
             self.logger.log(AppEvent::PageChanged {
@@ -1717,18 +1737,18 @@ impl FreeDfApp {
             self.paint_active(&painter, active, draw_origin);
         }
 
-        // Custom tool cursor — drawn last so it stays on top of the page
+        // Tool cursor — custom sprite over the page, OS cursor restored
+        // everywhere else (so it never disappears outside the canvas).
         if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
             if draw_rect.contains(pos) {
-                match self.tool {
-                    ToolType::Pan => ctx.set_cursor_icon(egui::CursorIcon::Grab),
-                    _ => {
-                        ctx.set_cursor_icon(egui::CursorIcon::None);
-                        let time = ctx.input(|i| i.time) as f32;
-                        self.paint_custom_cursor(&painter, pos, time);
-                    }
-                }
+                ctx.set_cursor_icon(egui::CursorIcon::None);
+                let time = ctx.input(|i| i.time) as f32;
+                self.paint_custom_cursor(&painter, pos, time);
+            } else {
+                ctx.set_cursor_icon(egui::CursorIcon::Default);
             }
+        } else {
+            ctx.set_cursor_icon(egui::CursorIcon::Default);
         }
 
         // Zoom hint
@@ -2022,7 +2042,20 @@ impl FreeDfApp {
                 );
                 painter.circle_filled(pos, 2.5, Color32::from_rgb(255, 60, 60));
             }
-            ToolType::Pan => {}
+            ToolType::Pan => {
+                // Small, compact "move" crosshair (much smaller than the OS grab hand).
+                let c = Color32::from_gray(180);
+                let s = 6.0;
+                painter.line_segment(
+                    [pos - Vec2::new(s, 0.0), pos + Vec2::new(s, 0.0)],
+                    Stroke::new(1.5, c),
+                );
+                painter.line_segment(
+                    [pos - Vec2::new(0.0, s), pos + Vec2::new(0.0, s)],
+                    Stroke::new(1.5, c),
+                );
+                painter.circle_filled(pos, 2.0, c);
+            }
         }
     }
 
@@ -2205,6 +2238,48 @@ impl eframe::App for FreeDfApp {
         });
 
         self.fallback_dialog(&ctx);
+
+        // Close confirmation: ask whether to save before quitting.
+        let close_requested = ctx.input(|i| i.viewport().close_requested());
+        if close_requested && !self.quitting {
+            if !self.asking_close {
+                self.asking_close = true;
+            }
+            // Cancel the native close and show our own confirmation dialog.
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+        if self.asking_close {
+            let mut decision: Option<bool> = None;
+            egui::Window::new("Save before quitting?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(&ctx, |ui| {
+                    ui.label("Save your current work before quitting?");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Save & Quit").clicked() {
+                            decision = Some(true);
+                        }
+                        if ui.button("Quit").clicked() {
+                            decision = Some(false);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.asking_close = false;
+                        }
+                    });
+                });
+            if let Some(save) = decision {
+                if save {
+                    // Re-save everything before quitting.
+                    self.autosave();
+                    let _ = self.notes.save();
+                    self.save_pdf_if_note();
+                }
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
 
         // High-refresh support: keep repainting while a document is open so
         // pen input and ink rendering stay smooth (120Hz+ displays).
