@@ -108,17 +108,45 @@ fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui:
 }
 
 /// Renders a horizontally-centered row of controls in the toolbar.
-/// The row shrinks to its content and is centered; if the controls are wider
-/// than the available space, a horizontal scrollbar lets the user reach them.
-fn centered_toolbar_row<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+///
+/// egui의 `ui.horizontal`과 `ScrollArea`는 중앙 정렬 레이아웃 안에서도
+/// **좌측**에 붙습니다(ScrollArea는 스스로 좌상단에 위치해 부모 정렬을 무시).
+/// 따라서 `sizing_pass`로 내용 폭을 먼저 측정한 뒤, 남는 폭을 좌우로 나눠
+/// 중앙에 배치합니다. 내용이 창보다 넓으면 좌측 기준 가로 스크롤로 폴백합니다.
+fn centered_toolbar_row<R>(ui: &mut egui::Ui, id: &str, add: impl FnMut(&mut egui::Ui) -> R) -> R {
+    let mut add = add;
+
+    // 1) sizing pass: 위젯을 등록하지 않고(부모 커서도 이동시키지 않고) 내용 폭 측정.
+    let content_w = {
+        let mut measure = ui.new_child(
+            egui::UiBuilder::new()
+                .layout(egui::Layout::left_to_right(egui::Align::Center))
+                .sizing_pass(),
+        );
+        add(&mut measure);
+        measure.min_rect().width()
+    };
+
+    let avail = ui.available_width();
+    if content_w < avail {
+        // 남는 폭을 좌우로 나눠 중앙 정렬.
+        let left = ((avail - content_w) * 0.5).max(0.0);
+        ui.horizontal(|ui| {
+            ui.add_space(left);
+            add(ui)
+        })
+        .inner
+    } else {
+        // 창보다 넓으면 좌측 기준 가로 스크롤 스트립.
         egui::ScrollArea::horizontal()
             .id_salt(id)
-            .auto_shrink([true, true])
-            .show(ui, |ui| add(ui))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| add(ui))
+            })
             .inner
-    })
-    .inner
+            .inner
+    }
 }
 
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
