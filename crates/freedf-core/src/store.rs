@@ -183,6 +183,34 @@ impl AnnotationStore {
         self.remove_strokes(page_index, &ids)
     }
 
+    /// 페이지의 모든 스트로크 점을 시계/반시계 90° 회전합니다.
+    /// (페이지 표시 방향이 바뀌므로 주석도 같은 회전을 적용해 화면 위치를 유지)
+    ///
+    /// 변환: 페이지 좌표계(원점 좌상단, y 아래로 증가)에서
+    /// - 시계방향: `(x, y) → (height - y, x)`
+    /// - 반시계: `(x, y) → (y, width - x)`
+    pub fn rotate_strokes_on(
+        &mut self,
+        page_index: PageIndex,
+        width: f32,
+        height: f32,
+        clockwise: bool,
+    ) {
+        if let Some(page) = self.pages.get_mut(&page_index) {
+            for stroke in &mut page.strokes {
+                for p in &mut stroke.points {
+                    let (nx, ny) = if clockwise {
+                        (height - p.y, p.x)
+                    } else {
+                        (p.y, width - p.x)
+                    };
+                    p.x = nx;
+                    p.y = ny;
+                }
+            }
+        }
+    }
+
     /// `Edit`(history)를 현재 저장소에 적용합니다.
     pub fn apply_edit(&mut self, edit: &Edit) {
         match edit {
@@ -308,6 +336,64 @@ mod tests {
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].id, id);
         assert_eq!(store.stroke_count_on(0), 0);
+    }
+
+    #[test]
+    fn rotate_strokes_maps_to_new_display_space() {
+        let mut store = AnnotationStore::new();
+        // 100×50 페이지에 네 모서리 점 스트로크.
+        let id = store.add_stroke(
+            0,
+            ToolType::Pen,
+            [0, 0, 0, 255],
+            2.0,
+            vec![
+                StrokePoint::new(0.0, 0.0, 0.5),
+                StrokePoint::new(100.0, 0.0, 0.5),
+                StrokePoint::new(100.0, 50.0, 0.5),
+                StrokePoint::new(0.0, 50.0, 0.5),
+            ],
+        );
+        // 시계 90°: (x, y) → (H - y, x) — 새 표시 공간 50×100.
+        store.rotate_strokes_on(0, 100.0, 50.0, true);
+        let pts: Vec<[f32; 2]> = store
+            .strokes_on(0)
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| p.to_array())
+            .collect();
+        assert_eq!(
+            pts,
+            vec![
+                [50.0, 0.0],
+                [50.0, 100.0],
+                [0.0, 100.0],
+                [0.0, 0.0],
+            ]
+        );
+        // 반시계 90° 복원: 새 공간 50×100 → (x, y) → (y, W - x).
+        store.rotate_strokes_on(0, 50.0, 100.0, false);
+        let pts: Vec<[f32; 2]> = store
+            .strokes_on(0)
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .points
+            .iter()
+            .map(|p| p.to_array())
+            .collect();
+        assert_eq!(
+            pts,
+            vec![
+                [0.0, 0.0],
+                [100.0, 0.0],
+                [100.0, 50.0],
+                [0.0, 50.0],
+            ]
+        );
     }
 
     #[test]

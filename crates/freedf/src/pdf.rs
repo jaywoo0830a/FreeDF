@@ -139,16 +139,10 @@ impl DocumentView {
         // document가 해제된 pdfium을 참조하지 않습니다.
         let document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
 
-        let pages = document.pages();
-        let count = pages.len() as usize;
+        let count = document.pages().len() as usize;
         let mut sizes = Vec::with_capacity(count);
         for i in 0..count {
-            let index = i as i32; // PdfPageIndex
-            let size = pages
-                .page_size(index)
-                .map(|r| [r.width().value, r.height().value])
-                .unwrap_or([595.0, 842.0]); // 기본 A4
-            sizes.push(size);
+            sizes.push(display_size_of(&document, i).unwrap_or([595.0, 842.0]));
         }
         let file_name = path
             .file_name()
@@ -274,18 +268,6 @@ impl DocumentView {
         Ok(runs)
     }
 
-    /// 문서 끝에 빈 페이지를 추가합니다.
-    pub fn add_page(&mut self, size_pts: [f32; 2]) -> Result<(), String> {
-        let paper =
-            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
-        self.document
-            .pages_mut()
-            .create_page_at_end(paper)
-            .map_err(|e| format!("Could not add page: {e}"))?;
-        self.refresh_sizes();
-        Ok(())
-    }
-
     /// 지정한 인덱스에 빈 페이지를 삽입합니다.
     pub fn insert_page_at(&mut self, index: usize, size_pts: [f32; 2]) -> Result<(), String> {
         let paper =
@@ -346,19 +328,68 @@ impl DocumentView {
             .map_err(|e| format!("Save failed: {e}"))
     }
 
+    /// 페이지를 시계(clockwise=true) 또는 반시계 방향으로 90° 회전합니다.
+    /// 회전은 PDF에 저장되고, 표시 크기(너비/높이)도 함께 갱신됩니다.
+    pub fn rotate_page(&mut self, index: usize, clockwise: bool) -> Result<(), String> {
+        if index >= self.page_count() {
+            return Err("Page index out of range.".to_string());
+        }
+        {
+            let mut page = self
+                .document
+                .pages_mut()
+                .get(index as i32)
+                .map_err(|e| format!("Could not read page: {e}"))?;
+            let current = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+            page.set_rotation(rotate_rotation(current, clockwise));
+        }
+        self.refresh_sizes();
+        Ok(())
+    }
+
+    /// 문서의 모든 페이지를 시계/반시계 방향으로 90° 회전합니다.
+    pub fn rotate_all_pages(&mut self, clockwise: bool) -> Result<(), String> {
+        let count = self.page_count();
+        for i in 0..count {
+            self.rotate_page(i, clockwise)?;
+        }
+        Ok(())
+    }
+
     /// 페이지 크기 캐시를 문서 상태에 맞게 다시 계산합니다.
     fn refresh_sizes(&mut self) {
         let count = self.document.pages().len() as usize;
         let mut sizes = Vec::with_capacity(count);
         for i in 0..count {
-            let size = self
-                .document
-                .pages()
-                .page_size(i as i32)
-                .map(|r| [r.width().value, r.height().value])
-                .unwrap_or([595.0, 842.0]); // 기본 A4
-            sizes.push(size);
+            sizes.push(display_size_of(&self.document, i).unwrap_or([595.0, 842.0]));
         }
         self.page_sizes_pts = sizes;
+    }
+}
+
+/// 페이지의 표시(회전 반영) 크기(포인트). 회전 90/270이면 너비/높이를 맞바꿉니다.
+fn display_size_of(document: &PdfDocument<'static>, index: usize) -> Option<[f32; 2]> {
+    let page = document.pages().get(index as i32).ok()?;
+    let w = page.width().value;
+    let h = page.height().value;
+    let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+    Some(match rot {
+        PdfPageRenderRotation::None | PdfPageRenderRotation::Degrees180 => [w, h],
+        PdfPageRenderRotation::Degrees90 | PdfPageRenderRotation::Degrees270 => [h, w],
+    })
+}
+
+/// 현재 회전 상태에서 시계/반시계 90° 회전한 다음 상태.
+fn rotate_rotation(current: PdfPageRenderRotation, clockwise: bool) -> PdfPageRenderRotation {
+    use PdfPageRenderRotation::*;
+    match (current, clockwise) {
+        (None, true) => Degrees90,
+        (Degrees90, true) => Degrees180,
+        (Degrees180, true) => Degrees270,
+        (Degrees270, true) => None,
+        (None, false) => Degrees270,
+        (Degrees90, false) => None,
+        (Degrees180, false) => Degrees90,
+        (Degrees270, false) => Degrees180,
     }
 }

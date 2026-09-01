@@ -25,9 +25,12 @@ native file dialogs, Windows Ink pressure).
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
   stores its own PDF, annotations and metadata under the app data folder
-- ➕➖ **Page CRUD** — insert a blank page **after the current page** or **at the
-  end**, or delete the current page; annotations stay aligned and page changes
+- ➕➖ **Page CRUD** — insert a blank page **from the current page** (copies its
+  size & paper), **at the front** (begin/end), or **before / after the current
+  page**; delete the current page; annotations stay aligned and page changes
   are persisted back into the note's PDF
+- 🔄 **Rotate pages** — rotate the **current page** or **all pages** 90° CW / CCW;
+  existing ink is rotated along with the page so nothing drifts
 - 🧭 **Outline panel** — browse the PDF bookmark tree and jump to a page on click
 - 🔍 **In-page word search** — case-insensitive; press **Ctrl+F** to toggle the
   search bar (with focus), yellow highlights for matches, an orange border for
@@ -86,8 +89,8 @@ native file dialogs, Windows Ink pressure).
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
 - 🖊️ **Custom cursors** — Pen = small 4×4 dot, Highlighter = colored rectangle,
-  Eraser = white translucent circle, Pan = small move crosshair; the OS cursor is
-  restored outside the page
+  Eraser = white translucent circle with a drop shadow, Pan = small move
+  crosshair; the OS cursor is restored outside the page
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end

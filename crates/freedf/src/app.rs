@@ -138,6 +138,21 @@ enum ConfirmAction {
     DeleteNote,
 }
 
+/// 새 빈 페이지를 삽입하는 위치/방식.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum InsertTarget {
+    /// 현재 페이지의 크기/용지를 그대로 써서 바로 다음에 삽입
+    FromCurrent,
+    /// 문서 맨 앞(0번)에 삽입
+    FrontBegin,
+    /// 문서 맨 끝에 삽입
+    FrontEnd,
+    /// 현재 페이지 앞에 삽입
+    BeforeCurrent,
+    /// 현재 페이지 뒤에 삽입
+    AfterCurrent,
+}
+
 #[derive(Debug, Clone)]
 enum ModalKind {
     AskText {
@@ -1264,60 +1279,98 @@ impl FreeDfApp {
         });
     }
 
-    fn add_page_action(&mut self) {
+    /// 새 빈 페이지를 삽입합니다. `target`에 따라 위치/크기/용지가 달라집니다.
+    fn insert_page_action(&mut self, target: InsertTarget) {
         let Some(doc) = &mut self.document else {
             return;
         };
-        let size = self.paper_size.size_pts();
-        if let Err(e) = doc.add_page(size) {
+        let total = doc.page_count();
+        if total == 0 {
+            return;
+        }
+        let default_paper = PagePaper {
+            style: self.paper_style,
+            color: self.paper_color,
+        };
+        let default_size = self.paper_size.size_pts();
+        let (idx, size, paper) = match target {
+            // 현재 페이지의 크기/용지를 그대로 써서 바로 다음에 삽입.
+            InsertTarget::FromCurrent => {
+                let size = doc.page_size_pts(self.current_page);
+                let paper = self
+                    .store
+                    .paper_on_or(self.current_page, default_paper);
+                (self.current_page + 1, size, paper)
+            }
+            InsertTarget::FrontBegin => (0, default_size, default_paper),
+            InsertTarget::FrontEnd => (total, default_size, default_paper),
+            InsertTarget::BeforeCurrent => (self.current_page, default_size, default_paper),
+            InsertTarget::AfterCurrent => (self.current_page + 1, default_size, default_paper),
+        };
+        if let Err(e) = doc.insert_page_at(idx, size) {
             self.status = Some(e);
             return;
         }
+        self.store.insert_page(idx);
+        self.store.set_paper(idx, paper);
+        self.current_page = idx;
         let total = doc.page_count();
-        let new_index = total - 1;
-        self.store.insert_page(new_index);
-        // 새 페이지에는 현재 용지 설정(스타일/색)을 적용합니다.
-        self.store.set_paper(
-            new_index,
-            PagePaper {
-                style: self.paper_style,
-                color: self.paper_color,
-            },
-        );
-        self.current_page = new_index;
-        self.logger.log(AppEvent::PageAdded {
-            page: new_index,
-            total,
-        });
+        self.logger.log(AppEvent::PageAdded { page: idx, total });
         self.on_page_changed();
         self.autosave();
         self.save_pdf_if_note();
         self.sync_note_meta();
     }
 
-    /// 현재 페이지 바로 다음에 빈 페이지를 삽입합니다.
-    fn insert_page_after_action(&mut self) {
+    /// 현재 페이지를 시계/반시계 90° 회전합니다 (주석도 함께 회전).
+    fn rotate_page_action(&mut self, clockwise: bool) {
         let Some(doc) = &mut self.document else {
             return;
         };
-        let idx = self.current_page + 1;
-        let size = self.paper_size.size_pts();
-        if let Err(e) = doc.insert_page_at(idx, size) {
+        let idx = self.current_page;
+        if idx >= doc.page_count() {
+            return;
+        }
+        let [w, h] = doc.page_size_pts(idx); // 회전 전 표시 크기
+        if let Err(e) = doc.rotate_page(idx, clockwise) {
             self.status = Some(e);
             return;
         }
-        self.store.insert_page(idx);
-        // 새 페이지에는 현재 용지 설정(스타일/색)을 적용합니다.
-        self.store.set_paper(
-            idx,
-            PagePaper {
-                style: self.paper_style,
-                color: self.paper_color,
-            },
-        );
-        self.current_page = idx;
+        self.store.rotate_strokes_on(idx, w, h, clockwise);
+        self.page_size_pts = doc.page_size_pts(idx);
         let total = doc.page_count();
-        self.logger.log(AppEvent::PageAdded { page: idx, total });
+        self.logger
+            .log(AppEvent::PageRotated { page: idx, total, clockwise });
+        self.on_page_changed();
+        self.autosave();
+        self.save_pdf_if_note();
+        self.sync_note_meta();
+    }
+
+    /// 문서의 모든 페이지를 시계/반시계 90° 회전합니다 (주석도 함께).
+    fn rotate_all_pages_action(&mut self, clockwise: bool) {
+        let Some(doc) = &mut self.document else {
+            return;
+        };
+        let count = doc.page_count();
+        if count == 0 {
+            return;
+        }
+        // 각 페이지의 회전 전 표시 크기 스냅샷.
+        let sizes: Vec<[f32; 2]> = (0..count).map(|i| doc.page_size_pts(i)).collect();
+        if let Err(e) = doc.rotate_all_pages(clockwise) {
+            self.status = Some(e);
+            return;
+        }
+        for i in 0..count {
+            self.store.rotate_strokes_on(i, sizes[i][0], sizes[i][1], clockwise);
+        }
+        self.page_size_pts = doc.page_size_pts(self.current_page);
+        self.logger.log(AppEvent::PageRotated {
+            page: self.current_page,
+            total: count,
+            clockwise,
+        });
         self.on_page_changed();
         self.autosave();
         self.save_pdf_if_note();
@@ -2071,27 +2124,61 @@ impl FreeDfApp {
                 ui.horizontal(|ui| {
                 ui.label(icon_text(ui, "Page", icons::FILES));
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-                ui.menu_button(icon_text(ui, "Add Page", icons::PLUS_SQUARE), |ui| {
-                    if ui
-                        .add_enabled(
-                            page_count > 0,
-                            egui::Button::new("Insert after current page"),
-                        )
-                        .clicked()
-                    {
-                        ui.close();
-                        self.insert_page_after_action();
-                    }
-                    if ui
-                        .add_enabled(page_count > 0, egui::Button::new("Insert at end"))
-                        .clicked()
-                    {
-                        ui.close();
-                        self.add_page_action();
+                ui.menu_button(icon_text(ui, "Insert Page", icons::PLUS_SQUARE), |ui| {
+                    let insert = [
+                        (InsertTarget::FromCurrent, "From current page"),
+                        (InsertTarget::FrontBegin, "Front begin"),
+                        (InsertTarget::FrontEnd, "Front end"),
+                        (InsertTarget::BeforeCurrent, "Before current page"),
+                        (InsertTarget::AfterCurrent, "After current page"),
+                    ];
+                    for (target, label) in insert {
+                        if ui
+                            .add_enabled(page_count > 0, egui::Button::new(label))
+                            .clicked()
+                        {
+                            ui.close();
+                            self.insert_page_action(target);
+                        }
                     }
                 })
                 .response
                 .on_hover_text("Insert a blank page");
+                ui.menu_button(icon_text(ui, "Rotate", icons::REPEAT), |ui| {
+                    if ui
+                        .add_enabled(page_count > 0, egui::Button::new("Rotate current page CW"))
+                        .clicked()
+                    {
+                        ui.close();
+                        self.rotate_page_action(true);
+                    }
+                    if ui
+                        .add_enabled(
+                            page_count > 0,
+                            egui::Button::new("Rotate current page CCW"),
+                        )
+                        .clicked()
+                    {
+                        ui.close();
+                        self.rotate_page_action(false);
+                    }
+                    if ui
+                        .add_enabled(page_count > 0, egui::Button::new("Rotate all pages CW"))
+                        .clicked()
+                    {
+                        ui.close();
+                        self.rotate_all_pages_action(true);
+                    }
+                    if ui
+                        .add_enabled(page_count > 0, egui::Button::new("Rotate all pages CCW"))
+                        .clicked()
+                    {
+                        ui.close();
+                        self.rotate_all_pages_action(false);
+                    }
+                })
+                .response
+                .on_hover_text("Rotate pages (CW = clockwise)");
                 if ui
                     .add_enabled(
                         page_count > 1,
@@ -3188,10 +3275,17 @@ impl FreeDfApp {
                 );
             }
             ToolType::Eraser => {
-                // Plain white semi-transparent circle previewing the erase radius.
+                // White translucent circle with a soft dark drop shadow so it
+                // reads clearly even on white paper.
                 let r = self.eraser_radius.max(6.0);
-                painter.circle_filled(pos, r, Color32::from_white_alpha(70));
-                painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(200)));
+                painter.circle_filled(
+                    pos + Vec2::new(2.5, 2.5),
+                    r,
+                    Color32::from_black_alpha(40),
+                );
+                painter.circle_filled(pos, r, Color32::from_white_alpha(85));
+                painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(215)));
+                painter.circle_filled(pos, 2.0, Color32::from_black_alpha(110));
             }
             ToolType::Pan => {
                 // Small, compact "move" crosshair (much smaller than the OS grab hand).

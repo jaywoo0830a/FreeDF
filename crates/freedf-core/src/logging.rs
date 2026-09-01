@@ -17,6 +17,7 @@ pub enum AppEvent {
     PageChanged { page: usize, total: usize },
     PageAdded { page: usize, total: usize },
     PageDeleted { page: usize, total: usize },
+    PageRotated { page: usize, total: usize, clockwise: bool },
     StrokeAdded { page: usize, points: usize, tool: String, width: f32 },
     StrokeErased { page: usize, strokes: usize },
     UndoRedo { kind: String },
