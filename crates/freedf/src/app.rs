@@ -28,6 +28,10 @@ const CANVAS_MARGIN: f32 = 16.0;
 const TOP_MARGIN: f32 = 16.0;
 /// Default blank page size (A4, points)
 const A4_PTS: [f32; 2] = [595.0, 842.0];
+/// Page transition animation duration (seconds)
+const PAGE_ANIM_SECS: f32 = 0.28;
+/// Scroll momentum decay (1/second)
+const SCROLL_DECAY: f32 = 6.0;
 
 /// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,6 +40,14 @@ enum FitMode {
     Width,
     /// Fit whole page
     Page,
+}
+
+/// In-progress page transition (slide).
+struct PageAnim {
+    /// 0.0 (start) .. 1.0 (done)
+    progress: f32,
+    /// +1.0 = next page (slides in from the right), -1.0 = previous (from the left)
+    direction: f32,
 }
 
 /// A stroke currently being drawn
@@ -174,6 +186,14 @@ pub struct FreeDfApp {
     active_stroke: Option<ActiveStroke>,
     pan_last: Option<Pos2>,
     middle_pan_last: Option<Pos2>,
+    /// Trackpad/wheel momentum (points/sec) for inertial panning
+    scroll_vel: Vec2,
+    /// Page change slide animation
+    page_anim: Option<PageAnim>,
+    /// Texture of the outgoing page during a transition
+    prev_texture: Option<egui::TextureHandle>,
+    /// Page index before the latest page change (drives the animation direction)
+    transition_last_page: usize,
 
     // ---------- Search ----------
     search_query: String,
@@ -239,6 +259,10 @@ impl FreeDfApp {
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
+            scroll_vel: Vec2::ZERO,
+            page_anim: None,
+            prev_texture: None,
+            transition_last_page: 0,
             search_query: String::new(),
             search_runs: Vec::new(),
             search_matches: Vec::new(),
@@ -334,6 +358,10 @@ impl FreeDfApp {
         self.outline_loaded = false;
         self.file_name = String::new();
         self.file_path = None;
+        self.scroll_vel = Vec2::ZERO;
+        self.page_anim = None;
+        self.prev_texture = None;
+        self.transition_last_page = 0;
         self.status = None;
     }
 
@@ -376,6 +404,10 @@ impl FreeDfApp {
                 self.outline = Vec::new();
                 self.search_matches = Vec::new();
                 self.search_current = None;
+                self.scroll_vel = Vec2::ZERO;
+                self.page_anim = None;
+                self.prev_texture = None;
+                self.transition_last_page = 0;
                 self.status = None;
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 self.logger.log(AppEvent::NoteOpened {
@@ -429,6 +461,10 @@ impl FreeDfApp {
                 self.outline = Vec::new();
                 self.search_matches = Vec::new();
                 self.search_current = None;
+                self.scroll_vel = Vec2::ZERO;
+                self.page_anim = None;
+                self.prev_texture = None;
+                self.transition_last_page = 0;
                 self.status = None;
 
                 // Auto-load a sidecar annotation file if present
@@ -478,9 +514,11 @@ impl FreeDfApp {
     }
 
     fn on_page_changed(&mut self) {
+        let from = self.transition_last_page;
         self.active_stroke = None;
         self.pan_last = None;
         self.middle_pan_last = None;
+        self.scroll_vel = Vec2::ZERO;
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
         }
@@ -493,6 +531,26 @@ impl FreeDfApp {
                 total: doc.page_count(),
             });
         }
+        self.start_page_anim(from, self.current_page);
+        self.transition_last_page = self.current_page;
+    }
+
+    /// Captures the outgoing page texture and starts a slide transition.
+    fn start_page_anim(&mut self, from: usize, to: usize) {
+        if from == to {
+            return;
+        }
+        if self.texture.is_none() {
+            return;
+        }
+        // The current texture still holds the old page; keep it for the outgoing
+        // frame and force a fresh render for the new page.
+        self.prev_texture = self.texture.take();
+        self.render_dirty = true;
+        self.page_anim = Some(PageAnim {
+            progress: 0.0,
+            direction: if to > from { 1.0 } else { -1.0 },
+        });
     }
 
     fn add_page_action(&mut self) {
@@ -1366,8 +1424,12 @@ impl FreeDfApp {
         let canvas_size = [canvas.width(), canvas.height()];
         self.last_canvas = canvas_size;
 
-        // Background
-        painter.rect_filled(canvas, egui::CornerRadius::ZERO, ui.visuals().extreme_bg_color);
+        // Background (neutral gray so the page reads clearly)
+        let bg = match ui.ctx().theme() {
+            egui::Theme::Dark => Color32::from_rgb(46, 46, 46),
+            egui::Theme::Light => Color32::from_rgb(168, 168, 168),
+        };
+        painter.rect_filled(canvas, egui::CornerRadius::ZERO, bg);
 
         if self.document.is_none() {
             ui.painter_at(canvas).text(
@@ -1386,6 +1448,23 @@ impl FreeDfApp {
 
         // ---------- Input ----------
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);
+        // Keep the page within the canvas (no infinite panning)
+        self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+
+        // Advance the page transition animation
+        let mut animating = false;
+        if let Some(anim) = &mut self.page_anim {
+            let dt = ctx.input(|i| i.stable_dt).max(1e-4);
+            anim.progress += dt / PAGE_ANIM_SECS;
+            animating = anim.progress < 1.0;
+            if !animating {
+                self.page_anim = None;
+                self.prev_texture = None;
+            }
+        }
+        if animating {
+            ctx.request_repaint();
+        }
 
         // ---------- Draw ----------
         let page_view = self.view.page_size_to_view(self.page_size_pts[0], self.page_size_pts[1]);
@@ -1394,53 +1473,94 @@ impl FreeDfApp {
             Vec2::new(page_view[0], page_view[1]),
         );
 
-        // Tool cursor while hovering the page area
-        if self.document.is_some() {
-            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                if page_rect.contains(pos) {
-                    let icon = match self.tool {
-                        ToolType::Pen | ToolType::Highlighter => egui::CursorIcon::Crosshair,
-                        ToolType::Eraser => egui::CursorIcon::NotAllowed,
-                        ToolType::Pan => egui::CursorIcon::Grab,
-                    };
-                    ctx.set_cursor_icon(icon);
-                }
+        // During a transition, draw the outgoing + incoming pages sliding.
+        let mut anim_dx = 0.0_f32;
+        if let (Some(anim), Some(prev)) = (&self.page_anim, &self.prev_texture) {
+            let w = page_rect.width();
+            let dir = anim.direction;
+            let p = anim.progress;
+            let old_off = -p * dir * w;
+            let new_off = (1.0 - p) * dir * w;
+            anim_dx = new_off;
+
+            let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+            // Outgoing page (old texture)
+            painter.rect_filled(
+                page_rect.translate(Vec2::new(old_off, 0.0)).expand(6.0),
+                egui::CornerRadius::same(4),
+                Color32::from_black_alpha(70),
+            );
+            painter.image(
+                prev.id(),
+                page_rect.translate(Vec2::new(old_off, 0.0)),
+                uv,
+                Color32::WHITE,
+            );
+            // Incoming page (new texture)
+            painter.rect_filled(
+                page_rect.translate(Vec2::new(new_off, 0.0)).expand(6.0),
+                egui::CornerRadius::same(4),
+                Color32::from_black_alpha(70),
+            );
+            if let Some(tex) = &self.texture {
+                painter.image(
+                    tex.id(),
+                    page_rect.translate(Vec2::new(new_off, 0.0)),
+                    uv,
+                    Color32::WHITE,
+                );
             }
         }
 
-        // Page shadow
-        painter.rect_filled(
-            page_rect.expand(6.0),
-            egui::CornerRadius::same(4),
-            Color32::from_black_alpha(70),
-        );
-        // Page image
-        if let Some(tex) = &self.texture {
-            painter.image(
-                tex.id(),
-                page_rect,
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                Color32::WHITE,
+        // Current-page rect/origin (shifted during a transition so border & ink follow)
+        let draw_rect = page_rect.translate(Vec2::new(anim_dx, 0.0));
+        let draw_origin = origin + Vec2::new(anim_dx, 0.0);
+
+        // Tool cursor while hovering the page area
+        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            if draw_rect.contains(pos) {
+                let icon = match self.tool {
+                    ToolType::Pen | ToolType::Highlighter => egui::CursorIcon::Crosshair,
+                    ToolType::Eraser => egui::CursorIcon::NotAllowed,
+                    ToolType::Pan => egui::CursorIcon::Grab,
+                };
+                ctx.set_cursor_icon(icon);
+            }
+        }
+
+        // Page shadow, image and border (single page when not mid-transition)
+        if self.page_anim.is_none() {
+            painter.rect_filled(
+                draw_rect.expand(6.0),
+                egui::CornerRadius::same(4),
+                Color32::from_black_alpha(70),
+            );
+            if let Some(tex) = &self.texture {
+                painter.image(
+                    tex.id(),
+                    draw_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            painter.rect_stroke(
+                draw_rect,
+                egui::CornerRadius::same(2),
+                Stroke::new(1.0, Color32::from_gray(120)),
+                egui::StrokeKind::Inside,
             );
         }
-        // Page border
-        painter.rect_stroke(
-            page_rect,
-            egui::CornerRadius::same(2),
-            Stroke::new(1.0, Color32::from_gray(120)),
-            egui::StrokeKind::Inside,
-        );
 
         // Search highlights (under ink so annotations stay readable)
-        self.paint_search_highlights(&painter, origin);
+        self.paint_search_highlights(&painter, draw_origin);
 
         // Annotation strokes
         let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
         for stroke in &strokes {
-            self.paint_stroke(&painter, stroke, origin);
+            self.paint_stroke(&painter, stroke, draw_origin);
         }
         if let Some(active) = &self.active_stroke {
-            self.paint_active(&painter, active, origin);
+            self.paint_active(&painter, active, draw_origin);
         }
 
         // Eraser cursor
@@ -1510,6 +1630,9 @@ impl FreeDfApp {
         let scroll_x = scroll.x;
         let scroll_y = scroll.y;
         let ctrl_down = ctx.input(|i| i.modifiers.ctrl);
+        let dt = ctx.input(|i| i.stable_dt).max(1e-4);
+        let pointer_any_down = ctx.input(|i| i.pointer.any_down());
+
         if (zoom_delta - 1.0).abs() > 1e-4 && response.hovered() {
             if let Some(abs) = pointer_abs {
                 let anchor = [abs.x - origin.x, abs.y - origin.y];
@@ -1517,6 +1640,8 @@ impl FreeDfApp {
                 self.render_dirty = true;
             }
         } else if (scroll_x.abs() + scroll_y.abs()) > 0.0 && response.hovered() && !ctrl_down {
+            // Trackpad/wheel scroll: remember velocity for momentum, then pan/flip.
+            self.scroll_vel = Vec2::new(scroll_x, scroll_y) / dt.max(1e-3);
             let page_h_px = self.page_size_pts[1] * self.view.zoom;
             if page_h_px <= canvas_size[1] && scroll_x.abs() <= scroll_y.abs() {
                 // Whole page height visible & mostly-vertical gesture -> page flip.
@@ -1530,6 +1655,21 @@ impl FreeDfApp {
             } else {
                 // Otherwise pan both axes; content follows the gesture.
                 self.view.pan_by(scroll_x, scroll_y);
+            }
+            ctx.request_repaint();
+        } else if !pointer_any_down {
+            // Momentum: keep gliding after the gesture stops, then decay.
+            let damping = (1.0 - SCROLL_DECAY * dt).max(0.0);
+            self.scroll_vel *= damping;
+            let page_h_px = self.page_size_pts[1] * self.view.zoom;
+            let page_w_px = self.page_size_pts[0] * self.view.zoom;
+            if self.scroll_vel.length_sq() > 1e-6 {
+                let dx = if page_w_px <= canvas_size[0] { 0.0 } else { self.scroll_vel.x * dt };
+                let dy = if page_h_px <= canvas_size[1] { 0.0 } else { self.scroll_vel.y * dt };
+                self.view.pan_by(dx, dy);
+                ctx.request_repaint();
+            } else {
+                self.scroll_vel = Vec2::ZERO;
             }
         }
 

@@ -109,6 +109,26 @@ impl ViewTransform {
         self.pan_x = ((canvas[0] - view_size[0]) / 2.0).max(0.0);
         self.pan_y = top_margin;
     }
+
+    /// 팬을 제한해 페이지가 캔버스 밖으로 무한정 사라지지 않게 합니다.
+    /// 페이지는 캔버스 가장자리에서 `margin` 이상 벗어날 수 없습니다.
+    /// 페이지가 캔버스보다 작으면 여백 범위 안에서만 이동합니다.
+    pub fn clamp_pan(&mut self, page: [f32; 2], canvas: [f32; 2], margin: f32) {
+        let view_size = self.page_size_to_view(page[0], page[1]);
+        // 페이지 왼쪽/위쪽이 캔버스 왼쪽/위에서 margin 밖으로 나가지 않고,
+        // 페이지 오른쪽/아래가 캔버스 오른쪽/아래에서 margin 밖으로 나가지 않게 제한.
+        let min_x = canvas[0] - view_size[0] - margin;
+        let max_x = margin;
+        let lo_x = min_x.min(max_x);
+        let hi_x = min_x.max(max_x);
+        self.pan_x = self.pan_x.clamp(lo_x, hi_x);
+
+        let min_y = canvas[1] - view_size[1] - margin;
+        let max_y = margin;
+        let lo_y = min_y.min(max_y);
+        let hi_y = min_y.max(max_y);
+        self.pan_y = self.pan_y.clamp(lo_y, hi_y);
+    }
 }
 
 #[cfg(test)]
@@ -157,6 +177,54 @@ mod tests {
         assert!((t.zoom - 1.0).abs() < 1e-3);
         assert!((t.pan_x - 0.0).abs() < 1e-3);
         assert!((t.pan_y - 0.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn clamp_pan_keeps_large_page_inside_canvas() {
+        // 페이지가 캔버스보다 크면 양 끝을 여백 안으로 제한
+        let mut t = ViewTransform {
+            zoom: 1.0,
+            pan_x: 9999.0,
+            pan_y: -9999.0,
+        };
+        let page = [1000.0, 1400.0];
+        let canvas = [800.0, 600.0];
+        let margin = 16.0;
+        t.clamp_pan(page, canvas, margin);
+        // pan_x 범위: [800-1000-16=-216, 16]
+        assert!(t.pan_x <= 16.0 && t.pan_x >= -216.0);
+        // pan_y 범위: [600-1400-16=-816, 16]
+        assert!(t.pan_y <= 16.0 && t.pan_y >= -816.0);
+    }
+
+    #[test]
+    fn clamp_pan_keeps_small_page_near_center() {
+        // 페이지가 캔버스보다 작으면 여백 안에서만 이동
+        let mut t = ViewTransform {
+            zoom: 1.0,
+            pan_x: 5000.0,
+            pan_y: 5000.0,
+        };
+        let page = [200.0, 200.0];
+        let canvas = [800.0, 600.0];
+        t.clamp_pan(page, canvas, 16.0);
+        // pan_x: [800-200-16=584, 16] -> [16, 584]
+        assert!(t.pan_x >= 16.0 && t.pan_x <= 584.0);
+        // pan_y: [600-200-16=384, 16] -> [16, 384]
+        assert!(t.pan_y >= 16.0 && t.pan_y <= 384.0);
+    }
+
+    #[test]
+    fn clamp_pan_keeps_centered_page_unchanged() {
+        // center_page 후 clamp는 위치를 바꾸지 않아야 함
+        let page = [595.0, 842.0];
+        let canvas = [1280.0, 820.0];
+        let mut t = ViewTransform::identity();
+        t.center_page(page, canvas, 16.0);
+        let before = (t.pan_x, t.pan_y);
+        t.clamp_pan(page, canvas, 16.0);
+        assert!((t.pan_x - before.0).abs() < 1e-3);
+        assert!((t.pan_y - before.1).abs() < 1e-3);
     }
 
     #[test]
