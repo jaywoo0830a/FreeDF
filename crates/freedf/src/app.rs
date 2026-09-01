@@ -74,11 +74,34 @@ fn tool_label(tool: ToolType) -> &'static str {
     }
 }
 
-/// RichText for an icon glyph rendered in the Phosphor icon font.
-/// Icons render icon-only (human-readable labels live in tooltips), so the
-/// `label` parameter is only kept for call-site readability.
-fn icon_label(_label: &str, ic: egui_phosphor_icons::Icon) -> egui::RichText {
-    ic.regular().size(18.0)
+/// Builds a WidgetText: a Phosphor icon glyph followed by a label, both in the
+/// current theme's text color. The icon uses the Phosphor font family so the
+/// glyph renders correctly; the label uses the UI font. This gives each button
+/// a recognizable icon *and* a text label (WCAG: text alternative + contrast).
+fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui::WidgetText {
+    let color = ui.visuals().text_color();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        ic.0,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(16.0, egui::FontFamily::Name("phosphor-regular".into())),
+            color,
+            ..Default::default()
+        },
+    );
+    if !label.is_empty() {
+        job.append(
+            &format!("  {label}"),
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::proportional(14.0),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    job.into()
 }
 
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
@@ -1070,11 +1093,14 @@ impl FreeDfApp {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
-            ui.add_space(4.0);
+            // Generous spacing + padding (larger click targets)
+            ui.spacing_mut().button_padding = egui::vec2(10.0, 7.0);
+            ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+            ui.add_space(8.0);
             // Row 1: file / page / zoom / tools
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(icon_label("", icons::FOLDER_OPEN))
+                    .button(icon_text(ui, "Open", icons::FOLDER_OPEN))
                     .on_hover_text("Open PDF (Ctrl+O)")
                     .clicked()
                 {
@@ -1083,14 +1109,14 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .toggle_value(&mut self.show_notes, icon_label("", icons::NOTE_PENCIL))
+                    .toggle_value(&mut self.show_notes, icon_text(ui, "Notes", icons::NOTE_PENCIL))
                     .on_hover_text("Notes")
                     .changed()
                 {
                     self.pending_fit = Some(FitMode::Width);
                 }
                 if ui
-                    .toggle_value(&mut self.show_outline, icon_label("", icons::LIST_BULLETS))
+                    .toggle_value(&mut self.show_outline, icon_text(ui, "Outline", icons::LIST_BULLETS))
                     .on_hover_text("Outline")
                     .changed()
                 {
@@ -1102,7 +1128,7 @@ impl FreeDfApp {
                 let can_prev = self.current_page > 0;
                 let can_next = self.current_page + 1 < page_count;
                 if ui
-                    .add_enabled(can_prev, egui::Button::new(icon_label("", icons::CARET_LEFT)))
+                    .add_enabled(can_prev, egui::Button::new(icon_text(ui, "Prev", icons::CARET_LEFT)))
                     .on_hover_text("Previous page")
                     .clicked()
                 {
@@ -1117,7 +1143,7 @@ impl FreeDfApp {
                     self.goto_page(page_num.saturating_sub(1));
                 }
                 if ui
-                    .add_enabled(can_next, egui::Button::new(icon_label("", icons::CARET_RIGHT)))
+                    .add_enabled(can_next, egui::Button::new(icon_text(ui, "Next", icons::CARET_RIGHT)))
                     .on_hover_text("Next page")
                     .clicked()
                 {
@@ -1127,14 +1153,14 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .add_enabled(page_count > 0, egui::Button::new(icon_label("", icons::PLUS_SQUARE)))
+                    .add_enabled(page_count > 0, egui::Button::new(icon_text(ui, "Add Page", icons::PLUS_SQUARE)))
                     .on_hover_text("Add blank page at the end")
                     .clicked()
                 {
                     self.add_page_action();
                 }
                 if ui
-                    .add_enabled(page_count > 1, egui::Button::new(icon_label("", icons::TRASH_SIMPLE)))
+                    .add_enabled(page_count > 1, egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)))
                     .on_hover_text("Delete this page")
                     .clicked()
                 {
@@ -1143,7 +1169,7 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .button(icon_label("", icons::MAGNIFYING_GLASS_MINUS))
+                    .button(icon_text(ui, "Zoom Out", icons::MAGNIFYING_GLASS_MINUS))
                     .on_hover_text("Zoom out")
                     .clicked()
                 {
@@ -1151,21 +1177,21 @@ impl FreeDfApp {
                 }
                 ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
                 if ui
-                    .button(icon_label("", icons::MAGNIFYING_GLASS_PLUS))
+                    .button(icon_text(ui, "Zoom In", icons::MAGNIFYING_GLASS_PLUS))
                     .on_hover_text("Zoom in")
                     .clicked()
                 {
                     self.zoom_by(1.25);
                 }
                 if ui
-                    .button(icon_label("", icons::ARROWS_HORIZONTAL))
+                    .button(icon_text(ui, "Fit Width", icons::ARROWS_HORIZONTAL))
                     .on_hover_text("Fit width")
                     .clicked()
                 {
                     self.fit_width();
                 }
                 if ui
-                    .button(icon_label("", icons::ARROWS_IN_CARDINAL))
+                    .button(icon_text(ui, "Fit Page", icons::ARROWS_IN_CARDINAL))
                     .on_hover_text("Fit page")
                     .clicked()
                 {
@@ -1182,7 +1208,7 @@ impl FreeDfApp {
                     ];
                     for (a, ic, hint) in aligns {
                         if ui
-                            .selectable_label(self.page_align == a, icon_label("", ic))
+                            .selectable_label(self.page_align == a, icon_text(ui, a.label(), ic))
                             .on_hover_text(hint)
                             .clicked()
                         {
@@ -1193,16 +1219,16 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                let tool_icons = [
-                    (ToolType::Pen, icons::PEN, "Pen (P)"),
-                    (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlighter (H)"),
-                    (ToolType::Eraser, icons::ERASER, "Eraser (E)"),
-                    (ToolType::Pan, icons::HAND, "Pan (V)"),
+                let tool_buttons = [
+                    (ToolType::Pen, icons::PEN, "Pen"),
+                    (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlight"),
+                    (ToolType::Eraser, icons::ERASER, "Eraser"),
+                    (ToolType::Pan, icons::HAND, "Pan"),
                 ];
-                for (tool, ic, hint) in tool_icons {
+                for (tool, ic, label) in tool_buttons {
                     if ui
-                        .selectable_label(self.tool == tool, icon_label("", ic))
-                        .on_hover_text(hint)
+                        .selectable_label(self.tool == tool, icon_text(ui, label, ic))
+                        .on_hover_text(format!("{label} (P / H / E / V)"))
                         .clicked()
                     {
                         self.tool = tool;
@@ -1275,7 +1301,7 @@ impl FreeDfApp {
                 if ui
                     .add_enabled(
                         self.history.can_undo(),
-                        egui::Button::new(icon_label("", icons::ARROW_COUNTER_CLOCKWISE)),
+                        egui::Button::new(icon_text(ui, "Undo", icons::ARROW_COUNTER_CLOCKWISE)),
                     )
                     .on_hover_text("Undo (Ctrl+Z)")
                     .clicked()
@@ -1285,7 +1311,7 @@ impl FreeDfApp {
                 if ui
                     .add_enabled(
                         self.history.can_redo(),
-                        egui::Button::new(icon_label("", icons::ARROW_CLOCKWISE)),
+                        egui::Button::new(icon_text(ui, "Redo", icons::ARROW_CLOCKWISE)),
                     )
                     .on_hover_text("Redo (Ctrl+Y)")
                     .clicked()
@@ -1293,7 +1319,7 @@ impl FreeDfApp {
                     self.redo();
                 }
                 if ui
-                    .button(icon_label("", icons::X_CIRCLE))
+                    .button(icon_text(ui, "Clear", icons::X_CIRCLE))
                     .on_hover_text("Clear page")
                     .clicked()
                 {
@@ -1302,21 +1328,21 @@ impl FreeDfApp {
                 ui.separator();
 
                 if ui
-                    .button(icon_label("", icons::FLOPPY_DISK))
+                    .button(icon_text(ui, "Save", icons::FLOPPY_DISK))
                     .on_hover_text("Save annotations (Ctrl+S)")
                     .clicked()
                 {
                     self.save_annotations();
                 }
                 if ui
-                    .button(icon_label("", icons::FOLDER_SIMPLE))
+                    .button(icon_text(ui, "Load", icons::FOLDER_SIMPLE))
                     .on_hover_text("Load annotations")
                     .clicked()
                 {
                     self.load_annotations();
                 }
                 if ui
-                    .button(icon_label("", icons::IMAGE))
+                    .button(icon_text(ui, "Export", icons::IMAGE))
                     .on_hover_text("Export current page as PNG (Ctrl+E)")
                     .clicked()
                 {
@@ -1324,13 +1350,13 @@ impl FreeDfApp {
                 }
             });
 
-            ui.add_space(4.0);
+            ui.add_space(8.0);
             ui.separator();
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             // Row 2: search
             ui.horizontal_wrapped(|ui| {
-                ui.label(icon_label("", icons::MAGNIFYING_GLASS));
+                ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
                         .hint_text("Search text in this page...")
@@ -1343,21 +1369,21 @@ impl FreeDfApp {
                 }
                 let can = !self.search_matches.is_empty();
                 if ui
-                    .add_enabled(can, egui::Button::new(icon_label("", icons::CARET_UP)))
+                    .add_enabled(can, egui::Button::new(icon_text(ui, "Prev", icons::CARET_UP)))
                     .on_hover_text("Previous match")
                     .clicked()
                 {
                     self.search_find(false);
                 }
                 if ui
-                    .add_enabled(can, egui::Button::new(icon_label("", icons::CARET_DOWN)))
+                    .add_enabled(can, egui::Button::new(icon_text(ui, "Next", icons::CARET_DOWN)))
                     .on_hover_text("Next match")
                     .clicked()
                 {
                     self.search_find(true);
                 }
                 if ui
-                    .add_enabled(can, egui::Button::new(icon_label("", icons::X)))
+                    .add_enabled(can, egui::Button::new(icon_text(ui, "Clear", icons::X)))
                     .on_hover_text("Clear search")
                     .clicked()
                 {
@@ -1368,17 +1394,20 @@ impl FreeDfApp {
                     ui.label(format!("{cur}/{}", self.search_matches.len()));
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(8.0);
         });
     }
 
     // ---------- UI: notes panel ----------
 
     fn notes_panel(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+        ui.add_space(8.0);
         ui.heading("Notes");
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             if ui
-                .button(icon_label("", icons::PLUS))
+                .button(icon_text(ui, "New", icons::PLUS))
                 .on_hover_text("New note (Ctrl+N)")
                 .clicked()
             {
@@ -1390,7 +1419,7 @@ impl FreeDfApp {
             }
             let has_note = self.current_note.is_some();
             if ui
-                .add_enabled(has_note, egui::Button::new(icon_label("", icons::PENCIL_SIMPLE)))
+                .add_enabled(has_note, egui::Button::new(icon_text(ui, "Rename", icons::PENCIL_SIMPLE)))
                 .on_hover_text("Rename note")
                 .clicked()
             {
@@ -1407,7 +1436,7 @@ impl FreeDfApp {
                 }
             }
             if ui
-                .add_enabled(has_note, egui::Button::new(icon_label("", icons::TRASH_SIMPLE)))
+                .add_enabled(has_note, egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)))
                 .on_hover_text("Delete note")
                 .clicked()
             {
@@ -1452,7 +1481,10 @@ impl FreeDfApp {
     // ---------- UI: outline panel ----------
 
     fn outline_panel(&mut self, ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+        ui.add_space(8.0);
         ui.heading("Outline");
+        ui.add_space(4.0);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }
@@ -1518,7 +1550,9 @@ impl FreeDfApp {
                 ui.label(ink);
                 if let Some(s) = &status {
                     ui.separator();
-                    ui.label(egui::RichText::new(s).color(Color32::from_rgb(230, 120, 60)));
+                    ui.label(
+                        egui::RichText::new(s).color(ui.visuals().error_fg_color),
+                    );
                 }
             });
             ui.add_space(2.0);
@@ -1633,9 +1667,10 @@ impl FreeDfApp {
                 match self.tool {
                     ToolType::Pan => ctx.set_cursor_icon(egui::CursorIcon::Grab),
                     _ => {
-                        // Hide the OS cursor and draw a custom one
+                        // Hide the OS cursor and draw a custom sprite on the canvas
                         ctx.set_cursor_icon(egui::CursorIcon::None);
-                        self.paint_custom_cursor(&painter, pos);
+                        let time = ctx.input(|i| i.time) as f32;
+                        self.paint_custom_cursor(&painter, pos, time);
                     }
                 }
             }
@@ -1683,7 +1718,7 @@ impl FreeDfApp {
                 egui::Align2::LEFT_TOP,
                 "Ctrl+wheel: zoom / wheel: scroll & page / middle button: pan",
                 egui::TextStyle::Small.resolve(ui.style()),
-                ui.visuals().weak_text_color(),
+                ui.visuals().text_color(),
             );
         }
     }
@@ -1906,56 +1941,49 @@ impl FreeDfApp {
         }
     }
 
-    /// Draws a custom cursor that previews the current tool (size + color).
-    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2) {
-        let zoom = self.view.zoom;
+    /// Draws a custom cursor sprite confined to the canvas, previewing the
+    /// current tool's shape and color (Pen = translucent gray circle,
+    /// Highlighter = colored rectangle, Eraser = animated red circle).
+    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
         match self.tool {
             ToolType::Pen => {
-                let color = Color32::from_rgba_unmultiplied(
-                    self.pen_color[0],
-                    self.pen_color[1],
-                    self.pen_color[2],
-                    255,
+                // Small semi-transparent gray circle with a crisp rim.
+                let r = 9.0;
+                painter.circle_filled(pos, r, Color32::from_rgba_unmultiplied(128, 128, 128, 120));
+                painter.circle_stroke(
+                    pos,
+                    r,
+                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(90, 90, 90, 200)),
                 );
-                let r = (self.pen_width * zoom * 0.5).clamp(1.5, 14.0);
-                // Crosshair guides
-                let cross = Stroke::new(1.0, Color32::from_gray(150));
-                painter.line_segment([pos - Vec2::new(13.0, 0.0), pos + Vec2::new(13.0, 0.0)], cross);
-                painter.line_segment([pos - Vec2::new(0.0, 13.0), pos + Vec2::new(0.0, 13.0)], cross);
-                // Nib sized to the pen width
-                painter.circle_stroke(pos, r + 1.0, Stroke::new(1.0, Color32::from_black_alpha(90)));
-                painter.circle_filled(pos, r, color);
             }
             ToolType::Highlighter => {
-                let w = (self.hi_width * zoom).clamp(3.0, 60.0);
+                // Translucent rectangle in the highlighter color.
                 let color = Color32::from_rgba_unmultiplied(
                     self.hi_color[0],
                     self.hi_color[1],
                     self.hi_color[2],
-                    130,
+                    (self.hi_color[3] as f32 * 0.9) as u8,
                 );
-                let bar = Rect::from_center_size(pos, Vec2::new(w, 30.0));
-                painter.rect_filled(bar, 4.0, color);
+                let rect = Rect::from_center_size(pos, Vec2::new(22.0, 30.0));
+                painter.rect_filled(rect, 4.0, color);
                 painter.rect_stroke(
-                    bar,
+                    rect,
                     4.0,
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 160)),
+                    Stroke::new(1.0, Color32::from_white_alpha(170)),
                     egui::StrokeKind::Inside,
                 );
             }
             ToolType::Eraser => {
-                // Red ring showing the erase radius, plus a center dot
+                // Animated red circle: radius pulses with time.
+                let base = self.eraser_radius;
+                let pulse = 1.0 + 0.12 * (time * 6.0).sin();
+                let r = (base * pulse).max(6.0);
                 painter.circle_stroke(
                     pos,
-                    self.eraser_radius,
-                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 90, 90, 220)),
+                    r,
+                    Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 70, 70, 230)),
                 );
-                painter.circle_stroke(
-                    pos,
-                    self.eraser_radius + 1.0,
-                    Stroke::new(1.0, Color32::from_black_alpha(60)),
-                );
-                painter.circle_filled(pos, 2.0, Color32::from_rgb(255, 90, 90));
+                painter.circle_filled(pos, 2.5, Color32::from_rgb(255, 60, 60));
             }
             ToolType::Pan => {}
         }

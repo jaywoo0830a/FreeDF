@@ -34,16 +34,18 @@ native file dialogs, Windows Ink pressure).
   stays smooth on 120 Hz+ displays
 - 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
 - 🔤 **Typography** — the entire UI uses a single bundled **PT Serif** font
-- 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons
-  (tooltips explain each action)
+- 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
+  labels**, so every action is recognizable
+- ♿ **Accessible (WCAG)** — theme-aware high-contrast text, error colors, text
+  alternatives for icons, and roomy click targets
 - 🖱️ **Trackpad & gestures** — pinch zoom, two-finger pan/flip, horizontal scroll,
   and momentum (inertial) scrolling
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
-- 🖊️ **Custom cursors** — pen/highlighter/eraser show a live preview of their
-  size and color at the pointer
+- 🖊️ **Custom cursors** — Pen = translucent gray circle, Highlighter = colored
+  rectangle, Eraser = animated red circle, drawn only on the canvas
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
   integration tests, all runnable without a GUI or PDFium
 
