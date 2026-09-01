@@ -43,6 +43,9 @@ pub struct SessionState {
     pub paper_size: PaperSize,
     pub show_notes: bool,
     pub show_outline: bool,
+    /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
+    pub library_width: f32,
+    pub outline_width: f32,
 }
 
 impl Default for SessionState {
@@ -67,6 +70,8 @@ impl Default for SessionState {
             paper_size: PaperSize::A4,
             show_notes: true,
             show_outline: false,
+            library_width: 260.0,
+            outline_width: 240.0,
         }
     }
 }

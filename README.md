@@ -16,8 +16,9 @@ native file dialogs, Windows Ink pressure).
 
 - 📄 **PDF open / render** — high-resolution page rendering via PDFium (HiDPI aware)
 - 🗂️ **Tabs — multiple documents** — open several notes and PDFs at once and switch
-  between them; every tab keeps its own page, zoom/pan, annotations, search and outline.
-  The tab strip scrolls horizontally and long titles are truncated (full name on hover)
+  between them; every tab keeps its own page, zoom/pan, annotations, search, outline,
+  panel open state & **panel widths**, and ink/paper settings. The tab strip scrolls
+  horizontally and long titles are truncated (full name on hover)
 - �️ **Library panel** — one collapsible side panel groups **Notes**, **PDFs** and
   **Recents** so you can jump between notebooks and recently opened files
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
@@ -50,7 +51,7 @@ native file dialogs, Windows Ink pressure).
 - 🗂️ **Three-tier toolbar** — panels / bookmarks / undo-save on the first row;
   **Page** tools (insert / delete + paper grid & color) on the second row; ink
   tool picker & settings (icon-only Pen / Highlighter / Eraser / Pan) on the
-  third row. Rows 2–4 are **centered**. The search bar appears only on `Ctrl+F`
+  third row. **Every row is centered**. The search bar appears only on `Ctrl+F`
 - 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
   resizing the window re-centers the page at the **current zoom** instead of
   resetting it
@@ -80,7 +81,7 @@ native file dialogs, Windows Ink pressure).
   startup
 - 🗂️ **Per-document session** — reopening a note/PDF restores exactly where you
   left off: the last page, tool, pen/highlighter/eraser settings, zoom & pan,
-  page alignment, paper choices, and open panels (stored per document)
+  page alignment, paper choices, open panels, and panel widths (stored per document)
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right

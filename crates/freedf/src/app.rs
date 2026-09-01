@@ -230,6 +230,24 @@ pub struct TabEntry {
     search_current: Option<usize>,
     outline: Vec<OutlineNode>,
     outline_loaded: bool,
+    // ---------- Per-tab UI state (independent on switch) ----------
+    show_library: bool,
+    show_outline: bool,
+    show_search: bool,
+    library_width: f32,
+    outline_width: f32,
+    tool: ToolType,
+    color_family: ColorFamily,
+    pen_color: [u8; 4],
+    pen_width: f32,
+    hi_color: [u8; 4],
+    hi_width: f32,
+    eraser_radius: f32,
+    pressure_enabled: bool,
+    pressure_curve: PressureCurve,
+    paper_style: PaperStyle,
+    paper_color: [u8; 4],
+    paper_size: PaperSize,
 }
 
 pub struct FreeDfApp {
@@ -318,6 +336,9 @@ pub struct FreeDfApp {
     // ---------- Panels ----------
     show_library: bool,
     show_outline: bool,
+    /// Library / Outline panel widths (tracked per tab & persisted in session)
+    library_width: f32,
+    outline_width: f32,
 
     // ---------- Logging / status ----------
     logger: Logger,
@@ -389,6 +410,8 @@ impl FreeDfApp {
         let paper_size = if has { s.paper_size } else { PaperSize::A4 };
         let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
+        let library_width = if has { s.library_width } else { 260.0 };
+        let outline_width = if has { s.outline_width } else { 240.0 };
         // Recent files live next to the default session file in the app data folder.
         let recent_path = default_session_path
             .parent()
@@ -450,6 +473,8 @@ impl FreeDfApp {
             outline_loaded: false,
             show_library,
             show_outline,
+            library_width,
+            outline_width,
             logger,
             file_name: String::new(),
             status: None,
@@ -482,6 +507,8 @@ impl FreeDfApp {
             paper_size: self.paper_size,
             show_notes: self.show_library,
             show_outline: self.show_outline,
+            library_width: self.library_width,
+            outline_width: self.outline_width,
         }
         .save(&self.default_session_path);
     }
@@ -537,6 +564,8 @@ impl FreeDfApp {
             paper_size: self.paper_size,
             show_notes: self.show_library,
             show_outline: self.show_outline,
+            library_width: self.library_width,
+            outline_width: self.outline_width,
         }
     }
 
@@ -577,6 +606,8 @@ impl FreeDfApp {
         self.paper_size = s.paper_size;
         self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
+        self.library_width = s.library_width.clamp(160.0, 460.0);
+        self.outline_width = s.outline_width.clamp(160.0, 460.0);
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
             self.view.zoom = s.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
@@ -616,6 +647,24 @@ impl FreeDfApp {
         tab.search_current = self.search_current.take();
         tab.outline = std::mem::take(&mut self.outline);
         tab.outline_loaded = self.outline_loaded;
+        // Per-tab UI state.
+        tab.show_library = self.show_library;
+        tab.show_outline = self.show_outline;
+        tab.show_search = self.show_search;
+        tab.library_width = self.library_width;
+        tab.outline_width = self.outline_width;
+        tab.tool = self.tool;
+        tab.color_family = self.color_family;
+        tab.pen_color = self.pen_color;
+        tab.pen_width = self.pen_width;
+        tab.hi_color = self.hi_color;
+        tab.hi_width = self.hi_width;
+        tab.eraser_radius = self.eraser_radius;
+        tab.pressure_enabled = self.pressure_enabled;
+        tab.pressure_curve = self.pressure_curve;
+        tab.paper_style = self.paper_style;
+        tab.paper_color = self.paper_color;
+        tab.paper_size = self.paper_size;
     }
 
     /// `tabs[idx]`의 상태를 활성 문서로 복원합니다. (활성 탭의 document는 None이 됨)
@@ -636,6 +685,23 @@ impl FreeDfApp {
             search_current,
             outline,
             outline_loaded,
+            show_library,
+            show_outline,
+            show_search,
+            library_width,
+            outline_width,
+            tool,
+            color_family,
+            pen_color,
+            pen_width,
+            hi_color,
+            hi_width,
+            eraser_radius,
+            pressure_enabled,
+            pressure_curve,
+            paper_style,
+            paper_color,
+            paper_size,
         ) = {
             let tab = self.tabs.get_mut(idx).expect("tab index in range");
             (
@@ -654,6 +720,23 @@ impl FreeDfApp {
                 tab.search_current.take(),
                 std::mem::take(&mut tab.outline),
                 tab.outline_loaded,
+                tab.show_library,
+                tab.show_outline,
+                tab.show_search,
+                tab.library_width,
+                tab.outline_width,
+                tab.tool,
+                tab.color_family,
+                tab.pen_color,
+                tab.pen_width,
+                tab.hi_color,
+                tab.hi_width,
+                tab.eraser_radius,
+                tab.pressure_enabled,
+                tab.pressure_curve,
+                tab.paper_style,
+                tab.paper_color,
+                tab.paper_size,
             )
         };
         // 일시적인 렌더/입력 상태 초기화.
@@ -682,6 +765,24 @@ impl FreeDfApp {
         self.search_current = search_current;
         self.outline = outline;
         self.outline_loaded = outline_loaded;
+        // Per-tab UI state (panels, tools, paper).
+        self.show_library = show_library;
+        self.show_outline = show_outline;
+        self.show_search = show_search;
+        self.library_width = library_width;
+        self.outline_width = outline_width;
+        self.tool = tool;
+        self.color_family = color_family;
+        self.pen_color = pen_color;
+        self.pen_width = pen_width;
+        self.hi_color = hi_color;
+        self.hi_width = hi_width;
+        self.eraser_radius = eraser_radius;
+        self.pressure_enabled = pressure_enabled;
+        self.pressure_curve = pressure_curve;
+        self.paper_style = paper_style;
+        self.paper_color = paper_color;
+        self.paper_size = paper_size;
         self.search_runs = Vec::new();
         self.status = None;
         self.search_update();
@@ -742,6 +843,23 @@ impl FreeDfApp {
             search_current: None,
             outline: Vec::new(),
             outline_loaded: false,
+            show_library: self.show_library,
+            show_outline: self.show_outline,
+            show_search: self.show_search,
+            library_width: self.library_width,
+            outline_width: self.outline_width,
+            tool: self.tool,
+            color_family: self.color_family,
+            pen_color: self.pen_color,
+            pen_width: self.pen_width,
+            hi_color: self.hi_color,
+            hi_width: self.hi_width,
+            eraser_radius: self.eraser_radius,
+            pressure_enabled: self.pressure_enabled,
+            pressure_curve: self.pressure_curve,
+            paper_style: self.paper_style,
+            paper_color: self.paper_color,
+            paper_size: self.paper_size,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -1745,6 +1863,14 @@ impl FreeDfApp {
                         ui.horizontal(|ui| {
                             for (i, tab) in self.tabs.iter().enumerate() {
                                 let selected = i == self.active;
+                                // The active tab's title lives in `self.file_name`
+                                // (its `tab.label` is emptied by restore_from);
+                                // inactive tabs keep their own label.
+                                let title: &str = if selected {
+                                    &self.file_name
+                                } else {
+                                    &tab.label
+                                };
                                 egui::Frame::new()
                                     .fill(if selected {
                                         active_fill
@@ -1763,13 +1889,13 @@ impl FreeDfApp {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                                             // Fixed-width truncated title; full
                                             // name is shown on hover.
-                                            let title = ui.add_sized(
+                                            let title_resp = ui.add_sized(
                                                 egui::vec2(180.0, 22.0),
-                                                egui::Label::new(egui::RichText::new(&tab.label))
+                                                egui::Label::new(egui::RichText::new(title))
                                                     .truncate()
                                                     .sense(egui::Sense::click()),
                                             );
-                                            if title.on_hover_text(&tab.label).clicked() {
+                                            if title_resp.on_hover_text(title).clicked() {
                                                 to_switch = Some(i);
                                             }
                                             let close = ui.add(
@@ -1804,8 +1930,9 @@ impl FreeDfApp {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
-            // Row 1: panels / page tools / ink tools
-            ui.horizontal_wrapped(|ui| {
+            // Row 1: panels / page tools / ink tools (centered)
+            centered_toolbar_row(ui, "row1", |ui| {
+                ui.horizontal(|ui| {
                 if ui
                     .toggle_value(&mut self.show_library, icon_text(ui, "Library", icons::NOTEBOOK))
                     .on_hover_text("Library (notes, PDFs, recents)")
@@ -1932,6 +2059,7 @@ impl FreeDfApp {
                 {
                     self.export_png();
                 }
+                });
             });
 
             ui.add_space(4.0);
@@ -3252,18 +3380,27 @@ impl eframe::App for FreeDfApp {
         self.status_bar(ui);
 
         if self.show_library {
-            egui::Panel::left("library_panel")
+            // Per-tab panel id: each tab keeps its own width in egui memory,
+            // and the width is read back each frame into `self.library_width`
+            // so it survives tab switches and app restarts (via session.json).
+            let panel_id = egui::Id::new(("library_panel", self.active));
+            let resp = egui::Panel::left(panel_id)
                 .resizable(true)
-                .default_size(260.0)
+                .default_size(self.library_width)
+                .min_size(160.0)
                 .max_size(460.0)
                 .show(ui, |ui| self.library_panel(ui));
+            self.library_width = resp.response.rect.width().clamp(160.0, 460.0);
         }
         if self.show_outline {
-            egui::Panel::left("outline_panel")
+            let panel_id = egui::Id::new(("outline_panel", self.active));
+            let resp = egui::Panel::left(panel_id)
                 .resizable(true)
-                .default_size(240.0)
+                .default_size(self.outline_width)
+                .min_size(160.0)
                 .max_size(460.0)
                 .show(ui, |ui| self.outline_panel(ui));
+            self.outline_width = resp.response.rect.width().clamp(160.0, 460.0);
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
