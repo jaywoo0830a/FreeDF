@@ -12,7 +12,7 @@ mod fonts;
 mod pdf;
 mod recent;
 mod settings;
-mod style;
+mod theme;
 
 use eframe::egui;
 use freedf_core::logging::{AppEvent, Logger};
@@ -47,9 +47,9 @@ fn main() -> eframe::Result<()> {
         "FreeDF",
         options,
         Box::new(|cc| {
-            // Single UI font: PT Serif (bundled) + design system
-            fonts::install_pt_serif(&cc.egui_ctx);
-            style::install(&cc.egui_ctx);
+            // Single UI font: PT Serif (bundled) + Nord design system
+            fonts::install_inter(&cc.egui_ctx);
+            theme::nord::install(&cc.egui_ctx);
 
             // App data layout: <data>/notes + <data>/logs + <data>/session.json
             let data_dir = app_data_dir();

@@ -44,8 +44,6 @@ enum FitMode {
     Width,
     /// Fit page height
     Height,
-    /// Fit whole page
-    Page,
 }
 
 /// In-progress page transition (slide).
@@ -1186,10 +1184,6 @@ impl FreeDfApp {
         self.pending_fit = Some(FitMode::Height);
     }
 
-    fn fit_page(&mut self) {
-        self.pending_fit = Some(FitMode::Page);
-    }
-
     /// Applies a pending fit once the canvas size is known.
     fn apply_pending_fit(&mut self, canvas: [f32; 2]) {
         let Some(mode) = self.pending_fit else {
@@ -1207,10 +1201,6 @@ impl FreeDfApp {
             FitMode::Height => {
                 self.view.zoom =
                     ViewTransform::fit_height_zoom(self.page_size_pts[1], canvas[1], CANVAS_MARGIN);
-            }
-            FitMode::Page => {
-                self.view.zoom =
-                    ViewTransform::fit_page_zoom(self.page_size_pts, canvas, CANVAS_MARGIN);
             }
         }
         self.view
@@ -1772,31 +1762,6 @@ impl FreeDfApp {
                 ui.separator();
 
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-                let can_prev = self.current_page > 0;
-                let can_next = self.current_page + 1 < page_count;
-                if ui
-                    .add_enabled(can_prev, egui::Button::new(icon_text(ui, "Prev", icons::CARET_LEFT)))
-                    .on_hover_text("Previous page")
-                    .clicked()
-                {
-                    self.prev_page();
-                }
-                let mut page_num = self.current_page + 1;
-                if ui
-                    .add(egui::DragValue::new(&mut page_num).range(1..=page_count.max(1)))
-                    .on_hover_text("Page number")
-                    .changed()
-                {
-                    self.goto_page(page_num.saturating_sub(1));
-                }
-                if ui
-                    .add_enabled(can_next, egui::Button::new(icon_text(ui, "Next", icons::CARET_RIGHT)))
-                    .on_hover_text("Next page")
-                    .clicked()
-                {
-                    self.next_page();
-                }
-                ui.label(format!("/ {}", page_count.max(1)));
                 ui.separator();
 
                 // Bookmark the current page + jump list.
@@ -1850,35 +1815,6 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                if ui
-                    .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_MINUS))
-                    .on_hover_text("Zoom out")
-                    .clicked()
-                {
-                    self.zoom_by(1.0 / 1.25);
-                }
-                ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
-                if ui
-                    .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_PLUS))
-                    .on_hover_text("Zoom in")
-                    .clicked()
-                {
-                    self.zoom_by(1.25);
-                }
-                if ui
-                    .button(icon_text(ui, "Fit Width", icons::ARROWS_HORIZONTAL))
-                    .on_hover_text("Fit width")
-                    .clicked()
-                {
-                    self.fit_width();
-                }
-                if ui
-                    .button(icon_text(ui, "Fit Page", icons::ARROWS_IN_CARDINAL))
-                    .on_hover_text("Fit page")
-                    .clicked()
-                {
-                    self.fit_page();
-                }
                 if !self.show_notes && !self.show_outline {
                     // With the side panels collapsed the canvas is wide, so let
                     // the page be aligned left / center / right.
@@ -2369,11 +2305,8 @@ impl FreeDfApp {
         let canvas_size = [canvas.width(), canvas.height()];
         self.last_canvas = canvas_size;
 
-        // Background (Catppuccin crust: dark = Mocha crust, light = Latte crust)
-        let bg = match ui.ctx().theme() {
-            egui::Theme::Dark => Color32::from_rgb(0x11, 0x11, 0x1B), // Mocha crust
-            egui::Theme::Light => Color32::from_rgb(0xDC, 0xE0, 0xE8), // Latte crust
-        };
+        // Background behind the page (Nord canvas surround — dark mode)
+        let bg = crate::theme::nord::semantic::PAGE_SURROUND;
         painter.rect_filled(canvas, egui::CornerRadius::ZERO, bg);
 
         if self.document.is_none() {
@@ -2544,17 +2477,8 @@ impl FreeDfApp {
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
         let can_prev = self.current_page > 0;
         let can_next = self.current_page + 1 < page_count;
-        let dark = matches!(ctx.theme(), egui::Theme::Dark);
-        let fill = if dark {
-            Color32::from_rgba_unmultiplied(0x1E, 0x1E, 0x2E, 205) // Mocha base
-        } else {
-            Color32::from_rgba_unmultiplied(0xEF, 0xF1, 0xF5, 215) // Latte base
-        };
-        let stroke = if dark {
-            Color32::from_rgba_unmultiplied(0x7F, 0x84, 0x9C, 60) // Mocha overlay1
-        } else {
-            Color32::from_rgba_unmultiplied(0x6C, 0x6F, 0x85, 40) // Latte overlay0
-        };
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
 
         // 캔버스 중앙(왼쪽 패널이 열려 있어도)에 정렬되도록 화면 중앙 대비 오프셋.
         let screen = ctx.input(|i| i.raw.screen_rect).unwrap_or(canvas);
@@ -2582,6 +2506,18 @@ impl FreeDfApp {
                             {
                                 self.prev_page();
                             }
+                            let mut page_num = self.current_page + 1;
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut page_num)
+                                        .range(1..=page_count.max(1)),
+                                )
+                                .on_hover_text("Page number")
+                                .changed()
+                            {
+                                self.goto_page(page_num.saturating_sub(1));
+                            }
+                            ui.label(format!("/ {}", page_count.max(1)));
                             if ui
                                 .add_enabled(
                                     can_next,

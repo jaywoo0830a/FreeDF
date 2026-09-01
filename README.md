@@ -39,14 +39,16 @@ native file dialogs, Windows Ink pressure).
 - 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
   stays smooth on 120 Hz+ displays
 - 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
-- 🔤 **Typography** — the entire UI uses a single bundled **PT Serif** font
+- 🔤 **Typography** — the entire UI uses a single bundled **Inter** font
 - 🎨 **Phosphor icons** — toolbar and panels use crisp vector icons **with text
   labels**, so every action is recognizable
-- 🗂️ **Two-tier toolbar** — file/page/zoom controls on the first row, drawing
-  tools & pen settings on the second row, search on the third
+- 🗂️ **Two-tier toolbar** — file/notes/bookmark/page-tools on the first row,
+  drawing tools & pen settings on the second row, search on the third
 - 🎨 **Design system** — 1rem (16 px) base font scale, 4 px spacing grid, rounded
-  corners, and a **Catppuccin** palette (Mocha dark / Latte light) across both
-  themes, replicating `catppuccin-egui` visuals
+  corners, and a **Nord** dark theme built from primitive + semantic design
+  tokens (Polar Night / Snow Storm / Frost / Aurora palette)
+- 🌙 **Always dark** — the app locks to dark mode for comfortable long reading
+  sessions; the PDF page itself stays white for contrast
 - ♿ **Accessible (WCAG)** — theme-aware high-contrast text, error colors, text
   alternatives for icons, and roomy click targets
 - 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + two-finger scroll zoom,
@@ -54,8 +56,9 @@ native file dialogs, Windows Ink pressure).
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
 - 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
-  of the canvas gives quick access to Prev/Next page, zoom in/out, and
-  Fit Width / Fit Height
+  of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
+  Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
+  toolbar)
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
   dotted) and color (white, cream, ice blue, mint, light gray), applied
   independently and exported to PNG
