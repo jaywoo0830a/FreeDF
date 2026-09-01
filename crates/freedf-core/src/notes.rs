@@ -14,6 +14,8 @@ pub const LIBRARY_FILE: &str = "notes.json";
 pub const PDF_FILE: &str = "document.pdf";
 /// 노트 내 주석 파일명.
 pub const ANNOTATIONS_FILE: &str = "annotations.json";
+/// 노트 내 세션(GUI 상태) 파일명.
+pub const SESSION_FILE: &str = "session.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteError {
@@ -227,6 +229,10 @@ impl NotesManager {
 
     pub fn annotations_path(&self, id: u64) -> PathBuf {
         self.note_dir(id).join(ANNOTATIONS_FILE)
+    }
+
+    pub fn session_path(&self, id: u64) -> PathBuf {
+        self.note_dir(id).join(SESSION_FILE)
     }
 }
 

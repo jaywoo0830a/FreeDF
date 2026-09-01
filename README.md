@@ -52,6 +52,9 @@ native file dialogs, Windows Ink pressure).
 - 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal for new notes and pages
 - 💾 **Remembers your last settings** — the most recently used pen ink color and
   paper style/color/size are saved to `settings.json` and restored on startup
+- 🗂️ **Per-document session** — reopening a note/PDF restores exactly where you
+  left off: the last page, tool, pen/highlighter/eraser settings, zoom & pan,
+  page alignment, paper choices, and open panels (stored per document)
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right

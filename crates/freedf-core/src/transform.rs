@@ -2,6 +2,8 @@
 //!
 //! 순수 수학만 담고 있어 GUI 없이 단위 테스트로 검증합니다.
 
+use serde::{Deserialize, Serialize};
+
 /// 줌 배율 상/하한 (화면 픽셀 / 페이지 포인트).
 pub const MIN_ZOOM: f32 = 0.08;
 pub const MAX_ZOOM: f32 = 16.0;
@@ -11,7 +13,7 @@ pub const MAX_ZOOM: f32 = 16.0;
 pub const ZOOM_100_PERCENT: f32 = 96.0 / 72.0;
 
 /// 캔버스에서 페이지의 가로 정렬.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PageAlign {
     Left,
     Center,

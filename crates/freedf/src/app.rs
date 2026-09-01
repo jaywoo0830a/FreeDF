@@ -396,6 +396,82 @@ impl FreeDfApp {
         }
     }
 
+    // ---------- Session (per-document GUI state) ----------
+
+    /// 현재 GUI 상태를 세션 구조체로 캡처합니다.
+    fn capture_session(&self) -> crate::session::SessionState {
+        crate::session::SessionState {
+            page: self.current_page,
+            tool: self.tool,
+            color_family: self.color_family,
+            pen_color: self.pen_color,
+            pen_width: self.pen_width,
+            hi_color: self.hi_color,
+            hi_width: self.hi_width,
+            eraser_radius: self.eraser_radius,
+            pressure_enabled: self.pressure_enabled,
+            pressure_curve: self.pressure_curve,
+            zoom: self.view.zoom,
+            pan_x: self.view.pan_x,
+            pan_y: self.view.pan_y,
+            page_align: self.page_align,
+            paper_style: self.paper_style,
+            paper_color: self.paper_color,
+            paper_size: self.paper_size,
+            show_notes: self.show_notes,
+            show_outline: self.show_outline,
+        }
+    }
+
+    /// 현재 문서의 세션 파일 경로 (노트 폴더 또는 PDF 옆 사이드카).
+    fn session_path(&self) -> Option<PathBuf> {
+        if let Some(id) = self.current_note {
+            Some(self.notes.session_path(id))
+        } else {
+            self.file_path.as_deref().map(session_path_for)
+        }
+    }
+
+    /// 열려 있는 문서의 GUI 상태를 세션 파일에 저장합니다.
+    fn save_session(&self) {
+        if self.document.is_none() {
+            return;
+        }
+        if let Some(path) = self.session_path() {
+            self.capture_session().save(&path);
+        }
+    }
+
+    /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
+    fn apply_session(&mut self, s: &crate::session::SessionState, page_count: usize) {
+        self.current_page = s.page.min(page_count.saturating_sub(1));
+        self.tool = s.tool;
+        self.color_family = s.color_family;
+        self.pen_color = s.pen_color;
+        self.pen_width = s.pen_width.clamp(0.5, 12.0);
+        self.hi_color = s.hi_color;
+        self.hi_width = s.hi_width.clamp(4.0, 40.0);
+        self.eraser_radius = s.eraser_radius.clamp(4.0, 60.0);
+        self.pressure_enabled = s.pressure_enabled;
+        self.pressure_curve = s.pressure_curve;
+        self.page_align = s.page_align;
+        self.paper_style = s.paper_style;
+        self.paper_color = s.paper_color;
+        self.paper_size = s.paper_size;
+        self.show_notes = s.show_notes;
+        self.show_outline = s.show_outline;
+        if let Some(doc) = &self.document {
+            self.page_size_pts = doc.page_size_pts(self.current_page);
+            self.view.zoom = s.zoom.clamp(MIN_ZOOM, MAX_ZOOM);
+            self.view.pan_x = s.pan_x;
+            self.view.pan_y = s.pan_y;
+            self.view
+                .clamp_pan(self.page_size_pts, self.last_canvas, CANVAS_MARGIN);
+        }
+        self.render_dirty = true;
+        self.search_update();
+    }
+
     // ---------- Notes ----------
 
     /// Shows an error both in the status bar and as a popup alert.
@@ -544,6 +620,13 @@ impl FreeDfApp {
                 self.transition_last_page = 0;
                 self.status = None;
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+                // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
+                let session_path = self.notes.session_path(id);
+                if session_path.exists() {
+                    let session = crate::session::SessionState::load(&session_path);
+                    self.apply_session(&session, page_count);
+                    self.pending_fit = None;
+                }
                 self.logger.log(AppEvent::NoteOpened {
                     note_id: id,
                     title: meta.title.clone(),
@@ -615,6 +698,14 @@ impl FreeDfApp {
                         }
                     }
                 }
+                // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
+                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+                let session_path = session_path_for(path);
+                if session_path.exists() {
+                    let session = crate::session::SessionState::load(&session_path);
+                    self.apply_session(&session, page_count);
+                    self.pending_fit = None;
+                }
                 self.load_outline_if_needed();
             }
             Err(e) => self.show_error(e),
@@ -671,6 +762,8 @@ impl FreeDfApp {
         }
         self.start_page_anim(from, self.current_page);
         self.transition_last_page = self.current_page;
+        // 현재 페이지/줌 상태를 세션에 기록합니다.
+        self.save_session();
     }
 
     /// Captures the outgoing page texture and starts a slide transition.
@@ -756,6 +849,7 @@ impl FreeDfApp {
         let anchor = [self.last_canvas[0] * 0.5, self.last_canvas[1] * 0.5];
         self.view.zoom_at(anchor, factor, MIN_ZOOM, MAX_ZOOM);
         self.render_dirty = true;
+        self.save_session();
     }
 
     fn fit_width(&mut self) {
@@ -788,6 +882,7 @@ impl FreeDfApp {
         self.view
             .align_page(self.page_size_pts, canvas, TOP_MARGIN, self.page_align);
         self.render_dirty = true;
+        self.save_session();
     }
 
     /// Re-applies the current horizontal alignment without changing the zoom.
@@ -797,6 +892,7 @@ impl FreeDfApp {
         }
         self.view
             .align_page(self.page_size_pts, self.last_canvas, TOP_MARGIN, self.page_align);
+        self.save_session();
     }
 
     // ---------- Undo / redo / clear ----------
@@ -1240,6 +1336,7 @@ impl FreeDfApp {
                     .changed()
                 {
                     self.pending_fit = Some(FitMode::Width);
+                    self.save_session();
                 }
                 if ui
                     .toggle_value(&mut self.show_outline, icon_text(ui, "Outline", icons::LIST_BULLETS))
@@ -1247,6 +1344,7 @@ impl FreeDfApp {
                     .changed()
                 {
                     self.pending_fit = Some(FitMode::Width);
+                    self.save_session();
                 }
                 ui.separator();
 
@@ -1340,6 +1438,7 @@ impl FreeDfApp {
                         {
                             self.page_align = a;
                             self.realign();
+                            self.save_session();
                         }
                     }
                 }
@@ -1416,6 +1515,7 @@ impl FreeDfApp {
                         .clicked()
                     {
                         self.tool = tool;
+                        self.save_session();
                     }
                 }
                 ui.separator();
@@ -1426,11 +1526,16 @@ impl FreeDfApp {
                             .selected_text(self.color_family.label())
                             .show_ui(ui, |ui| {
                                 for family in ColorFamily::all() {
-                                    ui.selectable_value(
-                                        &mut self.color_family,
-                                        family,
-                                        family.label(),
-                                    );
+                                    if ui
+                                        .selectable_value(
+                                            &mut self.color_family,
+                                            family,
+                                            family.label(),
+                                        )
+                                        .changed()
+                                    {
+                                        self.save_session();
+                                    }
                                 }
                             });
                         let swatches = Palette::swatches(self.color_family);
@@ -1462,20 +1567,44 @@ impl FreeDfApp {
                                 if ui.add_sized([20.0, 20.0], btn).clicked() {
                                     self.pen_color = *swatch;
                                     self.save_settings();
+                                    self.save_session();
                                 }
                             });
                         }
-                        ui.add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"));
-                        ui.checkbox(&mut self.pressure_enabled, "Pressure");
+                        if ui
+                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
+                            .changed()
+                        {
+                            self.save_session();
+                        }
+                        if ui.checkbox(&mut self.pressure_enabled, "Pressure").changed() {
+                            self.save_session();
+                        }
                         if self.pressure_enabled {
-                            ui.add(
-                                egui::Slider::new(&mut self.pressure_curve.min_ratio, 0.1..=1.0)
+                            if ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.pressure_curve.min_ratio,
+                                        0.1..=1.0,
+                                    )
                                     .text("Min"),
-                            );
-                            ui.add(
-                                egui::Slider::new(&mut self.pressure_curve.max_ratio, 1.0..=3.0)
+                                )
+                                .changed()
+                            {
+                                self.save_session();
+                            }
+                            if ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.pressure_curve.max_ratio,
+                                        1.0..=3.0,
+                                    )
                                     .text("Max"),
-                            );
+                                )
+                                .changed()
+                            {
+                                self.save_session();
+                            }
                         }
                     }
                     ToolType::Highlighter => {
@@ -1487,11 +1616,22 @@ impl FreeDfApp {
                         );
                         if ui.color_edit_button_srgba(&mut color).changed() {
                             self.hi_color = color.to_array();
+                            self.save_session();
                         }
-                        ui.add(egui::Slider::new(&mut self.hi_width, 4.0..=40.0).text("Width"));
+                        if ui
+                            .add(egui::Slider::new(&mut self.hi_width, 4.0..=40.0).text("Width"))
+                            .changed()
+                        {
+                            self.save_session();
+                        }
                     }
                     ToolType::Eraser => {
-                        ui.add(egui::Slider::new(&mut self.eraser_radius, 4.0..=60.0).text("Radius"));
+                        if ui
+                            .add(egui::Slider::new(&mut self.eraser_radius, 4.0..=60.0).text("Radius"))
+                            .changed()
+                        {
+                            self.save_session();
+                        }
                     }
                     ToolType::Pan => {}
                 }
@@ -1510,6 +1650,7 @@ impl FreeDfApp {
                             if changed {
                                 self.apply_paper_to_current_page();
                                 self.save_settings();
+                                self.save_session();
                             }
                         }
                     })
@@ -1530,6 +1671,7 @@ impl FreeDfApp {
                             self.paper_color = *paper;
                             self.apply_paper_to_current_page();
                             self.save_settings();
+                            self.save_session();
                         }
                     });
                 }
@@ -1542,6 +1684,7 @@ impl FreeDfApp {
                                 .changed();
                             if changed {
                                 self.save_settings();
+                                self.save_session();
                             }
                         }
                     })
@@ -2473,6 +2616,7 @@ impl eframe::App for FreeDfApp {
                     self.save_pdf_if_note();
                 }
                 self.save_settings();
+                self.save_session();
                 self.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -2490,5 +2634,12 @@ impl eframe::App for FreeDfApp {
 fn annotation_path_for(pdf_path: &Path) -> PathBuf {
     let mut os = pdf_path.as_os_str().to_os_string();
     os.push(".freedf.json");
+    PathBuf::from(os)
+}
+
+/// Sidecar session path for a standalone PDF (`doc.pdf.session.json`).
+fn session_path_for(pdf_path: &Path) -> PathBuf {
+    let mut os = pdf_path.as_os_str().to_os_string();
+    os.push(".session.json");
     PathBuf::from(os)
 }
