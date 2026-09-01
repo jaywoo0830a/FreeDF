@@ -3122,22 +3122,36 @@ impl FreeDfApp {
 
         match self.tool {
             ToolType::Pen | ToolType::Highlighter => {
+                let page_w = self.page_size_pts[0];
+                let page_h = self.page_size_pts[1];
                 if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
-                        let page = self.view.view_to_page([p.x, p.y]);
+                        let raw = self.view.view_to_page([p.x, p.y]);
+                        // 페이지(캔버스) 바깥에서는 필기 금지: 페이지 내부에서만
+                        // 스트로크를 시작하고, 벗어나면 점을 추가하지 않습니다.
+                        let inside = raw[0] >= 0.0
+                            && raw[0] <= page_w
+                            && raw[1] >= 0.0
+                            && raw[1] <= page_h;
+                        let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
                         let pressure = self.sample_pressure(ctx);
                         if self.active_stroke.is_none() {
-                            let (color, width) = self.current_drawing_style();
-                            self.active_stroke = Some(ActiveStroke {
-                                tool: self.tool,
-                                color,
-                                width,
-                                points: Vec::new(),
-                            });
+                            if inside {
+                                let (color, width) = self.current_drawing_style();
+                                self.active_stroke = Some(ActiveStroke {
+                                    tool: self.tool,
+                                    color,
+                                    width,
+                                    points: Vec::new(),
+                                });
+                            }
                         }
-                        let st = self.active_stroke.as_mut().expect("just created");
-                        st.push(page, pressure);
+                        if let Some(st) = self.active_stroke.as_mut() {
+                            if inside {
+                                st.push(page, pressure);
+                            }
+                        }
                     }
                 }
                 if !primary_down && self.active_stroke.is_some() {
@@ -3146,9 +3160,17 @@ impl FreeDfApp {
                 if response.clicked() && self.active_stroke.is_none() {
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
-                        let page = self.view.view_to_page([p.x, p.y]);
-                        let pressure = self.sample_pressure(ctx);
-                        self.commit_dot(page, pressure);
+                        let raw = self.view.view_to_page([p.x, p.y]);
+                        // 클릭(점)도 페이지 내부일 때만 기록합니다.
+                        if raw[0] >= 0.0
+                            && raw[0] <= page_w
+                            && raw[1] >= 0.0
+                            && raw[1] <= page_h
+                        {
+                            let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
+                            let pressure = self.sample_pressure(ctx);
+                            self.commit_dot(page, pressure);
+                        }
                     }
                 }
             }
