@@ -1,8 +1,8 @@
-//! FreeDF 메인 앱: PDF 뷰어 캔버스 + 필기/메모 드로잉 + 툴바 + 파일 IO.
+//! FreeDF main app: PDF viewer canvas + drawing-pad annotation + notes/outline/search.
 //!
-//! egui의 화면 좌표 공간을 그대로 사용합니다.
-//! 캔버스(뷰포트) 좌상단 = `response.rect.min`, 페이지 좌표 ↔ 뷰 좌표는
-//! `freedf_core::transform::ViewTransform`이 담당합니다.
+//! English-only UI. Screen coordinates map 1:1 to egui's canvas space; the canvas
+//! top-left equals `response.rect.min`, and page <-> view coordinates are handled
+//! by `freedf_core::transform::ViewTransform`.
 
 use std::path::{Path, PathBuf};
 
@@ -10,28 +10,35 @@ use eframe::egui;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
 use freedf_core::history::{Edit, History};
+use freedf_core::logging::{AppEvent, Logger};
 use freedf_core::model::{PageIndex, StrokePoint, ToolType};
+use freedf_core::notes::NotesManager;
+use freedf_core::outline::{flatten, OutlineNode};
+use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
+use freedf_core::search::{find_matches, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
 use freedf_core::transform::{ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
 use crate::export::draw_strokes_on_image;
 use crate::pdf::DocumentView;
 
-/// 캔버스 기본 여백
+/// Canvas margin around the page
 const CANVAS_MARGIN: f32 = 16.0;
-/// 페이지 위쪽 여백
+/// Page top margin
 const TOP_MARGIN: f32 = 16.0;
+/// Default blank page size (A4, points)
+const A4_PTS: [f32; 2] = [595.0, 842.0];
 
-/// 페이지 맞춤 모드
+/// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FitMode {
-    /// 가로 폭 맞춤
+    /// Fit page width
     Width,
-    /// 페이지 전체 맞춤
+    /// Fit whole page
     Page,
 }
 
-/// 그리는 중인 스트로크
+/// A stroke currently being drawn
 struct ActiveStroke {
     tool: ToolType,
     color: [u8; 4],
@@ -45,95 +52,157 @@ impl ActiveStroke {
     }
 }
 
-/// 폴백 파일 대화상자 (Windows 이외/네이티브 대화상자 없을 때)
+fn tool_label(tool: ToolType) -> &'static str {
+    match tool {
+        ToolType::Pen => "Pen",
+        ToolType::Highlighter => "Highlighter",
+        ToolType::Eraser => "Eraser",
+        ToolType::Pan => "Pan",
+    }
+}
+
+// ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
+
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ModalAction {
+enum TextAction {
+    NewNote,
+    RenameNote,
     OpenPdf,
-    LoadAnnotations,
     SaveAnnotations,
+    LoadAnnotations,
     ExportPng,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ConfirmAction {
+    DeleteNote,
+}
+
+#[derive(Debug, Clone)]
+enum ModalKind {
+    AskText {
+        title: String,
+        hint: String,
+        action: TextAction,
+    },
+    Confirm {
+        title: String,
+        message: String,
+        action: ConfirmAction,
+    },
 }
 
 #[derive(Debug, Clone)]
 struct ModalState {
-    title: String,
-    hint: String,
-    path: String,
-    action: ModalAction,
+    kind: ModalKind,
+    text: String,
 }
 
 impl ModalState {
-    fn new(title: &str, hint: &str, action: ModalAction) -> Self {
+    fn ask_text(title: &str, hint: &str, action: TextAction) -> Self {
         Self {
-            title: title.to_string(),
-            hint: hint.to_string(),
-            path: String::new(),
-            action,
+            kind: ModalKind::AskText {
+                title: title.into(),
+                hint: hint.into(),
+                action,
+            },
+            text: String::new(),
+        }
+    }
+
+    fn confirm(title: &str, message: &str, action: ConfirmAction) -> Self {
+        Self {
+            kind: ModalKind::Confirm {
+                title: title.into(),
+                message: message.into(),
+                action,
+            },
+            text: String::new(),
         }
     }
 }
 
 pub struct FreeDfApp {
-    // 문서
+    // ---------- Notes ----------
+    notes: NotesManager,
+    current_note: Option<u64>,
+
+    // ---------- Document ----------
     document: Option<DocumentView>,
     file_path: Option<PathBuf>,
     current_page: usize,
     page_size_pts: [f32; 2],
-
-    // 뷰
     view: ViewTransform,
     last_canvas: [f32; 2],
     pending_fit: Option<FitMode>,
-
-    // 렌더링 캐시
     texture: Option<egui::TextureHandle>,
     render_dirty: bool,
     last_render_zoom: f32,
     last_render_ppp: f32,
 
-    // 주석
+    // ---------- Annotations ----------
     store: AnnotationStore,
     history: History,
 
-    // 도구
+    // ---------- Tools ----------
     tool: ToolType,
-    pen_color: Color32,
+    color_family: ColorFamily,
+    pen_color: [u8; 4],
     pen_width: f32,
-    hi_color: Color32,
+    hi_color: [u8; 4],
     hi_width: f32,
     eraser_radius: f32,
+    pressure_enabled: bool,
+    pressure_curve: PressureCurve,
 
-    // 입력 상태
+    // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
     pan_last: Option<Pos2>,
     middle_pan_last: Option<Pos2>,
 
-    // 상태/메시지
+    // ---------- Search ----------
+    search_query: String,
+    search_runs: Vec<TextRun>,
+    search_matches: Vec<TextMatch>,
+    search_current: Option<usize>,
+
+    // ---------- Outline ----------
+    outline: Vec<OutlineNode>,
+    outline_loaded: bool,
+
+    // ---------- Panels ----------
+    show_notes: bool,
+    show_outline: bool,
+
+    // ---------- Logging / status ----------
+    logger: Logger,
     file_name: String,
     status: Option<String>,
 
-    // 폴백 다이얼로그
+    // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
 }
 
 impl FreeDfApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, notes: NotesManager, logger: Logger) -> Self {
         let dark = matches!(cc.egui_ctx.theme(), egui::Theme::Dark);
         let pen_color = if dark {
-            Color32::WHITE
+            [255, 255, 255, 255]
         } else {
-            Color32::from_rgb(20, 20, 20)
+            Palette::default_pen()
         };
         let hi_color = if dark {
-            Color32::from_rgba_unmultiplied(255, 220, 60, 110)
+            [255, 220, 60, 110]
         } else {
-            Color32::from_rgba_unmultiplied(255, 235, 59, 90)
+            Palette::default_highlighter()
         };
         Self {
+            notes,
+            current_note: None,
             document: None,
             file_path: None,
             current_page: 0,
-            page_size_pts: [595.0, 842.0],
+            page_size_pts: A4_PTS,
             view: ViewTransform::default(),
             last_canvas: [1280.0, 600.0],
             pending_fit: None,
@@ -144,27 +213,168 @@ impl FreeDfApp {
             store: AnnotationStore::new(),
             history: History::new(256),
             tool: ToolType::Pen,
+            color_family: ColorFamily::Black,
             pen_color,
             pen_width: 2.5,
             hi_color,
             hi_width: 16.0,
             eraser_radius: 16.0,
+            pressure_enabled: true,
+            pressure_curve: PressureCurve::default(),
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
+            search_query: String::new(),
+            search_runs: Vec::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+            outline: Vec::new(),
+            outline_loaded: false,
+            show_notes: true,
+            show_outline: false,
+            logger,
             file_name: String::new(),
             status: None,
             modal: None,
         }
     }
 
-    // ---------- 문서 열기 / 페이지 ----------
+    // ---------- Notes ----------
+
+    fn create_note_action(&mut self, title: &str) {
+        match self.notes.create_note(title) {
+            Ok(meta) => {
+                let pdf_path = self.notes.pdf_path(meta.id);
+                if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
+                    self.status = Some(e);
+                    return;
+                }
+                let _ = self.notes.set_page_count(meta.id, 1);
+                self.logger.log(AppEvent::NoteCreated {
+                    note_id: meta.id,
+                    title: meta.title.clone(),
+                });
+                self.open_note(meta.id);
+            }
+            Err(e) => self.status = Some(format!("Could not create note: {e}")),
+        }
+    }
+
+    fn rename_note_action(&mut self, id: u64, title: &str) {
+        let old = self
+            .notes
+            .get(id)
+            .map(|m| m.title.clone())
+            .unwrap_or_default();
+        match self.notes.rename_note(id, title) {
+            Ok(()) => {
+                self.logger.log(AppEvent::NoteRenamed {
+                    note_id: id,
+                    from: old,
+                    to: title.to_string(),
+                });
+                if self.current_note == Some(id) {
+                    self.file_name = title.to_string();
+                }
+                let _ = self.notes.save();
+            }
+            Err(e) => self.status = Some(format!("Rename failed: {e}")),
+        }
+    }
+
+    fn delete_note_action(&mut self, id: u64) {
+        let title = self
+            .notes
+            .get(id)
+            .map(|m| m.title.clone())
+            .unwrap_or_default();
+        match self.notes.delete_note(id) {
+            Ok(()) => {
+                self.logger.log(AppEvent::NoteDeleted { note_id: id, title });
+                if self.current_note == Some(id) {
+                    self.close_document();
+                }
+                let _ = self.notes.save();
+            }
+            Err(e) => self.status = Some(format!("Delete failed: {e}")),
+        }
+    }
+
+    fn close_document(&mut self) {
+        self.document = None;
+        self.current_note = None;
+        self.texture = None;
+        self.store = AnnotationStore::new();
+        self.history = History::new(256);
+        self.active_stroke = None;
+        self.search_matches = Vec::new();
+        self.search_current = None;
+        self.outline = Vec::new();
+        self.outline_loaded = false;
+        self.file_name = String::new();
+        self.file_path = None;
+        self.status = None;
+    }
+
+    fn open_note(&mut self, id: u64) {
+        let Some(meta) = self.notes.get(id).cloned() else {
+            return;
+        };
+        let pdf_path = self.notes.pdf_path(id);
+        if !pdf_path.exists() {
+            if let Err(e) = DocumentView::create_blank_pdf(&pdf_path, A4_PTS) {
+                self.status = Some(e);
+                return;
+            }
+        }
+        let ann_path = self.notes.annotations_path(id);
+        let store = if ann_path.exists() {
+            std::fs::read_to_string(&ann_path)
+                .ok()
+                .and_then(|t| AnnotationStore::from_json(&t).ok())
+                .unwrap_or_default()
+        } else {
+            AnnotationStore::new()
+        };
+        match DocumentView::open(&pdf_path) {
+            Ok(doc) => {
+                self.current_note = Some(id);
+                self.current_page = 0;
+                self.page_size_pts = doc.page_size_pts(0);
+                self.file_name = meta.title.clone();
+                self.file_path = Some(pdf_path);
+                self.document = Some(doc);
+                self.store = store;
+                self.history = History::new(256);
+                self.active_stroke = None;
+                self.pan_last = None;
+                self.middle_pan_last = None;
+                self.render_dirty = true;
+                self.pending_fit = Some(FitMode::Width);
+                self.outline_loaded = false;
+                self.outline = Vec::new();
+                self.search_matches = Vec::new();
+                self.search_current = None;
+                self.status = None;
+                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+                self.logger.log(AppEvent::NoteOpened {
+                    note_id: id,
+                    title: meta.title.clone(),
+                    page_count,
+                });
+                self.load_outline_if_needed();
+            }
+            Err(e) => self.status = Some(e),
+        }
+    }
+
+    // ---------- Standalone PDF (Open button) ----------
 
     fn open_file_dialog(&mut self) {
         #[cfg(target_os = "windows")]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("PDF 문서", &["pdf"])
+                .add_filter("PDF files", &["pdf"])
                 .pick_file()
             {
                 self.open_pdf(&path);
@@ -172,10 +382,10 @@ impl FreeDfApp {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            self.modal = Some(ModalState::new(
-                "PDF 열기",
-                "PDF 파일 경로를 입력하세요 (예: C:/Users/me/doc.pdf)",
-                ModalAction::OpenPdf,
+            self.modal = Some(ModalState::ask_text(
+                "Open PDF",
+                "Enter the PDF file path (e.g. C:/Users/me/doc.pdf)",
+                TextAction::OpenPdf,
             ));
         }
     }
@@ -183,35 +393,43 @@ impl FreeDfApp {
     fn open_pdf(&mut self, path: &Path) {
         match DocumentView::open(path) {
             Ok(doc) => {
+                self.current_note = None;
                 self.current_page = 0;
                 self.page_size_pts = doc.page_size_pts(0);
                 self.file_name = doc.file_name.clone();
+                self.file_path = Some(path.to_path_buf());
                 self.document = Some(doc);
                 self.store = AnnotationStore::new();
                 self.history = History::new(256);
                 self.active_stroke = None;
                 self.render_dirty = true;
                 self.pending_fit = Some(FitMode::Width);
+                self.outline_loaded = false;
+                self.outline = Vec::new();
+                self.search_matches = Vec::new();
+                self.search_current = None;
                 self.status = None;
-                self.file_path = Some(path.to_path_buf());
 
-                // 옆에 저장된 메모 파일이 있으면 자동으로 불러오기
+                // Auto-load a sidecar annotation file if present
                 let ann_path = annotation_path_for(path);
                 if ann_path.exists() {
                     if let Ok(text) = std::fs::read_to_string(&ann_path) {
                         if let Ok(store) = AnnotationStore::from_json(&text) {
                             self.store = store;
                             self.status = Some(format!(
-                                "메모를 자동으로 불러왔습니다: {}",
+                                "Loaded sidecar annotations: {}",
                                 ann_path.file_name().unwrap_or_default().to_string_lossy()
                             ));
                         }
                     }
                 }
+                self.load_outline_if_needed();
             }
             Err(e) => self.status = Some(e),
         }
     }
+
+    // ---------- Pages ----------
 
     fn next_page(&mut self) {
         if let Some(doc) = &self.document {
@@ -247,9 +465,67 @@ impl FreeDfApp {
         }
         self.render_dirty = true;
         self.pending_fit = Some(FitMode::Width);
+        self.search_update();
+        if let Some(doc) = &self.document {
+            self.logger.log(AppEvent::PageChanged {
+                page: self.current_page,
+                total: doc.page_count(),
+            });
+        }
     }
 
-    // ---------- 줌 / 핏 ----------
+    fn add_page_action(&mut self) {
+        let Some(doc) = &mut self.document else {
+            return;
+        };
+        let size = doc.page_size_pts(self.current_page);
+        if let Err(e) = doc.add_page(size) {
+            self.status = Some(e);
+            return;
+        }
+        let total = doc.page_count();
+        let new_index = total - 1;
+        self.store.insert_page(new_index);
+        self.current_page = new_index;
+        self.logger.log(AppEvent::PageAdded {
+            page: new_index,
+            total,
+        });
+        self.on_page_changed();
+        self.autosave();
+        self.save_pdf_if_note();
+        self.sync_note_meta();
+    }
+
+    fn delete_page_action(&mut self) {
+        let Some(doc) = &mut self.document else {
+            return;
+        };
+        if doc.page_count() <= 1 {
+            self.status = Some("Cannot delete the last remaining page.".to_string());
+            return;
+        }
+        let idx = self.current_page;
+        if let Err(e) = doc.delete_page(idx) {
+            self.status = Some(e);
+            return;
+        }
+        let total = doc.page_count();
+        self.store.remove_page(idx);
+        if self.current_page >= total {
+            self.current_page = total.saturating_sub(1);
+        }
+        self.logger.log(AppEvent::PageDeleted {
+            page: idx,
+            total,
+        });
+        self.on_page_changed();
+        self.autosave();
+        self.save_pdf_if_note();
+        self.sync_note_meta();
+    }
+
+    // ---------- Zoom / fit ----------
 
     fn zoom_by(&mut self, factor: f32) {
         let anchor = [self.last_canvas[0] * 0.5, self.last_canvas[1] * 0.5];
@@ -265,7 +541,7 @@ impl FreeDfApp {
         self.pending_fit = Some(FitMode::Page);
     }
 
-    /// 캔버스 크기를 알고 있을 때 pending fit을 적용합니다.
+    /// Applies a pending fit once the canvas size is known.
     fn apply_pending_fit(&mut self, canvas: [f32; 2]) {
         let Some(mode) = self.pending_fit else {
             return;
@@ -288,17 +564,25 @@ impl FreeDfApp {
         self.render_dirty = true;
     }
 
-    // ---------- 실행취소 / 다시실행 / 지우기 ----------
+    // ---------- Undo / redo / clear ----------
 
     fn undo(&mut self) {
         if let Some(edit) = self.history.undo() {
             self.store.apply_edit(&edit);
+            self.logger.log(AppEvent::UndoRedo {
+                kind: "undo".to_string(),
+            });
+            self.autosave();
         }
     }
 
     fn redo(&mut self) {
         if let Some(edit) = self.history.redo() {
             self.store.apply_edit(&edit);
+            self.logger.log(AppEvent::UndoRedo {
+                kind: "redo".to_string(),
+            });
+            self.autosave();
         }
     }
 
@@ -307,19 +591,42 @@ impl FreeDfApp {
         if !removed.is_empty() {
             self.history.push(Edit::RemoveStrokes {
                 page: self.current_page,
-                strokes: removed,
+                strokes: removed.clone(),
             });
+            self.logger.log(AppEvent::StrokeErased {
+                page: self.current_page,
+                strokes: removed.len(),
+            });
+            self.autosave();
         }
     }
 
-    // ---------- 드로잉 ----------
+    // ---------- Drawing ----------
 
     fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
-            ToolType::Pen => (self.pen_color.to_array(), self.pen_width),
-            ToolType::Highlighter => (self.hi_color.to_array(), self.hi_width),
+            ToolType::Pen => (self.pen_color, self.pen_width),
+            ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
+    }
+
+    /// Pen pressure from touch events (Windows Ink). egui reports force via
+    /// `Event::Touch { force: Some(f) }`; falls back to full pressure for mouse.
+    fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
+        if !self.pressure_enabled {
+            return 1.0;
+        }
+        let force: Option<f32> = ctx.input(|i| {
+            i.events
+                .iter()
+                .rev()
+                .find_map(|e| match e {
+                    egui::Event::Touch { force: Some(f), .. } => Some(*f),
+                    _ => None,
+                })
+        });
+        force.map(|f| f.clamp(0.0, 1.0)).unwrap_or(1.0)
     }
 
     fn finish_stroke(&mut self) {
@@ -337,9 +644,16 @@ impl FreeDfApp {
             if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
                 self.history.push(Edit::AddStrokes {
                     page: self.current_page,
-                    strokes: vec![stroke],
+                    strokes: vec![stroke.clone()],
+                });
+                self.logger.log(AppEvent::StrokeAdded {
+                    page: self.current_page,
+                    points: stroke.points.len(),
+                    tool: tool_label(active.tool).to_string(),
+                    width: active.width,
                 });
             }
+            self.autosave();
         }
     }
 
@@ -354,7 +668,7 @@ impl FreeDfApp {
         self.finish_stroke();
     }
 
-    // ---------- 텍스처 렌더링 ----------
+    // ---------- Texture rendering ----------
 
     fn ensure_texture(&mut self, ctx: &egui::Context) {
         let Some(doc) = &self.document else {
@@ -387,15 +701,105 @@ impl FreeDfApp {
                 self.last_render_ppp = ppp;
                 self.render_dirty = false;
             }
-            Err(e) => self.status = Some(format!("렌더 오류: {e}")),
+            Err(e) => self.status = Some(format!("Render error: {e}")),
         }
     }
 
-    // ---------- 파일 저장 / 불러오기 / 내보내기 ----------
+    // ---------- Search ----------
+
+    fn search_update(&mut self) {
+        let Some(doc) = &self.document else {
+            return;
+        };
+        self.search_runs = doc.page_text_runs(self.current_page).unwrap_or_default();
+        self.search_matches = find_matches(&self.search_runs, &self.search_query);
+        self.search_current = if self.search_matches.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        if !self.search_query.trim().is_empty() {
+            self.logger.log(AppEvent::Search {
+                query: self.search_query.trim().to_string(),
+                results: self.search_matches.len(),
+            });
+        }
+    }
+
+    fn search_find(&mut self, forward: bool) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        let n = self.search_matches.len() as isize;
+        let cur = self.search_current.unwrap_or(0) as isize;
+        let next = if forward { cur + 1 } else { cur - 1 };
+        let idx = ((next % n) + n) % n;
+        self.search_current = Some(idx as usize);
+    }
+
+    fn search_clear(&mut self) {
+        self.search_query.clear();
+        self.search_matches = Vec::new();
+        self.search_current = None;
+    }
+
+    // ---------- Outline ----------
+
+    fn load_outline_if_needed(&mut self) {
+        if self.outline_loaded {
+            return;
+        }
+        if let Some(doc) = &self.document {
+            self.outline = doc.outline();
+            self.outline_loaded = true;
+        }
+    }
+
+    // ---------- Persistence ----------
+
+    /// Writes the current note's annotations to its note folder.
+    fn autosave(&mut self) {
+        let Some(id) = self.current_note else {
+            return;
+        };
+        let ann_path = self.notes.annotations_path(id);
+        let json = self.store.to_json();
+        if let Err(e) = std::fs::write(&ann_path, json) {
+            self.status = Some(format!("Autosave failed: {e}"));
+            return;
+        }
+        let _ = self.notes.save();
+    }
+
+    fn sync_note_meta(&mut self) {
+        if let Some(id) = self.current_note {
+            if let Some(doc) = &self.document {
+                let _ = self.notes.set_page_count(id, doc.page_count());
+            }
+        }
+    }
+
+    /// Persists page CRUD changes back into the note's PDF file.
+    fn save_pdf_if_note(&mut self) {
+        if self.current_note.is_none() {
+            return;
+        }
+        let Some(doc) = &self.document else {
+            return;
+        };
+        let Some(path) = self.file_path.clone() else {
+            return;
+        };
+        if let Err(e) = doc.save(&path) {
+            self.status = Some(format!("Save PDF failed: {e}"));
+        }
+    }
+
+    // ---------- File dialogs (annotations / export) ----------
 
     fn save_annotations(&mut self) {
         if self.document.is_none() {
-            self.status = Some("먼저 PDF를 열어 주세요.".to_string());
+            self.status = Some("Open a PDF or note first.".to_string());
             return;
         }
         let default = self
@@ -406,7 +810,7 @@ impl FreeDfApp {
         #[cfg(target_os = "windows")]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("FreeDF 메모", &["json"])
+                .add_filter("FreeDF annotations", &["json"])
                 .set_file_name(
                     default
                         .file_name()
@@ -421,18 +825,18 @@ impl FreeDfApp {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = default;
-            self.modal = Some(ModalState::new(
-                "메모 저장",
-                "저장할 JSON 파일 경로를 입력하세요",
-                ModalAction::SaveAnnotations,
+            self.modal = Some(ModalState::ask_text(
+                "Save Annotations",
+                "Enter the JSON file path to save to",
+                TextAction::SaveAnnotations,
             ));
         }
     }
 
     fn do_save_annotations(&mut self, path: &Path) {
         match std::fs::write(path, self.store.to_json()) {
-            Ok(()) => self.status = Some(format!("메모 저장 완료: {}", path.display())),
-            Err(e) => self.status = Some(format!("메모 저장 실패: {e}")),
+            Ok(()) => self.status = Some(format!("Annotations saved: {}", path.display())),
+            Err(e) => self.status = Some(format!("Save failed: {e}")),
         }
     }
 
@@ -440,7 +844,7 @@ impl FreeDfApp {
         #[cfg(target_os = "windows")]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("FreeDF 메모", &["json"])
+                .add_filter("FreeDF annotations", &["json"])
                 .pick_file()
             {
                 self.do_load_annotations(&path);
@@ -448,10 +852,10 @@ impl FreeDfApp {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            self.modal = Some(ModalState::new(
-                "메모 불러오기",
-                "불러올 JSON 파일 경로를 입력하세요",
-                ModalAction::LoadAnnotations,
+            self.modal = Some(ModalState::ask_text(
+                "Load Annotations",
+                "Enter the JSON file path to load",
+                TextAction::LoadAnnotations,
             ));
         }
     }
@@ -461,17 +865,17 @@ impl FreeDfApp {
             Ok(text) => match AnnotationStore::from_json(&text) {
                 Ok(store) => {
                     self.store = store;
-                    self.status = Some(format!("메모 불러오기 완료: {}", path.display()));
+                    self.status = Some(format!("Annotations loaded: {}", path.display()));
                 }
-                Err(e) => self.status = Some(format!("메모 파일이 올바르지 않습니다: {e}")),
+                Err(e) => self.status = Some(format!("Invalid annotation file: {e}")),
             },
-            Err(e) => self.status = Some(format!("메모 불러오기 실패: {e}")),
+            Err(e) => self.status = Some(format!("Load failed: {e}")),
         }
     }
 
     fn export_png(&mut self) {
         if self.document.is_none() {
-            self.status = Some("먼저 PDF를 열어 주세요.".to_string());
+            self.status = Some("Open a PDF or note first.".to_string());
             return;
         }
         #[cfg(target_os = "windows")]
@@ -483,7 +887,7 @@ impl FreeDfApp {
                 .map(|s| format!("{}-p{}.png", s.to_string_lossy(), self.current_page + 1))
                 .unwrap_or_else(|| format!("page-{}.png", self.current_page + 1));
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("PNG 이미지", &["png"])
+                .add_filter("PNG image", &["png"])
                 .set_file_name(&default_name)
                 .save_file()
             {
@@ -492,10 +896,10 @@ impl FreeDfApp {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            self.modal = Some(ModalState::new(
-                "PNG 내보내기",
-                "저장할 PNG 파일 경로를 입력하세요",
-                ModalAction::ExportPng,
+            self.modal = Some(ModalState::ask_text(
+                "Export PNG",
+                "Enter the PNG file path to save to",
+                TextAction::ExportPng,
             ));
         }
     }
@@ -516,7 +920,8 @@ impl FreeDfApp {
                 ) {
                     Some(img) => img,
                     None => {
-                        self.status = Some("렌더링 결과를 이미지로 변환하지 못했습니다.".to_string());
+                        self.status =
+                            Some("Could not convert render result to image.".to_string());
                         return;
                     }
                 };
@@ -524,33 +929,58 @@ impl FreeDfApp {
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
                 draw_strokes_on_image(&mut img, &strokes, scale);
                 match img.save(path) {
-                    Ok(()) => self.status = Some(format!("내보내기 완료: {}", path.display())),
-                    Err(e) => self.status = Some(format!("PNG 저장 실패: {e}")),
+                    Ok(()) => {
+                        self.logger.log(AppEvent::ExportPng {
+                            page: self.current_page,
+                        });
+                        self.status = Some(format!("Exported: {}", path.display()));
+                    }
+                    Err(e) => self.status = Some(format!("PNG save failed: {e}")),
                 }
             }
-            Err(e) => self.status = Some(format!("내보내기 실패: {e}")),
+            Err(e) => self.status = Some(format!("Export failed: {e}")),
         }
     }
 
-    fn run_modal_action(&mut self, action: ModalAction, path: String) {
-        let path = PathBuf::from(path.trim());
+    fn run_text_action(&mut self, action: TextAction, text: String) {
         match action {
-            ModalAction::OpenPdf => self.open_pdf(&path),
-            ModalAction::LoadAnnotations => self.do_load_annotations(&path),
-            ModalAction::SaveAnnotations => self.do_save_annotations(&path),
-            ModalAction::ExportPng => self.do_export_png(&path),
+            TextAction::NewNote => self.create_note_action(text.trim()),
+            TextAction::RenameNote => {
+                if let Some(id) = self.current_note {
+                    self.rename_note_action(id, text.trim());
+                }
+            }
+            TextAction::OpenPdf => self.open_pdf(&PathBuf::from(text.trim())),
+            TextAction::SaveAnnotations => self.do_save_annotations(&PathBuf::from(text.trim())),
+            TextAction::LoadAnnotations => self.do_load_annotations(&PathBuf::from(text.trim())),
+            TextAction::ExportPng => self.do_export_png(&PathBuf::from(text.trim())),
         }
     }
 
-    // ---------- UI: 툴바 ----------
+    fn run_confirm_action(&mut self, action: ConfirmAction, text: String) {
+        match action {
+            ConfirmAction::DeleteNote => {
+                if let Ok(id) = text.trim().parse::<u64>() {
+                    self.delete_note_action(id);
+                }
+            }
+        }
+    }
+
+    // ---------- UI: toolbar ----------
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
-            ui.add_space(6.0);
+            ui.add_space(4.0);
+            // Row 1: file / page / zoom / tools
             ui.horizontal_wrapped(|ui| {
-                if ui.button("열기").on_hover_text("Ctrl+O").clicked() {
+                if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
                     self.open_file_dialog();
                 }
+                ui.separator();
+
+                ui.toggle_value(&mut self.show_notes, "Notes");
+                ui.toggle_value(&mut self.show_outline, "Outline");
                 ui.separator();
 
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
@@ -558,7 +988,7 @@ impl FreeDfApp {
                 let can_next = self.current_page + 1 < page_count;
                 if ui
                     .add_enabled(can_prev, egui::Button::new("◀"))
-                    .on_hover_text("이전 페이지")
+                    .on_hover_text("Previous page")
                     .clicked()
                 {
                     self.prev_page();
@@ -566,14 +996,14 @@ impl FreeDfApp {
                 let mut page_num = self.current_page + 1;
                 if ui
                     .add(egui::DragValue::new(&mut page_num).range(1..=page_count.max(1)))
-                    .on_hover_text("페이지 번호")
+                    .on_hover_text("Page number")
                     .changed()
                 {
-                    self.goto_page(page_num - 1);
+                    self.goto_page(page_num.saturating_sub(1));
                 }
                 if ui
                     .add_enabled(can_next, egui::Button::new("▶"))
-                    .on_hover_text("다음 페이지")
+                    .on_hover_text("Next page")
                     .clicked()
                 {
                     self.next_page();
@@ -581,20 +1011,33 @@ impl FreeDfApp {
                 ui.label(format!("/ {}", page_count.max(1)));
                 ui.separator();
 
-                if ui.button("−").on_hover_text("축소").clicked() {
+                if ui
+                    .add_enabled(page_count > 0, egui::Button::new("＋ Page"))
+                    .on_hover_text("Add blank page at the end")
+                    .clicked()
+                {
+                    self.add_page_action();
+                }
+                if ui
+                    .add_enabled(page_count > 1, egui::Button::new("－ Page"))
+                    .on_hover_text("Delete this page")
+                    .clicked()
+                {
+                    self.delete_page_action();
+                }
+                ui.separator();
+
+                if ui.button("−").on_hover_text("Zoom out").clicked() {
                     self.zoom_by(1.0 / 1.25);
                 }
-                ui.label(format!(
-                    "{:.0}%",
-                    self.view.zoom / ZOOM_100_PERCENT * 100.0
-                ));
-                if ui.button("+").on_hover_text("확대").clicked() {
+                ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
+                if ui.button("+").on_hover_text("Zoom in").clicked() {
                     self.zoom_by(1.25);
                 }
-                if ui.button("폭 맞춤").clicked() {
+                if ui.button("Fit Width").clicked() {
                     self.fit_width();
                 }
-                if ui.button("페이지 맞춤").clicked() {
+                if ui.button("Fit Page").clicked() {
                     self.fit_page();
                 }
                 ui.separator();
@@ -605,67 +1048,255 @@ impl FreeDfApp {
                     ToolType::Eraser,
                     ToolType::Pan,
                 ] {
-                    if ui.selectable_label(self.tool == tool, tool.label()).clicked() {
+                    if ui.selectable_label(self.tool == tool, tool_label(tool)).clicked() {
                         self.tool = tool;
                     }
                 }
 
                 match self.tool {
                     ToolType::Pen => {
-                        ui.color_edit_button_srgba(&mut self.pen_color);
-                        ui.add(
-                            egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("두께"),
-                        );
+                        egui::ComboBox::from_id_salt("family")
+                            .selected_text(self.color_family.label())
+                            .show_ui(ui, |ui| {
+                                for family in ColorFamily::all() {
+                                    ui.selectable_value(
+                                        &mut self.color_family,
+                                        family,
+                                        family.label(),
+                                    );
+                                }
+                            });
+                        let swatches = Palette::swatches(self.color_family);
+                        for swatch in &swatches {
+                            let color = Color32::from_rgba_unmultiplied(
+                                swatch[0],
+                                swatch[1],
+                                swatch[2],
+                                swatch[3],
+                            );
+                            let selected = *swatch == self.pen_color;
+                            let mut btn = egui::Button::new(egui::RichText::new("").color(color))
+                                .fill(color);
+                            if selected {
+                                btn = btn.stroke(Stroke::new(2.0, Color32::WHITE));
+                            }
+                            if ui.add_sized([18.0, 18.0], btn).clicked() {
+                                self.pen_color = *swatch;
+                            }
+                        }
+                        ui.add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"));
+                        ui.checkbox(&mut self.pressure_enabled, "Pressure");
+                        if self.pressure_enabled {
+                            ui.add(
+                                egui::Slider::new(&mut self.pressure_curve.min_ratio, 0.1..=1.0)
+                                    .text("Min"),
+                            );
+                            ui.add(
+                                egui::Slider::new(&mut self.pressure_curve.max_ratio, 1.0..=3.0)
+                                    .text("Max"),
+                            );
+                        }
                     }
                     ToolType::Highlighter => {
-                        ui.color_edit_button_srgba(&mut self.hi_color);
-                        ui.add(
-                            egui::Slider::new(&mut self.hi_width, 4.0..=40.0).text("두께"),
+                        let mut color = Color32::from_rgba_unmultiplied(
+                            self.hi_color[0],
+                            self.hi_color[1],
+                            self.hi_color[2],
+                            self.hi_color[3],
                         );
+                        if ui.color_edit_button_srgba(&mut color).changed() {
+                            self.hi_color = color.to_array();
+                        }
+                        ui.add(egui::Slider::new(&mut self.hi_width, 4.0..=40.0).text("Width"));
                     }
                     ToolType::Eraser => {
-                        ui.add(
-                            egui::Slider::new(&mut self.eraser_radius, 4.0..=60.0).text("반경"),
-                        );
+                        ui.add(egui::Slider::new(&mut self.eraser_radius, 4.0..=60.0).text("Radius"));
                     }
                     ToolType::Pan => {}
                 }
                 ui.separator();
 
                 if ui
-                    .add_enabled(self.history.can_undo(), egui::Button::new("실행취소"))
+                    .add_enabled(self.history.can_undo(), egui::Button::new("Undo"))
                     .on_hover_text("Ctrl+Z")
                     .clicked()
                 {
                     self.undo();
                 }
                 if ui
-                    .add_enabled(self.history.can_redo(), egui::Button::new("다시실행"))
+                    .add_enabled(self.history.can_redo(), egui::Button::new("Redo"))
                     .on_hover_text("Ctrl+Y")
                     .clicked()
                 {
                     self.redo();
                 }
-                if ui.button("페이지 지우기").clicked() {
+                if ui.button("Clear Page").clicked() {
                     self.clear_page();
                 }
                 ui.separator();
 
-                if ui.button("메모 저장").on_hover_text("Ctrl+S").clicked() {
+                if ui.button("Save Ann.").on_hover_text("Ctrl+S — save annotations").clicked() {
                     self.save_annotations();
                 }
-                if ui.button("메모 불러오기").clicked() {
+                if ui.button("Load Ann.").clicked() {
                     self.load_annotations();
                 }
-                if ui.button("PNG 내보내기").on_hover_text("Ctrl+E").clicked() {
+                if ui.button("Export PNG").on_hover_text("Ctrl+E").clicked() {
                     self.export_png();
                 }
             });
-            ui.add_space(6.0);
+
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(2.0);
+
+            // Row 2: search
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Find:");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.search_query)
+                        .hint_text("Search text in this page...")
+                        .desired_width(180.0),
+                );
+                let submitted =
+                    resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.button("Find").clicked() || submitted {
+                    self.search_update();
+                }
+                let can = !self.search_matches.is_empty();
+                if ui
+                    .add_enabled(can, egui::Button::new("◀"))
+                    .on_hover_text("Previous match")
+                    .clicked()
+                {
+                    self.search_find(false);
+                }
+                if ui
+                    .add_enabled(can, egui::Button::new("▶"))
+                    .on_hover_text("Next match")
+                    .clicked()
+                {
+                    self.search_find(true);
+                }
+                if ui
+                    .add_enabled(can, egui::Button::new("Clear"))
+                    .on_hover_text("Clear search")
+                    .clicked()
+                {
+                    self.search_clear();
+                }
+                if !self.search_matches.is_empty() {
+                    let cur = self.search_current.map(|c| c + 1).unwrap_or(0);
+                    ui.label(format!("{cur}/{}", self.search_matches.len()));
+                }
+            });
+            ui.add_space(4.0);
         });
     }
 
-    // ---------- UI: 하단 상태 바 ----------
+    // ---------- UI: notes panel ----------
+
+    fn notes_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Notes");
+        ui.horizontal(|ui| {
+            if ui.button("＋ New").clicked() {
+                self.modal = Some(ModalState::ask_text(
+                    "New Note",
+                    "Note title:",
+                    TextAction::NewNote,
+                ));
+            }
+            let has_note = self.current_note.is_some();
+            if ui.add_enabled(has_note, egui::Button::new("Rename")).clicked() {
+                if let Some(id) = self.current_note {
+                    let current = self
+                        .notes
+                        .get(id)
+                        .map(|m| m.title.clone())
+                        .unwrap_or_default();
+                    let mut modal =
+                        ModalState::ask_text("Rename Note", "New title:", TextAction::RenameNote);
+                    modal.text = current;
+                    self.modal = Some(modal);
+                }
+            }
+            if ui.add_enabled(has_note, egui::Button::new("Delete")).clicked() {
+                if let Some(id) = self.current_note {
+                    let mut modal = ModalState::confirm(
+                        "Delete Note",
+                        "Delete this note and all its annotations? This cannot be undone.",
+                        ConfirmAction::DeleteNote,
+                    );
+                    modal.text = id.to_string();
+                    self.modal = Some(modal);
+                }
+            }
+        });
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let notes: Vec<(u64, String, usize)> = self
+                    .notes
+                    .list()
+                    .iter()
+                    .map(|m| (m.id, m.title.clone(), m.page_count))
+                    .collect();
+                if notes.is_empty() {
+                    ui.label("No notes yet. Click ＋ New to create one.");
+                }
+                for (id, title, page_count) in notes {
+                    let selected = self.current_note == Some(id);
+                    let text = if page_count > 0 {
+                        format!("{title}  ({}p)", page_count)
+                    } else {
+                        title
+                    };
+                    if ui.selectable_label(selected, text).clicked() {
+                        self.open_note(id);
+                    }
+                }
+            });
+    }
+
+    // ---------- UI: outline panel ----------
+
+    fn outline_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Outline");
+        if !self.outline_loaded {
+            self.load_outline_if_needed();
+        }
+        if self.outline.is_empty() {
+            ui.label("No outline in this PDF.");
+            return;
+        }
+        let mut jump: Option<(String, usize)> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                let mut index = 0usize;
+                for entry in flatten(&self.outline) {
+                    index += 1;
+                    let text = format!(
+                        "{}{}",
+                        "    ".repeat(entry.depth),
+                        entry.node.title
+                    );
+                    let resp = ui.push_id(index, |ui| ui.selectable_label(false, text)).inner;
+                    if resp.clicked() {
+                        if let Some(p) = entry.node.page_index {
+                            jump = Some((entry.node.title.clone(), p));
+                        }
+                    }
+                }
+            });
+        if let Some((title, page)) = jump {
+            self.logger.log(AppEvent::OutlineJump { title, page });
+            self.goto_page(page);
+        }
+    }
+
+    // ---------- UI: status bar ----------
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
@@ -673,25 +1304,28 @@ impl FreeDfApp {
         let stroke_count = self.store.total_stroke_count();
         let file_name = self.file_name.clone();
         let status = self.status.clone();
+        let ink = if self.pressure_enabled { "Ink: On" } else { "Ink: Off" };
 
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 if file_name.is_empty() {
-                    ui.label(egui::RichText::new("문서 없음").weak());
+                    ui.label(egui::RichText::new("No document").weak());
                 } else {
                     ui.label(egui::RichText::new(&file_name).strong());
                 }
                 ui.separator();
                 ui.label(format!(
-                    "{}/{} 페이지",
+                    "{}/{} pages",
                     (self.current_page + 1).min(page_count.max(1)),
                     page_count.max(1)
                 ));
                 ui.separator();
-                ui.label(format!("줌 {zoom_pct:.0}%"));
+                ui.label(format!("Zoom {zoom_pct:.0}%"));
                 ui.separator();
-                ui.label(format!("스트로크 {stroke_count}개"));
+                ui.label(format!("Strokes: {stroke_count}"));
+                ui.separator();
+                ui.label(ink);
                 if let Some(s) = &status {
                     ui.separator();
                     ui.label(egui::RichText::new(s).color(Color32::from_rgb(230, 120, 60)));
@@ -701,7 +1335,7 @@ impl FreeDfApp {
         });
     }
 
-    // ---------- UI: 캔버스 ----------
+    // ---------- UI: canvas ----------
 
     fn canvas(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -711,42 +1345,41 @@ impl FreeDfApp {
         let canvas_size = [canvas.width(), canvas.height()];
         self.last_canvas = canvas_size;
 
-        // 배경
+        // Background
         painter.rect_filled(canvas, egui::CornerRadius::ZERO, ui.visuals().extreme_bg_color);
 
         if self.document.is_none() {
             ui.painter_at(canvas).text(
                 canvas.center(),
                 egui::Align2::CENTER_CENTER,
-                "PDF를 열어 메모와 필기를 시작하세요 (Ctrl+O)",
+                "Open a PDF or create a note to start annotating (Ctrl+O)",
                 egui::TextStyle::Heading.resolve(ui.style()),
                 ui.visuals().weak_text_color(),
             );
             return;
         }
 
-        // pending fit 적용
+        // Apply pending fit + render cache
         self.apply_pending_fit(canvas_size);
-        // 렌더 캐시 갱신 (입력 처리 전에 줌 반영)
         self.ensure_texture(&ctx);
 
-        // ---------- 입력 처리 ----------
+        // ---------- Input ----------
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);
 
-        // ---------- 그리기 ----------
+        // ---------- Draw ----------
         let page_view = self.view.page_size_to_view(self.page_size_pts[0], self.page_size_pts[1]);
         let page_rect = Rect::from_min_size(
             origin + Vec2::new(self.view.pan_x, self.view.pan_y),
             Vec2::new(page_view[0], page_view[1]),
         );
 
-        // 페이지 그림자
+        // Page shadow
         painter.rect_filled(
             page_rect.expand(6.0),
             egui::CornerRadius::same(4),
             Color32::from_black_alpha(70),
         );
-        // 페이지 이미지
+        // Page image
         if let Some(tex) = &self.texture {
             painter.image(
                 tex.id(),
@@ -755,7 +1388,7 @@ impl FreeDfApp {
                 Color32::WHITE,
             );
         }
-        // 페이지 테두리
+        // Page border
         painter.rect_stroke(
             page_rect,
             egui::CornerRadius::same(2),
@@ -763,7 +1396,10 @@ impl FreeDfApp {
             egui::StrokeKind::Inside,
         );
 
-        // 주석 스트로크
+        // Search highlights (under ink so annotations stay readable)
+        self.paint_search_highlights(&painter, origin);
+
+        // Annotation strokes
         let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
         for stroke in &strokes {
             self.paint_stroke(&painter, stroke, origin);
@@ -772,7 +1408,7 @@ impl FreeDfApp {
             self.paint_active(&painter, active, origin);
         }
 
-        // 지우개 커서
+        // Eraser cursor
         if self.tool == ToolType::Eraser {
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
                 if canvas.contains(pos) {
@@ -785,19 +1421,45 @@ impl FreeDfApp {
             }
         }
 
-        // 줌 힌트
+        // Zoom hint
         if self.document.is_some() && self.view.zoom >= 4.0 {
             painter.text(
                 canvas.left_top() + Vec2::new(10.0, 10.0),
                 egui::Align2::LEFT_TOP,
-                "Ctrl+휠: 줌 / 휠: 스크롤·페이지 / 중간버튼: 이동",
+                "Ctrl+wheel: zoom / wheel: scroll & page / middle button: pan",
                 egui::TextStyle::Small.resolve(ui.style()),
                 ui.visuals().weak_text_color(),
             );
         }
     }
 
-    // ---------- 입력 처리 ----------
+    fn paint_search_highlights(&self, painter: &egui::Painter, origin: Pos2) {
+        let match_fill = Color32::from_rgba_unmultiplied(255, 235, 60, 80);
+        let current_fill = Color32::from_rgba_unmultiplied(255, 200, 40, 120);
+        let current_stroke = Color32::from_rgb(255, 140, 0);
+        for (i, m) in self.search_matches.iter().enumerate() {
+            let r = m.rect;
+            let a = self.view.page_to_view([r[0], r[1]]);
+            let b = self.view.page_to_view([r[2], r[3]]);
+            let rect = Rect::from_min_max(
+                origin + Vec2::new(a[0], a[1]),
+                origin + Vec2::new(b[0], b[1]),
+            );
+            if Some(i) == self.search_current {
+                painter.rect_filled(rect, 2.0, current_fill);
+                painter.rect_stroke(
+                    rect,
+                    2.0,
+                    Stroke::new(2.0, current_stroke),
+                    egui::StrokeKind::Inside,
+                );
+            } else {
+                painter.rect_filled(rect, 2.0, match_fill);
+            }
+        }
+    }
+
+    // ---------- Input handling ----------
 
     fn handle_canvas_input(
         &mut self,
@@ -808,7 +1470,7 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
-        // 줌(핀치 / Ctrl+휠)
+        // Zoom (pinch / Ctrl+wheel)
         let (zoom_delta, scroll_y) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.y));
         let ctrl_down = ctx.input(|i| i.modifiers.ctrl);
         if (zoom_delta - 1.0).abs() > 1e-4 && response.hovered() {
@@ -820,7 +1482,7 @@ impl FreeDfApp {
         } else if scroll_y.abs() > 0.0 && response.hovered() && !ctrl_down {
             let page_h_px = self.page_size_pts[1] * self.view.zoom;
             if page_h_px <= canvas_size[1] {
-                // 페이지가 통째로 보이면 페이지 넘기기
+                // Whole page visible -> page flip
                 if scroll_y < 0.0 {
                     self.next_page();
                 } else {
@@ -831,7 +1493,7 @@ impl FreeDfApp {
             }
         }
 
-        // 중간 버튼으로 항상 팬
+        // Middle-button pan
         let middle_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
         if middle_down {
             if let Some(abs) = ctx.input(|i| i.pointer.interact_pos()) {
@@ -853,7 +1515,7 @@ impl FreeDfApp {
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
                         let page = self.view.view_to_page([p.x, p.y]);
-                        let pressure = 0.5; // egui 0.36에는 펜 압력 API가 없음
+                        let pressure = self.sample_pressure(ctx);
                         if self.active_stroke.is_none() {
                             let (color, width) = self.current_drawing_style();
                             self.active_stroke = Some(ActiveStroke {
@@ -863,7 +1525,7 @@ impl FreeDfApp {
                                 points: Vec::new(),
                             });
                         }
-                        let st = self.active_stroke.as_mut().expect("방금 생성");
+                        let st = self.active_stroke.as_mut().expect("just created");
                         st.push(page, pressure);
                     }
                 }
@@ -874,7 +1536,7 @@ impl FreeDfApp {
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
                         let page = self.view.view_to_page([p.x, p.y]);
-                        let pressure = 0.5;
+                        let pressure = self.sample_pressure(ctx);
                         self.commit_dot(page, pressure);
                     }
                 }
@@ -889,8 +1551,13 @@ impl FreeDfApp {
                         if !removed.is_empty() {
                             self.history.push(Edit::RemoveStrokes {
                                 page: self.current_page,
-                                strokes: removed,
+                                strokes: removed.clone(),
                             });
+                            self.logger.log(AppEvent::StrokeErased {
+                                page: self.current_page,
+                                strokes: removed.len(),
+                            });
+                            self.autosave();
                         }
                     }
                 }
@@ -912,7 +1579,7 @@ impl FreeDfApp {
         }
     }
 
-    // ---------- 스트로크 그리기 ----------
+    // ---------- Stroke painting ----------
 
     fn paint_active(&self, painter: &egui::Painter, active: &ActiveStroke, origin: Pos2) {
         let stroke = freedf_core::model::Stroke {
@@ -940,7 +1607,8 @@ impl FreeDfApp {
         if pts.len() == 1 {
             let v = self.view.page_to_view([pts[0].x, pts[0].y]);
             let center = origin + Vec2::new(v[0], v[1]);
-            let r = (stroke.width * zoom * 0.5).max(0.75);
+            let r = (self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure) * 0.5)
+                .max(0.75);
             painter.circle_filled(center, r, color);
             return;
         }
@@ -948,14 +1616,17 @@ impl FreeDfApp {
             let a = self.view.page_to_view([w[0].x, w[0].y]);
             let b = self.view.page_to_view([w[1].x, w[1].y]);
             let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-            let wpx = stroke.width * zoom * (0.45 + 0.55 * pressure);
+            let wpx = self
+                .pressure_curve
+                .apply(stroke.width * zoom, pressure)
+                .max(0.5);
             let pa = origin + Vec2::new(a[0], a[1]);
             let pb = origin + Vec2::new(b[0], b[1]);
-            painter.line_segment([pa, pb], Stroke::new(wpx.max(0.5), color));
+            painter.line_segment([pa, pb], Stroke::new(wpx, color));
         }
     }
 
-    // ---------- 단축키 ----------
+    // ---------- Shortcuts ----------
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let ctrl = ctx.input(|i| i.modifiers.command);
@@ -963,6 +1634,13 @@ impl FreeDfApp {
 
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::O)) {
             self.open_file_dialog();
+        }
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::N)) {
+            self.modal = Some(ModalState::ask_text(
+                "New Note",
+                "Note title:",
+                TextAction::NewNote,
+            ));
         }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::Z)) {
             if shift {
@@ -980,10 +1658,17 @@ impl FreeDfApp {
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::E)) {
             self.export_png();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::ArrowRight)) {
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            self.search_update();
+        }
+        if ctx
+            .input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::ArrowRight))
+        {
             self.next_page();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::ArrowLeft)) {
+        if ctx
+            .input(|i| i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::ArrowLeft))
+        {
             self.prev_page();
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
@@ -992,7 +1677,7 @@ impl FreeDfApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
             self.zoom_by(1.0 / 1.25);
         }
-        // 도구 단축키
+        // Tool shortcuts
         if ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.tool = ToolType::Pen;
         }
@@ -1007,47 +1692,71 @@ impl FreeDfApp {
         }
     }
 
-    // ---------- 폴백 다이얼로그 ----------
+    // ---------- Fallback dialog ----------
 
     fn fallback_dialog(&mut self, ctx: &egui::Context) {
         let Some(modal) = self.modal.clone() else {
             return;
         };
-        let mut path = modal.path.clone();
+        let mut text = modal.text.clone();
         let mut ok = false;
         let mut cancel = false;
 
-        egui::Window::new(modal.title)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(&modal.hint);
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut path)
-                        .hint_text("경로 입력")
-                        .desired_width(360.0),
-                );
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ok = ui.button("확인").clicked();
-                    cancel = ui.button("취소").clicked();
-                });
-                if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    ok = true;
-                }
-            });
-
-        // 입력 중 상태 유지
-        if let Some(m) = &mut self.modal {
-            m.path = path.clone();
+        match &modal.kind {
+            ModalKind::AskText { title, hint, .. } => {
+                egui::Window::new(title)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(hint);
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut text)
+                                .hint_text("Type here...")
+                                .desired_width(360.0),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ok = ui.button("OK").clicked();
+                            cancel = ui.button("Cancel").clicked();
+                        });
+                        if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            ok = true;
+                        }
+                    });
+            }
+            ModalKind::Confirm { title, message, .. } => {
+                egui::Window::new(title)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(message);
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ok = ui.button("Delete").clicked();
+                            cancel = ui.button("Cancel").clicked();
+                        });
+                    });
+            }
         }
 
-        if ok && !path.trim().is_empty() {
-            let action = self.modal.as_ref().map(|m| m.action);
+        // Keep text updated while typing
+        if let Some(m) = &mut self.modal {
+            m.text = text.clone();
+        }
+
+        if ok {
+            let kind = self.modal.as_ref().map(|m| m.kind.clone());
             self.modal = None;
-            if let Some(action) = action {
-                self.run_modal_action(action, path);
+            if let Some(kind) = kind {
+                match kind {
+                    ModalKind::AskText { action, .. } if !text.trim().is_empty() => {
+                        self.run_text_action(action, text);
+                    }
+                    ModalKind::Confirm { action, .. } => self.run_confirm_action(action, text),
+                    _ => {}
+                }
             }
         } else if cancel {
             self.modal = None;
@@ -1062,15 +1771,34 @@ impl eframe::App for FreeDfApp {
         self.toolbar(ui);
         self.status_bar(ui);
 
+        if self.show_notes {
+            egui::Panel::left("notes_panel")
+                .resizable(true)
+                .default_size(230.0)
+                .show(ui, |ui| self.notes_panel(ui));
+        }
+        if self.show_outline {
+            egui::Panel::left("outline_panel")
+                .resizable(true)
+                .default_size(220.0)
+                .show(ui, |ui| self.outline_panel(ui));
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             self.canvas(ui);
         });
 
         self.fallback_dialog(&ctx);
+
+        // High-refresh support: keep repainting while a document is open so
+        // pen input and ink rendering stay smooth (120Hz+ displays).
+        if self.document.is_some() || self.active_stroke.is_some() {
+            ctx.request_repaint();
+        }
     }
 }
 
-/// PDF 파일 옆에 놓이는 메모 파일 경로 (`doc.freedf.json`).
+/// Sidecar annotation path for a standalone PDF (`doc.pdf.freedf.json`).
 fn annotation_path_for(pdf_path: &Path) -> PathBuf {
     let mut os = pdf_path.as_os_str().to_os_string();
     os.push(".freedf.json");

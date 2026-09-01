@@ -133,8 +133,7 @@ fn save_and_load_annotations() {
 
     let json = store.to_json();
 
-    let mut loaded = AnnotationStore::new();
-    loaded = AnnotationStore::from_json(&json).expect("load");
+    let mut loaded = AnnotationStore::from_json(&json).expect("load");
 
     assert_eq!(loaded, store);
     assert_eq!(loaded.strokes_on(2).len(), 1);

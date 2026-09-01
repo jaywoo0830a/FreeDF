@@ -4,6 +4,7 @@
 //! "메모한 페이지 내보내기" 기능을 제공합니다.
 
 use freedf_core::model::{Stroke, StrokePoint};
+use freedf_core::pen::PressureCurve;
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
@@ -15,20 +16,22 @@ pub fn draw_strokes_on_image(img: &mut RgbaImage, strokes: &[Stroke], scale: f32
 
 fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
     let color = stroke.color;
+    let curve = PressureCurve::default();
     let pts = &stroke.points;
     if pts.is_empty() {
         return;
     }
     if pts.len() == 1 {
         let p = scale_point(&pts[0], scale);
-        draw_disk(img, p, stroke.width * scale / 2.0, color);
+        let r = curve.apply(stroke.width, pts[0].pressure) * scale / 2.0;
+        draw_disk(img, p, r, color);
         return;
     }
     for w in pts.windows(2) {
         let a = scale_point(&w[0], scale);
         let b = scale_point(&w[1], scale);
         let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-        let width = stroke.width * (0.45 + 0.55 * pressure) * scale;
+        let width = curve.apply(stroke.width, pressure) * scale;
         draw_segment(img, a, b, width, color);
     }
 }

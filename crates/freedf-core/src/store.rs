@@ -18,7 +18,7 @@ pub struct PageAnnotations {
 /// `Edit`(history)와 함께 사용하면 실행취소/다시실행이 가능합니다.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AnnotationStore {
-    pages: BTreeMap<PageIndex, PageAnnotations>,
+    pub(crate) pages: BTreeMap<PageIndex, PageAnnotations>,
     next_stroke_id: u64,
 }
 
@@ -164,7 +164,7 @@ impl AnnotationStore {
         serde_json::from_str(s)
     }
 
-    fn ensure_page(&mut self, page_index: PageIndex) -> &mut PageAnnotations {
+    pub(crate) fn ensure_page(&mut self, page_index: PageIndex) -> &mut PageAnnotations {
         self.pages
             .entry(page_index)
             .or_insert_with(|| PageAnnotations {

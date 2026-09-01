@@ -6,6 +6,9 @@
 use pdfium_render::prelude::*;
 use std::path::Path;
 
+use freedf_core::outline::OutlineNode;
+use freedf_core::search::TextRun;
+
 /// PDFium 라이브러리를 로드합니다.
 pub fn load_pdfium() -> Result<Pdfium, String> {
     // 1) 시스템에 등록된 라이브러리 시도
@@ -139,5 +142,118 @@ impl DocumentView {
             height,
             rgba,
         })
+    }
+
+    /// 문서의 책갈피(목차) 트리를 `OutlineNode` 목록으로 변환합니다.
+    pub fn outline(&self) -> Vec<OutlineNode> {
+        fn walk(bookmark: &PdfBookmark) -> Vec<OutlineNode> {
+            let mut nodes = Vec::new();
+            for child in bookmark.iter_direct_children() {
+                let title = child.title().unwrap_or_default();
+                let page_index = child
+                    .destination()
+                    .and_then(|d| d.page_index().ok())
+                    .filter(|i| *i >= 0)
+                    .map(|i| i as usize);
+                nodes.push(OutlineNode::new(title, page_index, walk(&child)));
+            }
+            nodes
+        }
+        let Some(root) = self.document.bookmarks().root() else {
+            return Vec::new();
+        };
+        walk(&root)
+    }
+
+    /// 페이지의 텍스트 세그먼트를 검색용 `TextRun` 목록으로 변환합니다.
+    pub fn page_text_runs(&self, index: usize) -> Result<Vec<TextRun>, String> {
+        let page = self
+            .document
+            .pages()
+            .get(index as i32)
+            .map_err(|e| format!("페이지를 읽을 수 없습니다: {e}"))?;
+        let text = page.text().map_err(|e| format!("텍스트 추출 실패: {e}"))?;
+        let mut runs = Vec::new();
+        for seg in text.segments().iter() {
+            let txt = seg.text();
+            let b = seg.bounds();
+            let rect = [b.left().value, b.top().value, b.right().value, b.bottom().value];
+            // pdfium-render 0.9.3은 문자 단위 좌표를 노출하지 않으므로 빈 벡터.
+            // core의 find_matches가 run.rect 비율 폴백으로 처리합니다.
+            runs.push(TextRun::new(txt, rect, Vec::new()));
+        }
+        Ok(runs)
+    }
+
+    /// 문서 끝에 빈 페이지를 추가합니다.
+    pub fn add_page(&mut self, size_pts: [f32; 2]) -> Result<(), String> {
+        let paper =
+            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
+        self.document
+            .pages_mut()
+            .create_page_at_end(paper)
+            .map_err(|e| format!("페이지 추가 실패: {e}"))?;
+        self.refresh_sizes();
+        Ok(())
+    }
+
+    /// 페이지를 삭제합니다. 마지막 한 장은 삭제할 수 없습니다.
+    pub fn delete_page(&mut self, index: usize) -> Result<(), String> {
+        if self.page_count() <= 1 {
+            return Err("Cannot delete the last remaining page.".to_string());
+        }
+        if index >= self.page_count() {
+            return Err("Page index out of range.".to_string());
+        }
+        self.document
+            .pages_mut()
+            .get(index as i32)
+            .map_err(|e| format!("페이지를 읽을 수 없습니다: {e}"))?
+            .delete()
+            .map_err(|e| format!("페이지 삭제 실패: {e}"))?;
+        self.refresh_sizes();
+        Ok(())
+    }
+
+    /// 현재 문서(주석 포함)를 파일로 저장합니다.
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        self.document
+            .save_to_file(path)
+            .map_err(|e| format!("저장 실패: {e}"))
+    }
+
+    /// 빈 PDF 문서를 생성해 저장합니다 (기본 A4).
+    pub fn create_blank_pdf(path: &Path, size_pts: [f32; 2]) -> Result<(), String> {
+        let pdfium = Box::new(load_pdfium()?);
+        let document = pdfium
+            .create_new_pdf()
+            .map_err(|e| format!("새 PDF 생성 실패: {e}"))?;
+        // open()과 동일한 수명 확장 패턴.
+        let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
+        let paper =
+            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
+        document
+            .pages_mut()
+            .create_page_at_end(paper)
+            .map_err(|e| format!("페이지 생성 실패: {e}"))?;
+        document
+            .save_to_file(path)
+            .map_err(|e| format!("저장 실패: {e}"))
+    }
+
+    /// 페이지 크기 캐시를 문서 상태에 맞게 다시 계산합니다.
+    fn refresh_sizes(&mut self) {
+        let count = self.document.pages().len() as usize;
+        let mut sizes = Vec::with_capacity(count);
+        for i in 0..count {
+            let size = self
+                .document
+                .pages()
+                .page_size(i as i32)
+                .map(|r| [r.width().value, r.height().value])
+                .unwrap_or([595.0, 842.0]); // 기본 A4
+            sizes.push(size);
+        }
+        self.page_sizes_pts = sizes;
     }
 }

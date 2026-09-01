@@ -1,103 +1,147 @@
-# FreeDF — 초경량 PDF 뷰어 + 드로잉 패드
+# FreeDF — Lightweight PDF Viewer & Ink
 
-egui 0.36.1 + pdfium-render 0.9.3 기반의 **초경량 PDF 뷰어**입니다.
-태블릿/드로잉 패드로 **메모와 필기**를 하기 좋게 설계했습니다.
-Windows 11 친화적(시스템 테마 따라가기, HiDPI, 네이티브 파일 대화상자)이며
-단일 페이지 중심의 빠른 렌더링을 제공합니다.
+An ultra-lightweight PDF viewer with a drawing-pad annotation layer, built on
+**egui 0.36.1** + **pdfium-render 0.9.3**. It is designed for taking handwritten
+notes on a tablet / drawing pad and is Windows 11-friendly (system theme, HiDPI,
+native file dialogs, Windows Ink pressure).
 
 ```
 ├─ crates/
-│  ├─ freedf-core/   # GUI 없는 순수 Rust 코어 (모델·저장소·변환·이력) + 단위/통합 테스트
-│  └─ freedf/        # egui + pdfium-render 기반 데스크톱 앱
+│  ├─ freedf-core/   # Pure-Rust, GUI-free core (model, store, transform, history,
+│  │                 #   notes, pages, outline, search, pen, logging) + unit/integration tests
+│  └─ freedf/        # egui + pdfium-render desktop app
 ```
 
-## 주요 기능
+## Features
 
-- 📄 **PDF 열기/렌더링** — pdfium으로 페이지를 고해상도 렌더링 (HiDPI 대응)
-- ✏️ **펜 / 형광펜 / 지우개 / 이동** — 페이지 좌표계로 저장되어 줌/팬에 흔들리지 않음
-- 🖌️ 색상·두께 조절, 압력 값 저장(데이터 모델 포함, egui 0.36은 공용 압력 API 부재)
-- ↩️ **실행취소/다시실행** (diff 기반, 최대 256단계)
-- 🗂️ **메모 저장/불러오기** — PDF 옆에 `*.freedf.json` 자동 저장·자동 로드
-- 🖼️ **PNG 내보내기** — 주석을 페이지 위에 그려 150dpi 이미지로 저장
-- ⌨️ 단축키, 줌(핀치/Ctrl+휠), 페이지 넘기기, 중간버튼 팬
+- 📄 **PDF open / render** — high-resolution page rendering via PDFium (HiDPI aware)
+- 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
+  stores its own PDF, annotations and metadata under the app data folder
+- ➕➖ **Page CRUD** — add a blank page or delete the current page; annotations are
+  kept aligned and page changes are persisted back into the note's PDF
+- 🧭 **Outline panel** — browse the PDF bookmark tree and jump to a page on click
+- 🔍 **In-page word search** — case-insensitive; yellow highlights for matches, an
+  orange border for the current one, with prev/next/clear and a result counter
+- ✏️ **Pen / Highlighter / Eraser / Pan** — strokes are stored in page coordinates,
+  so they never drift under zoom/pan
+- 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
+  swatch palettes for one-tap color picking
+- 🖊️ **Pen pressure** — pressure is read from touch events (Windows Ink) and mapped
+  to stroke width via an adjustable `min/max` pressure curve (0.4×–1.4× by default)
+- ↩️ **Undo / Redo** — diff-based, up to 256 steps; eraser and clear are undoable
+- 🖼️ **PNG export** — renders the annotated page at 150 dpi
+- 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
+  stays smooth on 120 Hz+ displays
+- 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
+- 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
+  integration tests, all runnable without a GUI or PDFium
 
-## 요구 사항
+## Requirements
 
-- Rust 1.75+ (MSRV는 egui 0.36 기준)
-- **PDFium 라이브러리** (실행 파일 옆에 배치)
+- Rust 1.75+ (MSRV follows egui 0.36)
+- **PDFium library** placed next to the executable
 
-### Windows 11에서 pdfium.dll 준비
+### Windows 11: getting pdfium.dll
 
 ```powershell
-# 프로젝트 루트에서 실행 (또는 target/release에 복사)
+# Run from the project root (or copy next to target/release/freedf.exe)
 Invoke-WebRequest https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-windows-x64.tgz -OutFile pdfium.tgz
 tar -xzf pdfium.tgz
 copy bin\pdfium.dll .
 ```
 
-Linux에서는 `libpdfium.so`를 실행 파일 옆에 두면 됩니다.
+On Linux, place `libpdfium.so` next to the executable.
 
-## 빌드 & 실행
+## Build & Run
 
 ```bash
-# 코어 테스트 (GUI/PDFium 없이 실행 가능)
+# Core tests (run without a GUI or PDFium)
 cargo test -p freedf-core
 
-# 앱 빌드/실행
+# Build & run the app
 cargo run -p freedf
 
-# 릴리스 빌드 (작고 빠른 실행 파일)
+# Small, fast release binary
 cargo build --release -p freedf
 ```
 
-> 릴리스 빌드 후 `target/release/freedf.exe` 옆에 `pdfium.dll`을 함께 배포하세요.
+> When distributing, ship `pdfium.dll` next to `target/release/freedf.exe`.
 
-## 단축키
+## Shortcuts
 
-| 단축키 | 동작 |
+| Shortcut | Action |
 |---|---|
-| `Ctrl+O` | PDF 열기 |
-| `Ctrl+Z` / `Ctrl+Y`(또는 `Ctrl+Shift+Z`) | 실행취소 / 다시실행 |
-| `Ctrl+S` | 메모 저장 |
-| `Ctrl+E` | 현재 페이지 PNG 내보내기 |
-| `PgUp`/`PgDn`, `←`/`→` | 페이지 이동 |
-| `+` / `-` | 확대 / 축소 |
-| `P` / `H` / `E` / `V` | 펜 / 형광펜 / 지우개 / 이동 |
-| Ctrl+휠 | 줌 |
-| 휠 | 페이지 넘기기(꽉 차면) 또는 세로 스크롤 |
-| 중간 버튼 드래그 | 화면 이동 |
+| `Ctrl+O` | Open PDF |
+| `Ctrl+N` | New note |
+| `Ctrl+F` | Search in current page |
+| `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |
+| `Ctrl+S` | Save annotations |
+| `Ctrl+E` | Export current page as PNG |
+| `PgUp` / `PgDn`, `←` / `→` | Page navigation |
+| `+` / `-` | Zoom in / out |
+| `P` / `H` / `E` / `V` | Pen / Highlighter / Eraser / Pan |
+| Ctrl+wheel | Zoom |
+| Wheel | Page flip (if fully visible) or vertical scroll |
+| Middle-button drag | Pan |
 
-## 메모 파일 형식
+## App data & logging
 
-주석은 JSON(`serde`)으로 직렬화됩니다. 페이지별 스트로크(도구·RGBA·두께·좌표·압력)를 보관합니다.
+Data lives in `%LOCALAPPDATA%/FreeDF` on Windows and `~/.local/share/freedf` elsewhere:
 
-```json
-{"pages":{"0":{"page_index":0,"strokes":[{"id":0,"tool":"Pen","color":[20,20,20,255],"width":2.5,"points":[{"x":10.0,"y":20.0,"pressure":0.5}]}]}},"next_stroke_id":1}
+```
+FreeDF/
+├─ notes/
+│  ├─ notes.json          # library index (titles, timestamps, page counts)
+│  └─ <note-id>/
+│     ├─ document.pdf     # the note's PDF
+│     └─ annotations.json # that note's strokes
+└─ logs/
+   └─ freedf.log          # structured JSON-lines event log
 ```
 
-## 프로젝트 구조
+The log records one JSON object per line for analysis, e.g.:
 
-| 경로 | 내용 |
+```json
+{"epoch_ms":1719999999999,"seq":1,"event":"app_start","version":"0.1.0"}
+{"epoch_ms":1720000000001,"seq":2,"event":"note_opened","note_id":0,"title":"Lecture","page_count":12}
+{"epoch_ms":1720000000123,"seq":3,"event":"stroke_added","page":1,"points":42,"tool":"Pen","width":2.5}
+```
+
+Events: `app_start`, `note_opened`, `note_created`, `note_renamed`, `note_deleted`,
+`page_changed`, `page_added`, `page_deleted`, `stroke_added`, `stroke_erased`,
+`undo_redo`, `search`, `outline_jump`, `export_png`, `error`.
+
+## Project structure
+
+| Path | Contents |
 |---|---|
 | `crates/freedf-core/src/model.rs` | `ToolType`, `StrokePoint`, `Stroke` |
-| `crates/freedf-core/src/store.rs` | 페이지별 주석 저장소, 지우개 히트 테스트, JSON |
-| `crates/freedf-core/src/transform.rs` | 페이지 좌표 ↔ 뷰 좌표 (줌/팬/핏) |
-| `crates/freedf-core/src/history.rs` | diff 기반 undo/redo |
-| `crates/freedf/src/pdf.rs` | PDFium 로딩 + 페이지 렌더링 |
-| `crates/freedf/src/app.rs` | 뷰어 캔버스, 도구, 툴바, 단축키, 파일 IO |
-| `crates/freedf/src/export.rs` | 주석을 이미지 위에 래스터라이즈 → PNG |
+| `crates/freedf-core/src/store.rs` | per-page annotation store, eraser hit-test, JSON |
+| `crates/freedf-core/src/transform.rs` | page ↔ view coordinates (zoom/pan/fit) |
+| `crates/freedf-core/src/history.rs` | diff-based undo/redo |
+| `crates/freedf-core/src/notes.rs` | note library CRUD + file layout |
+| `crates/freedf-core/src/pages.rs` | page insert/delete with annotation re-alignment |
+| `crates/freedf-core/src/outline.rs` | outline tree model + flatten/search |
+| `crates/freedf-core/src/search.rs` | case-insensitive word search with highlight rects |
+| `crates/freedf-core/src/pen.rs` | color families/palettes + pressure curve |
+| `crates/freedf-core/src/logging.rs` | JSON-lines structured logger |
+| `crates/freedf/src/pdf.rs` | PDFium loading, rendering, outline/text extraction, page CRUD, save |
+| `crates/freedf/src/app.rs` | canvas, tools, toolbar, notes/outline/search UI, shortcuts, file IO |
+| `crates/freedf/src/export.rs` | rasterize annotations onto an image → PNG |
 
-## 문제 해결
+## Troubleshooting
 
-### 시작하자마자 0xc0000005 (액세스 위반) 크래시
-- 원인: eframe 0.36 기본 렌더러가 **wgpu(DX12)** 인데, 일부 Windows GPU/VM에서 시작 시 크래시가 발생할 수 있습니다.
-- 해결: 본 프로젝트는 **OpenGL(glow) 렌더러**를 사용하도록 설정되어 있습니다. 반드시 최신 소스로 다시 빌드하세요.
+### Crash on startup with 0xc0000005 (access violation)
+- **Cause:** eframe 0.36's default renderer is **wgpu (DX12)**, which can crash at
+  startup on some Windows GPUs / VMs.
+- **Fix:** this project is configured to use the **OpenGL (glow) renderer**. Rebuild
+  from the latest source:
   ```powershell
   cargo build --release -p freedf
   ```
-- 그래도 크래시가 나면 GPU 드라이버를 업데이트하거나, 소프트웨어 렌더링(원격 데스크톱/VM) 환경에서는 OpenGL 소프트웨어 구현을 사용하세요.
+- If it still crashes, update your GPU driver, or use an OpenGL software renderer in
+  remote-desktop / VM environments.
 
-## 라이선스
+## License
 
 MIT (FreeDF)
-
