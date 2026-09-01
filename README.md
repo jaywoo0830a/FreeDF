@@ -45,7 +45,8 @@ native file dialogs, Windows Ink pressure).
 - 🗂️ **Two-tier toolbar** — file/page/zoom controls on the first row, drawing
   tools & pen settings on the second row, search on the third
 - 🎨 **Design system** — 1rem (16 px) base font scale, 4 px spacing grid, rounded
-  corners, and a **dark-brown brand accent** across both themes
+  corners, and a **Catppuccin** palette (Mocha dark / Latte light) across both
+  themes, replicating `catppuccin-egui` visuals
 - ♿ **Accessible (WCAG)** — theme-aware high-contrast text, error colors, text
   alternatives for icons, and roomy click targets
 - 🖱️ **Trackpad & gestures** — pinch zoom, Ctrl + two-finger scroll zoom,

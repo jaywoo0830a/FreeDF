@@ -2369,10 +2369,10 @@ impl FreeDfApp {
         let canvas_size = [canvas.width(), canvas.height()];
         self.last_canvas = canvas_size;
 
-        // Background (neutral gray so the page reads clearly)
+        // Background (Catppuccin crust: dark = Mocha crust, light = Latte crust)
         let bg = match ui.ctx().theme() {
-            egui::Theme::Dark => Color32::from_rgb(46, 46, 46),
-            egui::Theme::Light => Color32::from_rgb(168, 168, 168),
+            egui::Theme::Dark => Color32::from_rgb(0x11, 0x11, 0x1B), // Mocha crust
+            egui::Theme::Light => Color32::from_rgb(0xDC, 0xE0, 0xE8), // Latte crust
         };
         painter.rect_filled(canvas, egui::CornerRadius::ZERO, bg);
 
@@ -2546,14 +2546,14 @@ impl FreeDfApp {
         let can_next = self.current_page + 1 < page_count;
         let dark = matches!(ctx.theme(), egui::Theme::Dark);
         let fill = if dark {
-            Color32::from_rgba_unmultiplied(28, 28, 32, 205)
+            Color32::from_rgba_unmultiplied(0x1E, 0x1E, 0x2E, 205) // Mocha base
         } else {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 215)
+            Color32::from_rgba_unmultiplied(0xEF, 0xF1, 0xF5, 215) // Latte base
         };
         let stroke = if dark {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 45)
+            Color32::from_rgba_unmultiplied(0x7F, 0x84, 0x9C, 60) // Mocha overlay1
         } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 35)
+            Color32::from_rgba_unmultiplied(0x6C, 0x6F, 0x85, 40) // Latte overlay0
         };
 
         // 캔버스 중앙(왼쪽 패널이 열려 있어도)에 정렬되도록 화면 중앙 대비 오프셋.
