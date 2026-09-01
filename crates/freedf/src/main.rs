@@ -13,20 +13,12 @@ use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
+        // wgpu(DX12) 대신 호환성 높은 OpenGL(glow) 렌더러 사용
+        renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_title("FreeDF — 초경량 PDF 뷰어")
             .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([760.0, 520.0])
-            .with_icon(egui::IconData {
-                rgba: vec![
-                    0x00, 0x00, 0x00, 0x00, 0x2e, 0x86, 0xf0, 0xff, 0x2e, 0x86, 0xf0, 0xff,
-                    0x00, 0x00, 0x00, 0x00, 0x2e, 0x86, 0xf0, 0xff, 0x2e, 0x86, 0xf0, 0xff,
-                    0x00, 0x00, 0x00, 0x00, 0x2e, 0x86, 0xf0, 0xff, 0x2e, 0x86, 0xf0, 0xff,
-                    0x00, 0x00, 0x00, 0x00, 0x2e, 0x86, 0xf0, 0xff, 0x2e, 0x86, 0xf0, 0xff,
-                ],
-                width: 3,
-                height: 4,
-            }),
+            .with_min_inner_size([760.0, 520.0]),
         ..Default::default()
     };
 

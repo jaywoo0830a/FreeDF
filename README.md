@@ -87,6 +87,16 @@ cargo build --release -p freedf
 | `crates/freedf/src/app.rs` | 뷰어 캔버스, 도구, 툴바, 단축키, 파일 IO |
 | `crates/freedf/src/export.rs` | 주석을 이미지 위에 래스터라이즈 → PNG |
 
+## 문제 해결
+
+### 시작하자마자 0xc0000005 (액세스 위반) 크래시
+- 원인: eframe 0.36 기본 렌더러가 **wgpu(DX12)** 인데, 일부 Windows GPU/VM에서 시작 시 크래시가 발생할 수 있습니다.
+- 해결: 본 프로젝트는 **OpenGL(glow) 렌더러**를 사용하도록 설정되어 있습니다. 반드시 최신 소스로 다시 빌드하세요.
+  ```powershell
+  cargo build --release -p freedf
+  ```
+- 그래도 크래시가 나면 GPU 드라이버를 업데이트하거나, 소프트웨어 렌더링(원격 데스크톱/VM) 환경에서는 OpenGL 소프트웨어 구현을 사용하세요.
+
 ## 라이선스
 
 MIT (FreeDF)
