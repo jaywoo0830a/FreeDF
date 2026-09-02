@@ -443,6 +443,11 @@ impl FreeDfApp {
                 self.pen_profile.tilt_k,
             )
         };
+        let pen_src: &str = if cfg!(target_os = "windows") {
+            "OTD"
+        } else {
+            "evdev"
+        };
         egui::Area::new(egui::Id::new("freedf_debug_hud"))
             .fixed_pos(origin + egui::vec2(14.0, 14.0))
             .order(egui::Order::Foreground)
@@ -456,7 +461,7 @@ impl FreeDfApp {
                     ui.label(format!(
                         "pressure: {pressure:.3}  (src: {})",
                         if self.live_pressure.is_some() {
-                            "HID"
+                            pen_src
                         } else {
                             "egui touch"
                         }
@@ -466,7 +471,7 @@ impl FreeDfApp {
                         self.pen_tilt[0],
                         self.pen_tilt[1],
                         if self.pen_monitor.is_some() {
-                            "HID"
+                            pen_src
                         } else {
                             "없음"
                         }

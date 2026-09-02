@@ -30,8 +30,6 @@ mod dictionary;
 mod panels;
 mod tabs;
 mod toolbar;
-#[cfg(target_os = "windows")]
-pub(crate) mod pen_hid_windows;
 
 pub(crate) use std::path::{Path, PathBuf};
 
@@ -775,9 +773,10 @@ impl FreeDfApp {
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
         let debug_hud = if has { s.debug_hud } else { false };
-        // 펜 입력 공급원 — Windows는 hidapi(pen_hid_windows), Linux는 evdev.
+        // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
-        let pen_monitor = pen_hid_windows::spawn_monitor();
+        let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
+            .map(freedf_core::pen_input::from_receiver);
         #[cfg(not(target_os = "windows"))]
         let pen_monitor = freedf_core::pen_input::open_best();
         // 이전 버전 세션은 저장된 프로파일 대신 새 기본값 사용 (감도 보정 반영).

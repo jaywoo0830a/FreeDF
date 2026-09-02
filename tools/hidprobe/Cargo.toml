@@ -10,7 +10,3 @@ path = "src/main.rs"
 
 [dependencies]
 freedf-core = { path = "../../crates/freedf-core" }
-
-# Windows: 펜 디지타이저 원시 리포트 바이트 덤프용.
-[target.'cfg(target_os = "windows")'.dependencies]
-hidapi = "2"

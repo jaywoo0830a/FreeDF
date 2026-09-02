@@ -12,16 +12,5 @@ serde_json.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 
-# Windows 펜 입력(Raw Input WM_INPUT → RAWHID 바이트) — pen_input 모듈용.
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62.2", features = [
-    "Win32_Foundation",
-    "Win32_System_LibraryLoader",
-    "Win32_UI_Input",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Graphics_Gdi",
-    "Win32_Devices_HumanInterfaceDevice",
-] }
-
 [dev-dependencies]
 approx = "0.5"
