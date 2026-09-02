@@ -689,18 +689,81 @@ impl FreeDfApp {
         }
 
         let zooming = (zoom_factor - 1.0).abs() > 1e-4;
+        // Pinch / trackpad pinch already arrive as a *continuous* zoom_delta,
+        // so they are applied immediately (they are smooth by nature). A
+        // discrete Ctrl+wheel notch instead only sets an eased *target*: the
+        // real zoom glides toward it over a few frames instead of jumping.
+        let continuous_zoom = (zoom_delta - 1.0).abs() > 1e-4 && !scroll_zoom;
         if zooming && (response.hovered() || scroll_zoom) {
             // Anchor at the pointer when available, otherwise the canvas center.
-            let anchor = pointer_abs
+            let anchor_ui = pointer_abs
                 .map(|abs| [abs.x - origin.x, abs.y - origin.y])
                 .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-            self.view.zoom_at(anchor, zoom_factor, MIN_ZOOM, MAX_ZOOM);
-            self.render_dirty = true;
-            ctx.request_repaint();
-        } else if (scroll_x.abs() + scroll_y.abs()) > 0.0 && response.hovered() && !ctrl_down {
-            // Trackpad/wheel scroll: remember velocity for momentum, then pan/flip.
-            self.scroll_vel = Vec2::new(scroll_x, scroll_y) / dt.max(1e-3);
-            let page_h_px = self.page_size_pts[1] * self.view.zoom;
+            if continuous_zoom {
+                self.view.zoom_at(anchor_ui, zoom_factor, MIN_ZOOM, MAX_ZOOM);
+                self.render_dirty = true;
+                self.zoom_target = None;
+                self.zoom_anchor_page = None;
+                self.zoom_anchor_ui = None;
+                ctx.request_repaint();
+            } else {
+                // Ctrl+wheel: remember the page point under the cursor, then
+                // animate zoom toward the target (compounds if still gliding).
+                let page = [
+                    (anchor_ui[0] - self.view.pan_x) / self.view.zoom,
+                    (anchor_ui[1] - self.view.pan_y) / self.view.zoom,
+                ];
+                self.zoom_anchor_ui = Some(anchor_ui);
+                self.zoom_anchor_page = Some(page);
+                let base = self.zoom_target.unwrap_or(self.view.zoom);
+                let t = (base * zoom_factor).clamp(MIN_ZOOM, MAX_ZOOM);
+                self.zoom_target = Some(t);
+                ctx.request_repaint();
+            }
+        }
+        // Cancel an in-flight zoom animation as soon as the user starts a
+        // gesture (drawing / panning), snapping to the final zoom cleanly.
+        if pointer_any_down {
+            if let Some(t) = self.zoom_target {
+                self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
+                self.render_dirty = true;
+            }
+            self.zoom_target = None;
+            self.zoom_anchor_page = None;
+            self.zoom_anchor_ui = None;
+        }
+        // Drive the eased zoom toward its target every frame (smooth glide).
+        if let Some(target) = self.zoom_target {
+            let diff = (target - self.view.zoom).abs();
+            if diff < 1e-4 {
+                self.view.zoom = target.clamp(MIN_ZOOM, MAX_ZOOM);
+                self.zoom_target = None;
+                self.zoom_anchor_page = None;
+                self.zoom_anchor_ui = None;
+            } else {
+                let k = 1.0 - (-ZOOM_SMOOTH_RATE * dt).exp();
+                let next = self.view.zoom + (target - self.view.zoom) * k;
+                self.view.zoom = next.clamp(MIN_ZOOM, MAX_ZOOM);
+                // Keep the anchored page point under the cursor during the glide.
+                if let (Some(ui_p), Some(pg)) = (self.zoom_anchor_ui, self.zoom_anchor_page) {
+                    self.view.pan_x = ui_p[0] - pg[0] * self.view.zoom;
+                    self.view.pan_y = ui_p[1] - pg[1] * self.view.zoom;
+                    self.view
+                        .clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+                }
+                self.render_dirty = true;
+                ctx.request_repaint();
+            }
+        }
+
+        // ── Animated scroll (mouse wheel / trackpad) ─────────────────────
+        // Wheel/trackpad deltas are not applied in one jump. They accumulate
+        // in `scroll_vel` (pending pixels) and are eased into a pan each frame,
+        // so scrolling glides instead of stepping. A mostly-vertical gesture
+        // over a fully-visible page still flips to the previous/next page.
+        let page_h_px = self.page_size_pts[1] * self.view.zoom;
+        let page_w_px = self.page_size_pts[0] * self.view.zoom;
+        if (scroll_x.abs() + scroll_y.abs()) > 0.0 && response.hovered() && !ctrl_down {
             if page_h_px <= canvas_size[1] && scroll_x.abs() <= scroll_y.abs() {
                 // Whole page height visible & mostly-vertical gesture -> page flip.
                 // Content follows the fingers (natural scrolling): positive
@@ -710,25 +773,25 @@ impl FreeDfApp {
                 } else {
                     self.next_page();
                 }
+                self.scroll_vel = Vec2::ZERO;
             } else {
-                // Otherwise pan both axes; content follows the gesture.
-                self.view.pan_by(scroll_x, scroll_y);
+                // Accumulate; the per-frame easing below glides smoothly.
+                self.scroll_vel += Vec2::new(scroll_x, scroll_y);
             }
             ctx.request_repaint();
-        } else if !pointer_any_down {
-            // Momentum: keep gliding after the gesture stops, then decay.
-            let damping = (1.0 - SCROLL_DECAY * dt).max(0.0);
-            self.scroll_vel *= damping;
-            let page_h_px = self.page_size_pts[1] * self.view.zoom;
-            let page_w_px = self.page_size_pts[0] * self.view.zoom;
-            if self.scroll_vel.length_sq() > 1e-6 {
-                let dx = if page_w_px <= canvas_size[0] { 0.0 } else { self.scroll_vel.x * dt };
-                let dy = if page_h_px <= canvas_size[1] { 0.0 } else { self.scroll_vel.y * dt };
+        }
+        if self.scroll_vel.length_sq() > 1e-8 {
+            let k = (1.0 - (-SCROLL_SMOOTH_RATE * dt).exp()).min(1.0);
+            let step = self.scroll_vel * k;
+            self.scroll_vel -= step;
+            let dx = if page_w_px <= canvas_size[0] { 0.0 } else { step.x };
+            let dy = if page_h_px <= canvas_size[1] { 0.0 } else { step.y };
+            if dx != 0.0 || dy != 0.0 {
                 self.view.pan_by(dx, dy);
                 ctx.request_repaint();
-            } else {
-                self.scroll_vel = Vec2::ZERO;
             }
+        } else if !pointer_any_down {
+            self.scroll_vel = Vec2::ZERO;
         }
 
         // Middle-button pan

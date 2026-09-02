@@ -96,12 +96,22 @@ native file dialogs, Windows Ink pressure).
   (+1 % per notch, gently accelerating while you scroll), Ctrl + two-finger
   scroll zoom, two-finger pan/flip, horizontal scroll, and momentum (inertial)
   scrolling
+- 🪶 **Smooth animated scroll & zoom** — mouse-wheel scrolling and Ctrl+wheel
+  zoom **glide** to their target over a few frames (eased), so panning and
+  zooming feel fluid instead of stepping/jumping
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages
+- 🔁 **PgDn / PgUp = next / previous page** (not vertical scrolling). On a FreeDF
+  note, pressing **PgDn on the last page automatically appends a fresh page**
+  (same size & paper) so you can keep writing without breaking flow
 - 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
   of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
   Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
   toolbar)
+- 🪟 **Split-view focus mode** — when the window gets narrow (e.g. Windows split
+  view), FreeDF auto-collapses to **canvas + writing palette** only; a small
+  floating control (top-right “☰ Show UI”) restores the tabs/toolbar on demand,
+  and toggles the palette — great for multitasking side-by-side
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
   dotted) and color (white, cream, ice blue, mint, light gray), applied
   independently and exported to PNG
@@ -192,7 +202,8 @@ freedf --open /path/to/document.pdf
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |
 | `Ctrl+S` | Save annotations |
 | `Ctrl+E` | Export current page as PNG |
-| `PgUp` / `PgDn`, `←` / `→` | Page navigation |
+| `PgDn` / `PgUp` | Next / previous page (on a note, PgDn adds a new page at the end) |
+| `←` / `→` | Previous / next page |
 | `+` / `-` | Zoom in / out |
 | `P` / `H` / `E` / `V` | Pen / Highlighter / Eraser / Pan |
 | Ctrl+wheel | Zoom |

@@ -64,8 +64,14 @@ const CANVAS_MARGIN: f32 = 16.0;
 const TOP_MARGIN: f32 = 16.0;
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
-/// Scroll momentum decay (1/second)
-const SCROLL_DECAY: f32 = 6.0;
+/// Window width (points) below which the UI collapses to canvas + palette
+/// (Windows split view / narrow multitasking), with a floating control to
+/// re-show the full chrome on demand.
+const COMPACT_MIN_WIDTH: f32 = 640.0;
+/// Smoothing rate (1/second) for animated wheel scroll.
+const SCROLL_SMOOTH_RATE: f32 = 14.0;
+/// Smoothing rate (1/second) for animated Ctrl+wheel zoom.
+const ZOOM_SMOOTH_RATE: f32 = 16.0;
 
 /// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -499,12 +505,24 @@ pub struct FreeDfApp {
     zoom_accel: f32,
     /// Time of the last Ctrl+wheel notch (used to restart the ramp)
     zoom_accel_last: f64,
+    /// Animated (eased) zoom target — set by Ctrl+wheel notches; the actual
+    /// `view.zoom` glides toward it for a few frames (smooth, no jumps).
+    zoom_target: Option<f32>,
+    /// Page-space point that stays under the cursor while zoom animates.
+    zoom_anchor_page: Option<[f32; 2]>,
+    /// Canvas-space cursor position used as the zoom anchor.
+    zoom_anchor_ui: Option<[f32; 2]>,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// Texture of the outgoing page during a transition
     prev_texture: Option<egui::TextureHandle>,
     /// Page index before the latest page change (drives the animation direction)
     transition_last_page: usize,
+
+    // ---------- Compact (narrow / split-view) mode ----------
+    /// While the window is narrow the UI collapses to canvas + palette; set to
+    /// `true` to temporarily show the full chrome (tabs/toolbar) again.
+    narrow_chrome_expanded: bool,
 
     // ---------- Search ----------
     search_query: String,
@@ -684,9 +702,13 @@ impl FreeDfApp {
             scroll_vel: Vec2::ZERO,
             zoom_accel: 0.0,
             zoom_accel_last: 0.0,
+            zoom_target: None,
+            zoom_anchor_page: None,
+            zoom_anchor_ui: None,
             page_anim: None,
             prev_texture: None,
             transition_last_page: 0,
+            narrow_chrome_expanded: false,
             search_query: String::new(),
             search_runs: Vec::new(),
             search_matches: Vec::new(),
@@ -965,35 +987,89 @@ impl FreeDfApp {
                 self.search_clear();
             }
         }
-        if ctx
-            .input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::ArrowRight))
-        {
-            self.next_page();
+        // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
+        // 노트에서는 PgDn 시 마지막 페이지면 새 페이지를 자동으로 추가합니다.
+        // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
+        let typing = ctx.egui_wants_keyboard_input();
+        if !typing {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+                self.next_page_auto();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+                self.prev_page();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
+                self.next_page();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
+                self.prev_page();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals))
+            {
+                self.zoom_by(1.25);
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
+                self.zoom_by(1.0 / 1.25);
+            }
+            // Tool shortcuts
+            if ctx.input(|i| i.key_pressed(egui::Key::P)) {
+                self.tool = ToolType::Pen;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::H)) {
+                self.tool = ToolType::Highlighter;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::E)) && !ctrl {
+                self.tool = ToolType::Eraser;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::V)) {
+                self.tool = ToolType::Pan;
+            }
         }
-        if ctx
-            .input(|i| i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::ArrowLeft))
-        {
-            self.prev_page();
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)) {
-            self.zoom_by(1.25);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
-            self.zoom_by(1.0 / 1.25);
-        }
-        // Tool shortcuts
-        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
-            self.tool = ToolType::Pen;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::H)) {
-            self.tool = ToolType::Highlighter;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) && !ctrl {
-            self.tool = ToolType::Eraser;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::V)) {
-            self.tool = ToolType::Pan;
-        }
+    }
+
+    // ---------- Compact (narrow-window) floating control ----------
+
+    /// 좁은 창(스플릿 뷰)에서 우상단에 뜨는 작은 조종 버튼.
+    ///
+    /// - 크롬(탭/툴바)이 접혀 있으면 "☰ Show UI"를 눌러 전체 크롬을 잠시
+    ///   다시 켜고, 켜져 있으면 "✕"로 다시 접습니다.
+    /// - 필기 팔레트(오른쪽 색상 바)도 여기서 켜고 끌 수 있습니다.
+    fn compact_pill(&mut self, ctx: &egui::Context, minimal: bool) {
+        egui::Area::new(egui::Id::new("compact_pill"))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::window(&ui.style())
+                    .inner_margin(egui::Margin::same(6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let label = if minimal {
+                                "☰  Show UI"
+                            } else {
+                                "✕  Hide UI"
+                            };
+                            if ui
+                                .button(label)
+                                .on_hover_text(
+                                    "Show/hide the tabs & toolbar. The canvas and \
+                                     palette stay available for quick multitasking.",
+                                )
+                                .clicked()
+                            {
+                                // minimal → 크롬 켬(expanded=true), 아니면 접음.
+                                self.narrow_chrome_expanded = minimal;
+                            }
+                            if ui
+                                .selectable_label(self.show_palette, "Palette")
+                                .on_hover_text("Show the writing-tool / color palette")
+                                .clicked()
+                            {
+                                self.show_palette = !self.show_palette;
+                                self.save_default_session();
+                            }
+                        });
+                    });
+            });
     }
 
     // ---------- Fallback dialog ----------
@@ -1093,11 +1169,25 @@ impl eframe::App for FreeDfApp {
             self.open_pdf(&path);
         }
         self.handle_shortcuts(&ctx);
-        self.tabs_bar(ui);
-        self.toolbar(ui);
-        self.status_bar(ui);
 
-        if self.show_library {
+        // 좁은 창(Windows 스플릿 뷰)에서는 캔버스 + 팔레트만 남기고 나머지는
+        // 자동으로 숨깁니다. 우상단의 작은 조종 버튼(compact_pill)으로 전체
+        // 크롬(탭/툴바)을 잠시 다시 켤 수 있습니다.
+        let narrow = ctx.viewport_rect().width() < COMPACT_MIN_WIDTH;
+        if !narrow {
+            self.narrow_chrome_expanded = false;
+        }
+        // 문서가 하나도 없으면(시작 화면) 좁아도 크롬을 유지해 파일을
+        // 열 수 있게 합니다.
+        let minimal = narrow && !self.narrow_chrome_expanded && !self.tabs.is_empty();
+
+        if !minimal {
+            self.tabs_bar(ui);
+            self.toolbar(ui);
+            self.status_bar(ui);
+        }
+
+        if !minimal && self.show_library {
             // Per-tab panel id: each tab keeps its own width in egui memory,
             // and the width is read back each frame into `self.library_width`
             // so it survives tab switches and app restarts (via session.json).
@@ -1110,7 +1200,7 @@ impl eframe::App for FreeDfApp {
                 .show(ui, |ui| self.library_panel(ui));
             self.library_width = resp.response.rect.width().clamp(160.0, 460.0);
         }
-        if self.show_outline {
+        if !minimal && self.show_outline {
             let panel_id = egui::Id::new(("outline_panel", self.active));
             let resp = egui::Panel::left(panel_id)
                 .resizable(true)
@@ -1124,6 +1214,11 @@ impl eframe::App for FreeDfApp {
         egui::CentralPanel::default().show(ui, |ui| {
             self.canvas(ui);
         });
+
+        // 좁은 창에서 크롬 토글/팔레트 제어 (멀티태스킹용 플로팅 버튼).
+        if narrow {
+            self.compact_pill(&ctx, minimal);
+        }
 
         self.fallback_dialog(&ctx);
 
