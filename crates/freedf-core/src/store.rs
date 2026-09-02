@@ -437,6 +437,42 @@ mod tests {
         );
     }
 
+    /// 회전 변환이 여러 단계에서도 일관적인지 검증합니다:
+    /// CW→CCW = 원위치, CW×4 = 원위치, CW×2 = 180° 회전.
+    /// (표시 크기는 매 단계 너비/높이가 뒤집힘)
+    #[test]
+    fn rotation_composes_across_multiple_steps() {
+        let rotate_cw = |p: (f32, f32), w: f32, h: f32| (h - p.1, p.0);
+        let rotate_ccw = |p: (f32, f32), w: f32, h: f32| (p.1, w - p.0);
+
+        let start = (100.0f32, 50.0f32);
+        let (w0, h0) = (595.0f32, 842.0f32);
+
+        // CW → CCW = 원위치.
+        let p1 = rotate_cw(start, w0, h0);
+        let back = rotate_ccw(p1, h0, w0);
+        assert!((back.0 - start.0).abs() < 1e-3 && (back.1 - start.1).abs() < 1e-3);
+
+        // CW × 4 = 원위치.
+        let mut p = start;
+        let (mut w, mut h) = (w0, h0);
+        for _ in 0..4 {
+            p = rotate_cw(p, w, h);
+            std::mem::swap(&mut w, &mut h);
+        }
+        assert!((p.0 - start.0).abs() < 1e-3 && (p.1 - start.1).abs() < 1e-3);
+
+        // CW × 2 = 180° 회전: (W - x, H - y).
+        let mut q = start;
+        let (mut w2, mut h2) = (w0, h0);
+        for _ in 0..2 {
+            q = rotate_cw(q, w2, h2);
+            std::mem::swap(&mut w2, &mut h2);
+        }
+        assert!((q.0 - (w0 - start.0)).abs() < 1e-3);
+        assert!((q.1 - (h0 - start.1)).abs() < 1e-3);
+    }
+
     #[test]
     fn clear_page_removes_all() {
         let mut store = AnnotationStore::new();

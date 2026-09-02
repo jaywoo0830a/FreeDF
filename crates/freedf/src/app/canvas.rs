@@ -120,9 +120,7 @@ fn stroke_ribbon_quads(points: &[Pos2], half_widths: &[f32]) -> Vec<[Pos2; 4]> {
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
-            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
-                (self.pen_color, self.pen_width)
-            }
+            ToolType::Pen => (self.pen_color, self.pen_width),
             ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
@@ -1137,11 +1135,7 @@ impl FreeDfApp {
                 && self.input_device == InputDevice::Mouse
                 && matches!(
                     self.tool,
-                    ToolType::Pen
-                        | ToolType::Ballpoint
-                        | ToolType::Fountain
-                        | ToolType::Highlighter
-                        | ToolType::Eraser
+                    ToolType::Pen | ToolType::Highlighter | ToolType::Eraser
                 ));
 
         if panning {
@@ -1161,7 +1155,7 @@ impl FreeDfApp {
         }
 
         match self.tool {
-            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain | ToolType::Highlighter => {
+            ToolType::Pen | ToolType::Highlighter => {
                 let page_w = self.page_size_pts[0];
                 let page_h = self.page_size_pts[1];
                 if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
@@ -1306,55 +1300,22 @@ impl FreeDfApp {
         if pts.len() == 1 {
             let v = self.view.page_to_view([pts[0].x, pts[0].y]);
             let center = origin + Vec2::new(v[0], v[1]);
-            let w = if uses_own_profile(stroke.tool) {
-                // 볼펜/만년필: 전역 곡선 대신 자체 닙 프로파일 (속도 0).
-                stroke.width * zoom * base_width_factor(stroke.tool)
-                    * ink_modifier(stroke.tool, pts[0].pressure, 0.0)
-            } else {
-                self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure)
-                    * base_width_factor(stroke.tool)
-            };
+            let w = self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure);
             painter.circle_filled(center, (w * 0.5).max(0.75), color);
             return;
         }
-        let wfactor = base_width_factor(stroke.tool);
-        // 펜/만년필은 획 양끝이 실제 펜처럼 얇아집니다 (테이퍼). 볼펜은 일정.
+        // 펜은 획 양끝이 실제 펜처럼 얇아집니다 (테이퍼).
         let tapers: Vec<f32> = if uses_taper(stroke.tool) {
             taper_factors(pts, TAPER_LEN_PTS)
         } else {
             vec![1.0; pts.len()]
         };
-        // 점별 화면 두께(px): 필압 곡선(펜) 또는 닙 프로파일(볼펜/만년필) × 테이퍼.
+        // 점별 화면 두께(px): 필압 곡선 × 테이퍼.
         let n = pts.len();
         let mut widths: Vec<f32> = Vec::with_capacity(n);
         for (i, p) in pts.iter().enumerate() {
-            let speed = if i + 1 < n {
-                let q = &pts[i + 1];
-                ((q.x - p.x).powi(2) + (q.y - p.y).powi(2)).sqrt()
-            } else if i > 0 {
-                let q = &pts[i - 1];
-                ((q.x - p.x).powi(2) + (q.y - p.y).powi(2)).sqrt()
-            } else {
-                0.0
-            };
-            let w = if uses_own_profile(stroke.tool) {
-                stroke.width * zoom * wfactor * ink_modifier(stroke.tool, p.pressure, speed)
-            } else {
-                self.pressure_curve.apply(stroke.width * zoom, p.pressure) * wfactor
-            } * tapers[i];
+            let w = self.pressure_curve.apply(stroke.width * zoom, p.pressure) * tapers[i];
             widths.push(w.max(0.4));
-        }
-        // 만년필: 닙이 종이에 닿는 순간 잉크가 번지는 시작 방울.
-        if stroke.tool == ToolType::Fountain {
-            let blob = stroke.width * zoom * wfactor
-                * ink_modifier(ToolType::Fountain, 1.0, 0.0)
-                * 0.5;
-            let p0 = self.view.page_to_view([pts[0].x, pts[0].y]);
-            painter.circle_filled(
-                origin + Vec2::new(p0[0], p0[1]),
-                blob.clamp(0.75, 14.0),
-                color,
-            );
         }
         let pts_view: Vec<Pos2> = pts
             .iter()
@@ -1381,11 +1342,7 @@ impl FreeDfApp {
             && self.input_device == InputDevice::Mouse
             && matches!(
                 self.tool,
-                ToolType::Pen
-                    | ToolType::Ballpoint
-                    | ToolType::Fountain
-                    | ToolType::Highlighter
-                    | ToolType::Eraser
+                ToolType::Pen | ToolType::Highlighter | ToolType::Eraser
             );
         let tool = if mouse_panning {
             ToolType::Pan
@@ -1393,7 +1350,7 @@ impl FreeDfApp {
             self.tool
         };
         match tool {
-            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
+            ToolType::Pen => {
                 match self.pen_cursor_style {
                     PenCursorStyle::Dot => {
                         // 작은 점.
@@ -1418,11 +1375,7 @@ impl FreeDfApp {
                             self.pen_color[2],
                             (self.pen_color[3] as f32 * 0.85).max(40.0) as u8,
                         );
-                        let r = (self.pen_width
-                            * base_width_factor(self.tool)
-                            * self.view.zoom
-                            * 0.5)
-                            .clamp(2.5, 16.0);
+                        let r = (self.pen_width * self.view.zoom * 0.5).clamp(2.5, 16.0);
                         let breath = 1.0 + 0.06 * (time * 3.0).sin();
                         // 흰 용지 위에서도 보이도록 어두운 윤곽을 먼저.
                         painter.circle_stroke(

@@ -10,10 +10,6 @@ use serde::{Deserialize, Serialize};
 pub enum ToolType {
     /// 펜 — 불투명한 필기선 (필압 곡선 적용)
     Pen,
-    /// 볼펜 — 두께가 거의 일정한 필기선
-    Ballpoint,
-    /// 만년필 — 필압/속도에 따라 두께가 크게 변하는 닙 표현
-    Fountain,
     /// 형광펜 — 투명한 두꺼운 강조선
     Highlighter,
     /// 지우개 — 스트로크 벡터 삭제
@@ -27,8 +23,6 @@ impl ToolType {
     pub fn label(self) -> &'static str {
         match self {
             ToolType::Pen => "Pen",
-            ToolType::Ballpoint => "Ballpoint",
-            ToolType::Fountain => "Fountain",
             ToolType::Highlighter => "Highlighter",
             ToolType::Eraser => "Eraser",
             ToolType::Pan => "Pan",
@@ -38,8 +32,6 @@ impl ToolType {
     /// 라벨에서 도구 복원 (DB 저장 값 역변환). 알 수 없으면 Pen.
     pub fn from_label(label: &str) -> ToolType {
         match label {
-            "Ballpoint" => ToolType::Ballpoint,
-            "Fountain" => ToolType::Fountain,
             "Highlighter" => ToolType::Highlighter,
             "Eraser" => ToolType::Eraser,
             "Pan" => ToolType::Pan,
@@ -49,27 +41,12 @@ impl ToolType {
 
     /// 잉크를 남기는 필기 도구인지 (지우개/팬 아님).
     pub fn is_ink(self) -> bool {
-        matches!(
-            self,
-            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain | ToolType::Highlighter
-        )
-    }
-
-    /// 모든 잉크 필기 도구 (도구 선택기 표시 순서).
-    pub fn ink_tools() -> [ToolType; 3] {
-        [ToolType::Pen, ToolType::Ballpoint, ToolType::Fountain]
+        matches!(self, ToolType::Pen | ToolType::Highlighter)
     }
 
     /// 도구 선택기에 표시되는 기본 순서 (사용자가 드래그로 재정렬 가능).
     pub fn default_order() -> Vec<ToolType> {
-        vec![
-            ToolType::Pen,
-            ToolType::Ballpoint,
-            ToolType::Fountain,
-            ToolType::Highlighter,
-            ToolType::Eraser,
-            ToolType::Pan,
-        ]
+        vec![ToolType::Pen, ToolType::Highlighter, ToolType::Eraser, ToolType::Pan]
     }
 }
 

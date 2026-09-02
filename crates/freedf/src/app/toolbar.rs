@@ -6,17 +6,11 @@
 
 use super::*;
 
-/// 펜/볼펜/만년필의 **실제 잉크 수식**을 그대로 보여주는 미니 스트로크 미리보기.
-///
-/// 화면 렌더링과 같은 함수(필압 곡선 / 닙 프로파일 / 기본 두께 배율)로 가상의
-/// 곡선을 그립니다 — 세 도구의 차이가 "연속 입력 → 두께" 함수 형태의 차이임을
-/// 한눈에 확인할 수 있습니다:
-/// - Pen: 두께 = f(필압) — 눌렀다 떼는 압력 물결을 그대로 따라감
-/// - Ballpoint: 두께 ≈ 일정 — 어떤 속도/압력에서도 균일한 선
-/// - Fountain: 두께 = f(필압, 속도) — 빠르게 긋는 구간이 얇아짐
+/// 펜의 **실제 잉크 수식**(필압 곡선)을 그대로 보여주는 미니 스트로크 미리보기.
+/// 화면 렌더링과 같은 함수로 가상의 곡선을 그려 필압에 따른 두께 변화를
+/// 한눈에 확인할 수 있습니다.
 fn pen_profile_preview(
     ui: &mut egui::Ui,
-    tool: ToolType,
     color: Color32,
     width: f32,
     curve: &PressureCurve,
@@ -25,7 +19,6 @@ fn pen_profile_preview(
         ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
-    let wfactor = base_width_factor(tool);
     let n = 64;
     let x0 = rect.left() + 3.0;
     let x1 = rect.right() - 3.0;
@@ -38,26 +31,9 @@ fn pen_profile_preview(
         let t = i as f32 / (n - 1) as f32;
         let x = x0 + (x1 - x0) * t;
         let y = cy + (t * 2.0 * std::f32::consts::PI).sin() * amp;
-        // 도구별 가상의 연속 입력 신호:
-        let (pressure, speed) = match tool {
-            // 펜: 필압이 물결처럼 오르내림 → 두께가 그대로 따라감.
-            ToolType::Pen => (
-                0.25 + 0.75 * (t * 3.0 * std::f32::consts::PI).sin().abs(),
-                0.0,
-            ),
-            // 만년필: 필압 일정 + 속도 물결 → 빠른 구간이 얇아짐.
-            ToolType::Fountain => (
-                0.6,
-                15.0 + 200.0 * (t * 4.0 * std::f32::consts::PI).sin().abs(),
-            ),
-            // 볼펜: 둘 다 일정 → 두께가 거의 변하지 않음.
-            _ => (0.6, 15.0),
-        };
-        let w = if uses_own_profile(tool) {
-            width * wfactor * ink_modifier(tool, pressure, speed)
-        } else {
-            width * wfactor * curve.apply(1.0, pressure)
-        };
+        // 필압이 물결처럼 오르내림 → 두께가 그대로 따라감.
+        let pressure = 0.25 + 0.75 * (t * 3.0 * std::f32::consts::PI).sin().abs();
+        let w = width * curve.apply(1.0, pressure);
         pts.push(egui::pos2(x, y));
         widths.push(w);
         max_w = max_w.max(w);
@@ -67,7 +43,9 @@ fn pen_profile_preview(
         let wpx = (widths[i] + widths[i + 1]) * 0.5 * scale;
         painter.line_segment([pts[i], pts[i + 1]], Stroke::new(wpx, color));
     }
-    let _ = resp.on_hover_text(ink_profile_hint(tool));
+    let _ = resp.on_hover_text(
+        "Live preview of the current pressure curve:\nwidth = f(pen pressure)",
+    );
 }
 
 impl FreeDfApp {
@@ -220,13 +198,22 @@ impl FreeDfApp {
                 {
                     self.load_annotations();
                 }
-                if ui
-                    .button(icon_text(ui, "Export", icons::IMAGE))
-                    .on_hover_text("Export current page as PNG (Ctrl+E)")
-                    .clicked()
-                {
-                    self.export_png();
-                }
+                ui.menu_button(icon_text(ui, "Export", icons::IMAGE), |ui| {
+                    if ui.button("Export as PNG").clicked() {
+                        ui.close();
+                        self.export_with_format(ExportFormat::Png);
+                    }
+                    if ui.button("Export as JPG").clicked() {
+                        ui.close();
+                        self.export_with_format(ExportFormat::Jpg);
+                    }
+                    if ui.button("Export as PDF").clicked() {
+                        ui.close();
+                        self.export_with_format(ExportFormat::Pdf);
+                    }
+                })
+                .response
+                .on_hover_text("Export current page as PNG / JPG / PDF (Ctrl+E = PNG)");
                 });
             });
 
@@ -553,7 +540,7 @@ impl FreeDfApp {
                 ui.separator();
 
                 match self.tool {
-                    ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
+                    ToolType::Pen => {
                         egui::ComboBox::from_id_salt("family")
                             .selected_text(self.color_family.label())
                             .show_ui(ui, |ui| {
@@ -605,34 +592,24 @@ impl FreeDfApp {
                             self.save_default_session();
                             self.save_session();
                         }
-                        // 도구별 프로필 설명은 Width 슬라이더에 마우스를 올리면
-                        // 툴팁으로 표시됩니다 (항상 보이는 라벨은 제거).
-                        let hint = ink_profile_hint(self.tool);
-                        let width_resp =
-                            ui.add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"));
-                        let width_resp = if hint.is_empty() {
-                            width_resp.on_hover_text("Stroke width")
-                        } else {
-                            width_resp.on_hover_text(hint)
-                        };
+                        // Width 슬라이더 툴팁.
+                        let width_resp = ui
+                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
+                            .on_hover_text(
+                                "Stroke width. The line thickness follows the \
+                                 pressure curve (see the preview below).",
+                            );
                         if width_resp.changed() {
                             self.save_session();
                         }
-                        // 미니 스트로크 미리보기: 실제 잉크 수식으로 그려
-                        // 펜/볼펜/만년필의 차이를 보여줍니다.
+                        // 미니 스트로크 미리보기: 실제 필압 수식으로 그립니다.
                         let preview_color = Color32::from_rgba_unmultiplied(
                             self.pen_color[0],
                             self.pen_color[1],
                             self.pen_color[2],
                             self.pen_color[3],
                         );
-                        pen_profile_preview(
-                            ui,
-                            self.tool,
-                            preview_color,
-                            self.pen_width,
-                            &self.pressure_curve,
-                        );
+                        pen_profile_preview(ui, preview_color, self.pen_width, &self.pressure_curve);
                         egui::ComboBox::from_id_salt("pen_cursor_style")
                             .selected_text(self.pen_cursor_style.label())
                             .show_ui(ui, |ui| {

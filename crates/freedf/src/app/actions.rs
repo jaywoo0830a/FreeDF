@@ -556,6 +556,12 @@ impl FreeDfApp {
             return;
         }
         self.store.rotate_strokes_on(idx, w, h, clockwise);
+        // 회전은 좌표계를 바꾸는 구조 연산 — 회전 전 좌표가 담긴 undo 히스토리와
+        // DB 편집 저널은 더 이상 유효하지 않으므로 초기화합니다.
+        self.history.clear();
+        if let Some(doc_id) = self.doc_id {
+            self.db.clear_edits(doc_id);
+        }
         self.page_size_pts = doc.page_size_pts(idx);
         let total = doc.page_count();
         self.logger
@@ -581,6 +587,11 @@ impl FreeDfApp {
         }
         for i in 0..count {
             self.store.rotate_strokes_on(i, sizes[i][0], sizes[i][1], clockwise);
+        }
+        // 좌표계가 바뀌었으므로 undo 히스토리/저널 초기화.
+        self.history.clear();
+        if let Some(doc_id) = self.doc_id {
+            self.db.clear_edits(doc_id);
         }
         self.page_size_pts = doc.page_size_pts(self.current_page);
         self.logger.log(AppEvent::PageRotated {
@@ -851,6 +862,11 @@ impl FreeDfApp {
     }
 
     pub(crate) fn export_png(&mut self) {
+        self.export_with_format(ExportFormat::Png);
+    }
+
+    /// 현재 페이지를 PNG / JPG / PDF로 내보냅니다.
+    pub(crate) fn export_with_format(&mut self, fmt: ExportFormat) {
         if self.document.is_none() {
             self.status = Some("Open a PDF or note first.".to_string());
             return;
@@ -862,26 +878,34 @@ impl FreeDfApp {
                 .map(|s| s.to_string_lossy().into_owned())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "document".to_string());
-            let default_name = format!("{stem}-p{}.png", self.current_page + 1);
+            let (ext, filter) = match fmt {
+                ExportFormat::Png => ("png", "PNG image"),
+                ExportFormat::Jpg => ("jpg", "JPEG image"),
+                ExportFormat::Pdf => ("pdf", "PDF document"),
+            };
+            let default_name = format!("{stem}-p{}.{ext}", self.current_page + 1);
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("PNG image", &["png"])
+                .add_filter(filter, &[ext])
                 .set_file_name(&default_name)
                 .save_file()
             {
-                self.do_export_png(&path);
+                self.do_export(&path, fmt);
             }
         }
         #[cfg(not(target_os = "windows"))]
         {
+            // 비-Windows는 경로 입력 다이얼로그 — 형식은 확장자로 추론합니다.
+            let _ = fmt;
             self.modal = Some(ModalState::ask_text(
-                "Export PNG",
-                "Enter the PNG file path to save to",
+                "Export Page",
+                "Enter the file path to save to (.png / .jpg / .pdf)",
                 TextAction::ExportPng,
             ));
         }
     }
 
-    pub(crate) fn do_export_png(&mut self, path: &Path) {
+    /// 페이지를 렌더+주석 합성해 PNG/JPG/PDF로 저장합니다.
+    pub(crate) fn do_export(&mut self, path: &Path, fmt: ExportFormat) {
         let Some(doc) = &self.document else {
             return;
         };
@@ -920,14 +944,38 @@ impl FreeDfApp {
                 }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
                 draw_strokes_on_image(&mut img, &strokes, scale);
-                match img.save(path) {
+                let result = match fmt {
+                    ExportFormat::Png => img
+                        .save(path)
+                        .map(|_| ())
+                        .map_err(|e| format!("PNG save failed: {e}")),
+                    ExportFormat::Jpg => {
+                        crate::export::encode_jpeg(&img, 90)
+                            .and_then(|bytes| {
+                                std::fs::write(path, bytes).map_err(|e| format!("JPG save failed: {e}"))
+                            })
+                    }
+                    ExportFormat::Pdf => {
+                        crate::export::encode_jpeg(&img, 90).and_then(|bytes| {
+                            let pdf = crate::export::jpeg_to_pdf(
+                                &bytes,
+                                img.width(),
+                                img.height(),
+                                page_pts[0],
+                                page_pts[1],
+                            );
+                            std::fs::write(path, pdf).map_err(|e| format!("PDF save failed: {e}"))
+                        })
+                    }
+                };
+                match result {
                     Ok(()) => {
                         self.logger.log(AppEvent::ExportPng {
                             page: self.current_page,
                         });
                         self.status = Some(format!("Exported: {}", path.display()));
                     }
-                    Err(e) => self.status = Some(format!("PNG save failed: {e}")),
+                    Err(e) => self.status = Some(e),
                 }
             }
             Err(e) => self.status = Some(format!("Export failed: {e}")),
@@ -943,7 +991,11 @@ impl FreeDfApp {
                 }
             }
             TextAction::OpenPdf => self.open_pdf(&PathBuf::from(text.trim())),
-            TextAction::ExportPng => self.do_export_png(&PathBuf::from(text.trim())),
+            TextAction::ExportPng => {
+                let path = PathBuf::from(text.trim());
+                let fmt = ExportFormat::from_path(&path);
+                self.do_export(&path, fmt);
+            }
         }
     }
 

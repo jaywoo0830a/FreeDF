@@ -589,6 +589,12 @@ impl Db {
         .unwrap_or_default()
     }
 
+    /// 문서의 편집 저널 전체 삭제 (페이지 회전처럼 좌표계가 바뀌는 구조 연산 시).
+    pub fn clear_edits(&self, doc_id: i64) {
+        let mut c = conn_guard(&self.conn);
+        let _ = c.execute("DELETE FROM doc_edits WHERE doc_id = $1", &[&doc_id]);
+    }
+
     // ---------- word cache (사전 오버레이) ----------
 
     pub fn get_word_cache(&self, word: &str) -> Option<Value> {
@@ -662,7 +668,7 @@ mod tests {
             },
             Stroke {
                 id: ids[1] as u64,
-                tool: ToolType::Fountain,
+                tool: ToolType::Pen,
                 color: [200, 40, 40, 255],
                 width: 3.0,
                 points: vec![StrokePoint::new(0.0, 0.0, 1.0)],

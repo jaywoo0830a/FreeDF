@@ -46,8 +46,7 @@ pub(crate) use freedf_core::paper::{
     PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    base_width_factor, ink_modifier, ink_profile_hint, taper_factors, uses_own_profile,
-    uses_taper, ColorFamily, OneEuroFilter, Palette, PressureCurve, TAPER_LEN_PTS,
+    taper_factors, uses_taper, ColorFamily, OneEuroFilter, Palette, PressureCurve, TAPER_LEN_PTS,
 };
 pub(crate) use freedf_core::search::{char_line_highlights, find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::store::AnnotationStore;
@@ -114,8 +113,6 @@ impl ActiveStroke {
 fn tool_label(tool: ToolType) -> &'static str {
     match tool {
         ToolType::Pen => "Pen",
-        ToolType::Ballpoint => "Ballpoint",
-        ToolType::Fountain => "Fountain",
         ToolType::Highlighter => "Highlighter",
         ToolType::Eraser => "Eraser",
         ToolType::Pan => "Pan",
@@ -125,8 +122,6 @@ fn tool_label(tool: ToolType) -> &'static str {
 fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
     match tool {
         ToolType::Pen => icons::PEN,
-        ToolType::Ballpoint => icons::PEN_NIB_STRAIGHT,
-        ToolType::Fountain => icons::PEN_NIB,
         ToolType::Highlighter => icons::MARKER_CIRCLE,
         ToolType::Eraser => icons::ERASER,
         ToolType::Pan => icons::HAND,
@@ -281,6 +276,29 @@ pub(crate) enum TextAction {
     RenameNote,
     OpenPdf,
     ExportPng,
+}
+
+/// 페이지 내보내기 형식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportFormat {
+    Png,
+    Jpg,
+    Pdf,
+}
+
+impl ExportFormat {
+    /// 파일 경로 확장자로 형식을 추론합니다 (.pdf/.jpg/.jpeg → 해당 형식, 그 외 PNG).
+    pub(crate) fn from_path(path: &std::path::Path) -> ExportFormat {
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        match ext.as_str() {
+            "pdf" => ExportFormat::Pdf,
+            "jpg" | "jpeg" => ExportFormat::Jpg,
+            _ => ExportFormat::Png,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

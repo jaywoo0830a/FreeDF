@@ -1,44 +1,15 @@
-//! 펜 설정: 색상 팔레트(빨강/파랑/검정 계열)와 필압 → 두께 곡선.
+//! 펜 설정: 색상 팔레트(빨강/파랑/검정 계열), 필압 → 두께 곡선, 스무딩/테이퍼.
+//!
+//! FreeDF v3: 필기구는 펜 하나로 단순화했습니다 (볼펜/만년필 제거).
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{StrokePoint, ToolType};
 
-/// 잉크 도구별 두께 배율을 계산합니다 (렌더/내보내기 공용).
-///
-/// - `Pen`: 1.0 — 앱은 전역 필압 곡선(`PressureCurve`)을 별도로 곱합니다.
-/// - `Ballpoint`: 필압에 살짝만 반응 (거의 일정).
-/// - `Fountain`: 필압(아래로 누르면 굵게) + 속도(빠르면 얇게)로 닙 느낌.
-/// - 그 외(Highlighter 등): 1.0 (기존 경로 사용).
-///
-/// `speed`는 인접 두 점 사이 페이지 좌표 거리(포인트)입니다.
-pub fn ink_modifier(tool: ToolType, pressure: f32, speed: f32) -> f32 {
-    let p = if pressure.is_nan() {
-        1.0
-    } else {
-        pressure.clamp(0.0, 1.0)
-    };
-    match tool {
-        ToolType::Pen | ToolType::Highlighter | ToolType::Eraser | ToolType::Pan => 1.0,
-        ToolType::Ballpoint => 0.82 + 0.24 * p,
-        ToolType::Fountain => {
-            let nib = 0.5 + 1.15 * p; // 누를수록 굵게 (최대 ~1.65x)
-            let speed = if speed.is_finite() { speed.abs() } else { 0.0 };
-            let thin = 1.0 / (1.0 + (speed * 0.012).min(1.6)); // 빠르면 얇게
-            (nib * thin).clamp(0.4, 1.7)
-        }
-    }
-}
-
-/// 잉크 도구(만년필/볼펜)인지 — 전역 필압 곡선을 쓰지 않고 자체 프로파일을 쓰는 도구.
-pub fn uses_own_profile(tool: ToolType) -> bool {
-    matches!(tool, ToolType::Ballpoint | ToolType::Fountain)
-}
-
 /// 시작/끝을 뾰족하게(테이퍼) 만드는 도구인지 — 실제 펜처럼 획 양끝이 얇아집니다.
-/// 볼펜은 항상 일정한 두께라 제외하고, 하이라이터/지우개도 해당 없습니다.
+/// 펜만 해당하고, 하이라이터/지우개는 해당 없습니다.
 pub fn uses_taper(tool: ToolType) -> bool {
-    matches!(tool, ToolType::Pen | ToolType::Fountain)
+    matches!(tool, ToolType::Pen)
 }
 
 /// 획 양끝 테이퍼 길이 (페이지 포인트). 이 거리 안에서 두께가 0에서 서서히 커집니다.
@@ -142,38 +113,6 @@ impl OneEuroFilter {
         self.prev_dx = dx_hat;
         self.prev_t = Some(t);
         x_hat
-    }
-}
-
-/// 도구별 **기본 두께 배율** — 같은 "Width" 슬라이더 값이라도 도구마다
-/// 실제 선 굵기가 다르게 보이게 해서 구분감을 줍니다.
-///
-/// - `Pen`: 1.0 (기준)
-/// - `Ballpoint`: 0.6 — 볼펜은 항상 가늘고 일정합니다.
-/// - `Fountain`: 1.25 — 만년필은 두껍고, 빠르게 쓰면 얇아집니다.
-///
-/// 실제 선 두께 = `stroke.width × base_width_factor(tool) × ink_modifier(...)`.
-pub fn base_width_factor(tool: ToolType) -> f32 {
-    match tool {
-        ToolType::Ballpoint => 0.6,
-        ToolType::Fountain => 1.25,
-        _ => 1.0,
-    }
-}
-
-/// 도구 선택 UI에 표시하는 짧은 프로필 설명.
-pub fn ink_profile_hint(tool: ToolType) -> &'static str {
-    match tool {
-        ToolType::Ballpoint => {
-            "Ballpoint: thin & steady at any speed — a consistent, even line."
-        }
-        ToolType::Fountain => {
-            "Fountain: thicker, expressive nib — thins out as you write faster."
-        }
-        ToolType::Pen => {
-            "Pen: medium width that follows the pressure curve (tablet / stylus)."
-        }
-        _ => "",
     }
 }
 
@@ -388,40 +327,6 @@ mod tests {
         assert!(c.min_ratio >= 0.05 && c.max_ratio <= 4.0 && c.max_ratio >= c.min_ratio);
     }
 
-    #[test]
-    fn ink_modifier_profiles() {
-        use crate::model::ToolType;
-        // 펜/하이라이터는 1.0 (전역 곡선이 담당)
-        assert!((ink_modifier(ToolType::Pen, 0.3, 5.0) - 1.0).abs() < 1e-6);
-        assert!((ink_modifier(ToolType::Highlighter, 0.3, 5.0) - 1.0).abs() < 1e-6);
-        // 볼펜: 필압에 조금만 반응, 일정에 가까움
-        let b_light = ink_modifier(ToolType::Ballpoint, 0.1, 5.0);
-        let b_press = ink_modifier(ToolType::Ballpoint, 1.0, 5.0);
-        assert!(b_light > 0.8 && b_press < 1.1);
-        assert!(b_press > b_light);
-        // 만년필: 누르면 굵어지고 빠르면 얇아짐
-        let f_slow_press = ink_modifier(ToolType::Fountain, 1.0, 0.5);
-        let f_fast_light = ink_modifier(ToolType::Fountain, 0.1, 200.0);
-        assert!(f_slow_press > 1.4, "천천히 강하게: {f_slow_press}");
-        assert!(f_fast_light < f_slow_press, "빠르게 가볍게는 더 얇아야");
-        assert!(uses_own_profile(ToolType::Fountain));
-        assert!(!uses_own_profile(ToolType::Pen));
-    }
-
-    #[test]
-    fn base_width_factor_distinguishes_pens() {
-        use crate::model::ToolType;
-        // 기준 도구는 1.0
-        assert!((base_width_factor(ToolType::Pen) - 1.0).abs() < 1e-6);
-        assert!((base_width_factor(ToolType::Highlighter) - 1.0).abs() < 1e-6);
-        // 볼펜은 확실히 가늘게, 만년필은 확실히 굵게
-        assert!(base_width_factor(ToolType::Ballpoint) < 0.8);
-        assert!(base_width_factor(ToolType::Fountain) > 1.1);
-        // 구분감이 있어야 함
-        assert!(base_width_factor(ToolType::Ballpoint) < base_width_factor(ToolType::Pen));
-        assert!(base_width_factor(ToolType::Pen) < base_width_factor(ToolType::Fountain));
-    }
-
     // ---------- taper_factors ----------
 
     fn line_points(n: usize) -> Vec<StrokePoint> {
@@ -473,12 +378,12 @@ mod tests {
     }
 
     #[test]
-    fn only_pen_and_fountain_taper() {
+    fn only_pen_tapers() {
         use crate::model::ToolType;
         assert!(uses_taper(ToolType::Pen));
-        assert!(uses_taper(ToolType::Fountain));
-        assert!(!uses_taper(ToolType::Ballpoint));
         assert!(!uses_taper(ToolType::Highlighter));
+        assert!(!uses_taper(ToolType::Eraser));
+        assert!(!uses_taper(ToolType::Pan));
     }
 
     // ---------- OneEuroFilter ----------
