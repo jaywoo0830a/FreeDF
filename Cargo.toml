@@ -14,8 +14,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 egui = "0.36"
 # eframe 0.36 기본 렌더러는 wgpu(DX12) — 일부 Windows에서 시작 시 0xc0000005 크래시.
-# 호환성이 좋은 OpenGL(glow) 백엔드를 기본으로 사용합니다.
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "accesskit", "links", "x11", "wayland"] }
+# 호환성이 좋은 OpenGL(glow) 백엔드를 기본으로 사용하되, GPU 오프로드를 원하면
+# `FREEDF_RENDERER=wgpu` 환경 변수로 DirectX 12 백엔드를 선택할 수 있습니다.
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wgpu", "accesskit", "links", "x11", "wayland"] }
 pdfium-render = "0.9.3"
 
 [profile.release]

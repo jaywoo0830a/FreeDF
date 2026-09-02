@@ -353,6 +353,34 @@ impl DocumentView {
         Ok(out)
     }
 
+    /// 페이지의 **(글자 텍스트, 표시 공간 사각형)** 목록을 반환합니다.
+    /// 사전 오버레이의 단어 추출(`search::word_at`) 입력으로 사용합니다.
+    pub fn page_chars(&self, index: usize) -> Result<Vec<(String, [f32; 4])>, String> {
+        let page = self
+            .document
+            .pages()
+            .get(index as i32)
+            .map_err(|e| format!("Could not read page: {e}"))?;
+        let w = page.width().value;
+        let h = page.height().value;
+        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
+        let mut out = Vec::new();
+        for ch in text.chars().iter() {
+            if let Ok(b) = ch.tight_bounds() {
+                let s = ch
+                    .unicode_string()
+                    .or_else(|| ch.unicode_char().map(|c| c.to_string()))
+                    .unwrap_or_default();
+                if s.is_empty() {
+                    continue;
+                }
+                out.push((s, content_rect_to_display(b, w, h, rot)));
+            }
+        }
+        Ok(out)
+    }
+
     /// 지정한 인덱스에 빈 페이지를 삽입합니다.
     pub fn insert_page_at(&mut self, index: usize, size_pts: [f32; 2]) -> Result<(), String> {
         let paper =

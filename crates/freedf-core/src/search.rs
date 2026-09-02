@@ -213,6 +213,94 @@ pub fn char_line_highlights(
     lines
 }
 
+/// 탭한 위치에 있는 **단어**를 찾습니다 (사전 오버레이용).
+///
+/// `chars`는 pdfium에서 추출한 (글자, 표시 공간 사각형) 목록입니다.
+/// - 점을 포함하는 글자(여백 2pt)를 찾은 뒤, 같은 줄(세로 중심이 가까움)에서
+///   글자 간 간격이 `글자 높이 × 0.6` 이하인 이웃으로 좌우로 확장해 단어를 만듭니다.
+/// - 공백/구두점만 있거나 아무 글자도 없으면 `None`.
+///
+/// 순수 데이터 연산이라 GUI 없이 단위 테스트로 검증합니다.
+pub fn word_at(chars: &[(String, [f32; 4])], point: [f32; 2]) -> Option<(String, [f32; 4])> {
+    if chars.is_empty() {
+        return None;
+    }
+    // 1) 점 근처(여백 2pt)의 글자 중 **중심이 가장 가까운** 글자 찾기 —
+    //    단어 사이 공백을 탭하면 공백(→None)이 선택되도록 합니다.
+    let margin = 2.0f32;
+    let mut best: Option<(usize, f32)> = None;
+    for (i, (_, r)) in chars.iter().enumerate() {
+        let hit = point[0] >= r[0] - margin
+            && point[0] <= r[2] + margin
+            && point[1] >= r[1] - margin
+            && point[1] <= r[3] + margin;
+        if !hit {
+            continue;
+        }
+        let cx = (r[0] + r[2]) * 0.5;
+        let cy = (r[1] + r[3]) * 0.5;
+        let d2 = (point[0] - cx).powi(2) + (point[1] - cy).powi(2);
+        if best.map_or(true, |(_, bd)| d2 < bd) {
+            best = Some((i, d2));
+        }
+    }
+    let idx = best?.0;
+    if chars[idx].0.trim().is_empty() {
+        return None;
+    }
+    let h = (chars[idx].1[3] - chars[idx].1[1]).max(1.0);
+    let gap_max = h * 0.6;
+    let cy = (chars[idx].1[1] + chars[idx].1[3]) * 0.5;
+    // 같은 줄 판정: 세로 중심이 글자 높이의 0.75 이내.
+    let same_line = |r: &[f32; 4]| ((r[1] + r[3]) * 0.5 - cy).abs() <= h * 0.75;
+    // 2) 왼쪽으로 확장 (공백은 단어 경계 — 통과하지 않음).
+    let mut start = idx;
+    while start > 0 {
+        if chars[start - 1].0.trim().is_empty() {
+            break;
+        }
+        let prev = &chars[start - 1].1;
+        if prev[0] < chars[idx].1[0]
+            && same_line(prev)
+            && chars[start].1[0] - prev[2] <= gap_max
+        {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    // 3) 오른쪽으로 확장 (공백은 단어 경계).
+    let mut end = idx;
+    while end + 1 < chars.len() {
+        if chars[end + 1].0.trim().is_empty() {
+            break;
+        }
+        let next = &chars[end + 1].1;
+        if next[0] > chars[idx].1[0] && same_line(next) && next[0] - chars[end].1[2] <= gap_max {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    // 4) 단어 조립 (공백은 제거, 아포스트로피/하이픈은 유지).
+    let mut word = String::new();
+    let mut bb = chars[start].1;
+    for (text, r) in &chars[start..=end] {
+        if !text.trim().is_empty() {
+            word.push_str(text);
+        }
+        bb[0] = bb[0].min(r[0]);
+        bb[1] = bb[1].min(r[1]);
+        bb[2] = bb[2].max(r[2]);
+        bb[3] = bb[3].max(r[3]);
+    }
+    if word.is_empty() {
+        None
+    } else {
+        Some((word, bb))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +484,58 @@ mod tests {
     fn char_highlights_empty_area_is_empty() {
         let chars = two_line_chars();
         assert!(char_line_highlights(&chars, [400.0, 300.0, 450.0, 330.0], 3.0).is_empty());
+    }
+
+    // ---------- word_at (사전 오버레이) ----------
+
+    /// "Hello world"를 글자 단위(폭 8pt, 간격 2pt)로 만듭니다.
+    fn word_chars() -> Vec<(String, [f32; 4])> {
+        let text = "Hello world";
+        let mut out = Vec::new();
+        let mut x = 100.0f32;
+        for ch in text.chars() {
+            let w = if ch == ' ' { 6.0 } else { 8.0 };
+            out.push((ch.to_string(), [x, 50.0, x + w, 68.0]));
+            x += w + 2.0;
+        }
+        out
+    }
+
+    #[test]
+    fn word_at_finds_whole_word() {
+        let chars = word_chars();
+        // "Hello"의 두 번째 글자 'e' 위를 탭.
+        let (word, bb) = word_at(&chars, [117.0, 59.0]).expect("word found");
+        assert_eq!(word, "Hello");
+        assert!((bb[0] - 100.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn word_at_finds_second_word() {
+        let chars = word_chars();
+        let (word, _) = word_at(&chars, [165.0, 59.0]).expect("word found");
+        assert_eq!(word, "world");
+    }
+
+    #[test]
+    fn word_at_misses_gap_and_empty_area() {
+        let chars = word_chars();
+        // 두 단어 사이 공백 위치.
+        assert!(word_at(&chars, [150.0, 59.0]).is_none());
+        // 빈 곳.
+        assert!(word_at(&chars, [300.0, 300.0]).is_none());
+    }
+
+    #[test]
+    fn word_at_keeps_apostrophes() {
+        let chars = vec![
+            ("w".to_string(), [0.0, 0.0, 8.0, 18.0]),
+            ("o".to_string(), [10.0, 0.0, 18.0, 18.0]),
+            ("n".to_string(), [20.0, 0.0, 28.0, 18.0]),
+            ("'".to_string(), [30.0, 0.0, 36.0, 18.0]),
+            ("t".to_string(), [38.0, 0.0, 46.0, 18.0]),
+        ];
+        let (word, _) = word_at(&chars, [12.0, 9.0]).expect("word found");
+        assert_eq!(word, "won't");
     }
 }

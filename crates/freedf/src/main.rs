@@ -60,8 +60,13 @@ fn main() -> eframe::Result<()> {
     };
 
     let options = eframe::NativeOptions {
-        // wgpu(DX12) 대신 호환성 높은 OpenGL(glow) 렌더러 사용 (Windows 크래시 방지)
-        renderer: eframe::Renderer::Glow,
+        // 기본: OpenGL(glow) — 호환성이 가장 좋습니다 (Windows 크래시 방지).
+        // `FREEDF_RENDERER=wgpu`로 실행하면 DirectX 12 백엔드로 GPU 오프로드
+        // (페이지 전환/줌/합성이 더 부드러움, 전용 GPU 권장).
+        renderer: match std::env::var("FREEDF_RENDERER").as_deref() {
+            Ok("wgpu") => eframe::Renderer::Wgpu,
+            _ => eframe::Renderer::Glow,
+        },
         viewport: egui::ViewportBuilder::default()
             .with_title("FreeDF — Lightweight PDF Viewer & Ink")
             .with_inner_size([1280.0, 820.0])

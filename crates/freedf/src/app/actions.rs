@@ -205,6 +205,8 @@ impl FreeDfApp {
         self.current_note = None;
         self.doc_id = None;
         self.texture = None;
+        self.prefetch = None;
+        self.prefetch_pending = false;
         self.store = AnnotationStore::new();
         self.history = History::new(256);
         self.active_stroke = None;
@@ -266,6 +268,8 @@ impl FreeDfApp {
                 self.active_stroke = None;
                 self.pan_last = None;
                 self.middle_pan_last = None;
+                self.prefetch = None;
+                self.prefetch_pending = true;
                 self.render_dirty = true;
                 self.pending_fit = Some(FitMode::Width);
                 self.outline_loaded = false;
@@ -433,6 +437,8 @@ impl FreeDfApp {
         self.pan_last = None;
         self.middle_pan_last = None;
         self.scroll_vel = Vec2::ZERO;
+        // 다음 페이지 프리페치 예약 (현재 페이지의 줌/크기 기준).
+        self.prefetch_pending = true;
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
         }
@@ -463,14 +469,26 @@ impl FreeDfApp {
         if from == to {
             return;
         }
-        if self.texture.is_none() {
-            return;
-        }
-        // The current texture still holds the old page; keep it for the outgoing
-        // frame and force a fresh render for the new page.
         let vertical = std::mem::take(&mut self.transition_vertical);
-        self.prev_texture = self.texture.take();
-        self.render_dirty = true;
+        // 프리페치된 새 페이지 텍스처가 있으면 즉시 사용 → 렌더 대기 없는 전환.
+        let hit = self
+            .prefetch
+            .as_ref()
+            .is_some_and(|(p, z, _)| *p == to && (*z - self.view.zoom).abs() < 1e-3);
+        if hit {
+            let (_, _, tex) = self.prefetch.take().expect("hit");
+            self.prev_texture = self.texture.take();
+            self.texture = Some(tex);
+            self.render_dirty = false;
+        } else {
+            if self.texture.is_none() {
+                return;
+            }
+            // The current texture still holds the old page; keep it for the
+            // outgoing frame and force a fresh render for the new page.
+            self.prev_texture = self.texture.take();
+            self.render_dirty = true;
+        }
         self.page_anim = Some(PageAnim {
             progress: 0.0,
             direction: if to > from { 1.0 } else { -1.0 },

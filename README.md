@@ -129,9 +129,22 @@ docker compose up -d db
 - 🪶 **Smooth animated scroll & zoom** — mouse-wheel scrolling and Ctrl+wheel
   zoom **glide** to their target over a few frames (eased), so panning and
   zooming feel fluid instead of stepping/jumping
-- 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
-  level is preserved when moving between pages. **PgUp / PgDn flip vertically**
-  (like pages stacked in a long column), everything else slides horizontally
+- 🖊️ **Device-aware input** — a pen writes, everything else pans: mouse/trackpad
+  automatically pan the page in every ink tool (like real note apps), and only
+  a stylus draws ink. Enable *Mouse ink* in the pen settings to let the mouse
+  draw too. The on-page cursor switches to a pan crosshair for mouse users
+- 📖 **Dictionary overlay** — toggle *Dictionary* and tap any word on the page:
+  a floating overlay shows the pronunciation and definitions
+  (dictionaryapi.dev). Lookups run in the background and are **cached in the
+  database** (`word_cache`), so words you've seen work offline. Word extraction
+  uses PDFium's per-character boxes (`search::word_at`)
+- 🎞️ **Smooth page transitions** — the next/previous page texture is
+  **pre-rendered in advance** (prefetch), so page flips start instantly
+  without waiting for the CPU raster pass
+- 🖥️ **DirectX 12 renderer (opt-in)** — run with `FREEDF_RENDERER=wgpu` to use
+  the wgpu/DirectX 12 backend for GPU-accelerated compositing, zoom and page
+  transitions (recommended with a discrete GPU). Default stays glow/OpenGL for
+  maximum compatibility
 - 🔁 **PgDn / PgUp = browser-style paging** — if the page is taller than the
   canvas it scrolls **one viewport at a time** inside the page (just like a web
   browser); only when there is no more room does it move to the next / previous

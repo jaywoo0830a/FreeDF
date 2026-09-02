@@ -81,6 +81,12 @@ pub struct SessionState {
     /// 사용자 정의 용지 크기 [가로, 세로] (포인트). `PaperSize::Custom`일 때 사용.
     #[serde(default)]
     pub custom_paper_size: Option<[f32; 2]>,
+    /// 마우스/트랙패드로도 잉크를 그릴지 (기본 off — 펜 전용 필기)
+    #[serde(default = "default_false")]
+    pub mouse_draws: bool,
+    /// 단어 탭 시 사전 오버레이 표시 여부 (전역)
+    #[serde(default = "default_false")]
+    pub dictionary_enabled: bool,
 }
 
 /// 이전 버전 세션 파일(필드 없음)에서도 팔레트를 기본 표시.
@@ -170,6 +176,8 @@ impl Default for SessionState {
             zoom_lock: false,
             smoothing: 0.4,
             custom_paper_size: None,
+            mouse_draws: false,
+            dictionary_enabled: false,
         }
     }
 }

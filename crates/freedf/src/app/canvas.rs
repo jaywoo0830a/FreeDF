@@ -381,10 +381,15 @@ impl FreeDfApp {
             if !animating {
                 self.page_anim = None;
                 self.prev_texture = None;
+                // 애니메이션 종료 → 다음 페이지를 미리 렌더.
+                self.prefetch_pending = true;
             }
         }
         if animating {
             ctx.request_repaint();
+        } else if self.prefetch_pending {
+            // 다음/이전 페이지 텍스처 프리페치 (CPU 래스터 대기 제거).
+            self.prefetch_page(&ctx);
         }
 
         // ---------- Draw ----------
@@ -538,6 +543,44 @@ impl FreeDfApp {
         self.canvas_nav_overlay(&ctx, canvas);
         // Floating writing-tool / color palette (right-center of the canvas).
         self.canvas_palette_overlay(&ctx, canvas);
+        // 사전 오버레이 (단어 탭 조회 결과).
+        self.dict_overlay(&ctx);
+    }
+
+    /// 다음(또는 이전) 페이지를 미리 렌더해 둡니다 — 페이지 전환 시
+    /// CPU 래스터 대기를 없애 부드럽게 넘어갑니다.
+    fn prefetch_page(&mut self, ctx: &egui::Context) {
+        self.prefetch_pending = false;
+        let Some(doc) = &self.document else {
+            return;
+        };
+        let next = if self.current_page + 1 < doc.page_count() {
+            self.current_page + 1
+        } else if self.current_page > 0 {
+            self.current_page - 1
+        } else {
+            return;
+        };
+        // 이미 같은 페이지를 같은 줌으로 프리페치해 두었으면 스킵.
+        if let Some((p, z, _)) = &self.prefetch {
+            if *p == next && (*z - self.view.zoom).abs() < 1e-3 {
+                return;
+            }
+        }
+        let size = doc.page_size_pts(next);
+        let ppp = ctx.pixels_per_point();
+        let target_w = size[0] * self.view.zoom * ppp;
+        if let Ok(rendered) = doc.render_page(next, target_w, 4096.0 * ppp) {
+            let img = egui::ColorImage::from_rgba_unmultiplied(
+                [rendered.width, rendered.height],
+                &rendered.rgba,
+            );
+            self.prefetch = Some((
+                next,
+                self.view.zoom,
+                ctx.load_texture("prefetch", img, egui::TextureOptions::LINEAR),
+            ));
+        }
     }
 
     /// 페이지 내비게이션 오버레이: Prev/Next, 줌, Fit Width/Height를
@@ -1058,6 +1101,65 @@ impl FreeDfApp {
 
         let primary_down = ctx.input(|i| i.pointer.primary_down());
 
+        // ── 입력 장치 판별 ──────────────────────────────────────────────
+        // egui 0.36 이벤트에는 장치 필드가 없어, Windows Ink 펜의 `Event::Touch`
+        // 유무로 펜/마우스를 구분합니다. 펜을 제외한 입력(마우스/트랙패드)은
+        // 기본적으로 팬(페이지 이동)으로 동작합니다.
+        let has_touch = ctx
+            .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })));
+        let any_pointer = ctx.input(|i| {
+            i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released()
+        });
+        if has_touch {
+            self.input_device = InputDevice::Pen;
+        } else if any_pointer {
+            self.input_device = InputDevice::Mouse;
+        }
+
+        // ── 사전 오버레이: 단어 탭 조회 (다른 동작보다 우선) ─────────────
+        if response.clicked() && self.dictionary.enabled && self.document.is_some() {
+            if let Some(abs) = pointer_abs {
+                let p = abs - origin;
+                let raw = self.view.view_to_page([p.x, p.y]);
+                let page_w = self.page_size_pts[0];
+                let page_h = self.page_size_pts[1];
+                if raw[0] >= 0.0 && raw[0] <= page_w && raw[1] >= 0.0 && raw[1] <= page_h {
+                    self.lookup_word_at(raw, abs);
+                    return;
+                }
+            }
+        }
+
+        // 마우스/트랙패드는 (mouse_draws가 꺼져 있으면) 모든 잉크 도구에서
+        // 팬으로 동작 — 팬만 글을 쓰게 하는 범용 관례를 따릅니다.
+        let panning = self.tool == ToolType::Pan
+            || (!self.mouse_draws
+                && self.input_device == InputDevice::Mouse
+                && matches!(
+                    self.tool,
+                    ToolType::Pen
+                        | ToolType::Ballpoint
+                        | ToolType::Fountain
+                        | ToolType::Highlighter
+                        | ToolType::Eraser
+                ));
+
+        if panning {
+            if response.dragged() || response.is_pointer_button_down_on() {
+                if let Some(abs) = pointer_abs {
+                    if let Some(last) = self.pan_last {
+                        let d = abs - last;
+                        self.view.pan_by(d.x, d.y);
+                    }
+                    self.pan_last = Some(abs);
+                }
+            }
+            if !primary_down {
+                self.pan_last = None;
+            }
+            return;
+        }
+
         match self.tool {
             ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain | ToolType::Highlighter => {
                 let page_w = self.page_size_pts[0];
@@ -1155,20 +1257,7 @@ impl FreeDfApp {
                     }
                 }
             }
-            ToolType::Pan => {
-                if response.dragged() || response.is_pointer_button_down_on() {
-                    if let Some(abs) = pointer_abs {
-                        if let Some(last) = self.pan_last {
-                            let d = abs - last;
-                            self.view.pan_by(d.x, d.y);
-                        }
-                        self.pan_last = Some(abs);
-                    }
-                }
-                if !primary_down {
-                    self.pan_last = None;
-                }
-            }
+            ToolType::Pan => {}
         }
     }
 
@@ -1285,8 +1374,25 @@ impl FreeDfApp {
     /// Draws a custom cursor sprite confined to the canvas, previewing the
     /// current tool's shape and color (Pen = translucent gray circle,
     /// Highlighter = colored rectangle, Eraser = white translucent circle).
+    /// 마우스 + 잉크 도구(mouse_draws 꺼짐)면 팬 십자선으로 표시합니다.
     pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
-        match self.tool {
+        // 실제로 쓰일 도구: 마우스는 기본적으로 팬처럼 동작.
+        let mouse_panning = !self.mouse_draws
+            && self.input_device == InputDevice::Mouse
+            && matches!(
+                self.tool,
+                ToolType::Pen
+                    | ToolType::Ballpoint
+                    | ToolType::Fountain
+                    | ToolType::Highlighter
+                    | ToolType::Eraser
+            );
+        let tool = if mouse_panning {
+            ToolType::Pan
+        } else {
+            self.tool
+        };
+        match tool {
             ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
                 match self.pen_cursor_style {
                     PenCursorStyle::Dot => {

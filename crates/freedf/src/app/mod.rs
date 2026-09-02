@@ -26,6 +26,7 @@
 
 mod actions;
 mod canvas;
+mod dictionary;
 mod panels;
 mod tabs;
 mod toolbar;
@@ -53,6 +54,7 @@ pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
 pub(crate) use crate::db::Db;
+pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::export::draw_strokes_on_image;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
@@ -434,6 +436,14 @@ pub(crate) enum PenCursorStyle {
     Round,
 }
 
+/// 현재 입력 장치. egui 0.36은 이벤트에 장치 필드가 없어 `Event::Touch`
+/// (Windows Ink 펜) 유무로 판별합니다 — 펜이면 잉크, 아니면 팬(기본).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputDevice {
+    Pen,
+    Mouse,
+}
+
 impl PenCursorStyle {
     fn label(self) -> &'static str {
         match self {
@@ -502,6 +512,10 @@ pub struct FreeDfApp {
     /// 드래그 앤 드롭 상태 (임시)
     tool_drag: Option<usize>,
     tool_drop: Option<usize>,
+    /// 마지막으로 감지된 입력 장치 (펜/마우스)
+    input_device: InputDevice,
+    /// 마우스/트랙패드로도 잉크를 그릴지 (기본 off — 펜 전용 필기)
+    mouse_draws: bool,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -552,6 +566,13 @@ pub struct FreeDfApp {
     prev_texture: Option<egui::TextureHandle>,
     /// Page index before the latest page change (drives the animation direction)
     transition_last_page: usize,
+    /// 다음/이전 페이지를 미리 렌더한 텍스처 (페이지 전환을 부드럽게)
+    prefetch: Option<(usize, f32, egui::TextureHandle)>,
+    /// 프리페치가 필요한지 (페이지 변경/애니메이션 종료 시 세팅)
+    prefetch_pending: bool,
+
+    /// 단어 사전 오버레이
+    dictionary: Dictionary,
 
     // ---------- Compact (narrow / split-view) mode ----------
     /// While the window is narrow the UI collapses to canvas + palette; set to
@@ -692,6 +713,8 @@ impl FreeDfApp {
         let text_highlight_snap = if has { s.text_highlight_snap } else { false };
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
+        let mouse_draws = if has { s.mouse_draws } else { false };
+        let dictionary_enabled = if has { s.dictionary_enabled } else { false };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -768,6 +791,8 @@ impl FreeDfApp {
             tool_order,
             tool_drag: None,
             tool_drop: None,
+            input_device: InputDevice::Mouse,
+            mouse_draws,
             paper_style,
             paper_color,
             paper_size,
@@ -794,6 +819,12 @@ impl FreeDfApp {
             transition_vertical: false,
             prev_texture: None,
             transition_last_page: 0,
+            prefetch: None,
+            prefetch_pending: false,
+            dictionary: Dictionary {
+                enabled: dictionary_enabled,
+                ..Default::default()
+            },
             narrow_chrome_expanded: false,
             manual_minimal: false,
             search_query: String::new(),
@@ -860,6 +891,8 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
             custom_paper_size: Some(self.custom_paper_size),
+            mouse_draws: self.mouse_draws,
+            dictionary_enabled: self.dictionary.enabled,
         };
         self.db.set_app_state("session", &state.to_json_value());
     }
@@ -951,6 +984,8 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
             custom_paper_size: Some(self.custom_paper_size),
+            mouse_draws: self.mouse_draws,
+            dictionary_enabled: self.dictionary.enabled,
         }
     }
 
@@ -1005,6 +1040,8 @@ impl FreeDfApp {
         self.paper_line_width = clamp_line_width(s.paper_line_width);
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
+        self.mouse_draws = s.mouse_draws;
+        self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {
             self.custom_paper_size = [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)];
         }

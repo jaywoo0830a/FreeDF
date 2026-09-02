@@ -22,6 +22,7 @@ pub const DEFAULT_DATABASE_URL: &str = "postgres://freedf:freedf@localhost:5432/
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_extensions", include_str!("../migrations/0002_extensions.sql")),
+    ("0003_word_cache", include_str!("../migrations/0003_word_cache.sql")),
 ];
 
 /// 문서 행 (documents 테이블).
@@ -588,6 +589,24 @@ impl Db {
         .unwrap_or_default()
     }
 
+    // ---------- word cache (사전 오버레이) ----------
+
+    pub fn get_word_cache(&self, word: &str) -> Option<Value> {
+        let mut c = conn_guard(&self.conn);
+        c.query_opt("SELECT data FROM word_cache WHERE word = $1", &[&word])
+            .ok()?
+            .map(|r| r.get(0))
+    }
+
+    pub fn set_word_cache(&self, word: &str, data: &Value) {
+        let mut c = conn_guard(&self.conn);
+        let _ = c.execute(
+            "INSERT INTO word_cache (word, data, updated_at) VALUES ($1, $2, $3)
+             ON CONFLICT (word) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+            &[&word, data, &now_ms()],
+        );
+    }
+
     // ---------- event log ----------
 
     pub fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
@@ -730,6 +749,19 @@ mod tests {
                 .unwrap_or(-1);
             assert_eq!(n, 0);
         }
+
+        // ── word_cache (사전 오버레이 캐시) ──
+        let entry = serde_json::json!([
+            {"word": "hello", "phonetic": "/həˈloʊ/",
+             "meanings": [{"partOfSpeech": "interjection",
+                           "definitions": [{"definition": "used as a greeting"}]}]}
+        ]);
+        assert!(db.get_word_cache("hello").is_none());
+        db.set_word_cache("hello", &entry);
+        let cached = db.get_word_cache("hello").expect("cached");
+        assert_eq!(cached[0]["phonetic"], "/həˈloʊ/");
+        db.set_word_cache("hello", &serde_json::json!([{"word": "hello", "meanings": []}]));
+        assert_eq!(db.get_word_cache("hello").unwrap()[0]["meanings"].as_array().unwrap().len(), 0);
 
         // ── delete + cascade ──
         db.delete_document(doc_id).expect("delete");

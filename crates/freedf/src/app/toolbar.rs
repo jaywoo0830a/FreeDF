@@ -104,6 +104,19 @@ impl FreeDfApp {
                 {
                     self.save_default_session();
                 }
+                if ui
+                    .toggle_value(
+                        &mut self.dictionary.enabled,
+                        icon_text(ui, "Dictionary", icons::BOOK_OPEN_TEXT),
+                    )
+                    .on_hover_text(
+                        "Tap any word on the page to look it up in the dictionary.\n\
+                         Needs internet once per word; results are cached in the database.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                }
                 ui.separator();
 
                 // Bookmark the current page + jump list.
@@ -640,6 +653,18 @@ impl FreeDfApp {
                             )
                             .changed()
                         {
+                            self.save_session();
+                        }
+                        if ui
+                            .checkbox(&mut self.mouse_draws, "Mouse ink")
+                            .on_hover_text(
+                                "Draw ink with the mouse/trackpad too.\n\
+                                 Off (default): mouse & trackpad pan the page — \
+                                 only a pen writes, like real note-taking apps.",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
                             self.save_session();
                         }
                         if self.pressure_enabled {
