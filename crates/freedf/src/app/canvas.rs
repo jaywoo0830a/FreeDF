@@ -12,6 +12,19 @@ fn tilt_magnitude(tilt: &[f32; 2]) -> f32 {
     (m / 90.0).min(1.0).max(0.0)
 }
 
+/// 펜 틸트(±도) → (방위각 rad, 기울기 코사인).
+/// 방위각 0 = 오른쪽(+x), +π/2 = 아래(화면 y — tilt_y 양수가 사용자 쪽일 때).
+/// 기울기 0(수직)이면 (0, 1).
+fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
+    let (x, y) = (tilt[0], tilt[1]);
+    let mag = (x * x + y * y).sqrt();
+    if mag < 1e-3 {
+        return (0.0, 1.0);
+    }
+    let cos_pitch = (mag.min(90.0) * std::f32::consts::PI / 180.0).cos();
+    (y.atan2(x), cos_pitch)
+}
+
 // ── 획별 지오메트리 캐시 (LRU, pt 공간 — 줌과 무관) ─────────────────────────
 
 /// 잉크 설정 스냅샷 — 캐시된 지오메트리가 어떤 모델 파라미터로 만들어졌는지.
@@ -230,6 +243,26 @@ fn append_aa(
     }
 }
 
+/// 리본(근사) 지오메트리를 메시에 덧붙입니다 — 버텍스별 알파 램프
+/// (1 = 본체, 0 = 페더 바깥 가장자리)를 베이스 색에 곱해 칠합니다.
+fn append_ribbon(
+    mesh: &mut egui::Mesh,
+    ribbon: &freedf_core::pen::StrokeRibbon,
+    to_view: &impl Fn([f32; 2]) -> Pos2,
+    color: Color32,
+) {
+    let base = mesh.vertices.len() as u32;
+    for (p, a) in ribbon.verts.iter().zip(&ribbon.alphas) {
+        let alpha = (color.a() as f32 * a).clamp(0.0, 255.0) as u8;
+        let c = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+        mesh.vertices.push(egui::epaint::Vertex::untextured(to_view(*p), c));
+    }
+    for t in &ribbon.tris {
+        mesh.indices
+            .extend_from_slice(&[base + t[0], base + t[1], base + t[2]]);
+    }
+}
+
 /// 폴백 지오메트리(quad + 조인/캡 원)를 메시에 덧붙입니다. 원은 메시에
 /// 못 넣으므로 별도 목록(`fallbacks`)에 담아 호출자가 원형으로 그립니다.
 fn append_fallback(
@@ -251,24 +284,6 @@ fn append_fallback(
     }
     for (c, r) in &fb.circles {
         fallbacks.push((to_view(*c), (r * zoom).max(0.5), color));
-    }
-}
-
-/// 후광 레이어(외곽선+삼각분할 or 폴백)를 메시에 덧붙입니다.
-fn append_filled(
-    mesh: &mut egui::Mesh,
-    pts_pt: &[[f32; 2]],
-    hb: &[f32],
-    to_view: &impl Fn([f32; 2]) -> Pos2,
-    zoom: f32,
-    color: Color32,
-    fallbacks: &mut Vec<(Pos2, f32, Color32)>,
-) {
-    match freedf_core::pen::stroke_geometry(pts_pt, hb, true) {
-        freedf_core::pen::StrokeFill::Tris(t) => append_outline(mesh, &t, to_view, color, 0.0),
-        freedf_core::pen::StrokeFill::Fallback(fb) => {
-            append_fallback(mesh, &fb, to_view, zoom, color, fallbacks)
-        }
     }
 }
 
@@ -479,6 +494,7 @@ impl FreeDfApp {
                     ui.label(format!("tip speed: {speed:.0} pt/s"));
                     ui.label(format!("tip width: {tip_w:.2} pt"));
                     ui.label(format!("active points: {pts_n}"));
+                    ui.label("render: ribbon ≈ O(n)  (완성 획: 정확+캐시)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -1786,20 +1802,18 @@ impl FreeDfApp {
         } else {
             (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
         };
-        // ── 지오메트리 캐시 (해시/설정 불일치 시에만 재구성 — 삼각분할은 O(n²)).
-        let hash = stroke_geom_hash(stroke);
-        let settings = (self.ink_bleed, self.pen_profile, self.fountain_profile);
-        let bleed = self.ink_bleed;
         let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
-        let geom = self.stroke_geom_cache.get_or_build(stroke.id, hash, settings, || {
-            build_stroke_geom(&pts_pt, &halves_pt, round_caps, bleed, settle, age_sec, bleed_active)
-        });
         let to_view = |p: [f32; 2]| -> Pos2 {
             let v = self.view.page_to_view(p);
             egui::pos2(origin.x + v[0], origin.y + v[1])
         };
-        // 젊은 블리드(정착 전)는 나이가 매 프레임 변하므로 매 프레임 후광.
-        if bleed_active && age_sec < settle && age_sec > 0.05 {
+        // 진행 중 획은 점이 매 프레임 늘어 **매 프레임 재구성**됩니다. 여기서
+        // 귀 자르기 삼각분할(O(n²))·경계 해시맵을 돌리면 빠르게 쓸 때 버벅이므로,
+        // **리본 근사(O(n) 단일 스캔)** 로 그립니다 — 마이터/베벨 규칙은 정확
+        // 경로와 동일하고, AA는 "바깥 페더 링 + 알파 1→0 램프"로 근사합니다.
+        // (완성 획은 build_ink_mesh에서 캐시된 정확 지오메트리를 씁니다)
+        let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
+        if bleed_active {
             let radii = bleed_radii(&pts_pt, age_sec, self.ink_bleed);
             for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
                 let hb: Vec<f32> = (0..n).map(|i| halves_pt[i] + radii[i] * extra).collect();
@@ -1807,39 +1821,24 @@ impl FreeDfApp {
                 let halo_color =
                     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
                 let mut mesh = egui::Mesh::default();
-                let mut fallbacks = Vec::new();
-                append_filled(&mut mesh, &pts_pt, &hb, &to_view, self.view.zoom, halo_color, &mut fallbacks);
+                append_ribbon(
+                    &mut mesh,
+                    &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
+                    &to_view,
+                    halo_color,
+                );
                 painter.add(egui::Shape::mesh(mesh));
-                for (c, r, col) in fallbacks {
-                    painter.circle_filled(c, r, col);
-                }
             }
         }
-        // 본체.
+        // 본체 — 리본 + 내장 페더(알파 램프).
         let mut body = egui::Mesh::default();
-        let mut fallbacks = Vec::new();
-        if let Some(fb) = &geom.fallback {
-            append_fallback(&mut body, fb, &to_view, self.view.zoom, color, &mut fallbacks);
-        } else {
-            append_outline(&mut body, &geom.main, &to_view, color, 0.0);
-            append_aa(&mut body, &geom.main, &to_view, color, 1.0);
-        }
+        append_ribbon(
+            &mut body,
+            &freedf_core::pen::stroke_ribbon(&pts_pt, &halves_pt, feather_pt, round_caps),
+            &to_view,
+            color,
+        );
         painter.add(egui::Shape::mesh(body));
-        for (c, r, col) in fallbacks {
-            painter.circle_filled(c, r, col);
-        }
-        // 정착 블리드 후광.
-        if let Some((mid, outer)) = &geom.halo {
-            let a1 = (color.a() as f32 * 0.35).clamp(0.0, 255.0) as u8;
-            let a2 = (color.a() as f32 * 0.12).clamp(0.0, 255.0) as u8;
-            let c1 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a1);
-            let c2 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a2);
-            for (outline, c) in [(mid, c1), (outer, c2)] {
-                let mut mesh = egui::Mesh::default();
-                append_outline(&mut mesh, outline, &to_view, c, 0.0);
-                painter.add(egui::Shape::mesh(mesh));
-            }
-        }
     }
 
     /// 페이지의 **모든 완성 획**을 병합 잉크 메시 하나로 만듭니다.
@@ -1928,7 +1927,12 @@ impl FreeDfApp {
                         color.b(),
                         alpha,
                     );
-                    append_filled(&mut mesh, &pts_pt, &hb, &to_view, zoom, halo_color, &mut fallbacks);
+                    append_ribbon(
+                        &mut mesh,
+                        &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
+                        &to_view,
+                        halo_color,
+                    );
                 }
             }
             // 본체.
@@ -2050,6 +2054,34 @@ impl FreeDfApp {
                             Stroke::new(1.0, Color32::from_white_alpha(60)),
                         );
                         painter.circle_filled(pos, 1.2, Color32::from_white_alpha(200));
+                    }
+                }
+                // ── 틸트 추적: 펜 기울기의 방위각으로 회전하는 배럴 투영 타원 +
+                // 닙 방향 지시선 — 필압/틸트 소스(OTD/evdev)가 있을 때만.
+                if self.pen_monitor.is_some() {
+                    let (az, cos_pitch) = tilt_azimuth(&self.pen_tilt);
+                    if cos_pitch < 0.98 {
+                        let pitch = cos_pitch.acos();
+                        // 장축은 기울기 방향으로 늘어나고(펜 그림자), 단축은
+                        // 기울기에 비례해 찌그러집니다(원의 원근 단축).
+                        let major = 8.0 + 16.0 * pitch.sin();
+                        let minor = (8.0 * cos_pitch).max(1.2);
+                        let (ct, st) = (az.cos(), az.sin());
+                        let mut pts = Vec::with_capacity(20);
+                        for k in 0..20 {
+                            let t = std::f32::consts::TAU * (k as f32 / 20.0);
+                            let (ex, ey) = (major * t.cos(), minor * t.sin());
+                            pts.push(pos + egui::vec2(ex * ct - ey * st, ex * st + ey * ct));
+                        }
+                        painter.add(egui::Shape::convex_polygon(
+                            pts,
+                            Color32::from_black_alpha(28),
+                            Stroke::NONE,
+                        ));
+                        painter.line_segment(
+                            [pos, pos + egui::vec2(major * ct, major * st)],
+                            Stroke::new(1.5, Color32::from_white_alpha(160)),
+                        );
                     }
                 }
             }
@@ -2216,5 +2248,45 @@ mod tests {
         let b = mesh_bounds(&pts, &halves, true);
         assert!(b.min.x > 30.0 && b.max.x < 160.0, "x 경계: {b:?}");
         assert!(b.min.y > 30.0 && b.max.y < 70.0, "y 경계: {b:?}");
+    }
+
+    #[test]
+    fn ribbon_active_mesh_stays_bounded() {
+        // 진행 중 획이 매 프레임 쓰는 리본 경로 — 유한하고 스트로크 근처에 머뭄.
+        let mut pts: Vec<[f32; 2]> = Vec::new();
+        let mut t = 0.0f32;
+        while t < std::f32::consts::TAU * 2.0 {
+            let r = 20.0 + 6.0 * (t * 2.0).sin();
+            pts.push([100.0 + r * t.cos(), 100.0 + r * t.sin() * 0.6]);
+            t += 0.05;
+        }
+        let halves: Vec<f32> = vec![2.0; pts.len()];
+        let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
+        for feather in [0.0f32, 0.5] {
+            let rb = freedf_core::pen::stroke_ribbon(&pts, &halves, feather, true);
+            assert_eq!(rb.verts.len(), rb.alphas.len());
+            assert!(!rb.tris.is_empty());
+            let mut mesh = egui::Mesh::default();
+            append_ribbon(&mut mesh, &rb, &ident, Color32::RED);
+            let mut bounds = egui::Rect::NOTHING;
+            for v in &mesh.vertices {
+                assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
+                bounds.extend_with(v.pos);
+            }
+            assert!(bounds.min.x > 50.0 && bounds.max.x < 150.0, "x: {bounds:?}");
+            assert!(bounds.min.y > 50.0 && bounds.max.y < 150.0, "y: {bounds:?}");
+        }
+    }
+
+    #[test]
+    fn tilt_azimuth_maps_direction() {
+        let (az, cos) = tilt_azimuth(&[20.0, 0.0]);
+        assert!(az.abs() < 1e-3, "오른쪽 기울기 → 방위각 0");
+        assert!((cos - 20.0f32.to_radians().cos()).abs() < 1e-4);
+        let (az2, _) = tilt_azimuth(&[0.0, 25.0]);
+        assert!(
+            (az2 - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            "사용자 쪽 기울기 → +90°"
+        );
     }
 }

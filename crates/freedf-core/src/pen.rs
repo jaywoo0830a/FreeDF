@@ -18,29 +18,12 @@ use crate::model::{StrokePoint, ToolType};
 /// 폴백합니다 — SVG `stroke-linejoin: miter`의 miter-limit에 해당하는 관례.
 const MITER_LIMIT_DIR_LEN: f32 = 0.35;
 
-/// 가변폭 폴리라인의 **외곽선 다각형**을 만듭니다.
-///
-/// - 각 점의 오프셋 법선 = 인접 두 세그먼트 방향의 평균(마이터), 되접힘 시 베벨 폴백.
-/// - `round_caps=true`면 양끝에 반원 캡(펜 관례), false면 직선(butt) 끝(마커 관례).
-/// - 좌표는 입력과 같은 공간이며, 화면(egui)과 내보내기(래스터)가
-///   **같은 함수**를 써서 동일하게 그려집니다.
-///
-/// 반환 다각형은 단순 다각형(구멍 없음)이므로, `triangulate_polygon`으로
-/// **겹침 없는 삼각형들**로 나눌 수 있습니다 — 반투명 잉크도 얼룩 없이
-/// 균일하게 칠해집니다.
-pub fn stroke_outline(
-    points: &[[f32; 2]],
-    half_widths: &[f32],
-    round_caps: bool,
-) -> Vec<[f32; 2]> {
-    let n = points.len().min(half_widths.len());
-    if n == 0 {
-        return Vec::new();
-    }
-    if n == 1 {
-        return circle_polygon(points[0], half_widths[0].max(0.0), 12);
-    }
-    // 점별 오프셋 법선 (마이터 + 베벨 폴백).
+/// 점별 오프셋 법선 — 마이터(인접 두 세그먼트 방향의 평균에 수직)이며,
+/// 거의 180° 되접힘이면 베벨(첫 세그먼트 방향)로 폴백합니다.
+/// [`stroke_outline`]과 [`stroke_ribbon`]이 **같은 규칙**을 공유해
+/// 두 지오메트리의 조인 모양이 일치합니다.
+fn miter_normals(points: &[[f32; 2]]) -> Vec<[f32; 2]> {
+    let n = points.len();
     let mut norms: Vec<[f32; 2]> = Vec::with_capacity(n);
     for i in 0..n {
         let a = if i > 0 {
@@ -64,6 +47,33 @@ pub fn stroke_outline(
         // 오프셋 방향 = 마이터 방향에 수직.
         norms.push([-miter_dir[1], miter_dir[0]]);
     }
+    norms
+}
+
+/// 가변폭 폴리라인의 **외곽선 다각형**을 만듭니다.
+///
+/// - 각 점의 오프셋 법선 = 인접 두 세그먼트 방향의 평균(마이터), 되접힘 시 베벨 폴백.
+/// - `round_caps=true`면 양끝에 반원 캡(펜 관례), false면 직선(butt) 끝(마커 관례).
+/// - 좌표는 입력과 같은 공간이며, 화면(egui)과 내보내기(래스터)가
+///   **같은 함수**를 써서 동일하게 그려집니다.
+///
+/// 반환 다각형은 단순 다각형(구멍 없음)이므로, `triangulate_polygon`으로
+/// **겹침 없는 삼각형들**로 나눌 수 있습니다 — 반투명 잉크도 얼룩 없이
+/// 균일하게 칠해집니다.
+pub fn stroke_outline(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    round_caps: bool,
+) -> Vec<[f32; 2]> {
+    let n = points.len().min(half_widths.len());
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return circle_polygon(points[0], half_widths[0].max(0.0), 12);
+    }
+    // 점별 오프셋 법선 (마이터 + 베벨 폴백) — 리본과 동일한 규칙.
+    let norms = miter_normals(points);
     let mut poly: Vec<[f32; 2]> = Vec::with_capacity(n * 2 + 26);
     let t_start = unit2(sub(points[1], points[0]));
     let t_end = unit2(sub(points[n - 1], points[n - 2]));
@@ -415,6 +425,193 @@ pub fn stroke_geometry(
         aa_edges,
         bbox,
     })
+}
+
+// ── 리본 근사 지오메트리 (빠른 경로 — 삼각분할 없음) ─────────────────────────
+
+/// 리본(quad 스트립) 근사 지오메트리 — **O(n) 단일 스캔**으로 만들어집니다.
+///
+/// [`stroke_geometry`]의 귀 자르기(O(n²))·경계 해시맵을 전혀 쓰지 않으므로,
+/// 진행 중 획·번짐 후광처럼 **매 프레임 다시 짓는** 지오메트리에 씁니다.
+///
+/// - 조인: [`stroke_outline`]과 **같은 마이터/베벨 규칙** — 인접 세그먼트가
+///   마이터 단면을 공유해 겹침/틈이 없습니다 (반투명 잉크 얼룩 없음).
+/// - AA: 본체 바깥으로 `feather`만큼 불린 링에 **버텍스 알파 1→0 램프**를
+///   얹는 근사 (정확 경로의 경계 페더 스트립과 시각적으로 동등).
+/// - 캡: `round_caps`면 8분할 반원 팬 근사, false면 직선(butt) 끝.
+///
+/// 버텍스 레이아웃(점 i): `feather>0`이면 `[L, OL, R, OR]`, 아니면 `[L, R]`
+/// (L/R = ±법선 쪽 본체 가장자리, OL/OR = 페더 바깥 가장자리).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeRibbon {
+    pub verts: Vec<[f32; 2]>,
+    /// 버텍스별 알파 배율(0..1) — 호출자가 `base_color × alphas[i]`로 칠합니다.
+    pub alphas: Vec<f32>,
+    pub tris: Vec<[u32; 3]>,
+    pub bbox: [f32; 4],
+}
+
+fn push_ribbon_vert(out: &mut StrokeRibbon, v: [f32; 2], a: f32) -> u32 {
+    out.bbox[0] = out.bbox[0].min(v[0]);
+    out.bbox[1] = out.bbox[1].min(v[1]);
+    out.bbox[2] = out.bbox[2].max(v[0]);
+    out.bbox[3] = out.bbox[3].max(v[1]);
+    out.verts.push(v);
+    out.alphas.push(a);
+    (out.verts.len() - 1) as u32
+}
+
+/// 캡(반원 팬)을 붙입니다. 호가 `+nrm`에서 출발해 `away`(바깥 방향)를
+/// 지나 `−nrm`으로 이어집니다.
+fn push_ribbon_cap(
+    out: &mut StrokeRibbon,
+    center: [f32; 2],
+    nrm: [f32; 2],
+    half: f32,
+    feather: f32,
+    away: [f32; 2],
+) {
+    const CAP_STEPS: usize = 8;
+    let rot = [-nrm[1], nrm[0]]; // nrm을 +90° 회전.
+    let s = if away[0] * rot[0] + away[1] * rot[1] > 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let center_idx = push_ribbon_vert(out, center, 1.0);
+    let mut inner = Vec::with_capacity(CAP_STEPS + 1);
+    let mut outer = Vec::with_capacity(CAP_STEPS + 1);
+    for k in 0..=CAP_STEPS {
+        let phi = s * std::f32::consts::PI * (k as f32 / CAP_STEPS as f32);
+        let dir = [
+            nrm[0] * phi.cos() - nrm[1] * phi.sin(),
+            nrm[0] * phi.sin() + nrm[1] * phi.cos(),
+        ];
+        inner.push(push_ribbon_vert(out, add_mul(center, dir, half), 1.0));
+        if feather > 0.0 {
+            outer.push(push_ribbon_vert(out, add_mul(center, dir, half + feather), 0.0));
+        }
+    }
+    for k in 0..CAP_STEPS {
+        out.tris.push([center_idx, inner[k], inner[k + 1]]);
+        if feather > 0.0 {
+            out.tris.push([inner[k], inner[k + 1], outer[k]]);
+            out.tris.push([inner[k + 1], outer[k + 1], outer[k]]);
+        }
+    }
+}
+
+/// 리본 지오메트리를 계산합니다. `feather`는 pt 공간 페더 폭(0이면 본체만).
+pub fn stroke_ribbon(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    feather: f32,
+    round_caps: bool,
+) -> StrokeRibbon {
+    let n = points.len().min(half_widths.len());
+    let feather = feather.max(0.0);
+    let mut out = StrokeRibbon {
+        verts: Vec::new(),
+        alphas: Vec::new(),
+        tris: Vec::new(),
+        bbox: [f32::MAX, f32::MAX, f32::MIN, f32::MIN],
+    };
+    if n == 0 {
+        out.bbox = [0.0; 4];
+        return out;
+    }
+    let has_feather = feather > 0.0;
+    let per = if has_feather { 4 } else { 2 };
+    out.verts.reserve(n * per + 32);
+    out.alphas.reserve(n * per + 32);
+    out.tris.reserve((n - 1) * if has_feather { 6 } else { 2 } + 48);
+    if n == 1 {
+        // 점 하나: 원판 + 페더 링.
+        let h = half_widths[0].max(0.0);
+        let steps = 12usize;
+        let center = push_ribbon_vert(&mut out, points[0], 1.0);
+        let mut inner = Vec::with_capacity(steps);
+        let mut outer = Vec::with_capacity(steps);
+        for k in 0..steps {
+            let a = std::f32::consts::TAU * (k as f32 / steps as f32);
+            let dir = [a.cos(), a.sin()];
+            inner.push(push_ribbon_vert(&mut out, add_mul(points[0], dir, h), 1.0));
+            if has_feather {
+                outer.push(push_ribbon_vert(
+                    &mut out,
+                    add_mul(points[0], dir, h + feather),
+                    0.0,
+                ));
+            }
+        }
+        for k in 0..steps {
+            let k2 = (k + 1) % steps;
+            out.tris.push([center, inner[k], inner[k2]]);
+            if has_feather {
+                out.tris.push([inner[k], inner[k2], outer[k]]);
+                out.tris.push([inner[k2], outer[k2], outer[k]]);
+            }
+        }
+        return out;
+    }
+    let norms = miter_normals(points);
+    // 점별 단면 버텍스.
+    for i in 0..n {
+        let p = points[i];
+        let h = half_widths[i].max(0.0);
+        let nrm = norms[i];
+        push_ribbon_vert(&mut out, add_mul(p, nrm, h), 1.0); // L
+        if has_feather {
+            push_ribbon_vert(&mut out, add_mul(p, nrm, h + feather), 0.0); // OL
+        }
+        push_ribbon_vert(&mut out, sub_mul(p, nrm, h), 1.0); // R
+        if has_feather {
+            push_ribbon_vert(&mut out, sub_mul(p, nrm, h + feather), 0.0); // OR
+        }
+    }
+    // 세그먼트 스트립.
+    for i in 0..n - 1 {
+        let d = sub(points[i + 1], points[i]);
+        if d[0] * d[0] + d[1] * d[1] < 1e-12 {
+            continue; // 중복 점.
+        }
+        let base0 = (i * per) as u32;
+        let base1 = ((i + 1) * per) as u32;
+        let r_off = if has_feather { 2 } else { 1 };
+        let (l0, r0) = (base0, base0 + r_off);
+        let (l1, r1) = (base1, base1 + r_off);
+        out.tris.push([l0, r0, l1]);
+        out.tris.push([r0, r1, l1]);
+        if has_feather {
+            let (ol0, or0) = (l0 + 1, r0 + 1);
+            let (ol1, or1) = (l1 + 1, r1 + 1);
+            out.tris.push([l0, l1, ol1]);
+            out.tris.push([l0, ol1, ol0]);
+            out.tris.push([r0, or0, or1]);
+            out.tris.push([r0, or1, r1]);
+        }
+    }
+    if round_caps {
+        let t0 = unit2(sub(points[1], points[0]));
+        let t1 = unit2(sub(points[n - 1], points[n - 2]));
+        push_ribbon_cap(
+            &mut out,
+            points[0],
+            norms[0],
+            half_widths[0].max(0.0),
+            feather,
+            t0,
+        );
+        push_ribbon_cap(
+            &mut out,
+            points[n - 1],
+            norms[n - 1],
+            half_widths[n - 1].max(0.0),
+            feather,
+            neg(t1),
+        );
+    }
+    out
 }
 
 // ── 인과적(온라인) 선폭 확정기 ───────────────────────────────────────────────
@@ -1882,5 +2079,67 @@ mod tests {
             (tri_area - expected).abs() < 1e-3,
             "면적 {tri_area} vs {expected}"
         );
+    }
+
+    // ---------- stroke_ribbon (리본 근사 지오메트리) ----------
+
+    #[test]
+    fn ribbon_straight_line_has_expected_edges_and_area() {
+        let pts: Vec<[f32; 2]> = (0..12).map(|i| [i as f32 * 10.0, 0.0]).collect();
+        let halves: Vec<f32> = vec![2.0; 12];
+        let rb = stroke_ribbon(&pts, &halves, 0.0, true);
+        // 직선이면 법선은 위쪽 — L = +2, R = −2.
+        assert_eq!(rb.verts[0], [0.0, 2.0]);
+        assert_eq!(rb.verts[1], [0.0, -2.0]);
+        // 본체 면적 = 직사각형(110×4) + 8분할 반원 캡 두 개.
+        let area: f32 = rb.tris.iter().map(|t| triangle_area(t, &rb.verts)).sum();
+        let expected = 110.0 * 4.0 + 32.0 * (std::f32::consts::FRAC_PI_8).sin();
+        assert!((area - expected).abs() < 1e-2, "면적 {area} vs {expected}");
+    }
+
+    #[test]
+    fn ribbon_matches_outline_area_without_overlap() {
+        // 완만한 곡선 + 다양한 폭 — 리본 본체(마이터 단면 공유)는 정확 외곽선
+        // 다각형과 **같은 면적**이어야 함(겹침/틈 없음 = 반투명 얼룩 없음).
+        let pts = [
+            [0.0f32, 0.0],
+            [12.0, 3.0],
+            [24.0, -2.0],
+            [38.0, 6.0],
+            [50.0, 4.0],
+        ];
+        let halves = [1.0f32, 1.6, 0.8, 2.0, 1.2];
+        let rb = stroke_ribbon(&pts, &halves, 0.0, false);
+        let poly = stroke_outline(&pts, &halves, false);
+        let rb_area: f32 = rb.tris.iter().map(|t| triangle_area(t, &rb.verts)).sum();
+        let poly_area = polygon_area(&poly);
+        assert!(
+            (rb_area - poly_area).abs() < 1e-2,
+            "리본 {rb_area} vs 외곽선 {poly_area}"
+        );
+    }
+
+    #[test]
+    fn ribbon_feather_adds_alpha_ramp_outside() {
+        let pts = [[0.0f32, 0.0], [10.0, 0.0]];
+        let halves = [1.0f32, 1.0];
+        let rb = stroke_ribbon(&pts, &halves, 0.5, true);
+        assert!(rb.alphas.iter().any(|&a| a == 0.0), "바깥 알파 0 존재");
+        assert!(rb.alphas.iter().any(|&a| a == 1.0), "본체 알파 1 존재");
+        assert_eq!(rb.verts.len(), rb.alphas.len());
+        // bbox: 두께 1 + 페더 0.5 → y ∈ [−1.5, 1.5].
+        assert!((rb.bbox[1] - (-1.5)).abs() < 1e-4);
+        assert!((rb.bbox[3] - 1.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn ribbon_single_point_and_empty_are_safe() {
+        let rb = stroke_ribbon(&[[5.0f32, 5.0]], &[2.0], 0.5, true);
+        assert!(!rb.tris.is_empty());
+        for v in &rb.verts {
+            assert!(v[0].is_finite() && v[1].is_finite());
+        }
+        let empty = stroke_ribbon(&[], &[], 1.0, true);
+        assert!(empty.verts.is_empty() && empty.tris.is_empty());
     }
 }
