@@ -113,6 +113,12 @@ pub fn triangulate_polygon_checked(poly: &[[f32; 2]]) -> (Vec<[u32; 3]>, bool) {
     let ccw = area2 > 0.0;
     let mut idx: Vec<u32> = (0..n as u32).collect();
     let mut out: Vec<[u32; 3]> = Vec::with_capacity(n.saturating_sub(2));
+    // 격자 공간 인덱스: 귀 후보 검사("이 삼각형 안에 다른 점이 있나")를
+    // 삼각형 bbox 근처의 점으로 국소화 — 전수 검사 O(n²) → 근사 O(n).
+    // 격자는 후보 필터일 뿐이라 판정 결과는 전수 검사와 정확히 같습니다.
+    let grid = EarGrid::build(poly);
+    // 격자 경로에서 건너뛸, 이미 잘려나간 점 표시 (게으른 삭제).
+    let mut removed: Vec<bool> = vec![false; n];
     let mut guard = 0usize;
     let mut i = 0usize;
     while idx.len() > 3 && guard <= n * n + 16 {
@@ -126,24 +132,30 @@ pub fn triangulate_polygon_checked(poly: &[[f32; 2]]) -> (Vec<[u32; 3]>, bool) {
         if cross.abs() <= 1e-6 {
             // 일직선(collinear) 정점 — 면적 기여가 없으므로 제거만 합니다.
             // (일정 두께의 직선 획처럼 외곽선이 완전 직선인 경우 필수)
+            removed[idx[(i + 1) % m] as usize] = true;
             idx.remove((i + 1) % m);
             continue;
         }
         let convex = if ccw { cross > 0.0 } else { cross < 0.0 };
         let mut is_ear = convex;
         if is_ear {
-            for &v in &idx {
-                if v == a || v == b || v == c {
-                    continue;
-                }
-                if point_in_triangle(poly[v as usize], pa, pb, pc, ccw) {
-                    is_ear = false;
-                    break;
+            if let Some(grid) = &grid {
+                is_ear = !grid.any_inside(poly, pa, pb, pc, ccw, [a, b, c], &removed);
+            } else {
+                for &v in &idx {
+                    if v == a || v == b || v == c {
+                        continue;
+                    }
+                    if point_in_triangle(poly[v as usize], pa, pb, pc, ccw) {
+                        is_ear = false;
+                        break;
+                    }
                 }
             }
         }
         if is_ear {
             out.push([a, b, c]);
+            removed[b as usize] = true;
             idx.remove((i + 1) % m);
         } else {
             i += 1;
@@ -154,6 +166,92 @@ pub fn triangulate_polygon_checked(poly: &[[f32; 2]]) -> (Vec<[u32; 3]>, bool) {
         (out, true)
     } else {
         (out, false) // 조기 종료 — 부분 커버만 됨.
+    }
+}
+
+/// 귀 자르기용 격자 공간 인덱스 — 삼각형 bbox에 걸친 셀의 점만 후보로
+/// 반환합니다. `any_inside`의 판정은 전수 검사와 동일합니다.
+struct EarGrid {
+    x0: f32,
+    y0: f32,
+    cell: f32,
+    nx: usize,
+    ny: usize,
+    cells: Vec<Vec<u32>>,
+}
+
+impl EarGrid {
+    /// 점이 적으면 격자 구성 비용이 더 크므로 None (전수 검사 경로 사용).
+    fn build(poly: &[[f32; 2]]) -> Option<Self> {
+        let n = poly.len();
+        if n < 96 {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in poly {
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
+        }
+        let (w, h) = ((x1 - x0).max(1e-6), (y1 - y0).max(1e-6));
+        // 셀 개수 ≈ 점 수: 셀 면적 = bbox 면적 / n → 한 변 = sqrt.
+        let cell = (w * h / n as f32).sqrt().max(1e-6);
+        let nx = ((w / cell).ceil() as usize).max(1);
+        let ny = ((h / cell).ceil() as usize).max(1);
+        let mut cells = vec![Vec::new(); nx * ny];
+        for (i, p) in poly.iter().enumerate() {
+            let cx = (((p[0] - x0) / cell).floor() as usize).min(nx - 1);
+            let cy = (((p[1] - y0) / cell).floor() as usize).min(ny - 1);
+            cells[cy * nx + cx].push(i as u32);
+        }
+        Some(Self {
+            x0,
+            y0,
+            cell,
+            nx,
+            ny,
+            cells,
+        })
+    }
+
+    /// 삼각형 (a,b,c) **내부**(경계 제외)에 다른 점이 하나라도 있는지.
+    /// `removed`로 이미 잘려나간 점은 건너뜁니다.
+    fn any_inside(
+        &self,
+        poly: &[[f32; 2]],
+        pa: [f32; 2],
+        pb: [f32; 2],
+        pc: [f32; 2],
+        ccw: bool,
+        skip: [u32; 3],
+        removed: &[bool],
+    ) -> bool {
+        let (minx, maxx) = (
+            pa[0].min(pb[0]).min(pc[0]),
+            pa[0].max(pb[0]).max(pc[0]),
+        );
+        let (miny, maxy) = (
+            pa[1].min(pb[1]).min(pc[1]),
+            pa[1].max(pb[1]).max(pc[1]),
+        );
+        let cx0 = (((minx - self.x0) / self.cell).floor().max(0.0) as usize).min(self.nx - 1);
+        let cx1 = (((maxx - self.x0) / self.cell).floor().max(0.0) as usize).min(self.nx - 1);
+        let cy0 = (((miny - self.y0) / self.cell).floor().max(0.0) as usize).min(self.ny - 1);
+        let cy1 = (((maxy - self.y0) / self.cell).floor().max(0.0) as usize).min(self.ny - 1);
+        for cy in cy0..=cy1 {
+            for cx in cx0..=cx1 {
+                for &v in &self.cells[cy * self.nx + cx] {
+                    if v == skip[0] || v == skip[1] || v == skip[2] || removed[v as usize] {
+                        continue;
+                    }
+                    if point_in_triangle(poly[v as usize], pa, pb, pc, ccw) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 }
 
@@ -594,7 +692,9 @@ impl Default for FountainProfile {
             min_width_pt: 0.3,
             pressure_alpha: 0.8,
             speed_beta: 1.2,
-            speed_ref: 60.0,
+            // 실제 필기 속도(100~400 pt/s)에서 곡선이 반응하도록 보정된 기준.
+            // 이전 60 pt/s는 너무 낮아 보통 속도에서 곡선이 포화(굵기 일정)됨.
+            speed_ref: 150.0,
             tilt_k: 0.4,
             speed_smooth: 0.3,
             v_dwell: 5.0,
@@ -962,12 +1062,16 @@ impl Default for BallPenProfile {
     fn default() -> Self {
         Self {
             pressure_k: 0.15,
-            speed_k: 0.08,
-            speed_max: 600.0,
+            // 속도 영향 — 볼펜은 만년필보다 약하지만, 직선(빠름)과 곡선(느림)의
+            // 굵기 차이가 눈에 보이도록 보정된 값 (이전 0.08/600은 사실상 평평).
+            speed_k: 0.2,
+            speed_max: 300.0,
             speed_smooth: 0.3,
             min_ratio: 0.65,
             max_ratio: 1.35,
-            tilt_cut_enabled: false,
+            // 펜이 틸트를 지원하면 기본 켜기 — 틸트 값이 없으면(0) 무해하고,
+            // HID/WM_POINTER 훅으로 `set_pen_tilt`가 값을 넣으면 즉시 동작.
+            tilt_cut_enabled: true,
             tilt_cut_deg: 30.0,
             tilt_falloff_deg: 15.0,
             starve_v: 900.0,
@@ -1457,10 +1561,13 @@ mod tests {
 
     #[test]
     fn fountain_speed_factor_halves_at_ref() {
-        let f = FountainProfile::default(); // v_ref=60, beta=1.2
+        let f = FountainProfile::default(); // speed_ref = 150
         assert!((f.speed_factor(0.0) - 1.0).abs() < 1e-5, "정지 = 최대");
-        assert!((f.speed_factor(60.0) - 0.5).abs() < 1e-5, "v_ref = 0.5");
-        assert!(f.speed_factor(600.0) < 0.1, "빠르면 얇아짐");
+        assert!(
+            (f.speed_factor(f.speed_ref) - 0.5).abs() < 1e-5,
+            "v_ref = 0.5"
+        );
+        assert!(f.speed_factor(1200.0) < 0.1, "빠르면 얇아짐");
     }
 
     #[test]
@@ -1675,6 +1782,48 @@ mod tests {
         assert!((done.width - batch[0]).abs() < 1e-4, "확정 폭 일치");
     }
 
+    /// 실제 필기 속도 회귀 테스트: 느린 곡선 구간과 빠른 직선 구간이 같은
+    /// 스트로크 안에서 **눈에 보일 정도로 다른 굵기**를 가져야 합니다
+    /// (이전 기본값 speed_ref=60은 실제 속도에서 곡선이 포화되어 굵기가
+    /// 일정해 보이는 문제가 있었습니다).
+    #[test]
+    fn widths_vary_visibly_between_slow_and_fast_sections() {
+        // 16ms 간격 점, 느린 구간 50 pt/s, 빠른 구간 400 pt/s, 필압 일정.
+        let build = |speed: f32, count: usize, t0: &mut u64, x: &mut f32| {
+            let mut pts = Vec::new();
+            for _ in 0..count {
+                *x += speed * 0.016;
+                pts.push(StrokePoint::with_time(*x, 100.0, 0.7, *t0));
+                *t0 += 16;
+            }
+            pts
+        };
+        let mut t0 = 1_700_000_000_000u64;
+        let mut x = 0.0f32;
+        let slow = build(50.0, 12, &mut t0, &mut x);
+        let fast = build(400.0, 12, &mut t0, &mut x);
+        let mut pts = slow;
+        pts.extend(fast);
+
+        let f = FountainProfile::default();
+        let batch = f.widths(2.5, &pts, 0.0);
+        let slow_w = batch[11];
+        let fast_w = batch[23];
+        assert!(
+            slow_w / fast_w > 1.8,
+            "만년필: 느린 곡선 {slow_w:.2} vs 빠른 직선 {fast_w:.2} — 굵기 차이가 보여야 함"
+        );
+
+        let b = BallPenProfile::default();
+        let batch = b.widths(2.0, &pts, 0.0);
+        let slow_w = batch[11];
+        let fast_w = batch[23];
+        assert!(
+            slow_w / fast_w > 1.15,
+            "볼펜: 느린 곡선 {slow_w:.2} vs 빠른 직선 {fast_w:.2} — 은은하지만 차이가 있어야 함"
+        );
+    }
+
     /// 통합 진입점 `stroke_geometry`: 직선 렌즈는 완전 분할 + 면적 일치.
     #[test]
     fn stroke_geometry_covers_straight_lens_exactly() {
@@ -1689,5 +1838,59 @@ mod tests {
             }
             StrokeFill::Fallback(_) => panic!("직선 렌즈는 완전 분할이어야 함"),
         }
+    }
+
+    // ---------- 격자 가속 귀 자르기 (n ≥ 96에서 활성화) ----------
+
+    /// 큰 별 모양(단순) 다각형 — 격자 경로로 완전 분할되고, 삼각형 면적
+    /// 합이 다각형 면적과 일치해야 합니다 (격자가 후보를 빠뜨리면 귀 판정이
+    /// 틀려 면적이 어긋납니다).
+    #[test]
+    fn grid_triangulation_covers_large_star_exactly() {
+        let n = 300;
+        let mut poly: Vec<[f32; 2]> = Vec::with_capacity(n);
+        for k in 0..n {
+            let t = k as f32 / n as f32 * std::f32::consts::TAU;
+            let r = 100.0 + 12.0 * (7.0 * t).cos();
+            poly.push([200.0 + r * t.cos(), 200.0 + r * t.sin()]);
+        }
+        let (tris, complete) = triangulate_polygon_checked(&poly);
+        assert!(complete, "단순 다각형은 완전 분할");
+        assert_eq!(tris.len(), n - 2);
+        let tri_area: f32 = tris.iter().map(|t| triangle_area(t, &poly)).sum();
+        let expected = polygon_area(&poly);
+        assert!(
+            (tri_area - expected).abs() < expected * 1e-3,
+            "면적 {tri_area} vs {expected}"
+        );
+    }
+
+    /// 큰 다각형에서 일직선(collinear) 정점이 섞여도 격자 경로가 올바르게
+    /// 완전 분할합니다.
+    #[test]
+    fn grid_triangulation_handles_collinear_vertices() {
+        // 사각형 테두리에 점을 많이 찍음 (테두리 위 점 = 콜리니어).
+        let mut poly: Vec<[f32; 2]> = Vec::new();
+        for i in 0..60 {
+            poly.push([10.0 + i as f32, 10.0]); // 아래
+        }
+        for i in 0..60 {
+            poly.push([70.0, 10.0 + i as f32]); // 오른쪽
+        }
+        for i in 0..60 {
+            poly.push([70.0 - i as f32, 70.0]); // 위 (역순)
+        }
+        for i in 0..60 {
+            poly.push([10.0, 70.0 - i as f32]); // 왼쪽 (역순)
+        }
+        assert!(poly.len() >= 96, "격자 경로 활성화");
+        let (tris, complete) = triangulate_polygon_checked(&poly);
+        assert!(complete, "사각형은 완전 분할");
+        let tri_area: f32 = tris.iter().map(|t| triangle_area(t, &poly)).sum();
+        let expected = polygon_area(&poly);
+        assert!(
+            (tri_area - expected).abs() < 1e-3,
+            "면적 {tri_area} vs {expected}"
+        );
     }
 }
