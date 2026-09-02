@@ -115,31 +115,20 @@ fn draw_one_stroke(
         }
     }
     let is_fountain = stroke.tool == ToolType::Fountain;
-    // 잉크 번짐 후광 (만년필 전용, 화면과 동일한 2단 레이어).
+    // 잉크 번짐 후광 (만년필 전용, 화면과 동일한 2단 레이어) — **점별 나이** 기준.
     if is_fountain && bleed.enabled {
-        let age_sec = if stroke.created_ms == 0 {
-            0.0
-        } else {
-            (crate::app::now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
-        };
-        let len: f32 = pts
-            .windows(2)
-            .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt())
-            .sum();
-        let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n);
-        let mut acc = 0.0f32;
-        for i in 0..n {
-            if i > 0 {
-                let a = &pts[i - 1];
-                let b = &pts[i];
-                acc += ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
-            }
-            dists.push((acc, len - acc));
-        }
-        let radii: Vec<f32> = dists
+        let now = crate::app::now_ms();
+        let ages: Vec<f32> = pts
             .iter()
-            .map(|(d0, d1)| bleed.radius(*d0, *d1, len, age_sec))
+            .map(|p| {
+                if p.t_ms == 0 {
+                    0.0
+                } else {
+                    (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                }
+            })
             .collect();
+        let radii = crate::app::canvas::bleed_radii(&pts_xy, &ages, bleed);
         for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
             let mut hb: Vec<f32> = Vec::with_capacity(n);
             for i in 0..n {

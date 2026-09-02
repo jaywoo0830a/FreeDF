@@ -168,8 +168,10 @@ fn stroke_halves(
     halves
 }
 
-/// 점별 블리드 번짐 반경(pt) — 획 위 위치(d0/d1)와 나이에 따라.
-fn bleed_radii(pts_pt: &[[f32; 2]], age_sec: f32, bleed: InkBleed) -> Vec<f32> {
+/// 점별 번짐 반경(pt) — **점별 나이**(그 점이 종이에 닿은 뒤 경과 시간)
+/// 기준. 펜 닙 근처(나이≈0)는 안 퍼지고, 뒤로 갈수록 퍼져 나가므로
+/// 라이브 스트로크에서 잉크가 닿자마자 서서히 번지는 애니메이션이 됩니다.
+pub(crate) fn bleed_radii(pts_pt: &[[f32; 2]], ages_sec: &[f32], bleed: InkBleed) -> Vec<f32> {
     let n = pts_pt.len();
     let len: f32 = pts_pt
         .windows(2)
@@ -187,7 +189,8 @@ fn bleed_radii(pts_pt: &[[f32; 2]], age_sec: f32, bleed: InkBleed) -> Vec<f32> {
     }
     dists
         .iter()
-        .map(|(d0, d1)| bleed.radius(*d0, *d1, len, age_sec))
+        .zip(ages_sec)
+        .map(|((d0, d1), age)| bleed.radius(*d0, *d1, len, *age))
         .collect()
 }
 
@@ -1859,7 +1862,20 @@ impl FreeDfApp {
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
         let mut mesh = egui::Mesh::default();
         if bleed_active {
-            let radii = bleed_radii(&pts_pt, age_sec, self.ink_bleed);
+            // 점별 나이 = 그 점이 종이에 닿은 뒤 경과 시간 — 닙 근처는 0이라
+            // 후광이 없고, 뒤로 갈수록 퍼져 나갑니다 (라이브 번짐 애니메이션).
+            let now = now_ms();
+            let ages: Vec<f32> = pts
+                .iter()
+                .map(|p| {
+                    if p.t_ms == 0 {
+                        age_sec
+                    } else {
+                        (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                    }
+                })
+                .collect();
+            let radii = bleed_radii(&pts_pt, &ages, self.ink_bleed);
             for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
                 let hb: Vec<f32> = (0..n).map(|i| halves_pt[i] + radii[i] * extra).collect();
                 let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
@@ -1907,14 +1923,18 @@ impl FreeDfApp {
         let tilt = tilt_magnitude(&self.pen_tilt);
         let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
-        // 1차 패스: 다음 정착 시각 (젊은 후광이 매 프레임 재구성을 요구하는
-        // 동안만 병합 메시를 다시 만듭니다).
+        // 1차 패스: 다음 정착 시각 — **점별** (그 점이 닿은 시각 + settle).
+        // 가장 늦게 닿은 점까지 번지면 병합 메시 재구성을 멈춥니다.
         let mut next_settle = u64::MAX;
         for s in strokes {
-            if bleed.enabled && s.tool == ToolType::Fountain && s.created_ms > 0 {
-                let settle_ms = s.created_ms.saturating_add((settle * 1000.0) as u64);
-                if now < settle_ms {
-                    next_settle = next_settle.min(settle_ms);
+            if bleed.enabled && s.tool == ToolType::Fountain {
+                for p in &s.points {
+                    if p.t_ms > 0 {
+                        let settle_ms = p.t_ms.saturating_add((settle * 1000.0) as u64);
+                        if now < settle_ms {
+                            next_settle = next_settle.min(settle_ms);
+                        }
+                    }
                 }
             }
         }
@@ -1967,14 +1987,21 @@ impl FreeDfApp {
                 }
             }
             let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
-            let age_sec = if s.created_ms == 0 {
-                settle
-            } else {
-                (now.saturating_sub(s.created_ms)) as f32 / 1000.0
-            };
-            // 젊은 블리드: 후광을 매 프레임 반영 (소수의 최근 획뿐) — 리본.
-            if bleed_on && age_sec < settle && age_sec > 0.05 {
-                let radii = bleed_radii(&pts_pt, age_sec, bleed);
+            // 점별 나이 기준 번짐 후광 — 닿은 뒤 서서히 퍼지고 settle에서 멈춤.
+            if bleed_on {
+                let nowf = now;
+                let ages: Vec<f32> = s
+                    .points
+                    .iter()
+                    .map(|p| {
+                        if p.t_ms == 0 {
+                            settle
+                        } else {
+                            (nowf.saturating_sub(p.t_ms)) as f32 / 1000.0
+                        }
+                    })
+                    .collect();
+                let radii = bleed_radii(&pts_pt, &ages, bleed);
                 for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
                     let hb: Vec<f32> = (0..halves.len())
                         .map(|i| halves[i] + radii[i] * extra)
@@ -2001,28 +2028,6 @@ impl FreeDfApp {
                 &to_view,
                 color,
             );
-            // 정착 블리드 후광 — 리본.
-            if bleed_on && age_sec >= settle {
-                let radii = bleed_radii(&pts_pt, settle, bleed);
-                for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-                    let hb: Vec<f32> = (0..halves.len())
-                        .map(|i| halves[i] + radii[i] * extra)
-                        .collect();
-                    let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
-                    let halo_color = Color32::from_rgba_unmultiplied(
-                        color.r(),
-                        color.g(),
-                        color.b(),
-                        alpha,
-                    );
-                    append_ribbon(
-                        &mut mesh,
-                        &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
-                        &to_view,
-                        halo_color,
-                    );
-                }
-            }
         }
         Some(std::sync::Arc::new(mesh))
     }

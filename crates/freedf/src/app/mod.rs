@@ -25,7 +25,7 @@
 //! inherent methods, so call sites keep working exactly as before.
 
 mod actions;
-mod canvas;
+pub(crate) mod canvas;
 mod dictionary;
 mod panels;
 mod tabs;
