@@ -54,12 +54,16 @@ native file dialogs, Windows Ink pressure).
 - ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
   hand Pan tool complete the toolkit
 - 🔖 **Highlighter (default: plain marker)** — the Highlighter draws a clean,
-  even, semi-transparent marker line along your stroke by default (drawn as one
-  smooth path, no pressure wobble). Optionally enable **“Snap to text”** in the
-  tool settings to make it follow the document's real text instead — snapping
-  uses PDFium's **per-character** boxes (`tight_bounds`), merges each touched
-  line into one clean band, ignores pressure, and works on **rotated pages**;
-  if the page has no selectable text it falls back to the plain marker stroke
+  even, semi-transparent marker line along your stroke by default: it is filled
+  as one **precise rectangle ribbon** with flat (square) ends that sit exactly
+  on the path — no round caps poking out, no pressure wobble. The on-canvas
+  **cursor is a small precise rectangle** whose height previews the real marker
+  width and whose left edge is anchored to the pen tip. Optionally enable
+  **“Snap to text”** in the tool settings to make it follow the document's real
+  text instead — snapping uses PDFium's **per-character** boxes
+  (`tight_bounds`), merges each touched line into one clean band, ignores
+  pressure, and works on **rotated pages**; if the page has no selectable text
+  it falls back to the plain marker stroke
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on

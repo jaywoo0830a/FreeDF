@@ -6,6 +6,73 @@
 
 use super::*;
 
+/// 두 점 사이 방향 단위 벡터 (길이가 0이면 기본값).
+fn unit_dir(v: Vec2) -> Vec2 {
+    let l = v.length();
+    if l < 1e-6 {
+        Vec2::X
+    } else {
+        v / l
+    }
+}
+
+/// 폴리라인을 두께 `width`의 **직사각형 끝(butt)** 리본 모양의 채워진 폴리곤으로
+/// 만듭니다.
+///
+/// - 세그먼트마다 겹쳐 그리지 않고 **한 번만 채워** 반투명 하이라이터가 겹침
+///   얼룩 없이 균일하게 나옵니다.
+/// - 시작/끝이 선 방향에 수직으로 딱 끊겨 **정밀한 사각형** 끝을 가집니다.
+///   (원형 캡이 툭 튀어나와 위치가 어긋나 보이던 문제 제거)
+fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
+    let n = points.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        // 점 하나 → 작은 정사각형.
+        let h = width * 0.5;
+        let p = points[0];
+        return vec![
+            p + Vec2::new(-h, -h),
+            p + Vec2::new(h, -h),
+            p + Vec2::new(h, h),
+            p + Vec2::new(-h, h),
+        ];
+    }
+    // i번째 점에서 이웃 두 세그먼트 방향의 평균(마이터) 방향.
+    let miter_at = |i: usize| -> Vec2 {
+        let a = if i > 0 {
+            points[i] - points[i - 1]
+        } else {
+            points[1] - points[0]
+        };
+        let b = if i + 1 < n {
+            points[i + 1] - points[i]
+        } else {
+            points[n - 1] - points[n - 2]
+        };
+        let d = unit_dir(a) + unit_dir(b);
+        // 180°로 접히는 경우: 아무 쪽이나 사용.
+        let d = if d.length_sq() < 1e-6 {
+            Vec2::new(-a.y, a.x)
+        } else {
+            d
+        };
+        unit_dir(d)
+    };
+    let half = width * 0.5;
+    let mut poly: Vec<Pos2> = Vec::with_capacity(n * 2);
+    for i in 0..n {
+        let perp = Vec2::new(-miter_at(i).y, miter_at(i).x);
+        poly.push(points[i] + perp * half);
+    }
+    for i in (0..n).rev() {
+        let perp = Vec2::new(-miter_at(i).y, miter_at(i).x);
+        poly.push(points[i] - perp * half);
+    }
+    poly
+}
+
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
@@ -971,11 +1038,9 @@ impl FreeDfApp {
                     origin + Vec2::new(v[0], v[1])
                 })
                 .collect();
-            if pts_view.len() == 1 {
-                painter.circle_filled(pts_view[0], (wpx * 0.5).max(0.75), color);
-                return;
-            }
-            painter.add(egui::Shape::line(pts_view, Stroke::new(wpx, color)));
+            // 리본(직사각형 끝)으로 한 번에 채워 정밀한 마커처럼 그립니다.
+            let poly = stroke_ribbon(&pts_view, wpx);
+            painter.add(egui::Shape::convex_polygon(poly, color, Stroke::NONE));
             return;
         }
         if pts.len() == 1 {
@@ -1066,19 +1131,27 @@ impl FreeDfApp {
                 }
             }
             ToolType::Highlighter => {
-                // Translucent rectangle in the highlighter color.
+                // 정밀한 마커 닙 커서: **작고 반듯한 사각형** — 두께는 실제
+                // 하이라이트 두께와 같고, 왼쪽 시작점이 커서 위치에 고정됩니다
+                // (그을 때 실제 선이 여기서 시작됨).
                 let color = Color32::from_rgba_unmultiplied(
                     self.hi_color[0],
                     self.hi_color[1],
                     self.hi_color[2],
                     (self.hi_color[3] as f32 * 0.9) as u8,
                 );
-                let rect = Rect::from_center_size(pos, Vec2::new(22.0, 30.0));
-                painter.rect_filled(rect, 4.0, color);
+                let wpx = (self.hi_width * self.view.zoom).clamp(3.0, 90.0);
+                let len = 14.0_f32; // 커서 길이는 짧게(힌트만)
+                let half = wpx * 0.5;
+                // 왼쪽 시작 모서리가 커서 위치.
+                let min = pos + Vec2::new(0.0, -half);
+                let rect = Rect::from_min_size(min, Vec2::new(len, wpx));
+                // 반듯한 사각(모서리 없음) — 위치/크기를 정확히 미리보기.
+                painter.rect_filled(rect, 0.0, color);
                 painter.rect_stroke(
                     rect,
-                    4.0,
-                    Stroke::new(1.0, Color32::from_white_alpha(170)),
+                    0.0,
+                    Stroke::new(1.0, Color32::from_white_alpha(200)),
                     egui::StrokeKind::Inside,
                 );
             }
