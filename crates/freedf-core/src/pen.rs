@@ -470,6 +470,7 @@ fn push_ribbon_cap(
     half: f32,
     feather: f32,
     away: [f32; 2],
+    alpha: f32,
 ) {
     const CAP_STEPS: usize = 8;
     let rot = [-nrm[1], nrm[0]]; // nrm을 +90° 회전.
@@ -478,7 +479,7 @@ fn push_ribbon_cap(
     } else {
         -1.0
     };
-    let center_idx = push_ribbon_vert(out, center, 1.0);
+    let center_idx = push_ribbon_vert(out, center, alpha);
     let mut inner = Vec::with_capacity(CAP_STEPS + 1);
     let mut outer = Vec::with_capacity(CAP_STEPS + 1);
     for k in 0..=CAP_STEPS {
@@ -487,7 +488,7 @@ fn push_ribbon_cap(
             nrm[0] * phi.cos() - nrm[1] * phi.sin(),
             nrm[0] * phi.sin() + nrm[1] * phi.cos(),
         ];
-        inner.push(push_ribbon_vert(out, add_mul(center, dir, half), 1.0));
+        inner.push(push_ribbon_vert(out, add_mul(center, dir, half), alpha));
         if feather > 0.0 {
             outer.push(push_ribbon_vert(out, add_mul(center, dir, half + feather), 0.0));
         }
@@ -507,9 +508,12 @@ pub fn stroke_ribbon(
     half_widths: &[f32],
     feather: f32,
     round_caps: bool,
+    alphas: Option<&[f32]>,
 ) -> StrokeRibbon {
     let n = points.len().min(half_widths.len());
     let feather = feather.max(0.0);
+    // 점별 알파(잉크 포화도) — None이면 전부 1.0.
+    let alpha_at = |i: usize| -> f32 { alphas.map_or(1.0, |v| v[i].clamp(0.0, 1.0)) };
     let mut out = StrokeRibbon {
         verts: Vec::new(),
         alphas: Vec::new(),
@@ -528,14 +532,15 @@ pub fn stroke_ribbon(
     if n == 1 {
         // 점 하나: 원판 + 페더 링.
         let h = half_widths[0].max(0.0);
+        let a0 = alpha_at(0);
         let steps = 12usize;
-        let center = push_ribbon_vert(&mut out, points[0], 1.0);
+        let center = push_ribbon_vert(&mut out, points[0], a0);
         let mut inner = Vec::with_capacity(steps);
         let mut outer = Vec::with_capacity(steps);
         for k in 0..steps {
             let a = std::f32::consts::TAU * (k as f32 / steps as f32);
             let dir = [a.cos(), a.sin()];
-            inner.push(push_ribbon_vert(&mut out, add_mul(points[0], dir, h), 1.0));
+            inner.push(push_ribbon_vert(&mut out, add_mul(points[0], dir, h), a0));
             if has_feather {
                 outer.push(push_ribbon_vert(
                     &mut out,
@@ -560,11 +565,12 @@ pub fn stroke_ribbon(
         let p = points[i];
         let h = half_widths[i].max(0.0);
         let nrm = norms[i];
-        push_ribbon_vert(&mut out, add_mul(p, nrm, h), 1.0); // L
+        let a = alpha_at(i);
+        push_ribbon_vert(&mut out, add_mul(p, nrm, h), a); // L
         if has_feather {
             push_ribbon_vert(&mut out, add_mul(p, nrm, h + feather), 0.0); // OL
         }
-        push_ribbon_vert(&mut out, sub_mul(p, nrm, h), 1.0); // R
+        push_ribbon_vert(&mut out, sub_mul(p, nrm, h), a); // R
         if has_feather {
             push_ribbon_vert(&mut out, sub_mul(p, nrm, h + feather), 0.0); // OR
         }
@@ -601,6 +607,7 @@ pub fn stroke_ribbon(
             half_widths[0].max(0.0),
             feather,
             t0,
+            alpha_at(0),
         );
         push_ribbon_cap(
             &mut out,
@@ -609,6 +616,7 @@ pub fn stroke_ribbon(
             half_widths[n - 1].max(0.0),
             feather,
             neg(t1),
+            alpha_at(n - 1),
         );
     }
     out
@@ -780,6 +788,15 @@ pub struct InkBleed {
     pub mid_rate: f32,
     /// 끝 구간(뒤 30%) 번짐 속도 (pt/초).
     pub end_rate: f32,
+    /// 잉크가 종이에 스며들어 **완전히 진해지는** 시간(초).
+    /// 닿은 직후는 옅고(35%) 시간이 지나며 원래 색으로 포화됩니다.
+    #[serde(default = "default_bleed_saturate_sec")]
+    pub saturate_sec: f32,
+}
+
+/// 이전 세션 데이터에 `saturate_sec`이 없을 때의 기본값.
+fn default_bleed_saturate_sec() -> f32 {
+    2.0
 }
 
 impl Default for InkBleed {
@@ -791,6 +808,7 @@ impl Default for InkBleed {
             start_rate: 0.45,
             mid_rate: 0.2,
             end_rate: 0.35,
+            saturate_sec: 2.0,
         }
     }
 }
@@ -1711,6 +1729,7 @@ mod tests {
             start_rate: 1.0,
             mid_rate: 1.0,
             end_rate: 1.0,
+            ..InkBleed::default()
         };
         let mid = b.radius(5.0, 5.0, 10.0, 2.0);
         assert!((mid - 2.0).abs() < 1e-4, "속도 1 → 2초에 2pt");
@@ -1727,6 +1746,7 @@ mod tests {
             start_rate: 3.0,
             mid_rate: 1.0,
             end_rate: 2.0,
+            ..InkBleed::default()
         };
         let len = 100.0;
         assert!((b.phase_rate(0.0, len, len) - 3.0).abs() < 1e-4, "시작 = start_rate");
@@ -1749,6 +1769,7 @@ mod tests {
             start_rate: 0.0,
             mid_rate: 0.4,
             end_rate: 0.0,
+            ..InkBleed::default()
         };
         assert_eq!(b.radius(0.0, 10.0, 10.0, 10.0), 0.0, "시작 구간 속도 0");
         assert!(b.radius(5.0, 5.0, 10.0, 10.0) > 0.0, "중간은 번짐");
@@ -2106,7 +2127,7 @@ mod tests {
     fn ribbon_straight_line_has_expected_edges_and_area() {
         let pts: Vec<[f32; 2]> = (0..12).map(|i| [i as f32 * 10.0, 0.0]).collect();
         let halves: Vec<f32> = vec![2.0; 12];
-        let rb = stroke_ribbon(&pts, &halves, 0.0, true);
+        let rb = stroke_ribbon(&pts, &halves, 0.0, true, None);
         // 직선이면 법선은 위쪽 — L = +2, R = −2.
         assert_eq!(rb.verts[0], [0.0, 2.0]);
         assert_eq!(rb.verts[1], [0.0, -2.0]);
@@ -2128,7 +2149,7 @@ mod tests {
             [50.0, 4.0],
         ];
         let halves = [1.0f32, 1.6, 0.8, 2.0, 1.2];
-        let rb = stroke_ribbon(&pts, &halves, 0.0, false);
+        let rb = stroke_ribbon(&pts, &halves, 0.0, false, None);
         let poly = stroke_outline(&pts, &halves, false);
         let rb_area: f32 = rb.tris.iter().map(|t| triangle_area(t, &rb.verts)).sum();
         let poly_area = polygon_area(&poly);
@@ -2142,7 +2163,7 @@ mod tests {
     fn ribbon_feather_adds_alpha_ramp_outside() {
         let pts = [[0.0f32, 0.0], [10.0, 0.0]];
         let halves = [1.0f32, 1.0];
-        let rb = stroke_ribbon(&pts, &halves, 0.5, true);
+        let rb = stroke_ribbon(&pts, &halves, 0.5, true, None);
         assert!(rb.alphas.iter().any(|&a| a == 0.0), "바깥 알파 0 존재");
         assert!(rb.alphas.iter().any(|&a| a == 1.0), "본체 알파 1 존재");
         assert_eq!(rb.verts.len(), rb.alphas.len());
@@ -2152,13 +2173,30 @@ mod tests {
     }
 
     #[test]
+    fn ribbon_applies_per_point_ink_saturation() {
+        // 잉크가 스며들며 진해지는 효과 — 점별 알파가 본체 정점에 적용.
+        let pts = [[0.0f32, 0.0], [10.0, 0.0]];
+        let halves = [1.0f32, 1.0];
+        let rb = stroke_ribbon(&pts, &halves, 0.0, false, Some(&[0.35, 1.0]));
+        assert!((rb.alphas[0] - 0.35).abs() < 1e-4, "첫 점은 옅게");
+        assert!((rb.alphas[2] - 1.0).abs() < 1e-4, "둘째 점은 완전 포화");
+        assert!((rb.alphas[3] - 1.0).abs() < 1e-4, "둘째 점 R도 완전 포화");
+        // 캡에도 끝점 알파 적용.
+        let rb2 = stroke_ribbon(&pts, &halves, 0.0, true, Some(&[0.2, 1.0]));
+        assert!(
+            rb2.alphas.iter().any(|&a| (a - 0.2).abs() < 1e-4),
+            "시작 캡은 첫 점 알파"
+        );
+    }
+
+    #[test]
     fn ribbon_single_point_and_empty_are_safe() {
-        let rb = stroke_ribbon(&[[5.0f32, 5.0]], &[2.0], 0.5, true);
+        let rb = stroke_ribbon(&[[5.0f32, 5.0]], &[2.0], 0.5, true, None);
         assert!(!rb.tris.is_empty());
         for v in &rb.verts {
             assert!(v[0].is_finite() && v[1].is_finite());
         }
-        let empty = stroke_ribbon(&[], &[], 1.0, true);
+        let empty = stroke_ribbon(&[], &[], 1.0, true, None);
         assert!(empty.verts.is_empty() && empty.tris.is_empty());
     }
 }

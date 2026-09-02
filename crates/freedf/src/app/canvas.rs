@@ -59,6 +59,9 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
     }
 }
 
+/// 잉크가 종이에 닿은 직후의 포화도 — 시간이 지나며 1.0(원색)까지 진해집니다.
+const INK_SAT_INITIAL: f32 = 0.35;
+
 /// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 사실상 매 프레임
 /// (리본이 O(n)으로 저렴해져 지연 없이 바로 따라갑니다).
 const ACTIVE_STROKE_GEOM_MS: u64 = 10;
@@ -1861,9 +1864,12 @@ impl FreeDfApp {
         };
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
         let mut mesh = egui::Mesh::default();
+        // 번지는 본체 폭: 점별 나이만큼 스트로크 몸체가 **퍼져서 채워집니다**
+        // (후광 없이 선 자체가 두꺼워짐). 동시에 잉크가 스며들며 **점점 진해짐**
+        // (닿은 직후 옅게 → 포화). 닙 근처는 원래 폭·옅은 색, 뒤로 갈수록 번지고 진해짐.
+        let body_halves: Vec<f32>;
+        let body_sat: Option<Vec<f32>>;
         if bleed_active {
-            // 점별 나이 = 그 점이 종이에 닿은 뒤 경과 시간 — 닙 근처는 0이라
-            // 후광이 없고, 뒤로 갈수록 퍼져 나갑니다 (라이브 번짐 애니메이션).
             let now = now_ms();
             let ages: Vec<f32> = pts
                 .iter()
@@ -1876,23 +1882,27 @@ impl FreeDfApp {
                 })
                 .collect();
             let radii = bleed_radii(&pts_pt, &ages, self.ink_bleed);
-            for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-                let hb: Vec<f32> = (0..n).map(|i| halves_pt[i] + radii[i] * extra).collect();
-                let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
-                let halo_color =
-                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-                append_ribbon(
-                    &mut mesh,
-                    &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
-                    &to_view,
-                    halo_color,
-                );
-            }
+            body_halves = (0..n).map(|i| halves_pt[i] + radii[i]).collect();
+            let sat_sec = self.ink_bleed.saturate_sec.max(1e-3);
+            body_sat = Some(
+                ages
+                    .iter()
+                    .map(|age| INK_SAT_INITIAL + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0))
+                    .collect(),
+            );
+        } else {
+            body_halves = halves_pt;
+            body_sat = None;
         }
-        // 본체 — 리본 + 내장 페더(알파 램프).
         append_ribbon(
             &mut mesh,
-            &freedf_core::pen::stroke_ribbon(&pts_pt, &halves_pt, feather_pt, round_caps),
+            &freedf_core::pen::stroke_ribbon(
+                &pts_pt,
+                &body_halves,
+                feather_pt,
+                round_caps,
+                body_sat.as_deref(),
+            ),
             &to_view,
             color,
         );
@@ -1923,14 +1933,16 @@ impl FreeDfApp {
         let tilt = tilt_magnitude(&self.pen_tilt);
         let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
-        // 1차 패스: 다음 정착 시각 — **점별** (그 점이 닿은 시각 + settle).
-        // 가장 늦게 닿은 점까지 번지면 병합 메시 재구성을 멈춥니다.
+        // 1차 패스: 다음 정착 시각 — **점별** (그 점이 닿은 시각 +
+        // 번짐 정착과 잉크 포화 중 늦은 쪽). 전부 끝나면 재구성을 멈춥니다.
+        let settle_deadline = settle.max(bleed.saturate_sec);
         let mut next_settle = u64::MAX;
         for s in strokes {
             if bleed.enabled && s.tool == ToolType::Fountain {
                 for p in &s.points {
                     if p.t_ms > 0 {
-                        let settle_ms = p.t_ms.saturating_add((settle * 1000.0) as u64);
+                        let settle_ms =
+                            p.t_ms.saturating_add((settle_deadline * 1000.0) as u64);
                         if now < settle_ms {
                             next_settle = next_settle.min(settle_ms);
                         }
@@ -1987,9 +1999,11 @@ impl FreeDfApp {
                 }
             }
             let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
-            // 점별 나이 기준 번짐 후광 — 닿은 뒤 서서히 퍼지고 settle에서 멈춤.
+            // 번지는 본체 폭 + 스며들며 진해지는 포화도 — 점별 나이 기준
+            // (후광 없이 몸체가 퍼지고 진해짐), settle/saturate에서 멈춤.
+            let body_halves: Vec<f32>;
+            let body_sat: Option<Vec<f32>>;
             if bleed_on {
-                let nowf = now;
                 let ages: Vec<f32> = s
                     .points
                     .iter()
@@ -1997,34 +2011,35 @@ impl FreeDfApp {
                         if p.t_ms == 0 {
                             settle
                         } else {
-                            (nowf.saturating_sub(p.t_ms)) as f32 / 1000.0
+                            (now.saturating_sub(p.t_ms)) as f32 / 1000.0
                         }
                     })
                     .collect();
                 let radii = bleed_radii(&pts_pt, &ages, bleed);
-                for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-                    let hb: Vec<f32> = (0..halves.len())
-                        .map(|i| halves[i] + radii[i] * extra)
-                        .collect();
-                    let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
-                    let halo_color = Color32::from_rgba_unmultiplied(
-                        color.r(),
-                        color.g(),
-                        color.b(),
-                        alpha,
-                    );
-                    append_ribbon(
-                        &mut mesh,
-                        &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
-                        &to_view,
-                        halo_color,
-                    );
-                }
+                body_halves = (0..halves.len()).map(|i| halves[i] + radii[i]).collect();
+                let sat_sec = bleed.saturate_sec.max(1e-3);
+                body_sat = Some(
+                    ages
+                        .iter()
+                        .map(|age| {
+                            INK_SAT_INITIAL
+                                + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
+                        })
+                        .collect(),
+                );
+            } else {
+                body_halves = halves;
+                body_sat = None;
             }
-            // 본체 — 진행 중 획과 동일한 리본 (시각 차이 없음).
             append_ribbon(
                 &mut mesh,
-                &freedf_core::pen::stroke_ribbon(&pts_pt, &halves, feather_pt, round_caps),
+                &freedf_core::pen::stroke_ribbon(
+                    &pts_pt,
+                    &body_halves,
+                    feather_pt,
+                    round_caps,
+                    body_sat.as_deref(),
+                ),
                 &to_view,
                 color,
             );
@@ -2305,7 +2320,7 @@ mod tests {
     /// 스트로크 근처에 머무는지 확인합니다.
     fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32]) -> egui::Rect {
         let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
-        let rb = freedf_core::pen::stroke_ribbon(pts, halves, 0.5, true);
+        let rb = freedf_core::pen::stroke_ribbon(pts, halves, 0.5, true, None);
         let mut mesh = egui::Mesh::default();
         append_ribbon(&mut mesh, &rb, &ident, Color32::RED);
         assert!(!mesh.indices.is_empty(), "빈 메시");
@@ -2397,7 +2412,7 @@ mod tests {
         let halves: Vec<f32> = vec![2.0; pts.len()];
         let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
         for feather in [0.0f32, 0.5] {
-            let rb = freedf_core::pen::stroke_ribbon(&pts, &halves, feather, true);
+            let rb = freedf_core::pen::stroke_ribbon(&pts, &halves, feather, true, None);
             assert_eq!(rb.verts.len(), rb.alphas.len());
             assert!(!rb.tris.is_empty());
             let mut mesh = egui::Mesh::default();

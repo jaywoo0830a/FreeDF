@@ -129,18 +129,18 @@ fn draw_one_stroke(
             })
             .collect();
         let radii = crate::app::canvas::bleed_radii(&pts_xy, &ages, bleed);
-        for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-            let mut hb: Vec<f32> = Vec::with_capacity(n);
-            for i in 0..n {
-                hb.push(halves[i] + radii[i] * extra);
-            }
-            let mut halo = color;
-            halo[3] = (color[3] as f32 * alpha_k).clamp(0.0, 255.0) as u8;
-            fill_stroke_outline(img, &pts_xy, &hb, true, halo);
+        // 후광이 아니라 **몸체가 퍼져 채워지는** 번짐 — 점별 나이만큼 두꺼워짐.
+        let mut hb: Vec<f32> = Vec::with_capacity(n);
+        for i in 0..n {
+            hb.push(halves[i] + radii[i]);
         }
+        fill_stroke_outline(img, &pts_xy, &hb, true, color);
     }
     // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝.
-    fill_stroke_outline(img, &pts_xy, &halves, round_caps, color);
+    // (번짐이 이미 몸체를 채웠으면 중복 채움으로 색이 진해지지 않게 생략)
+    if !(is_fountain && bleed.enabled) {
+        fill_stroke_outline(img, &pts_xy, &halves, round_caps, color);
+    }
 }
 
 /// 화면과 **동일한** 외곽선→삼각분할로 스트로크를 래스터라이즈합니다.
