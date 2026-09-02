@@ -1578,6 +1578,8 @@ impl FreeDfApp {
 impl eframe::App for FreeDfApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // 펜 진단 로그는 Debug HUD가 켜져 있을 때만 (평소 I/O 비용 0).
+        canvas::set_pen_trace(self.debug_hud);
         // CLI 시작 인자: `freedf <file.pdf>`은 import 후 열기,
         // `freedf --doc <id>`는 DB의 문서 id로 열기("새 창" 분리 시 사용).
         if let Some(path) = self.pending_open.take() {

@@ -28,13 +28,31 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
 /// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
 const DEFAULT_PEN_AZ: f32 = -0.6;
 
-/// 진행 중 획/번지는 후광의 지오메트리 재구성 스로틀 (ms).
-/// 사람이 못 느끼는 100ms — 최대 10Hz로만 다시 짓습니다.
-const ACTIVE_STROKE_GEOM_MS: u64 = 100;
+/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 사실상 매 프레임
+/// (리본이 O(n)으로 저렴해져 지연 없이 바로 따라갑니다).
+const ACTIVE_STROKE_GEOM_MS: u64 = 10;
+/// 번지는 후광(병합 메시) 재구성 스로틀 (ms) — 후광은 느리게 자라므로
+/// 20Hz면 충분하고, 페이지 전체 재구성 비용을 아낍니다.
+const HALO_GEOM_MS: u64 = 50;
+
+/// 펜 진단 로그 활성 스위치 — **Debug HUD가 켜져 있을 때만** 로그를 남깁니다
+/// (평소에는 로그 파일/콘솔 I/O 비용 0).
+static PEN_TRACE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn set_pen_trace(on: bool) {
+    PEN_TRACE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn pen_trace_on() -> bool {
+    PEN_TRACE_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// 펜 진단 로그 — 필압/폭이 변하지 않을 때 원인을 찾기 위한 흔적.
-/// stderr와 `freedf_pendebug.log`(앱 실행 폴더) 둘 다에 남깁니다.
+/// Debug HUD가 켜져 있을 때만 stderr와 `freedf_pendebug.log`에 남깁니다.
 fn pen_trace(msg: &str) {
+    if !pen_trace_on() {
+        return;
+    }
     let line = format!("[{}] {msg}", now_ms());
     eprintln!("[pen-trace] {line}");
     if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -76,27 +94,30 @@ fn append_ribbon(
 /// 점별 절반 두께(pt) — 입력 시점에 잠금된 폭(`StrokePoint.width`)이 있으면
 /// 그대로 쓰고, 없으면(이전 데이터) 프로파일 배치 계산으로 폴백합니다.
 fn stroke_halves(
-    stroke: &freedf_core::model::Stroke,
+    tool: ToolType,
+    width: f32,
+    points: &[StrokePoint],
     ball: &BallPenProfile,
     fountain: &FountainProfile,
     tilt_mag: f32,
 ) -> Vec<f32> {
-    let n = stroke.points.len();
-    if stroke.tool == ToolType::Highlighter {
+    let n = points.len();
+    let locked = !points.is_empty() && points.iter().all(|p| p.width > 0.0);
+    if tool == ToolType::Highlighter {
         // 마커: 필압/테이퍼 없이 일정한 두께 (잠금 폭도 동일 규칙).
         let mut halves = Vec::with_capacity(n);
-        if stroke.has_locked_widths() {
-            for p in &stroke.points {
+        if locked {
+            for p in points {
                 halves.push((p.width * 0.5).max(0.5));
             }
         } else {
-            halves.resize(n, (stroke.width * 0.5).max(0.5));
+            halves.resize(n, (width * 0.5).max(0.5));
         }
         return halves;
     }
     let mut halves = Vec::with_capacity(n);
-    if stroke.has_locked_widths() {
-        for p in &stroke.points {
+    if locked {
+        for p in points {
             // 바닥값은 기하학 퇴화 방지용 최소값 — 예전 0.3pt 바닥은
             // 0.5pt 펜의 폭 변동(절반 0.22~0.30)을 **전부 삼켜** 굵기가
             // 항상 0.6pt로 보였습니다 (사용자 보고 버그의 원인).
@@ -104,12 +125,12 @@ fn stroke_halves(
         }
         return halves;
     }
-    if stroke.tool == ToolType::Fountain {
-        for w in fountain.widths(stroke.width, &stroke.points, tilt_mag) {
+    if tool == ToolType::Fountain {
+        for w in fountain.widths(width, points, tilt_mag) {
             halves.push((w * 0.5).max(0.05));
         }
     } else {
-        for w in ball.widths(stroke.width, &stroke.points, tilt_mag) {
+        for w in ball.widths(width, points, tilt_mag) {
             halves.push((w * 0.5).max(0.05));
         }
     }
@@ -278,7 +299,7 @@ impl FreeDfApp {
                     if let Some(v) = &self.pen_verdict {
                         ui.label(format!("verdict: {v}"));
                     }
-                    ui.label("render: ribbon ≈ O(n) · 100ms 스로틀  (완성 획: 정확+캐시)");
+                    ui.label("render: ribbon ≈ O(n) · 10ms 스로틀  (완성 획: 동일 리본)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -1640,21 +1661,22 @@ impl FreeDfApp {
     ) {
         // 나이 기준 = 첫 점의 시각(획 시작) — 그리는 동안에도 번짐이
         // 실시간으로 자라 펜을 떼는 순간 굵기가 튀지 않습니다.
+        // (점 벡터 복사 없이 참조로 전달 — 매 프레임 O(n) 복사 제거)
         let created_ms = active
             .points
             .first()
             .map(|p| p.t_ms)
             .filter(|t| *t > 0)
             .unwrap_or_else(now_ms);
-        let stroke = freedf_core::model::Stroke {
-            id: 0,
-            tool: active.tool,
-            color: active.color,
-            width: active.width,
-            points: active.points.clone(),
+        self.paint_stroke(
+            painter,
+            active.tool,
+            active.color,
+            active.width,
             created_ms,
-        };
-        self.paint_stroke(painter, &stroke, origin);
+            &active.points,
+            origin,
+        );
     }
 
     /// 진행 중인 스트로크(또는 단일 스트로크)를 그립니다. 완성된 스트로크는
@@ -1664,23 +1686,29 @@ impl FreeDfApp {
     pub(crate) fn paint_stroke(
         &mut self,
         painter: &egui::Painter,
-        stroke: &freedf_core::model::Stroke,
+        tool: ToolType,
+        color_in: [u8; 4],
+        width: f32,
+        created_ms: u64,
+        pts: &[StrokePoint],
         origin: Pos2,
     ) {
-        let color = Color32::from_rgba_unmultiplied(
-            stroke.color[0],
-            stroke.color[1],
-            stroke.color[2],
-            stroke.color[3],
-        );
-        let pts = &stroke.points;
         if pts.is_empty() {
             return;
         }
         let n = pts.len();
+        let color =
+            Color32::from_rgba_unmultiplied(color_in[0], color_in[1], color_in[2], color_in[3]);
         // ── 뷰포트 컬링: 페이지 bbox가 화면 밖이면 통째로 스킵 (줌인 시 큰 절약).
-        if let Some(bb) = stroke.bounding_box() {
-            let pad = (stroke.width * 0.7).max(6.0) + self.ink_bleed.max_spread_pt.max(0.0);
+        let mut bb = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for p in pts {
+            bb[0] = bb[0].min(p.x);
+            bb[1] = bb[1].min(p.y);
+            bb[2] = bb[2].max(p.x);
+            bb[3] = bb[3].max(p.y);
+        }
+        {
+            let pad = (width * 0.7).max(6.0) + self.ink_bleed.max_spread_pt.max(0.0);
             let a = self.view.page_to_view([bb[0] - pad, bb[1] - pad]);
             let b = self.view.page_to_view([bb[2] + pad, bb[3] + pad]);
             let rect = Rect::from_min_max(
@@ -1691,11 +1719,11 @@ impl FreeDfApp {
                 return;
             }
         }
-        let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
+        let round_caps = matches!(tool, ToolType::Pen | ToolType::Fountain);
         let tilt = tilt_magnitude(&self.pen_tilt);
-        let halves_pt = stroke_halves(stroke, &self.pen_profile, &self.fountain_profile, tilt);
-        // ── 라이브 진단: 그리는 중 렌더 폭이 평평하면(변화 없음) 경고 로그.
-        if n >= 8 && now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
+        let halves_pt = stroke_halves(tool, width, pts, &self.pen_profile, &self.fountain_profile, tilt);
+        // ── 라이브 진단 (Debug HUD 켜져 있을 때만): 렌더 폭이 평평하면 경고.
+        if pen_trace_on() && n >= 8 && now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
             let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
             for h in &halves_pt {
                 wmn = wmn.min(*h);
@@ -1714,17 +1742,17 @@ impl FreeDfApp {
                 ));
             }
         }
-        let is_pen = stroke.tool == ToolType::Pen;
+        let is_pen = tool == ToolType::Pen;
         let bleed_active = is_pen && self.ink_bleed.enabled;
         let settle = self.ink_bleed.settle_sec().max(1e-3);
-        let age_sec = if stroke.created_ms == 0 {
+        let age_sec = if created_ms == 0 {
             settle
         } else {
-            (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
+            (now_ms().saturating_sub(created_ms)) as f32 / 1000.0
         };
         let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
-        // ── 100ms 스로틀: 지오메트리 재구성은 최대 10Hz — 그 사이엔 캐시된
-        // 메시를 그대로 다시 그립니다 (갱신 지연은 사람이 못 느낍니다).
+        // ── 10ms 스로틀: 지오메트리 재구성은 최대 100Hz(사실상 매 프레임) —
+        // 그 사이엔 캐시된 메시를 그대로 다시 그립니다.
         let now = now_ms();
         let view_key = (
             self.view.zoom,
@@ -1765,7 +1793,7 @@ impl FreeDfApp {
             }
         }
         // ── 재구성 (리본 O(n) 단일 스캔 — 귀 자르기 없음).
-        {
+        if pen_trace_on() {
             // 진단: 진행 중 렌더(리본)가 실제로 쓰는 폭 — 펜업 후 정착 렌더와 대조.
             let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
             for h in &halves_pt {
@@ -1871,24 +1899,26 @@ impl FreeDfApp {
                 s.color[3],
             );
             let pts_pt: Vec<[f32; 2]> = s.points.iter().map(|p| [p.x, p.y]).collect();
-            let halves = stroke_halves(s, &ball, &fountain, tilt);
+            let halves = stroke_halves(s.tool, s.width, &s.points, &ball, &fountain, tilt);
             let round_caps = matches!(s.tool, ToolType::Pen | ToolType::Fountain);
             if Some(s.id) == self.last_finished_id {
-                // 진단: 방금 끝난 획의 **정착 렌더** 폭 — ACTIVE-RENDER 로그와
-                // 대조해서 펜업 순간 뭐가 바뀌는지 확인.
-                let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
-                for h in &halves {
-                    hmn = hmn.min(*h);
-                    hmx = hmx.max(*h);
-                }
-                pen_trace(&format!(
-                    "SETTLED-RENDER: id={} n={} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
-                    s.id,
-                    s.points.len(),
-                    s.points[0].width,
-                    s.points[s.points.len() - 1].width
-                ));
                 self.last_finished_id = None;
+                if pen_trace_on() {
+                    // 진단: 방금 끝난 획의 **정착 렌더** 폭 — ACTIVE-RENDER 로그와
+                    // 대조해서 펜업 순간 뭐가 바뀌는지 확인.
+                    let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
+                    for h in &halves {
+                        hmn = hmn.min(*h);
+                        hmx = hmx.max(*h);
+                    }
+                    pen_trace(&format!(
+                        "SETTLED-RENDER: id={} n={} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
+                        s.id,
+                        s.points.len(),
+                        s.points[0].width,
+                        s.points[s.points.len() - 1].width
+                    ));
+                }
             }
             let bleed_on = s.tool == ToolType::Pen && bleed.enabled;
             let age_sec = if s.created_ms == 0 {
@@ -1977,10 +2007,10 @@ impl FreeDfApp {
             if self.ink_built_at < self.ink_next_settle_ms {
                 return true;
             }
-            // 아직 번지고 있으면 **100ms 스로틀**로만 재구성 (후광은 느리게
-            // 자라므로 10Hz 갱신으로도 충분 — 사람은 못 느낍니다).
+            // 아직 번지고 있으면 **50ms 스로틀**로만 재구성 (후광은 느리게
+            // 자라므로 20Hz 갱신으로도 충분 — 사람은 못 느낍니다).
             if now < self.ink_next_settle_ms
-                && now.saturating_sub(self.ink_built_at) >= ACTIVE_STROKE_GEOM_MS
+                && now.saturating_sub(self.ink_built_at) >= HALO_GEOM_MS
             {
                 return true;
             }
