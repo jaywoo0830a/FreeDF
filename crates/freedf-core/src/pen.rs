@@ -1232,7 +1232,8 @@ impl Palette {
 /// 순수 계산이라 GUI 없이 단위 테스트로 검증합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct BallPenProfile {
-    /// 필압 계수 k_p — 작을수록 필압 영향이 적음 (0.1~0.3 권장).
+    /// 필압 곡선 제어 — γ = 1 − k_p (기본 0.3 → γ 0.7). 작을수록 필압
+    /// 반응이 평평해지고, 클수록 살짝 닿는 입력이 더 가늘어집니다.
     pub pressure_k: f32,
     /// 속도 계수 k_v — 작을수록 속도 영향이 적음 (0.05~0.15 권장).
     pub speed_k: f32,
@@ -1262,15 +1263,16 @@ fn default_ballpen_tilt_k() -> f32 {
 impl Default for BallPenProfile {
     fn default() -> Self {
         Self {
-            // 필압 감도 — 힘 변화가 선폭에 눈에 보이게 반영되도록 상향
-            // (p=0 → ×0.85, p=1 → ×1.15: 30% 폭).
+            // 필압 곡선: γ = 1−0.3 = 0.7 → p=0.1은 ×0.23(가늘게),
+            // p=1은 ×1.15(꾹 누르면 최대) — 살짝 그으면 얇게.
             pressure_k: 0.3,
             // 속도 영향 — 볼펜은 만년필보다 약하지만, 직선(빠름)과 곡선(느림)의
             // 굵기 차이가 눈에 보이도록 보정된 값 (이전 0.08/600은 사실상 평평).
             speed_k: 0.2,
             speed_max: 300.0,
             speed_smooth: 0.3,
-            min_ratio: 0.65,
+            // 하한은 이제 필압 커브가 책임짐 — 살짝 닿은 선(×0.2)까지 허용.
+            min_ratio: 0.2,
             max_ratio: 1.35,
             // 틸트: 임계값 없이 연속 반영 — 값이 들어오면 즉시 굵어짐.
             tilt_k: 0.35,
@@ -1293,9 +1295,11 @@ impl BallPenProfile {
     /// 점 하나의 선폭(pt). `base_pt`는 툴바 Width(기본 선폭), `tilt_mag`는 0..1.
     pub fn width_at(&self, base_pt: f32, pressure: f32, tilt_mag: f32, v: f32) -> f32 {
         let speed_norm = (v.max(0.0) / self.speed_max.max(1.0)).clamp(0.0, 1.0);
-        let mut w = base_pt.max(0.05)
-            * (1.0 + self.pressure_k * (pressure.clamp(0.0, 1.0) - 0.5))
-            * (1.0 - self.speed_k.max(0.0) * speed_norm);
+        // 필압 커브: 아주 살짝 닿으면 가늘게(p^γ), 꾹 누르면 최대(×1.15).
+        // γ = 1 − pressure_k → 기본 0.7: p=0.1 → ×0.23, p=0.5 → ×0.71, p=1 → ×1.15.
+        let gamma = (1.0 - self.pressure_k).clamp(0.35, 1.2);
+        let p_factor = 1.15 * pressure.clamp(0.0, 1.0).powf(gamma);
+        let mut w = base_pt.max(0.05) * p_factor * (1.0 - self.speed_k.max(0.0) * speed_norm);
         // 틸트(연속): 눕힐수록 굵어짐 — 임계값 없이 즉시 반영.
         w *= 1.0 + self.tilt_k.max(0.0) * tilt_mag.clamp(0.0, 1.0);
         w *= self.starve_factor(v);
@@ -1458,26 +1462,40 @@ mod tests {
     // ---------- BallPenProfile (일반 펜 물리 모델) ----------
 
     #[test]
-    fn ballpen_width_variation_is_small_and_bounded() {
-        let p = BallPenProfile::default(); // base 1.0, ratio 0.65..1.35
-        for (pr, v) in [(0.0f32, 0.0f32), (1.0, 0.0), (0.5, 600.0), (1.0, 6000.0)] {
+    fn ballpen_pressure_curve_is_strong_and_bounded() {
+        let p = BallPenProfile::default(); // base 1.0, min_ratio 0.2, max_ratio 1.35
+        let light = p.width_at(1.0, 0.0, 0.0, 0.0);
+        let feather = p.width_at(1.0, 0.1, 0.0, 0.0);
+        let mid = p.width_at(1.0, 0.5, 0.0, 0.0);
+        let full = p.width_at(1.0, 1.0, 0.0, 0.0);
+        assert!(light >= 0.2 - 1e-4 && full <= 1.35 + 1e-4, "범위: {light}..{full}");
+        assert!(feather < 0.4, "살짝 닿으면 가늘어야: {feather}");
+        assert!(
+            feather < mid && mid < full,
+            "필압 커브 단조 증가: {feather} {mid} {full}"
+        );
+        // 어떤 입력에서도 유한·범위 내.
+        for (pr, v) in [(0.0f32, 600.0), (0.5, 600.0), (1.0, 6000.0)] {
             let w = p.width_at(1.0, pr, 0.0, v);
-            assert!(w >= 0.65 - 1e-4 && w <= 1.35 + 1e-4, "좁은 범위: {w}");
+            assert!(w >= 0.2 - 1e-4 && w <= 1.35 + 1e-4, "범위: {w}");
         }
     }
 
     #[test]
-    fn ballpen_pressure_and_speed_effects_are_gentle() {
+    fn ballpen_light_pressure_is_thin_and_speed_reduces() {
         let p = BallPenProfile::default();
         let light = p.width_at(1.0, 0.0, 0.0, 300.0);
         let full = p.width_at(1.0, 1.0, 0.0, 300.0);
         let slow = p.width_at(1.0, 1.0, 0.0, 0.0);
         let fast = p.width_at(1.0, 1.0, 0.0, 600.0);
-        // 영향은 존재하되 과하지 않음 (필압 전체 범위 ±15%, 속도 최대 −20%).
-        assert!(full > light, "필압↑ → 약간 굵어짐");
-        assert!(slow > fast, "속도↑ → 약간 가늘어짐");
-        assert!((full - light) < 0.35, "필압 영향이 너무 큼: {} vs {}", light, full);
-        assert!((slow - fast) < 0.3, "속도 영향이 너무 큼: {} vs {}", fast, slow);
+        assert!(full > light, "필압↑ → 굵어짐");
+        assert!(slow > fast, "속도↑ → 가늘어짐");
+        assert!(
+            full - light > 0.5,
+            "필압 효과가 커야 (살짝=가늘게, 꾹=굵게): {} vs {}",
+            light,
+            full
+        );
     }
 
     #[test]

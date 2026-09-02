@@ -1773,22 +1773,30 @@ impl FreeDfApp {
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
                             if inside {
-                                // ── 펜 떼기 직전 처리: 펜 접촉이 이미 해제된
-                                // 뒤 도착한 꼬리 리포트(필압 0으로 떨어지는)는
-                                // **버립니다** — 펜 떼는 순간 끝이 갑자기
-                                // 가늘어지는 "확 바뀜"의 원인이었습니다.
-                                // (첫 점 4개는 접촉 시작 타이밍 차이로 잘릴 수
-                                // 있으니 점이 어느 정도 쌓인 뒤에만 적용)
+                                // ── 펜 떼기 직전 처리: 접촉이 해제됐거나 필압이
+                                // 사실상 0으로 무너진 꼬리 리포트는 **버립니다** —
+                                // 펜 떼는 순간 끝이 갑자기 가늘어지는 "확 바뀜"의
+                                // 원인이었습니다. (첫 점 4개는 접촉 시작 타이밍
+                                // 차이로 잘릴 수 있으니 점이 쌓인 뒤에만 적용)
+                                let pen_lifted = self
+                                    .pen_monitor
+                                    .as_ref()
+                                    .is_some_and(|m| !m.snapshot().contact);
+                                // 직전에는 힘이 있었는데 지금 1% 미만 → 리프트 꼬리.
+                                let pressure_collapsed = pressure <= 0.01
+                                    && st
+                                        .points
+                                        .last()
+                                        .map_or(false, |q| q.pressure > 0.05);
                                 let contact_lost = st.points.len() >= 4
-                                    && self
-                                        .pen_monitor
-                                        .as_ref()
-                                        .is_some_and(|m| !m.snapshot().contact);
+                                    && (pen_lifted || pressure_collapsed);
                                 if contact_lost {
+                                    // 표시 중인 진행 획을 즉시 갱신하도록 캐시 무효화.
+                                    self.active_mesh = None;
                                     if !self.lift_cut_logged {
                                         self.lift_cut_logged = true;
                                         pen_trace(
-                                            "LIFT-CUT: 접촉 해제 뒤 도착한 꼬리 점 제거 (펜 떼는 순간 가늘어지는 것 방지)",
+                                            "LIFT-CUT: 접촉 해제/필압 붕괴 뒤 도착한 꼬리 점 제거 (펜 떼는 순간 가늘어지는 것 방지)",
                                         );
                                     }
                                 } else {
