@@ -48,7 +48,8 @@ pub(crate) use freedf_core::paper::{
 pub(crate) use freedf_core::pen::{
     taper_factors, uses_taper, ColorFamily, OneEuroFilter, Palette, PressureCurve, TAPER_LEN_PTS,
 };
-pub(crate) use freedf_core::search::{char_line_highlights, find_matches, TextMatch, TextRun};
+pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
+pub(crate) use freedf_core::text::char_line_highlights;
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 

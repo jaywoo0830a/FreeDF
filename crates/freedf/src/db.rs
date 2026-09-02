@@ -757,6 +757,12 @@ mod tests {
         }
 
         // ── word_cache (사전 오버레이 캐시) ──
+        // 이전 실행이 남긴 캐시를 먼저 지워 단언을 멱등하게 만듭니다.
+        {
+            let mut c = conn_guard(&db.conn);
+            c.execute("DELETE FROM word_cache WHERE word = 'hello'", &[])
+                .expect("clear word_cache");
+        }
         let entry = serde_json::json!([
             {"word": "hello", "phonetic": "/həˈloʊ/",
              "meanings": [{"partOfSpeech": "interjection",

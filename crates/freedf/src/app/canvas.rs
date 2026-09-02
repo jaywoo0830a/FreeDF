@@ -39,7 +39,9 @@ fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
             p + Vec2::new(-h, h),
         ];
     }
-    // i번째 점에서 이웃 두 세그먼트 방향의 평균(마이터) 방향.
+    // 거의 180°로 되접히면(합이 0에 가까움) 법선이 무한대로 커져
+    // 스파이크가 튀므로, 합이 작을 땐 **한쪽 세그먼트 방향(베벨)** 으로
+    // 폴백합니다 (관례적 마이터 리밋).
     let miter_at = |i: usize| -> Vec2 {
         let a = if i > 0 {
             points[i] - points[i - 1]
@@ -52,13 +54,11 @@ fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
             points[n - 1] - points[n - 2]
         };
         let d = unit_dir(a) + unit_dir(b);
-        // 180°로 접히는 경우: 아무 쪽이나 사용.
-        let d = if d.length_sq() < 1e-6 {
-            Vec2::new(-a.y, a.x)
+        if d.length() < 0.35 {
+            unit_dir(a)
         } else {
-            d
-        };
-        unit_dir(d)
+            unit_dir(d)
+        }
     };
     let half = width * 0.5;
     let mut poly: Vec<Pos2> = Vec::with_capacity(n * 2);
@@ -71,50 +71,6 @@ fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
         poly.push(points[i] - perp * half);
     }
     poly
-}
-
-/// 폴리라인을 점별 절반 두께(`half_widths`)의 **세그먼트별 사각형(quad)** 으로
-/// 분해합니다. 인접 quad는 같은 모서리를 공유해(butt 결합) 반투명 잉크도
-/// 겹침 얼룩 없이 이어지고, 점별 두께 변화(필압/속도/테이퍼)가 자연스럽게
-/// 표현됩니다.
-fn stroke_ribbon_quads(points: &[Pos2], half_widths: &[f32]) -> Vec<[Pos2; 4]> {
-    let n = points.len();
-    if n < 2 || half_widths.len() != n {
-        return Vec::new();
-    }
-    // 점별 수직 방향 = 인접 두 세그먼트 방향의 평균(마이터).
-    let mut norms = Vec::with_capacity(n);
-    for i in 0..n {
-        let a = if i > 0 {
-            points[i] - points[i - 1]
-        } else {
-            points[1] - points[0]
-        };
-        let b = if i + 1 < n {
-            points[i + 1] - points[i]
-        } else {
-            points[n - 1] - points[n - 2]
-        };
-        let d = unit_dir(a) + unit_dir(b);
-        let dir = if d.length_sq() < 1e-6 {
-            Vec2::new(-a.y, a.x).normalized()
-        } else {
-            unit_dir(d)
-        };
-        norms.push(Vec2::new(-dir.y, dir.x));
-    }
-    let mut quads = Vec::with_capacity(n - 1);
-    for i in 0..n - 1 {
-        let h0 = half_widths[i];
-        let h1 = half_widths[i + 1];
-        quads.push([
-            points[i] + norms[i] * h0,
-            points[i] - norms[i] * h0,
-            points[i + 1] - norms[i + 1] * h1,
-            points[i + 1] + norms[i + 1] * h1,
-        ]);
-    }
-    quads
 }
 
 impl FreeDfApp {
@@ -1310,25 +1266,33 @@ impl FreeDfApp {
         } else {
             vec![1.0; pts.len()]
         };
-        // 점별 화면 두께(px): 필압 곡선 × 테이퍼.
+        // 점별 페이지 공간 절반 두께: 필압 곡선 × 테이퍼.
         let n = pts.len();
-        let mut widths: Vec<f32> = Vec::with_capacity(n);
+        let mut halves: Vec<f32> = Vec::with_capacity(n);
         for (i, p) in pts.iter().enumerate() {
             let w = self.pressure_curve.apply(stroke.width * zoom, p.pressure) * tapers[i];
-            widths.push(w.max(0.4));
+            halves.push((w * 0.5).max(0.4));
         }
-        let pts_view: Vec<Pos2> = pts
+        // 관례적 라운드 캡/조인 지오메트리 (core, 내보내기와 동일 함수):
+        // 세그먼트 법선 quad + 꺾인 곳의 조인 원 — 마이터 스파이크 없음.
+        // 화면(뷰) 공간에서 계산해 줌이 두 번 적용되지 않게 합니다.
+        let pts_view: Vec<[f32; 2]> = pts
             .iter()
             .map(|p| {
                 let v = self.view.page_to_view([p.x, p.y]);
-                origin + Vec2::new(v[0], v[1])
+                [origin.x + v[0], origin.y + v[1]]
             })
             .collect();
-        let halves: Vec<f32> = widths.iter().map(|w| w * 0.5).collect();
-        // 세그먼트별 quad로 한 번씩 채움 — 원을 겹쳐 찍던 방식의 울퉁불퉁한
-        // 비딩(beading)이 사라지고 부드러운 가변 두께 선이 됩니다.
-        for quad in stroke_ribbon_quads(&pts_view, &halves) {
-            painter.add(egui::Shape::convex_polygon(quad.to_vec(), color, Stroke::NONE));
+        let shape = freedf_core::pen::stroke_shape(&pts_view, &halves);
+        for quad in &shape.quads {
+            let quad: Vec<Pos2> = quad
+                .iter()
+                .map(|p| Pos2::new(p[0], p[1]))
+                .collect();
+            painter.add(egui::Shape::convex_polygon(quad, color, Stroke::NONE));
+        }
+        for (c, r) in &shape.circles {
+            painter.circle_filled(Pos2::new(c[0], c[1]), r.max(0.5), color);
         }
     }
 

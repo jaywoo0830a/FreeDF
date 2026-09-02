@@ -1,14 +1,144 @@
 //! 영단어 사전 오버레이 — 페이지의 단어를 탭하면 사전을 조회해 띄웁니다.
 //!
-//! - 단어 추출은 core의 `search::word_at`(pdfium 글자 좌표 기반)을 사용합니다.
-//! - 조회는 백그라운드 스레드(ureq, dictionaryapi.dev)로 하고, 결과는
-//!   DB `word_cache` 테이블에 캐시되어 오프라인 재조회가 가능합니다.
+//! - 단어 추출은 core의 `text::word_at`(pdfium 글자 좌표 + 줄 클러스터링)를
+//!   사용합니다.
+//! - 조회는 백그라운드 스레드로 하고, 결과는 DB `word_cache`에 캐시되어
+//!   오프라인 재조회가 가능합니다.
+//! - **OCP(개방-폐쇄) 프로바이더 구조**: `DictionaryProvider` 트레이트를 구현한
+//!   프로바이더를 `DictionaryService`에 등록하면 순서대로 시도합니다.
+//!   새 API를 추가하려면 앱의 프로바이더 구현 + core의 `parse_*` 함수만
+//!   추가하면 됩니다 (UI/캐시/조회 코드는 변경 없음).
 //! - UI는 캔버스 위 플로팅 Area로 표시됩니다.
 
 use super::*;
+use freedf_core::dictionary::DictionaryEntry;
+use freedf_core::text::word_at;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::time::Duration;
 
-const DICT_URL: &str = "https://api.dictionaryapi.dev/api/v2/entries/en/";
+/// 사전 조회 API 하나를 나타냅니다. 응답은 **공통 형식**(
+/// [`DictionaryEntry`])으로 정규화해 반환합니다.
+pub(crate) trait DictionaryProvider: Send + Sync {
+    /// 사용자에게 보여줄 이름 (오류 메시지 등).
+    fn name(&self) -> &'static str;
+    /// 단어 조회. 네트워크/파싱 실패는 `Err(사유)`.
+    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String>;
+}
+
+/// dictionaryapi.dev (Free Dictionary API).
+struct DictionaryApiDevProvider;
+
+impl DictionaryProvider for DictionaryApiDevProvider {
+    fn name(&self) -> &'static str {
+        "dictionaryapi.dev"
+    }
+
+    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
+        let url = format!("https://api.dictionaryapi.dev/api/v2/entries/en/{word}");
+        let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("bad response: {e}"))?;
+        Ok(freedf_core::dictionary::parse_dictionaryapi_dev(&value))
+    }
+}
+
+/// Wiktionary REST API (키 불필요).
+struct WiktionaryProvider;
+
+impl DictionaryProvider for WiktionaryProvider {
+    fn name(&self) -> &'static str {
+        "Wiktionary"
+    }
+
+    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
+        let url = format!("https://en.wiktionary.org/api/rest_v1/page/definition/{word}");
+        let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("bad response: {e}"))?;
+        let mut entry = freedf_core::dictionary::parse_wiktionary(&value);
+        if entry.word.is_empty() {
+            entry.word = word.to_string();
+        }
+        if entry.definitions.is_empty() {
+            return Err("no definitions".to_string());
+        }
+        Ok(entry)
+    }
+}
+
+/// Datamuse API (키 불필요, 간단 정의 폴백).
+struct DatamuseProvider;
+
+impl DictionaryProvider for DatamuseProvider {
+    fn name(&self) -> &'static str {
+        "Datamuse"
+    }
+
+    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
+        let url = format!("https://api.datamuse.com/words?sp={word}&md=d&max=1");
+        let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
+        let value: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("bad response: {e}"))?;
+        let mut entry = freedf_core::dictionary::parse_datamuse(&value);
+        if entry.word.is_empty() {
+            entry.word = word.to_string();
+        }
+        if entry.definitions.is_empty() {
+            return Err("no definitions".to_string());
+        }
+        Ok(entry)
+    }
+}
+
+/// 등록된 프로바이더들을 순서대로 시도하는 사전 조회 서비스.
+#[derive(Clone)]
+pub(crate) struct DictionaryService {
+    agent: ureq::Agent,
+    providers: std::sync::Arc<Vec<Box<dyn DictionaryProvider>>>,
+}
+
+impl DictionaryService {
+    /// 기본 구성: 타임아웃 10초 + 프로바이더 3개.
+    /// 새 프로바이더는 여기 `providers`에 추가하면 됩니다.
+    pub fn new() -> Self {
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(10))
+            .user_agent("FreeDF/3.0")
+            .build();
+        Self {
+            agent,
+            providers: std::sync::Arc::new(vec![
+                Box::new(DictionaryApiDevProvider),
+                Box::new(WiktionaryProvider),
+                Box::new(DatamuseProvider),
+            ]),
+        }
+    }
+
+    /// 프로바이더를 순서대로 시도합니다 (모두 실패 시 이유를 모아서 보고).
+    fn query(&self, word: &str) -> Result<DictionaryEntry, String> {
+        let mut failures = Vec::new();
+        for p in self.providers.iter() {
+            match p.lookup(&self.agent, word) {
+                Ok(entry) => return Ok(entry),
+                Err(e) => failures.push(format!("{}: {e}", p.name())),
+            }
+        }
+        Err(format!(
+            "Dictionary lookup failed — check your internet connection.\n{}",
+            failures.join("\n")
+        ))
+    }
+}
+
+impl Default for DictionaryService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// 사전 오버레이 상태.
 #[derive(Default)]
@@ -23,88 +153,35 @@ pub(crate) struct Dictionary {
     pub rx: Option<Receiver<Result<String, String>>>,
     /// 탭한 화면 좌표 (오버레이 앵커).
     pub anchor: Pos2,
+    /// 프로바이더 서비스 (OCP: 교체/확장 가능).
+    pub service: DictionaryService,
 }
 
 /// 백그라운드 스레드에서 단어를 조회합니다 (UI 블로킹 없음).
-pub(crate) fn spawn_lookup(db: Db, word: String) -> Receiver<Result<String, String>> {
+pub(crate) fn spawn_lookup(
+    service: DictionaryService,
+    db: Db,
+    word: String,
+) -> Receiver<Result<String, String>> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let _ = tx.send(lookup(&db, &word));
+        let _ = tx.send(lookup(&service, &db, &word));
     });
     rx
 }
 
-fn lookup(db: &Db, word: &str) -> Result<String, String> {
-    // 1) DB 캐시.
+fn lookup(service: &DictionaryService, db: &Db, word: &str) -> Result<String, String> {
+    // 1) DB 캐시 (공통 형식 JSONB; 이전 형식이면 무시하고 재조회).
     if let Some(v) = db.get_word_cache(word) {
-        return Ok(format_entry(&v, word));
+        if let Some(e) = DictionaryEntry::from_value(&v) {
+            return Ok(e.format(word));
+        }
     }
-    // 2) 온라인 사전 API.
-    let url = format!("{DICT_URL}{}", word);
-    let resp = ureq::get(&url)
-        .call()
-        .map_err(|e| format!("Dictionary unreachable — check your internet connection.\n({e})"))?;
-    let value: serde_json::Value = resp
-        .into_json()
-        .map_err(|e| format!("Bad dictionary response: {e}"))?;
+    // 2) 프로바이더 순차 조회 (OCP 목록).
+    let entry = service.query(word)?;
     // 3) 캐시 저장 + 표시.
-    db.set_word_cache(word, &value);
-    Ok(format_entry(&value, word))
-}
-
-/// dictionaryapi.dev 응답을 읽기 좋은 평문으로 변환합니다.
-fn format_entry(v: &serde_json::Value, fallback_word: &str) -> String {
-    let Some(entries) = v.as_array() else {
-        return "No definition found.".to_string();
-    };
-    let mut out = String::new();
-    let mut count = 0usize;
-    for e in entries {
-        let w = e
-            .get("word")
-            .and_then(|w| w.as_str())
-            .unwrap_or(fallback_word);
-        let phonetic = e.get("phonetic").and_then(|p| p.as_str()).unwrap_or("");
-        if count == 0 {
-            if phonetic.is_empty() {
-                out.push_str(&format!("{w}\n\n"));
-            } else {
-                out.push_str(&format!("{w}  /{phonetic}/\n\n"));
-            }
-        }
-        let empty = Vec::new();
-        for m in e
-            .get("meanings")
-            .and_then(|m| m.as_array())
-            .unwrap_or(&empty)
-        {
-            let pos = m.get("partOfSpeech").and_then(|p| p.as_str()).unwrap_or("");
-            for d in m
-                .get("definitions")
-                .and_then(|d| d.as_array())
-                .unwrap_or(&empty)
-            {
-                if count >= 5 {
-                    return out;
-                }
-                let def = d
-                    .get("definition")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("");
-                if pos.is_empty() {
-                    out.push_str(&format!("• {def}\n"));
-                } else {
-                    out.push_str(&format!("• [{pos}] {def}\n"));
-                }
-                count += 1;
-            }
-        }
-    }
-    if count == 0 {
-        "No definition found.".to_string()
-    } else {
-        out
-    }
+    db.set_word_cache(word, &entry.to_value());
+    Ok(entry.format(word))
 }
 
 impl FreeDfApp {
@@ -120,13 +197,17 @@ impl FreeDfApp {
                 return;
             }
         };
-        match freedf_core::search::word_at(&chars, page_pt) {
+        match word_at(&chars, page_pt, 4.0) {
             Some((word, _)) if !word.trim().is_empty() => {
                 self.dictionary.query = Some(word.clone());
                 self.dictionary.loading = true;
                 self.dictionary.display = None;
                 self.dictionary.anchor = anchor;
-                self.dictionary.rx = Some(spawn_lookup(self.db.clone(), word));
+                self.dictionary.rx = Some(spawn_lookup(
+                    self.dictionary.service.clone(),
+                    self.db.clone(),
+                    word,
+                ));
             }
             Some(_) => {
                 self.status = Some("No word under the pointer.".to_string());

@@ -53,7 +53,99 @@ pub fn taper_factors(points: &[StrokePoint], taper_len: f32) -> Vec<f32> {
         .collect()
 }
 
-/// 1€ (One Euro) 저역 통과 필터 — 손떨림은 제거하고 빠른 움직임은 그대로 따라갑니다
+/// 가변폭 폴리라인의 채움 지오메트리 — 벡터 드로잉의 관례적인
+/// **라운드 캡/조인** 방식으로 분해한 결과입니다.
+///
+/// 이전 구현은 점별 **마이터(이등분) 법선**으로 세그먼트 quad를 만들어
+/// 급격히 방향이 꺾이는 곳(거의 180°로 되접힐 때)에서 법선이 무한대로
+/// 커져 **번개 모양 스파이크**가 튀었습니다. 이 방식은:
+/// - quad는 **세그먼트 자체의 법선**만 사용 → 어떤 입력에도 스파이크가 생기지 않음.
+/// - 방향이 일정 각도(약 15°) 이상 꺾이는 내부 점에는 **조인 원**을,
+///   양끝에는 **캡 원**을 얹어 이음새/끝을 매끄럽게 이어줍니다.
+///
+/// 좌표는 입력과 같은 공간이며, 화면(egui)과 내보내기(래스터)가
+/// **같은 함수**를 써서 동일하게 그려집니다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeShape {
+    /// 세그먼트별 사각형 (점 i → i+1, 세그먼트 법선 사용).
+    pub quads: Vec<[[f32; 2]; 4]>,
+    /// (중심, 반지름) 원 목록 — 양끝 캡 + 방향이 꺾인 내부 조인.
+    pub circles: Vec<([f32; 2], f32)>,
+}
+
+/// 두 인접 세그먼트 방향의 코사인 유사도가 이 값보다 작으면(약 15° 이상
+/// 꺾이면) 조인 원을 얹습니다. 완만한 곡선은 quad만으로 이음새가 안 보이므로
+/// 원(오버드로)을 줄여 반투명 잉크의 얼룩을 막습니다.
+const MIN_JOIN_COS: f32 = 0.966;
+
+/// 가변폭 폴리라인 지오메트리를 계산합니다.
+///
+/// `points`와 `half_widths`의 길이는 같아야 합니다 (짧은 쪽 기준).
+/// 점이 1개면 원 하나(점 찍기)를 반환합니다.
+pub fn stroke_shape(points: &[[f32; 2]], half_widths: &[f32]) -> StrokeShape {
+    let n = points.len().min(half_widths.len());
+    if n == 0 {
+        return StrokeShape {
+            quads: Vec::new(),
+            circles: Vec::new(),
+        };
+    }
+    if n == 1 {
+        return StrokeShape {
+            quads: Vec::new(),
+            circles: vec![(points[0], half_widths[0].max(0.0))],
+        };
+    }
+    let mut shape = StrokeShape {
+        quads: Vec::with_capacity(n - 1),
+        circles: Vec::with_capacity(2 + n),
+    };
+    // 1) 세그먼트 quad — 법선은 세그먼트 자체에 수직 (마이터 없음 → 스파이크 없음).
+    for i in 0..n - 1 {
+        let (a, b) = (points[i], points[i + 1]);
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            continue;
+        }
+        let (nx, ny) = (-dy / len, dx / len);
+        let h0 = half_widths[i];
+        let h1 = half_widths[i + 1];
+        shape.quads.push([
+            [a[0] + nx * h0, a[1] + ny * h0],
+            [a[0] - nx * h0, a[1] - ny * h0],
+            [b[0] - nx * h1, b[1] - ny * h1],
+            [b[0] + nx * h1, b[1] + ny * h1],
+        ]);
+    }
+    // 2) 양끝 캡 (라운드 캡이 관례).
+    shape.circles.push((points[0], half_widths[0].max(0.0)));
+    shape.circles.push((points[n - 1], half_widths[n - 1].max(0.0)));
+    // 3) 방향이 꺾이는 내부 점에 조인 원 (이웃 quad 사이 쐐기 틈을 메움).
+    for i in 1..n - 1 {
+        let (dx0, dy0) = (points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+        let (dx1, dy1) = (
+            points[i + 1][0] - points[i][0],
+            points[i + 1][1] - points[i][1],
+        );
+        let l0 = (dx0 * dx0 + dy0 * dy0).sqrt();
+        let l1 = (dx1 * dx1 + dy1 * dy1).sqrt();
+        if l0 < 1e-6 || l1 < 1e-6 {
+            continue;
+        }
+        let dot = (dx0 * dx1 + dy0 * dy1) / (l0 * l1);
+        if dot < MIN_JOIN_COS {
+            let r = half_widths[i]
+                .max(half_widths[i - 1])
+                .max(half_widths[i + 1]);
+            shape.circles.push((points[i], r));
+        }
+    }
+    shape
+}
+
+/// OneEuroFilter (1€ 저역 통과 필터) — 손떨림은 제거하고 빠른 움직임은 그대로 따라갑니다
 /// (Casiez, Roussel, Vogel 2012). 필압/좌표 스무딩에 사용합니다.
 ///
 /// 속도에 적응적: 입력이 느리면(필기) 강하게 스무딩하고, 빠르면(획 긋기)
@@ -450,5 +542,84 @@ mod tests {
         f.reset();
         let y = f.filter(10.0, 0.1);
         assert!((y - 10.0).abs() < 1e-4, "reset 후 첫 값은 원본 그대로: {y}");
+    }
+
+    // ---------- stroke_shape (관례적 라운드 조인/캡) ----------
+
+    #[test]
+    fn stroke_shape_single_point_is_one_circle() {
+        let s = stroke_shape(&[[5.0, 6.0]], &[2.0]);
+        assert!(s.quads.is_empty());
+        assert_eq!(s.circles, vec![([5.0, 6.0], 2.0)]);
+    }
+
+    #[test]
+    fn stroke_shape_straight_line_has_one_quad_and_two_caps() {
+        let s = stroke_shape(&[[0.0, 0.0], [10.0, 0.0]], &[2.0, 2.0]);
+        assert_eq!(s.quads.len(), 1);
+        // quad는 선에서 정확히 ±half 떨어져 있음.
+        let q = s.quads[0];
+        for p in q {
+            assert!((p[1].abs() - 2.0).abs() < 1e-6, "수직 오프셋: {p:?}");
+            assert!(p[0] >= -1e-6 && p[0] <= 10.0 + 1e-6);
+        }
+        // 캡 2개, 조인 없음 (방향 변화 없음).
+        assert_eq!(s.circles.len(), 2);
+        assert_eq!(s.circles[0], ([0.0, 0.0], 2.0));
+        assert_eq!(s.circles[1], ([10.0, 0.0], 2.0));
+    }
+
+    #[test]
+    fn stroke_shape_no_spikes_on_sharp_reversal() {
+        // 180° 되접힘 — 마이터 법선이면 무한대 스파이크가 튀는 입력.
+        let pts = [[0.0f32, 0.0], [10.0, 0.0], [0.0, 0.0]];
+        let s = stroke_shape(&pts, &[2.0, 2.0, 2.0]);
+        // 모든 quad 정점이 폴리라인에서 max_half(+여유) 이내에 있어야 함.
+        for p in s.quads.iter().flatten() {
+            let d = min_dist_to_polyline(*p, &pts);
+            assert!(d <= 2.0 + 1e-3, "스파이크: {p:?} 거리 {d}");
+        }
+        // 되접힘 점에 조인 원.
+        assert!(s.circles.iter().any(|(c, r)| *c == [10.0, 0.0] && *r >= 2.0));
+    }
+
+    #[test]
+    fn stroke_shape_jagged_input_stays_bounded() {
+        // 번개 지그재그 — 모든 quad가 폴리라인에서 half 이내.
+        let mut pts = vec![[0.0f32, 0.0]];
+        let mut x = 0.0f32;
+        let mut y = 0.0f32;
+        for i in 1..40 {
+            x += 8.0;
+            y = if i % 2 == 0 { -4.0 } else { 4.0 };
+            pts.push([x, y]);
+        }
+        let halves: Vec<f32> = (0..40).map(|i| 1.0 + 0.05 * i as f32).collect();
+        let s = stroke_shape(&pts, &halves);
+        let max_h = halves.iter().cloned().fold(0.0f32, f32::max);
+        for p in s.quads.iter().flatten() {
+            let d = min_dist_to_polyline(*p, &pts);
+            assert!(d <= max_h + 1e-3, "스파이크: {p:?} 거리 {d} (max {max_h})");
+        }
+        // 캡 2 + 꺾인 내부 점마다 조인.
+        assert_eq!(s.circles.len(), 2 + 38);
+    }
+
+    #[test]
+    fn stroke_shape_variable_width_quads_follow_half_widths() {
+        let s = stroke_shape(&[[0.0, 0.0], [10.0, 0.0]], &[1.0, 4.0]);
+        let q = s.quads[0];
+        // 시작점은 ±1, 끝점은 ±4 오프셋.
+        assert!((q[0][1] - 1.0).abs() < 1e-6 && (q[1][1] + 1.0).abs() < 1e-6);
+        assert!((q[2][1] + 4.0).abs() < 1e-6 && (q[3][1] - 4.0).abs() < 1e-6);
+    }
+
+    fn min_dist_to_polyline(p: [f32; 2], poly: &[[f32; 2]]) -> f32 {
+        let mut best = f32::MAX;
+        for i in 0..poly.len() {
+            let d = ((p[0] - poly[i][0]).powi(2) + (p[1] - poly[i][1]).powi(2)).sqrt();
+            best = best.min(d);
+        }
+        best
     }
 }

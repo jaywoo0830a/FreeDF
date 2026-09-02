@@ -89,18 +89,65 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
     } else {
         vec![1.0; pts.len()]
     };
-    for (i, w) in pts.windows(2).enumerate() {
-        let a = scale_point(&w[0], scale);
-        let b = scale_point(&w[1], scale);
-        let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-        let width = if stroke.tool == ToolType::Highlighter {
-            // 마커: 기본 동작 — 필압 없이 일정한 두께.
-            stroke.width * scale
-        } else {
-            curve.apply(stroke.width, pressure) * scale
-        } * 0.5
-            * (tapers[i] + tapers[i + 1]);
-        draw_segment(img, a, b, width, color);
+    if stroke.tool == ToolType::Highlighter {
+        // 마커: 기본 동작 — 필압 없이 일정한 두께의 연결선.
+        for (i, w) in pts.windows(2).enumerate() {
+            let a = scale_point(&w[0], scale);
+            let b = scale_point(&w[1], scale);
+            let width = stroke.width * scale * 0.5 * (tapers[i] + tapers[i + 1]);
+            draw_segment(img, a, b, width, color);
+        }
+        return;
+    }
+    // 펜: 화면과 **동일한 관례적 지오메트리**(라운드 캡/조인) —
+    // 세그먼트 법선 quad + 꺾인 곳 조인 원. 마이터 스파이크 없이
+    // 화면/PNG/JPG/PDF가 같은 모양으로 나옵니다.
+    let pts_xy: Vec<[f32; 2]> = pts.iter().map(|p| scale_point(p, scale)).collect();
+    let mut halves: Vec<f32> = Vec::with_capacity(pts.len());
+    for (i, p) in pts.iter().enumerate() {
+        let w = curve.apply(stroke.width, p.pressure) * scale * tapers[i];
+        halves.push((w * 0.5).max(0.5));
+    }
+    let shape = freedf_core::pen::stroke_shape(&pts_xy, &halves);
+    for quad in &shape.quads {
+        fill_quad(img, *quad, color);
+    }
+    for (c, r) in &shape.circles {
+        draw_disk(img, *c, r.max(0.5), color);
+    }
+}
+
+/// 볼록 사각형(quad)을 삼각형 2개로 나눠 채웁니다.
+fn fill_quad(img: &mut RgbaImage, q: [[f32; 2]; 4], color: [u8; 4]) {
+    fill_triangle(img, q[0], q[1], q[2], color);
+    fill_triangle(img, q[0], q[2], q[3], color);
+}
+
+/// 삼각형을 무게중심 좌표 테스트로 채웁니다 (경계 포함, 알파 블렌드).
+fn fill_triangle(img: &mut RgbaImage, a: [f32; 2], b: [f32; 2], c: [f32; 2], color: [u8; 4]) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let x0 = a[0].min(b[0]).min(c[0]).floor() as i32;
+    let x1 = a[0].max(b[0]).max(c[0]).ceil() as i32;
+    let y0 = a[1].min(b[1]).min(c[1]).floor() as i32;
+    let y1 = a[1].max(b[1]).max(c[1]).ceil() as i32;
+    let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if area.abs() < 1e-9 {
+        return;
+    }
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            if x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let s = ((b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0])) / area;
+            let t = ((c[0] - b[0]) * (py - b[1]) - (c[1] - b[1]) * (px - b[0])) / area;
+            let u = 1.0 - s - t;
+            if s >= -1e-3 && t >= -1e-3 && u >= -1e-3 {
+                blend_pixel(img, x as u32, y as u32, color);
+            }
+        }
     }
 }
 

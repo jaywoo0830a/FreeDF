@@ -8,6 +8,17 @@ use std::path::{Path, PathBuf};
 
 use freedf_core::outline::OutlineNode;
 use freedf_core::search::TextRun;
+use freedf_core::text::{content_rect_to_display as core_content_rect_to_display, PageRotation, TextChar};
+
+/// 콘텐츠 공간 `PdfRect` → 표시 공간 `[x0,y0,x1,y1]` (core 변환의 pdfium 래퍼).
+fn content_rect_to_display(r: PdfRect, w: f32, h: f32, rot: PageRotation) -> [f32; 4] {
+    core_content_rect_to_display(
+        [r.left().value, r.bottom().value, r.right().value, r.top().value],
+        w,
+        h,
+        rot,
+    )
+}
 
 /// 플랫폼별 PDFium 라이브러리 파일 이름 후보.
 fn pdfium_names() -> &'static [&'static str] {
@@ -317,7 +328,7 @@ impl DocumentView {
             .map_err(|e| format!("Could not read page: {e}"))?;
         let w = page.width().value;
         let h = page.height().value;
-        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
         let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
@@ -341,7 +352,7 @@ impl DocumentView {
             .map_err(|e| format!("Could not read page: {e}"))?;
         let w = page.width().value;
         let h = page.height().value;
-        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
         let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut out = Vec::with_capacity(text.len().max(0) as usize);
         for ch in text.chars().iter() {
@@ -353,9 +364,9 @@ impl DocumentView {
         Ok(out)
     }
 
-    /// 페이지의 **(글자 텍스트, 표시 공간 사각형)** 목록을 반환합니다.
-    /// 사전 오버레이의 단어 추출(`search::word_at`) 입력으로 사용합니다.
-    pub fn page_chars(&self, index: usize) -> Result<Vec<(String, [f32; 4])>, String> {
+    /// 페이지의 **글자별 (텍스트, 표시 공간 사각형)** 목록을 반환합니다.
+    /// 사전 오버레이의 단어 추출(`text::word_at`) 입력으로 사용합니다.
+    pub fn page_chars(&self, index: usize) -> Result<Vec<TextChar>, String> {
         let page = self
             .document
             .pages()
@@ -363,7 +374,7 @@ impl DocumentView {
             .map_err(|e| format!("Could not read page: {e}"))?;
         let w = page.width().value;
         let h = page.height().value;
-        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
         let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut out = Vec::new();
         for ch in text.chars().iter() {
@@ -375,7 +386,7 @@ impl DocumentView {
                 if s.is_empty() {
                     continue;
                 }
-                out.push((s, content_rect_to_display(b, w, h, rot)));
+                out.push(TextChar::new(s, content_rect_to_display(b, w, h, rot)));
             }
         }
         Ok(out)
@@ -484,25 +495,12 @@ fn rotate_rotation(current: PdfPageRenderRotation, clockwise: bool) -> PdfPageRe
     }
 }
 
-/// 콘텐츠 공간(좌하단 원점, y 위, `/Rotate` 미적용)의 `PdfRect`를
-/// **표시 공간**(좌상단 원점, y 아래) 사각형 `[x0, y0, x1, y1]`으로 변환합니다.
-/// (픽셀 렌더로 검증됨 — 세그먼트·글자 양쪽에 공용)
-fn content_rect_to_display(
-    r: PdfRect,
-    w: f32,
-    h: f32,
-    rot: PdfPageRenderRotation,
-) -> [f32; 4] {
-    let (x0, y0, x1, y1) = (
-        r.left().value,
-        r.bottom().value,
-        r.right().value,
-        r.top().value,
-    );
-    match rot {
-        PdfPageRenderRotation::None => [x0, h - y1, x1, h - y0],
-        PdfPageRenderRotation::Degrees90 => [y0, x0, y1, x1],
-        PdfPageRenderRotation::Degrees180 => [w - x1, y0, w - x0, y1],
-        PdfPageRenderRotation::Degrees270 => [h - y1, w - x1, h - y0, w - x0],
+/// pdfium의 회전 enum → core의 `PageRotation`.
+fn core_rotation(r: PdfPageRenderRotation) -> PageRotation {
+    match r {
+        PdfPageRenderRotation::None => PageRotation::None,
+        PdfPageRenderRotation::Degrees90 => PageRotation::Degrees90,
+        PdfPageRenderRotation::Degrees180 => PageRotation::Degrees180,
+        PdfPageRenderRotation::Degrees270 => PageRotation::Degrees270,
     }
 }

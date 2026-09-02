@@ -15,6 +15,7 @@
 //! - [`paper`]: 용지 스타일(그리드/줄/점선) + 배경 색
 //! - [`logging`]: 분석용 구조적 로그(JSON Lines)
 
+pub mod dictionary;
 pub mod history;
 pub mod logging;
 pub mod model;
@@ -25,4 +26,5 @@ pub mod paper;
 pub mod pen;
 pub mod search;
 pub mod store;
+pub mod text;
 pub mod transform;
