@@ -393,7 +393,7 @@ mod windows_raw {
     use windows::Win32::Graphics::Gdi::HBRUSH;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::{
-        GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT, RAWINPUT,
+        GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT,
         RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT, RIM_TYPEHID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -518,12 +518,16 @@ mod windows_raw {
 
     /// WM_INPUT의 lParam에서 (장치 경로, HID 리포트 바이트)를 추출합니다
     /// (GetRawInputData 2단계: 크기 조회 → 복사).
+    ///
+    /// 주의: `RAWINPUT` 구조체 전체(유니언 포함 ~48B)를 짧은 리포트 버퍼에
+    /// 매핑하면 힙 오버리드(STATUS_HEAP_CORRUPTION)가 납니다. 헤더만 참조하고
+    /// HID 페이로드는 오프셋으로 접근합니다.
     fn read_hid(lparam: LPARAM) -> Option<RawReport> {
         let hraw = HRAWINPUT(lparam.0 as *mut core::ffi::c_void);
         let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
         let mut size: u32 = 0;
         let _ = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
-        if size == 0 || size == u32::MAX {
+        if size == u32::MAX || size < header_size + 8 {
             return None;
         }
         let mut buf: Vec<u8> = vec![0u8; size as usize];
@@ -536,21 +540,28 @@ mod windows_raw {
                 header_size,
             )
         };
-        if copied == u32::MAX || copied == 0 {
+        if copied == u32::MAX || copied < header_size + 8 {
             return None;
         }
         buf.truncate(size as usize);
-        let raw: &RAWINPUT = unsafe { &*(buf.as_ptr() as *const RAWINPUT) };
-        if raw.header.dwType != RIM_TYPEHID.0 {
+        // 헤더만 참조 (버퍼 최소 크기 보장됨).
+        let header: &RAWINPUTHEADER = unsafe { &*(buf.as_ptr() as *const RAWINPUTHEADER) };
+        if header.dwType != RIM_TYPEHID.0 {
             return None;
         }
-        let device = device_name(raw.header.hDevice);
-        let hid = unsafe { raw.data.hid };
-        let bytes =
-            unsafe { std::slice::from_raw_parts(hid.bRawData.as_ptr(), hid.dwCount as usize) };
+        let device = device_name(header.hDevice);
+        // RAWHID 레이아웃: dwSizeHid(4) + dwCount(4) + bRawData[dwCount].
+        let base = header_size as usize;
+        let count_bytes: [u8; 4] = buf[base + 4..base + 8].try_into().ok()?;
+        let count = u32::from_le_bytes(count_bytes) as usize;
+        let data_off = base + 8;
+        let end = data_off.checked_add(count)?;
+        if end > buf.len() {
+            return None;
+        }
         Some(RawReport {
             device,
-            bytes: bytes.to_vec(),
+            bytes: buf[data_off..end].to_vec(),
         })
     }
 
