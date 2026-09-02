@@ -93,9 +93,9 @@ fn draw_one_stroke(
     let mut halves: Vec<f32> = Vec::with_capacity(n);
     let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
     if stroke.has_locked_widths() {
-        // 입력 시점에 잠금된 폭 그대로 (화면과 동일).
+        // 입력 시점에 잠금된 폭 그대로 (화면과 동일 — 바닥값 0.05는 퇴화 방지).
         for p in pts {
-            halves.push((p.width * scale * 0.5).max(0.5));
+            halves.push((p.width * scale * 0.5).max(0.05));
         }
     } else if stroke.tool == ToolType::Highlighter {
         // 마커: 필압/테이퍼 없이 일정한 두께.
@@ -105,13 +105,13 @@ fn draw_one_stroke(
         // 저장된 스트로크에는 기울기 센서 값이 없으므로).
         let widths = fountain.widths(stroke.width, pts, 0.0);
         for w in widths {
-            halves.push((w * scale * 0.5).max(0.5));
+            halves.push((w * scale * 0.5).max(0.05));
         }
     } else {
         // 일반 펜: 필압·속도 영향이 작은 물리 모델.
         let widths = pen.widths(stroke.width, pts, 0.0);
         for w in widths {
-            halves.push((w * scale * 0.5).max(0.5));
+            halves.push((w * scale * 0.5).max(0.05));
         }
     }
     let is_pen = stroke.tool == ToolType::Pen;

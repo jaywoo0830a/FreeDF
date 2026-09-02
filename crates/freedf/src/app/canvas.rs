@@ -330,17 +330,20 @@ fn stroke_halves(
     let mut halves = Vec::with_capacity(n);
     if stroke.has_locked_widths() {
         for p in &stroke.points {
-            halves.push((p.width * 0.5).max(0.3));
+            // 바닥값은 기하학 퇴화 방지용 최소값 — 예전 0.3pt 바닥은
+            // 0.5pt 펜의 폭 변동(절반 0.22~0.30)을 **전부 삼켜** 굵기가
+            // 항상 0.6pt로 보였습니다 (사용자 보고 버그의 원인).
+            halves.push((p.width * 0.5).max(0.05));
         }
         return halves;
     }
     if stroke.tool == ToolType::Fountain {
         for w in fountain.widths(stroke.width, &stroke.points, tilt_mag) {
-            halves.push((w * 0.5).max(0.3));
+            halves.push((w * 0.5).max(0.05));
         }
     } else {
         for w in ball.widths(stroke.width, &stroke.points, tilt_mag) {
-            halves.push((w * 0.5).max(0.3));
+            halves.push((w * 0.5).max(0.05));
         }
     }
     halves
@@ -560,11 +563,12 @@ impl FreeDfApp {
                     }
                 }
             }
-            // ── 펜 진단: 획이 끝나면 필압/폭 변화량을 로그로 남깁니다.
+            // ── 펜 진단: 획이 끝나면 필압/**렌더 폭** 변화량을 로그로 남깁니다.
             if active.tool != ToolType::Highlighter {
                 let n_pt = active.points.len();
                 let (mut pmn, mut pmx) = (f32::MAX, f32::MIN);
                 let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
+                let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
                 let mut unlocked = 0usize;
                 for p in &active.points {
                     pmn = pmn.min(p.pressure);
@@ -572,6 +576,10 @@ impl FreeDfApp {
                     if p.width > 0.0 {
                         wmn = wmn.min(p.width);
                         wmx = wmx.max(p.width);
+                        // 실제 렌더에 쓰이는 절반 폭 (stroke_halves와 동일 규칙).
+                        let h = (p.width * 0.5).max(0.05);
+                        hmn = hmn.min(h);
+                        hmx = hmx.max(h);
                     } else {
                         unlocked += 1;
                     }
@@ -582,14 +590,14 @@ impl FreeDfApp {
                     "필압 일정 → 입력 문제 (OTD 연결/필압 소스 확인)"
                 } else if unlocked > 0 {
                     "폭 잠금 안 됨 → locker 버그"
-                } else if wmx - wmn < 0.03 {
-                    "필압은 변하는데 폭 고정 → 모델/잠금 버그"
+                } else if hmx - hmn < 0.02 {
+                    "필압은 변하는데 렌더 폭 고정 → 모델/바닥값 버그"
                 } else {
-                    "OK — 폭 변화 정상"
+                    "OK — 렌더 폭 변화 정상"
                 };
                 self.pen_verdict = Some(verdict.to_string());
                 pen_trace(&format!(
-                    "stroke end: tool={:?} n={n_pt} pressure=[{pmn:.3}..{pmx:.3}] width=[{wmn:.3}..{wmx:.3}] unlocked={unlocked} live_pressure={:?} tilt=[{:+.0},{:+.0}] → {verdict}",
+                    "stroke end: tool={:?} n={n_pt} pressure=[{pmn:.3}..{pmx:.3}] width=[{wmn:.3}..{wmx:.3}] half=[{hmn:.3}..{hmx:.3}] unlocked={unlocked} live_pressure={:?} tilt=[{:+.0},{:+.0}] → {verdict}",
                     active.tool, self.live_pressure, self.pen_tilt[0], self.pen_tilt[1]
                 ));
             }
