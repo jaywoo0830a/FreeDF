@@ -11,12 +11,25 @@
 //! - Linux: `/dev/input/event*`(evdev) — 틸트/필압/접촉을 바로 디코딩해 출력.
 //! - Windows: hidapi — 펜 디지타이저의 **원시 리포트 바이트(hex)**를 출력해
 //!   사용자가 오프셋을 직접 파악하도록 돕습니다 (변하는 바이트 = 필드).
+//!
+//! Windows 옵션:
+//!   --list           # 장치 목록만
+//!   --index N        # 목록의 N번째 장치 선택 (기본: 펜 usage=0x02 첫 번째)
 
+#[cfg(target_os = "windows")]
+use freedf_core::pen_input;
+#[cfg(not(target_os = "windows"))]
 use freedf_core::pen_input;
 
 #[cfg(target_os = "windows")]
 fn main() {
-    let list_only = std::env::args().any(|a| a == "--list");
+    let args: Vec<String> = std::env::args().collect();
+    let list_only = args.iter().any(|a| a == "--list");
+    let index_arg = args
+        .iter()
+        .position(|a| a == "--index")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<usize>().ok());
     let api = match hidapi::HidApi::new() {
         Ok(a) => a,
         Err(e) => {
@@ -35,9 +48,9 @@ fn main() {
         return;
     }
     println!("[hidprobe] 발견된 디지타이저:");
-    for d in &devices {
+    for (i, d) in devices.iter().enumerate() {
         println!(
-            "  vid={:04x} pid={:04x} usage={:04x} product={}",
+            "  [{i}] vid={:04x} pid={:04x} usage={:04x} product={}",
             d.vendor_id(),
             d.product_id(),
             d.usage(),
@@ -47,33 +60,69 @@ fn main() {
     if list_only {
         return;
     }
-    let chosen = devices
-        .iter()
-        .find(|d| d.usage() == 0x02) // 펜
-        .or_else(|| devices.first());
+    let chosen = match index_arg {
+        Some(i) => devices.get(i),
+        None => devices
+            .iter()
+            .find(|d| d.usage() == 0x02) // 펜
+            .or_else(|| devices.first()),
+    };
     let Some(info) = chosen else {
+        println!("[hidprobe] 선택된 장치가 없습니다 (--index 범위 확인).");
         return;
     };
     let device = match info.open_device(&api) {
         Ok(d) => d,
         Err(e) => {
             println!("[hidprobe] 장치 열기 실패: {e}");
+            println!("[hidprobe] 다른 프로세스(태블릿 드라이버 등)가 독점 중일 수 있습니다.");
             return;
         }
     };
     let _ = device.set_blocking_mode(false);
-    println!("[hidprobe] 스트리밍 시작 — 펜으로 그어 보세요 (Ctrl+C 종료).");
+    println!(
+        "[hidprobe] 선택: vid={:04x} pid={:04x} — 스트리밍 시작 (Ctrl+C 종료).",
+        info.vendor_id(),
+        info.product_id()
+    );
     println!("[hidprobe] 바이트 중 **움직이는 위치**가 X/Y/필압/틸트 필드입니다.");
-    let mut buf = [0u8; 64];
+    let mut buf = [0u8; 128];
+    let mut err_count: u64 = 0;
+    let mut empty_count: u64 = 0;
+    let mut last_notice = std::time::Instant::now();
     loop {
         match device.read_timeout(&mut buf, 500) {
             Ok(n) if n > 0 => {
+                err_count = 0;
+                empty_count = 0;
                 let hex: Vec<String> = buf[..n].iter().map(|b| format!("{b:02x}")).collect();
                 println!("report({n}B): {}", hex.join(" "));
             }
-            Ok(_) => {}
-            Err(_) => {}
+            Ok(_) => {
+                // 리포트 없음(타임아웃) — 펜이 닿지 않았거나 이 장치가 펜이 아님.
+                empty_count += 1;
+                if last_notice.elapsed() > std::time::Duration::from_secs(3) {
+                    println!(
+                        "(3초간 리포트 없음 — 펜으로 직접 그어 보세요. 안 나오면 --index로 다른 장치 시도)"
+                    );
+                    last_notice = std::time::Instant::now();
+                }
+            }
+            Err(e) => {
+                err_count += 1;
+                if err_count == 1 || (err_count <= 5 && err_count % 3 == 0) {
+                    println!("[hidprobe] 읽기 오류({err_count}회): {e}");
+                }
+                if err_count == 1 {
+                    println!(
+                        "[hidprobe] 힌트: 태블릿 드라이버가 장치를 독점 중이면 읽기가 막힙니다. \\\n\
+                         드라이버를 잠시 종료하거나 --index로 다른 장치를 시도해 보세요."
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
         }
+        let _ = empty_count;
     }
 }
 

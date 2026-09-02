@@ -64,7 +64,8 @@ pub fn spawn_monitor() -> Option<PenMonitor> {
     // ── 수신 스레드 — 원시 리포트 → parse_report → 앱으로 전달 ──
     let (tx, monitor) = pen_input::channel();
     std::thread::spawn(move || {
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 128];
+        let mut first_error = true;
         loop {
             match device.read_timeout(&mut buf, 500) {
                 Ok(n) if n > 0 => {
@@ -74,8 +75,15 @@ pub fn spawn_monitor() -> Option<PenMonitor> {
                         }
                     }
                 }
-                Ok(_) => {} // 0바이트 — 계속.
-                Err(_) => {} // 타임아웃/해제 — 계속.
+                Ok(_) => {} // 0바이트(타임아웃) — 계속.
+                Err(e) => {
+                    if first_error {
+                        // 진단용 — 원인(독점/해제)을 한 번만 알립니다.
+                        eprintln!("[pen_hid] 리포트 읽기 오류: {e}");
+                        first_error = false;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                }
             }
         }
     });
