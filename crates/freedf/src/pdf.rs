@@ -256,30 +256,40 @@ impl DocumentView {
 
     /// 페이지의 텍스트 세그먼트를 검색용 `TextRun` 목록으로 변환합니다.
     ///
-    /// pdfium의 텍스트 좌표는 페이지 **좌하단 원점(y 위)** 이지만 앱의 페이지
-    /// 좌표는 **좌상단 원점(y 아래)** 입니다. 여기서 세로를 뒤집어 앱 좌표로
-    /// 맞춥니다. (그래야 텍스트 하이라이트 스냅/검색 하이라이트가 제자리에 옴)
+    /// pdfium의 텍스트 좌표는 **미디어박스 콘텐츠 공간** 입니다:
+    /// 좌하단 원점(y 위)이고 페이지의 `/Rotate` 는 **적용되지 않습니다**
+    /// (실측 검증: /Rotate 90/180 페이지에서 char 좌표가 변하지 않음).
+    /// 앱의 페이지 좌표는 회전이 반영된 **표시 공간**(좌상단 원점, y 아래)
+    /// 이므로, 여기서 세로 뒤집기 + 회전 변환을 해야 텍스트 하이라이트
+    /// 스냅/검색 하이라이트가 렌더된 글자 위에 정확히 옵니다.
     pub fn page_text_runs(&self, index: usize) -> Result<Vec<TextRun>, String> {
         let page = self
             .document
             .pages()
             .get(index as i32)
             .map_err(|e| format!("Could not read page: {e}"))?;
-        let page_h = page.height().value;
+        let w = page.width().value;
+        let h = page.height().value;
+        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
         let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
             let txt = seg.text();
             let b = seg.bounds();
-            // pdf: bottom <= top (y up) → 앱: y0 = page_h - top, y1 = page_h - bottom
-            let rect = [
+            // 콘텐츠 공간(좌하단 원점, y 위) 사각형: [left, bottom, right, top]
+            let (x0, y0, x1, y1) = (
                 b.left().value,
-                page_h - b.top().value,
+                b.bottom().value,
                 b.right().value,
-                page_h - b.bottom().value,
-            ];
-            // pdfium-render 0.9.3은 문자 단위 좌표를 노출하지 않으므로 빈 벡터.
-            // core의 find_matches가 run.rect 비율 폴백으로 처리합니다.
+                b.top().value,
+            );
+            // 표시 공간(좌상단 원점, y 아래)으로 변환. (픽셀 렌더로 검증됨)
+            let rect = match rot {
+                PdfPageRenderRotation::None => [x0, h - y1, x1, h - y0],
+                PdfPageRenderRotation::Degrees90 => [y0, x0, y1, x1],
+                PdfPageRenderRotation::Degrees180 => [w - x1, y0, w - x0, y1],
+                PdfPageRenderRotation::Degrees270 => [h - y1, w - x1, h - y0, w - x0],
+            };
             runs.push(TextRun::new(txt, rect, Vec::new()));
         }
         Ok(runs)

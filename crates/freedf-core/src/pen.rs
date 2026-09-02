@@ -35,6 +35,38 @@ pub fn uses_own_profile(tool: ToolType) -> bool {
     matches!(tool, ToolType::Ballpoint | ToolType::Fountain)
 }
 
+/// 도구별 **기본 두께 배율** — 같은 "Width" 슬라이더 값이라도 도구마다
+/// 실제 선 굵기가 다르게 보이게 해서 구분감을 줍니다.
+///
+/// - `Pen`: 1.0 (기준)
+/// - `Ballpoint`: 0.6 — 볼펜은 항상 가늘고 일정합니다.
+/// - `Fountain`: 1.25 — 만년필은 두껍고, 빠르게 쓰면 얇아집니다.
+///
+/// 실제 선 두께 = `stroke.width × base_width_factor(tool) × ink_modifier(...)`.
+pub fn base_width_factor(tool: ToolType) -> f32 {
+    match tool {
+        ToolType::Ballpoint => 0.6,
+        ToolType::Fountain => 1.25,
+        _ => 1.0,
+    }
+}
+
+/// 도구 선택 UI에 표시하는 짧은 프로필 설명.
+pub fn ink_profile_hint(tool: ToolType) -> &'static str {
+    match tool {
+        ToolType::Ballpoint => {
+            "Ballpoint: thin & steady at any speed — a consistent, even line."
+        }
+        ToolType::Fountain => {
+            "Fountain: thicker, expressive nib — thins out as you write faster."
+        }
+        ToolType::Pen => {
+            "Pen: medium width that follows the pressure curve (tablet / stylus)."
+        }
+        _ => "",
+    }
+}
+
 /// 색상 계열.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColorFamily {
@@ -264,5 +296,19 @@ mod tests {
         assert!(f_fast_light < f_slow_press, "빠르게 가볍게는 더 얇아야");
         assert!(uses_own_profile(ToolType::Fountain));
         assert!(!uses_own_profile(ToolType::Pen));
+    }
+
+    #[test]
+    fn base_width_factor_distinguishes_pens() {
+        use crate::model::ToolType;
+        // 기준 도구는 1.0
+        assert!((base_width_factor(ToolType::Pen) - 1.0).abs() < 1e-6);
+        assert!((base_width_factor(ToolType::Highlighter) - 1.0).abs() < 1e-6);
+        // 볼펜은 확실히 가늘게, 만년필은 확실히 굵게
+        assert!(base_width_factor(ToolType::Ballpoint) < 0.8);
+        assert!(base_width_factor(ToolType::Fountain) > 1.1);
+        // 구분감이 있어야 함
+        assert!(base_width_factor(ToolType::Ballpoint) < base_width_factor(ToolType::Pen));
+        assert!(base_width_factor(ToolType::Pen) < base_width_factor(ToolType::Fountain));
     }
 }

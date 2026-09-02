@@ -5,7 +5,7 @@
 
 use freedf_core::model::{Stroke, StrokePoint};
 use freedf_core::paper::{clamp_spacing, paper_dots, paper_lines, PaperStyle};
-use freedf_core::pen::{ink_modifier, uses_own_profile, PressureCurve};
+use freedf_core::pen::{base_width_factor, ink_modifier, uses_own_profile, PressureCurve};
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
@@ -69,19 +69,20 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
     }
     if pts.len() == 1 {
         let p = scale_point(&pts[0], scale);
-        let r = curve.apply(stroke.width, pts[0].pressure) * scale / 2.0;
+        let r = curve.apply(stroke.width, pts[0].pressure) * base_width_factor(stroke.tool) * scale / 2.0;
         draw_disk(img, p, r, color);
         return;
     }
+    let wfactor = base_width_factor(stroke.tool);
     for w in pts.windows(2) {
         let a = scale_point(&w[0], scale);
         let b = scale_point(&w[1], scale);
         let pressure = (w[0].pressure + w[1].pressure) * 0.5;
         let width = if uses_own_profile(stroke.tool) {
             let speed = ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt();
-            stroke.width * ink_modifier(stroke.tool, pressure, speed) * scale
+            stroke.width * wfactor * ink_modifier(stroke.tool, pressure, speed) * scale
         } else {
-            curve.apply(stroke.width, pressure) * scale
+            curve.apply(stroke.width, pressure) * wfactor * scale
         };
         draw_segment(img, a, b, width, color);
     }

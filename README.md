@@ -20,11 +20,12 @@ native file dialogs, Windows Ink pressure).
   panel open state & **panel widths**, and ink/paper settings. The tab strip scrolls
   horizontally and long titles are truncated (full name on hover)
 - 🪟 **Split a tab into a new window** — right-click any **standalone PDF** tab and
-  choose *Open in new window*: FreeDF relaunches itself as a separate OS window that
-  opens that file (each window is its own process — eframe runs one window per
-  process and PDFium is single-binding per process). Sidecar annotations and the
-  per-file session are restored in the new window too. FreeDF **notes** share one
-  annotation file, so the option is disabled for them to avoid losing ink
+  choose *Open in new window*: FreeDF relaunches itself as a separate OS window
+  (each window is its own process — eframe runs one window per process and PDFium
+  is single-binding per process) and **moves** the tab there — the current window
+  closes the tab (ink is flushed to the sidecar first), so the same document never
+  appears in two windows. FreeDF **notes** share one annotation file, so the option
+  is disabled for them to avoid losing ink
 - 🗂️ **Library panel** — a modern side panel with a **search filter** and count
   badges groups **Notes**, **PDFs** and **Recents** into clean rows (title +
   meta), so you can jump between notebooks and recently opened files
@@ -44,15 +45,20 @@ native file dialogs, Windows Ink pressure).
   search bar (with focus), yellow highlights for matches, an orange border for
   the current one, prev/next and a result counter
 - ✏️ **Pen variants (Ballpoint / Fountain)** — three ink tools (Pen, Ballpoint,
-  Fountain) that follow GoodNotes-style profiles: Ballpoint keeps a steady,
-  even width regardless of speed, while Fountain gets **thinner when you write
-  fast** and thicker with pressure for that live calligraphy feel. Strokes are
-  stored in page coordinates, so they never drift under zoom/pan
+  Fountain) that are **visibly different** even with a mouse: Ballpoint draws
+  **thin & steady** (~0.6× the Width setting), Fountain draws **thicker** (~1.25×)
+  and gets **thinner when you write fast** for a live calligraphy feel, and Pen is
+  the medium, pressure-following reference (each tool shows its profile hint under
+  the Width slider). Strokes are stored in page coordinates, so they never drift
+  under zoom/pan
 - ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
   hand Pan tool complete the toolkit
 - 🔖 **Text-aware highlighter** — by default the Highlighter recognizes the
   document's actual text and snaps to it: swipe across a paragraph and you get
-  clean highlights exactly over the words (turn off with “Snap to text”)
+  clean highlights exactly over the words (turn off with “Snap to text”). Works on
+  **rotated pages** too (text coordinates are mapped into the page's display
+  space), and if the page has **no selectable text** (scanned/image PDF) a status
+  message tells you instead of silently drawing a freehand stroke
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
@@ -235,7 +241,12 @@ Events: `app_start`, `note_opened`, `note_created`, `note_renamed`, `note_delete
 | `crates/freedf-core/src/pen.rs` | color families/palettes + pressure curve |
 | `crates/freedf-core/src/logging.rs` | JSON-lines structured logger |
 | `crates/freedf/src/pdf.rs` | PDFium loading, rendering, outline/text extraction, page CRUD, save |
-| `crates/freedf/src/app.rs` | canvas, tools, toolbar, notes/outline/search UI, shortcuts, file IO |
+| `crates/freedf/src/app/mod.rs` | app state (`FreeDfApp`) + `eframe::App` glue, session persistence, shared helpers |
+| `crates/freedf/src/app/tabs.rs` | tab strip UI + tab lifecycle (open/switch/close) + detach to a new window |
+| `crates/freedf/src/app/toolbar.rs` | three-tier toolbar, tool picker (drag to reorder), per-tool settings |
+| `crates/freedf/src/app/panels.rs` | Library (Notes/PDFs/Recents) + Outline side panels |
+| `crates/freedf/src/app/canvas.rs` | page canvas: pan/zoom/draw, painting, text-aware highlight, palette & nav overlays, cursors |
+| `crates/freedf/src/app/actions.rs` | open/save/export, page CRUD & rotate, search, bookmarks, undo/redo |
 | `crates/freedf/src/export.rs` | rasterize annotations onto an image → PNG |
 
 ## Troubleshooting
