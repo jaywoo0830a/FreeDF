@@ -1,8 +1,9 @@
 //! 신규 기능(노트 CRUD, 페이지 CRUD, 아웃라인, 검색, 펜, 로깅) 통합 테스트.
+//! (FreeDF v2: 영속화는 PostgreSQL 담당 — 이 테스트는 순수 인메모리 로직만 검증)
 
 use freedf_core::logging::{AppEvent, LogEntry, Logger};
 use freedf_core::model::{StrokePoint, ToolType};
-use freedf_core::notes::NotesManager;
+use freedf_core::notes::{NoteMeta, NotesManager};
 use freedf_core::outline::{find_by_title, flatten, OutlineNode};
 use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
 use freedf_core::search::{find_matches, TextRun};
@@ -22,11 +23,10 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// 노트 CRUD 전체 시나리오 + 페이지 수 유지.
+/// 노트 CRUD 전체 시나리오 + 페이지 수 유지 (인메모리).
 #[test]
 fn notes_crud_end_to_end() {
-    let dir = temp_dir("notes");
-    let mut notes = NotesManager::new(dir.clone());
+    let mut notes = NotesManager::new();
 
     let a = notes.create_note("Math").unwrap();
     let b = notes.create_note("Physics").unwrap();
@@ -38,18 +38,11 @@ fn notes_crud_end_to_end() {
     notes.set_page_count(b.id, 12).unwrap();
     assert_eq!(notes.get(b.id).unwrap().page_count, 12);
 
-    // 저장 후 다시 로드
-    notes.save().unwrap();
-    let mut reloaded = NotesManager::new(dir.clone());
-    reloaded.load().unwrap();
+    // 메타 목록으로 캐시 재구성 (DB 로드 경로와 동일한 경로).
+    let metas: Vec<NoteMeta> = notes.list().iter().map(|m| (*m).clone()).collect();
+    let reloaded = NotesManager::from_metas(metas);
     assert_eq!(reloaded.len(), 2);
     assert_eq!(reloaded.get(a.id).unwrap().title, "Advanced Math");
-
-    // 삭제
-    reloaded.delete_note(a.id).unwrap();
-    assert_eq!(reloaded.len(), 1);
-    assert!(!reloaded.note_dir(a.id).exists());
-    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// 페이지 CRUD와 주석 인덱스 정리가 함께 동작.

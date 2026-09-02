@@ -137,6 +137,47 @@ impl AnnotationStore {
         page.strokes.extend(strokes);
     }
 
+    /// DB 시퀀스에서 미리 할당받은 id로 스트로크 하나를 추가합니다.
+    /// (id를 먼저 알아야 DB 행과 히스토리가 같은 id를 공유할 수 있습니다)
+    pub fn add_stroke_with_id(
+        &mut self,
+        page_index: PageIndex,
+        id: u64,
+        tool: ToolType,
+        color: [u8; 4],
+        width: f32,
+        points: Vec<StrokePoint>,
+    ) {
+        self.next_stroke_id = self.next_stroke_id.max(id + 1);
+        self.ensure_page(page_index).strokes.push(Stroke {
+            id,
+            tool,
+            color,
+            width,
+            points,
+        });
+    }
+
+    /// 임시 로컬 id를 DB의 최종 id로 교체합니다.
+    pub fn assign_stroke_id(&mut self, page_index: PageIndex, from: u64, to: u64) {
+        if from == to {
+            return;
+        }
+        if let Some(page) = self.pages.get_mut(&page_index) {
+            for s in &mut page.strokes {
+                if s.id == from {
+                    s.id = to;
+                }
+            }
+        }
+        self.next_stroke_id = self.next_stroke_id.max(to + 1);
+    }
+
+    /// 페이지별 용지 설정 전체를 순회합니다 (DB pages 테이블 동기화용).
+    pub fn paper_entries(&self) -> impl Iterator<Item = (PageIndex, PagePaper)> + '_ {
+        self.paper.iter().map(|(k, v)| (*k, *v))
+    }
+
     /// 페이지에서 스트로크 하나 제거.
     pub fn remove_stroke(&mut self, page_index: PageIndex, stroke_id: u64) -> Option<Stroke> {
         let page = self.pages.get_mut(&page_index)?;

@@ -37,8 +37,8 @@ impl FreeDfApp {
         let has_note = self.current_note.is_some();
         let mut rename_note = false;
         let mut delete_note = false;
-        // 다중 삭제: (선택된 노트 id, 선택된 PDF 경로) — 확인 모달로 전달.
-        let mut delete_selected: Option<(Vec<u64>, Vec<PathBuf>)> = None;
+        // 다중 삭제: (선택된 노트 id, 선택된 PDF id) — 확인 모달로 전달.
+        let mut delete_selected: Option<(Vec<i64>, Vec<i64>)> = None;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -101,7 +101,7 @@ impl FreeDfApp {
                     );
                 } else {
                     for (id, title, page_count) in &notes {
-                        let mut sel = self.sel_notes.contains(id);
+                        let mut sel = self.sel_notes.contains(&(*id as i64));
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                             if ui
@@ -110,9 +110,9 @@ impl FreeDfApp {
                                 .changed()
                             {
                                 if sel {
-                                    self.sel_notes.insert(*id);
+                                    self.sel_notes.insert(*id as i64);
                                 } else {
-                                    self.sel_notes.remove(id);
+                                    self.sel_notes.remove(&(*id as i64));
                                 }
                             }
                             let meta = if *page_count > 0 {
@@ -120,7 +120,7 @@ impl FreeDfApp {
                             } else {
                                 String::new()
                             };
-                            let selected = self.current_note == Some(*id);
+                            let selected = self.current_note == Some(*id as i64);
                             if library_row(ui, selected, title, &meta) {
                                 self.open_note(*id);
                             }
@@ -134,7 +134,7 @@ impl FreeDfApp {
                         )
                         .clicked()
                     {
-                        let ids: Vec<u64> = self.sel_notes.iter().copied().collect();
+                        let ids: Vec<i64> = self.sel_notes.iter().copied().collect();
                         delete_selected = Some((ids, Vec::new()));
                     }
                 }
@@ -168,10 +168,7 @@ impl FreeDfApp {
                     ui.label(egui::RichText::new("No PDFs opened yet.").weak().small());
                 } else {
                     for f in &visible {
-                        let mut sel = f
-                            .path
-                            .as_ref()
-                            .is_some_and(|p| self.sel_pdfs.contains(p));
+                        let mut sel = f.doc_id.is_some_and(|d| self.sel_pdfs.contains(&d));
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                             if ui
@@ -179,17 +176,17 @@ impl FreeDfApp {
                                 .on_hover_text("Select for multi-delete")
                                 .changed()
                             {
-                                if let Some(p) = &f.path {
+                                if let Some(d) = f.doc_id {
                                     if sel {
-                                        self.sel_pdfs.insert(p.clone());
+                                        self.sel_pdfs.insert(d);
                                     } else {
-                                        self.sel_pdfs.remove(p);
+                                        self.sel_pdfs.remove(&d);
                                     }
                                 }
                             }
                             if library_row(ui, false, &f.title, "PDF") {
-                                if let Some(p) = &f.path {
-                                    self.open_pdf(p);
+                                if let Some(d) = f.doc_id {
+                                    self.open_document(d);
                                 }
                             }
                         });
@@ -198,12 +195,12 @@ impl FreeDfApp {
                     if ui
                         .add_enabled(n_sel > 0, egui::Button::new(format!("Delete selected ({n_sel})")))
                         .on_hover_text(
-                            "Delete the checked PDF files from disk (annotations and \
-                             per-file session are removed too).",
+                            "Delete the checked PDF documents from the library \
+                             (the original files on disk are left untouched).",
                         )
                         .clicked()
                     {
-                        let paths: Vec<PathBuf> = self.sel_pdfs.iter().cloned().collect();
+                        let paths: Vec<i64> = self.sel_pdfs.iter().copied().collect();
                         delete_selected = Some((Vec::new(), paths));
                     }
                 }
@@ -237,17 +234,8 @@ impl FreeDfApp {
                             RecentKind::File => "pdf".to_string(),
                         };
                         if library_row(ui, false, &item.title, &meta) {
-                            match item.kind {
-                                RecentKind::Note => {
-                                    if let Some(id) = item.note_id {
-                                        self.open_note(id);
-                                    }
-                                }
-                                RecentKind::File => {
-                                    if let Some(p) = &item.path {
-                                        self.open_pdf(p);
-                                    }
-                                }
+                            if let Some(doc_id) = item.doc_id {
+                                self.open_document(doc_id);
                             }
                         }
                     }
@@ -261,7 +249,7 @@ impl FreeDfApp {
                 parts.push(format!("{} note(s) and their annotations", nids.len()));
             }
             if !ppaths.is_empty() {
-                parts.push(format!("{} PDF file(s) from disk", ppaths.len()));
+                parts.push(format!("{} PDF document(s) from the library", ppaths.len()));
             }
             let msg = format!(
                 "Delete {}?\nThis cannot be undone.",
@@ -284,7 +272,7 @@ impl FreeDfApp {
             if let Some(id) = self.current_note {
                 let current = self
                     .notes
-                    .get(id)
+                    .get(id as u64)
                     .map(|m| m.title.clone())
                     .unwrap_or_default();
                 let mut modal =

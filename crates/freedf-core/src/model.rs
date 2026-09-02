@@ -35,6 +35,18 @@ impl ToolType {
         }
     }
 
+    /// 라벨에서 도구 복원 (DB 저장 값 역변환). 알 수 없으면 Pen.
+    pub fn from_label(label: &str) -> ToolType {
+        match label {
+            "Ballpoint" => ToolType::Ballpoint,
+            "Fountain" => ToolType::Fountain,
+            "Highlighter" => ToolType::Highlighter,
+            "Eraser" => ToolType::Eraser,
+            "Pan" => ToolType::Pan,
+            _ => ToolType::Pen,
+        }
+    }
+
     /// 잉크를 남기는 필기 도구인지 (지우개/팬 아님).
     pub fn is_ink(self) -> bool {
         matches!(

@@ -161,13 +161,38 @@ impl FreeDfApp {
             {
                 return;
             }
-            let id = self.store.add_stroke(
-                self.current_page,
-                active.tool,
-                active.color,
-                active.width,
-                active.points,
-            );
+            // DB 시퀀스에서 id를 미리 할당받아 스토어/히스토리/DB 행이 같은
+            // id를 공유하게 합니다 (undo/redo가 정확히 같은 행을 복원).
+            let db_id = self.db.alloc_stroke_ids(1).first().copied();
+            let id = match (self.doc_id, db_id) {
+                (Some(doc_id), Some(sid)) => {
+                    self.store.add_stroke_with_id(
+                        self.current_page,
+                        sid as u64,
+                        active.tool,
+                        active.color,
+                        active.width,
+                        active.points,
+                    );
+                    let strokes: Vec<_> = self
+                        .store
+                        .strokes_on(self.current_page)
+                        .iter()
+                        .filter(|s| s.id == sid as u64)
+                        .cloned()
+                        .collect();
+                    self.db
+                        .insert_strokes(doc_id, self.current_page as i32, &strokes);
+                    sid as u64
+                }
+                _ => self.store.add_stroke(
+                    self.current_page,
+                    active.tool,
+                    active.color,
+                    active.width,
+                    active.points,
+                ),
+            };
             if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
                 self.history.push(Edit::AddStrokes {
                     page: self.current_page,
@@ -180,7 +205,6 @@ impl FreeDfApp {
                     width: active.width,
                 });
             }
-            self.autosave();
         }
     }
 
@@ -219,27 +243,29 @@ impl FreeDfApp {
         if rects.is_empty() {
             return false;
         }
+        // DB 시퀀스에서 밴드 수만큼 id를 미리 할당합니다.
+        let ids = self.db.alloc_stroke_ids(rects.len());
         let mut strokes = Vec::new();
-        for r in rects {
+        for (k, r) in rects.iter().enumerate() {
             // 밴드 높이 = 그 줄의 글자 높이(포인트). 필압은 1.0(무시).
             let line_h = (r[3] - r[1]).max(2.0);
             let yc = (r[1] + r[3]) * 0.5;
-            let id = self.store.add_stroke(
-                self.current_page,
-                ToolType::Highlighter,
-                active.color,
-                line_h,
-                vec![
+            let sid = ids.get(k).copied().map(|i| i as u64).unwrap_or(0);
+            strokes.push(freedf_core::model::Stroke {
+                id: sid,
+                tool: ToolType::Highlighter,
+                color: active.color,
+                width: line_h,
+                points: vec![
                     StrokePoint::new(r[0], yc, 1.0),
                     StrokePoint::new(r[2], yc, 1.0),
                 ],
-            );
-            if let Some(st) = self.store.stroke(self.current_page, id).cloned() {
-                strokes.push(st);
-            }
+            });
         }
-        if strokes.is_empty() {
-            return false;
+        self.store.add_strokes(self.current_page, strokes.clone());
+        if let Some(doc_id) = self.doc_id {
+            self.db
+                .insert_strokes(doc_id, self.current_page as i32, &strokes);
         }
         self.history.push(Edit::AddStrokes {
             page: self.current_page,
@@ -251,7 +277,6 @@ impl FreeDfApp {
             tool: "Highlighter".to_string(),
             width: active.width,
         });
-        self.autosave();
         true
     }
 
@@ -1112,6 +1137,12 @@ impl FreeDfApp {
                         let radius = self.eraser_radius / self.view.zoom;
                         let removed = self.store.erase_at(self.current_page, page, radius);
                         if !removed.is_empty() {
+                            // 지워진 행만 DB에서 삭제 (증분).
+                            if let Some(doc_id) = self.doc_id {
+                                let ids: Vec<i64> =
+                                    removed.iter().map(|s| s.id as i64).collect();
+                                self.db.delete_strokes(doc_id, &ids);
+                            }
                             self.history.push(Edit::RemoveStrokes {
                                 page: self.current_page,
                                 strokes: removed.clone(),
@@ -1120,7 +1151,6 @@ impl FreeDfApp {
                                 page: self.current_page,
                                 strokes: removed.len(),
                             });
-                            self.autosave();
                         }
                     }
                 }

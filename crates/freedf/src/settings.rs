@@ -1,14 +1,16 @@
-//! 앱 세션 영속화 — 전역 기본값과 문서별 GUI 상태를 모두 `SessionState` 하나로 관리.
+//! 앱 세션 상태 — 전역 기본값과 문서별 GUI 상태를 모두 `SessionState` 하나로 관리.
 //!
-//! - **전역 기본 세션**(마지막 펜 색, 용지, 도구 등) → `<data>/session.json`
-//! - **문서별 세션**(마지막 페이지, 줌/팬 등) → 노트 폴더(또는 PDF 옆) `session.json`
+//! FreeDF v2: 영속화는 PostgreSQL이 담당합니다.
+//! - **전역 기본 세션** → `app_state` 테이블 (key = 'session')
+//! - **문서별 세션** → `sessions` 테이블 (doc_id 기준)
+//!
+//! 이 모듈은 상태 구조체와 기본값만 정의하고, JSONB 변환은 `serde_json`으로 앱이 처리합니다.
 
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
 use freedf_core::pen::{ColorFamily, PressureCurve};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 /// GUI 세션 상태.
 ///
@@ -172,32 +174,14 @@ impl Default for SessionState {
     }
 }
 
-/// 파일에서 JSON으로 로드. 없거나 깨졌으면 기본값.
-pub fn load_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-/// JSON으로 저장 (부모 폴더 자동 생성).
-pub fn save_json<T: Serialize>(value: &T, path: &Path) {
-    if let Ok(json) = serde_json::to_string_pretty(value) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(path, json);
-    }
-}
-
 impl SessionState {
-    /// 파일에서 로드합니다. 없거나 깨졌으면 기본값.
-    pub fn load(path: &Path) -> Self {
-        load_json(path)
+    /// JSONB 값으로 변환 (DB 저장용).
+    pub fn to_json_value(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| serde_json::Value::Null)
     }
 
-    /// JSON으로 저장합니다 (부모 폴더 자동 생성).
-    pub fn save(&self, path: &Path) {
-        save_json(self, path);
+    /// JSONB 값에서 복원. 실패/누락 시 기본값.
+    pub fn from_json_value(value: serde_json::Value) -> Self {
+        serde_json::from_value(value).unwrap_or_default()
     }
 }

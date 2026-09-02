@@ -39,10 +39,19 @@ pub struct LogEntry {
     pub event: AppEvent,
 }
 
-/// 구조적 로거. 한 줄 = 하나의 JSON. 비활성화 가능.
+/// 구조적 로거. 한 줄 = 하나의 JSON 이벤트.
+///
+/// 싱크는 파일(JSONL) 또는 커스텀 콜백(PostgreSQL event_log 테이블)입니다.
 pub struct Logger {
-    writer: Option<BufWriter<File>>,
+    sink: Sink,
     seq: u64,
+}
+
+enum Sink {
+    Disabled,
+    File(BufWriter<File>),
+    /// FreeDF v2: DB(event_log 테이블)에 기록하는 콜백.
+    Custom(Box<dyn FnMut(LogEntry) + Send>),
 }
 
 impl Logger {
@@ -53,18 +62,29 @@ impl Logger {
         }
         let file = File::options().create(true).append(true).open(path)?;
         Ok(Self {
-            writer: Some(BufWriter::new(file)),
+            sink: Sink::File(BufWriter::new(file)),
             seq: 0,
         })
     }
 
-    /// 기록하지 않는 로거 (예: 파일 열기 실패 시).
+    /// 기록하지 않는 로거 (예: 연결 실패 시).
     pub fn disabled() -> Self {
-        Self { writer: None, seq: 0 }
+        Self {
+            sink: Sink::Disabled,
+            seq: 0,
+        }
+    }
+
+    /// 사용자 싱크(DB 등)에 이벤트를 넘기는 로거.
+    pub fn to_sink(f: impl FnMut(LogEntry) + Send + 'static) -> Self {
+        Self {
+            sink: Sink::Custom(Box::new(f)),
+            seq: 0,
+        }
     }
 
     pub fn enabled(&self) -> bool {
-        self.writer.is_some()
+        !matches!(self.sink, Sink::Disabled)
     }
 
     pub fn seq(&self) -> u64 {
@@ -73,22 +93,33 @@ impl Logger {
 
     /// 이벤트를 한 줄로 기록합니다.
     pub fn log(&mut self, event: AppEvent) {
-        let Some(writer) = self.writer.as_mut() else {
-            return;
-        };
-        self.seq += 1;
-        let entry = LogEntry {
-            epoch_ms: now_ms(),
-            seq: self.seq,
-            event,
-        };
-        if let Ok(line) = serde_json::to_string(&entry) {
-            let _ = writeln!(writer, "{line}");
+        match &mut self.sink {
+            Sink::Disabled => {}
+            Sink::File(writer) => {
+                self.seq += 1;
+                let entry = LogEntry {
+                    epoch_ms: now_ms(),
+                    seq: self.seq,
+                    event,
+                };
+                if let Ok(line) = serde_json::to_string(&entry) {
+                    let _ = writeln!(writer, "{line}");
+                }
+            }
+            Sink::Custom(f) => {
+                self.seq += 1;
+                let entry = LogEntry {
+                    epoch_ms: now_ms(),
+                    seq: self.seq,
+                    event,
+                };
+                f(entry);
+            }
         }
     }
 
     pub fn flush(&mut self) {
-        if let Some(writer) = self.writer.as_mut() {
+        if let Sink::File(writer) = &mut self.sink {
             let _ = writer.flush();
         }
     }

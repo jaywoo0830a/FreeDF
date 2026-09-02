@@ -156,6 +156,53 @@ impl DocumentView {
         })
     }
 
+    /// PostgreSQL(BYTEA)에서 내려온 바이트로 문서를 엽니다.
+    ///
+    /// pdfium-render의 `load_pdf_from_byte_slice`는 바이트 슬라이스를 문서보다
+    /// 오래 유지해야 하므로(수명 결합), 임시 파일에 쓴 뒤 `load_pdf_from_file`로
+    /// 로드하고 즉시 정리합니다 (pdfium은 로드 시 파일 전체를 메모리로 읽음).
+    pub fn open_bytes(pdfium: &Pdfium, bytes: &[u8], name: &str) -> Result<Self, String> {
+        let temp = std::env::temp_dir().join(format!(
+            "freedf-{}-{:x}.pdf",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&temp, bytes).map_err(|e| format!("Could not stage PDF bytes: {e}"))?;
+        let result = Self::open(pdfium, &temp);
+        let _ = std::fs::remove_file(&temp);
+        result.map(|mut doc| {
+            doc.file_name = name.to_string();
+            doc
+        })
+    }
+
+    /// 이미 로드된 PDFium 인스턴스로 빈 문서(페이지 1장)를 **메모리에** 생성합니다.
+    pub fn create_blank_view(
+        pdfium: &Pdfium,
+        size_pts: [f32; 2],
+        name: &str,
+    ) -> Result<Self, String> {
+        let document = pdfium
+            .create_new_pdf()
+            .map_err(|e| format!("Could not create new PDF: {e}"))?;
+        // open()과 동일한 수명 확장 패턴 (pdfium은 호출부에서 수명이 보장됨).
+        let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
+        let paper =
+            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
+        document
+            .pages_mut()
+            .create_page_at_end(paper)
+            .map_err(|e| format!("Could not create page: {e}"))?;
+        Ok(Self {
+            document,
+            file_name: name.to_string(),
+            page_sizes_pts: vec![size_pts],
+        })
+    }
+
     pub fn page_count(&self) -> usize {
         self.page_sizes_pts.len()
     }
@@ -336,33 +383,10 @@ impl DocumentView {
         Ok(())
     }
 
-    /// 현재 문서(주석 포함)를 파일로 저장합니다.
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    /// 현재 문서(주석 포함)를 바이트로 직렬화합니다 (DB BYTEA 저장용).
+    pub fn save_to_bytes(&self) -> Result<Vec<u8>, String> {
         self.document
-            .save_to_file(path)
-            .map_err(|e| format!("Save failed: {e}"))
-    }
-
-    /// 이미 로드된 PDFium 인스턴스로 빈 PDF 문서를 생성해 저장합니다.
-    /// 노트 생성처럼 로딩을 다시 하지 않고 캐시된 인스턴스를 재사용할 때 씁니다.
-    pub fn create_blank_pdf_with(
-        pdfium: &Pdfium,
-        path: &Path,
-        size_pts: [f32; 2],
-    ) -> Result<(), String> {
-        let document = pdfium
-            .create_new_pdf()
-            .map_err(|e| format!("Could not create new PDF: {e}"))?;
-        // open()과 동일한 수명 확장 패턴 (pdfium은 호출부에서 수명이 보장됨).
-        let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
-        let paper =
-            PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
-        document
-            .pages_mut()
-            .create_page_at_end(paper)
-            .map_err(|e| format!("Could not create page: {e}"))?;
-        document
-            .save_to_file(path)
+            .save_to_bytes()
             .map_err(|e| format!("Save failed: {e}"))
     }
 

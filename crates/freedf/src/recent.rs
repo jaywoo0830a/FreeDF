@@ -1,17 +1,17 @@
-//! 최근에 열었던 항목(노트 + 일반 PDF) 목록.
+//! 최근에 열었던 항목(노트 + 일반 PDF) 목록 (인메모리 캐시).
 //!
-//! `<data>/recent.json`에 저장되며, 앱 데이터 폴더의 settings.json 옆에
-//! 둡니다. 노트와 PDF를 구분해 각각 저장하고, 최근 순으로 정렬해 보여줍니다.
+//! FreeDF v2: 영속화는 PostgreSQL(`recents` 테이블)이 담당합니다.
+//! 항목의 정체성은 `(kind, doc_id)`입니다.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// 항목 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecentKind {
-    /// FreeDF 노트 (notes 라이브러리에 저장).
+    /// FreeDF 노트 (documents.kind = 'note').
     Note,
-    /// 외부 PDF 파일 (경로).
+    /// 외부 PDF 파일 (documents.kind = 'pdf').
     File,
 }
 
@@ -19,7 +19,14 @@ pub enum RecentKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecentItem {
     pub kind: RecentKind,
+    /// DB의 documents.id (노트/PDF 공통).
+    #[serde(default)]
+    pub doc_id: Option<i64>,
+    /// 레거시: 노트 id (doc_id와 동일 값).
+    #[serde(default)]
     pub note_id: Option<u64>,
+    /// 외부 PDF의 원래 경로.
+    #[serde(default)]
     pub path: Option<PathBuf>,
     pub title: String,
     pub opened_at_ms: u128,
@@ -35,27 +42,9 @@ pub struct RecentList {
 pub const MAX_RECENT: usize = 20;
 
 impl RecentList {
-    /// 파일에서 로드. 없거나 깨졌으면 빈 목록.
-    pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    }
-
-    /// JSON으로 저장 (부모 폴더 자동 생성).
-    pub fn save(&self, path: &Path) {
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = std::fs::write(path, json);
-        }
-    }
-
     /// 항목을 맨 앞에 추가/갱신하고 중복을 제거합니다.
     pub fn touch(&mut self, item: RecentItem) {
-        // 같은 항목(노트 id 또는 파일 경로) 제거 후 맨 앞에 삽입.
+        // 같은 항목(kind, doc_id) 제거 후 맨 앞에 삽입.
         self.items.retain(|old| !same_target(old, &item));
         self.items.insert(0, item);
         if self.items.len() > MAX_RECENT {
@@ -69,14 +58,24 @@ impl RecentList {
         v.sort_by(|a, b| b.opened_at_ms.cmp(&a.opened_at_ms));
         v
     }
+
+    /// 특정 문서에 대한 최근 항목 제거.
+    pub fn remove(&mut self, kind: RecentKind, doc_id: i64) {
+        self.items.retain(|r| {
+            !(r.kind == kind && r.doc_id == Some(doc_id))
+        });
+    }
 }
 
-/// 두 항목이 같은 대상을 가리키는지 (노트 id 또는 파일 경로).
+/// 두 항목이 같은 대상을 가리키는지 (기본: kind + doc_id).
 fn same_target(a: &RecentItem, b: &RecentItem) -> bool {
-    match (a.kind, b.kind) {
-        (RecentKind::Note, RecentKind::Note) => a.note_id == b.note_id,
-        (RecentKind::File, RecentKind::File) => a.path == b.path,
-        _ => false,
+    match (a.doc_id, b.doc_id) {
+        (Some(x), Some(y)) => a.kind == b.kind && x == y,
+        _ => match (a.kind, b.kind) {
+            (RecentKind::Note, RecentKind::Note) => a.note_id == b.note_id,
+            (RecentKind::File, RecentKind::File) => a.path == b.path,
+            _ => false,
+        },
     }
 }
 
@@ -84,11 +83,12 @@ fn same_target(a: &RecentItem, b: &RecentItem) -> bool {
 mod tests {
     use super::*;
 
-    fn item(kind: RecentKind, id: u64, path: Option<&str>, t: u128) -> RecentItem {
+    fn item(kind: RecentKind, id: i64, t: u128) -> RecentItem {
         RecentItem {
             kind,
-            note_id: (kind == RecentKind::Note).then_some(id),
-            path: path.map(PathBuf::from),
+            doc_id: Some(id),
+            note_id: (kind == RecentKind::Note).then_some(id as u64),
+            path: None,
             title: format!("item {id}"),
             opened_at_ms: t,
         }
@@ -97,38 +97,48 @@ mod tests {
     #[test]
     fn touch_dedupes_by_target_and_keeps_newest_first() {
         let mut list = RecentList::default();
-        list.touch(item(RecentKind::Note, 1, None, 100));
-        list.touch(item(RecentKind::Note, 2, None, 200));
+        list.touch(item(RecentKind::Note, 1, 100));
+        list.touch(item(RecentKind::Note, 2, 200));
         // 같은 노트 1을 다시 → 맨 앞으로, 중복 제거
-        list.touch(item(RecentKind::Note, 1, None, 300));
+        list.touch(item(RecentKind::Note, 1, 300));
         assert_eq!(list.items.len(), 2);
-        assert_eq!(list.items[0].note_id, Some(1));
-        assert_eq!(list.items[1].note_id, Some(2));
+        assert_eq!(list.items[0].doc_id, Some(1));
+        assert_eq!(list.items[1].doc_id, Some(2));
     }
 
     #[test]
     fn notes_and_files_do_not_collide() {
         let mut list = RecentList::default();
-        list.touch(item(RecentKind::Note, 1, None, 100));
-        list.touch(item(RecentKind::File, 0, Some("a.pdf"), 200));
+        list.touch(item(RecentKind::Note, 1, 100));
+        list.touch(item(RecentKind::File, 1, 200));
         assert_eq!(list.items.len(), 2);
     }
 
     #[test]
     fn sorted_is_newest_first() {
         let mut list = RecentList::default();
-        list.touch(item(RecentKind::File, 0, Some("a.pdf"), 100));
-        list.touch(item(RecentKind::File, 0, Some("b.pdf"), 300));
-        list.touch(item(RecentKind::File, 0, Some("c.pdf"), 200));
+        list.touch(item(RecentKind::File, 10, 100));
+        list.touch(item(RecentKind::File, 20, 300));
+        list.touch(item(RecentKind::File, 30, 200));
         let sorted = list.sorted();
-        assert_eq!(sorted[0].path.as_deref(), Some(Path::new("b.pdf")));
-        assert_eq!(sorted[2].path.as_deref(), Some(Path::new("a.pdf")));
+        assert_eq!(sorted[0].doc_id, Some(20));
+        assert_eq!(sorted[2].doc_id, Some(10));
+    }
+
+    #[test]
+    fn remove_drops_matching_doc() {
+        let mut list = RecentList::default();
+        list.touch(item(RecentKind::File, 10, 100));
+        list.touch(item(RecentKind::Note, 5, 200));
+        list.remove(RecentKind::File, 10);
+        assert_eq!(list.items.len(), 1);
+        assert_eq!(list.items[0].doc_id, Some(5));
     }
 
     #[test]
     fn json_round_trip() {
         let mut list = RecentList::default();
-        list.touch(item(RecentKind::Note, 7, None, 42));
+        list.touch(item(RecentKind::Note, 7, 42));
         let json = serde_json::to_string(&list).unwrap();
         let restored: RecentList = serde_json::from_str(&json).unwrap();
         assert_eq!(restored, list);

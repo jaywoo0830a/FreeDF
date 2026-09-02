@@ -1,12 +1,15 @@
 //! FreeDF — lightweight PDF viewer + drawing pad.
 //!
-//! Windows 11-friendly settings (system theme, HiDPI, native file dialogs) are
-//! applied at startup. App data (notes + logs) lives under
-//! `%LOCALAPPDATA%/FreeDF` on Windows and `~/.local/share/freedf` elsewhere.
+//! FreeDF v2: 모든 데이터(노트/PDF/주석/세션/로그)는 PostgreSQL(Docker)에
+//! 저장됩니다. 연결은 `FREEDF_DATABASE_URL`(기본
+//! `postgres://freedf:freedf@localhost:5432/freedf`)로 결정되며,
+//! `docker compose up -d db`로 띄우면 바로 사용할 수 있습니다.
+//! PDFium 라이브러리는 여전히 실행 파일 옆에 필요합니다.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod db;
 mod export;
 mod fonts;
 mod pdf;
@@ -15,37 +18,46 @@ mod settings;
 mod theme;
 
 use eframe::egui;
-use freedf_core::logging::{AppEvent, Logger};
-use freedf_core::notes::NotesManager;
+use freedf_core::logging::Logger;
 use std::path::PathBuf;
 
-/// Per-user app data directory.
-fn app_data_dir() -> PathBuf {
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local).join("FreeDF");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local").join("share").join("freedf");
-    }
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("freedf-data")
-}
-
 fn main() -> eframe::Result<()> {
-    // Optional CLI: `freedf <file.pdf>` (or `freedf --open <file.pdf>`) opens a
-    // standalone PDF on startup. "Open in New Window" from the tab bar re-launches
-    // this executable with a document path as its argument.
+    // CLI: `freedf <file.pdf>` — 외부 PDF import 후 열기.
+    //      `freedf --doc <id>` — DB의 문서 id로 열기 ("새 창" 분리 시 사용).
     let mut args = std::env::args().skip(1);
     let mut open_path: Option<PathBuf> = None;
+    let mut open_doc: Option<i64> = None;
     while let Some(a) = args.next() {
         if a == "--open" {
             open_path = args.next().map(PathBuf::from);
+        } else if a == "--doc" {
+            open_doc = args.next().and_then(|s| s.parse::<i64>().ok());
         } else if !a.starts_with("--") {
             open_path = Some(PathBuf::from(a));
         }
     }
     let open_path = open_path.filter(|p| p.is_file());
+
+    // PostgreSQL 연결 (없으면 앱을 실행할 수 없습니다 — Docker로 띄우세요).
+    let db_url = std::env::var("FREEDF_DATABASE_URL")
+        .unwrap_or_else(|_| db::DEFAULT_DATABASE_URL.to_string());
+    let db = match db::Db::connect(&db_url) {
+        Ok(db) => db,
+        Err(e) => {
+            eprintln!("FreeDF database error: {e}");
+            eprintln!("Start the database with: docker compose up -d db");
+            std::process::exit(1);
+        }
+    };
+
+    // 이벤트 로그 → PostgreSQL event_log 테이블.
+    let logger = {
+        let db = db.clone();
+        Logger::to_sink(move |entry| {
+            let event = serde_json::to_value(&entry.event).unwrap_or(serde_json::Value::Null);
+            db.insert_log(entry.epoch_ms, entry.seq, &event);
+        })
+    };
 
     let options = eframe::NativeOptions {
         // wgpu(DX12) 대신 호환성 높은 OpenGL(glow) 렌더러 사용 (Windows 크래시 방지)
@@ -61,32 +73,12 @@ fn main() -> eframe::Result<()> {
         "FreeDF",
         options,
         Box::new(|cc| {
-            // Single UI font: PT Serif (bundled) + Nord design system
+            // Bundled Inter(+NanumGothic) 폰트 + Nord 디자인 시스템
             fonts::install_inter(&cc.egui_ctx);
             theme::nord::install(&cc.egui_ctx);
 
-            // App data layout: <data>/notes + <data>/logs + <data>/session.json
-            let data_dir = app_data_dir();
-            let notes_dir = data_dir.join("notes");
-            let logs_dir = data_dir.join("logs");
-            let _ = std::fs::create_dir_all(&notes_dir);
-            let _ = std::fs::create_dir_all(&logs_dir);
-            let default_session_path = data_dir.join("session.json");
-
-            let notes = NotesManager::load_or_create(notes_dir);
-
-            let mut logger = Logger::to_file(&logs_dir.join("freedf.log"))
-                .unwrap_or_else(|_| Logger::disabled());
-            logger.log(AppEvent::AppStart {
-                version: env!("CARGO_PKG_VERSION").to_string(),
-            });
-
             Ok(Box::new(app::FreeDfApp::new(
-                cc,
-                notes,
-                logger,
-                default_session_path,
-                open_path,
+                cc, db, logger, open_path, open_doc,
             )))
         }),
     )

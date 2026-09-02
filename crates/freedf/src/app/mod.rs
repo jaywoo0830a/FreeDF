@@ -52,6 +52,7 @@ pub(crate) use freedf_core::search::{char_line_highlights, find_matches, TextMat
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
+pub(crate) use crate::db::Db;
 pub(crate) use crate::export::draw_strokes_on_image;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
@@ -277,16 +278,14 @@ pub(crate) enum TextAction {
     NewNote,
     RenameNote,
     OpenPdf,
-    SaveAnnotations,
-    LoadAnnotations,
     ExportPng,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ConfirmAction {
     DeleteNote,
-    /// Library 다중 삭제: 선택된 노트 id + PDF 경로 (PDF는 디스크에서 삭제).
-    DeleteLibrary { notes: Vec<u64>, pdfs: Vec<PathBuf> },
+    /// Library 다중 삭제 (documents.id 기준).
+    DeleteLibrary { notes: Vec<i64>, pdfs: Vec<i64> },
 }
 
 /// 새 빈 페이지를 삽입하는 위치/방식.
@@ -363,13 +362,13 @@ impl ModalState {
     }
 }
 
-/// 열려 있는 문서 탭의 종류.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 열려 있는 문서 탭의 종류 — 둘 다 DB의 `documents.id`입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabKind {
-    /// FreeDF 노트 (id).
-    Note(u64),
-    /// 외부 PDF 파일 (경로).
-    Pdf(PathBuf),
+    /// FreeDF 노트 (documents.kind = 'note').
+    Note(i64),
+    /// 외부 PDF (documents.kind = 'pdf').
+    Pdf(i64),
 }
 
 /// 하나의 열린 문서에 대한 전체 상태.
@@ -381,8 +380,7 @@ pub enum TabKind {
 pub struct TabEntry {
     kind: TabKind,
     label: String,
-    file_path: Option<PathBuf>,
-    current_note: Option<u64>,
+    current_note: Option<i64>,
     /// 활성 탭이 아니면 실제 문서 핸들 보관.
     document: Option<DocumentView>,
     current_page: usize,
@@ -450,23 +448,26 @@ impl PenCursorStyle {
 }
 
 pub struct FreeDfApp {
-    // ---------- Notes ----------
+    // ---------- Notes (in-memory cache of documents.kind='note') ----------
     notes: NotesManager,
-    current_note: Option<u64>,
+    current_note: Option<i64>,
 
     // ---------- Tabs (multiple open documents) ----------
     tabs: Vec<TabEntry>,
     active: usize,
 
-    // ---------- Recent files ----------
+    // ---------- Recent files (in-memory cache of recents table) ----------
     recents: RecentList,
-    recent_path: PathBuf,
+
+    // ---------- PostgreSQL ----------
+    db: Db,
 
     // ---------- Document ----------
     document: Option<DocumentView>,
+    /// 현재 열린 문서의 DB id (documents.id).
+    doc_id: Option<i64>,
     /// PDFium loaded once at startup; reused for creating blank note PDFs.
     pdfium: Result<Box<Pdfium>, String>,
-    file_path: Option<PathBuf>,
     current_page: usize,
     page_size_pts: [f32; 2],
     view: ViewTransform,
@@ -589,9 +590,9 @@ pub struct FreeDfApp {
     text_highlight_snap: bool,
     /// Library 패널 검색 필터 (일시적)
     library_filter: String,
-    /// Library 패널 다중 삭제 선택 상태 (일시적)
-    sel_notes: HashSet<u64>,
-    sel_pdfs: HashSet<PathBuf>,
+    /// Library 패널 다중 삭제 선택 상태 (일시적, documents.id 기준)
+    sel_notes: HashSet<i64>,
+    sel_pdfs: HashSet<i64>,
 
     // ---------- Logging / status ----------
     logger: Logger,
@@ -600,13 +601,13 @@ pub struct FreeDfApp {
     /// (message, time set) so the transient status line auto-clears
     status_since: Option<(String, f64)>,
 
-    // ---------- Default session (global GUI state) ----------
-    default_session_path: PathBuf,
-
     // ---------- CLI startup / new-window ----------
-    /// A standalone PDF passed on the command line (`freedf <file>.pdf`);
-    /// opened on the very first frame of this window.
+    /// A standalone PDF passed on the command line (`freedf <file.pdf>`);
+    /// imported and opened on the very first frame of this window.
     pending_open: Option<PathBuf>,
+    /// DB document id passed on the command line (`freedf --doc <id>`);
+    /// opened on the very first frame of this window.
+    pending_doc: Option<i64>,
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
@@ -618,10 +619,10 @@ pub struct FreeDfApp {
 impl FreeDfApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        notes: NotesManager,
+        db: Db,
         logger: Logger,
-        default_session_path: PathBuf,
         pending_open: Option<PathBuf>,
+        pending_doc: Option<i64>,
     ) -> Self {
         // Disable egui's built-in Ctrl+scroll zoom folding: it multiplies the
         // zoom by exp(speed * scroll), which jumps ~28% per wheel notch. We do
@@ -640,17 +641,12 @@ impl FreeDfApp {
         } else {
             Palette::default_highlighter()
         };
-        // 전역 기본 세션(마지막 펜 색/용지/도구 등)을 복원하고, 없으면 테마 기본값.
-        // (이전 버전의 settings.json이 있으면 session.json으로 마이그레이션)
-        if !default_session_path.exists() {
-            let old = default_session_path.with_file_name("settings.json");
-            if old.exists() {
-                let s: crate::settings::SessionState = crate::settings::load_json(&old);
-                s.save(&default_session_path);
-            }
-        }
-        let s = crate::settings::SessionState::load(&default_session_path);
-        let has = default_session_path.exists();
+
+        // 전역 기본 세션 → DB app_state('session'). 없으면 테마 기본값.
+        let (s, has) = match db.get_app_state("session") {
+            Some(v) => (crate::settings::SessionState::from_json_value(v), true),
+            None => (crate::settings::SessionState::default(), false),
+        };
         let pen_color = if has { s.pen_color } else { theme_pen };
         let hi_color = if has { s.hi_color } else { theme_hi };
         let tool = if has { s.tool } else { ToolType::Pen };
@@ -688,7 +684,7 @@ impl FreeDfApp {
         } else {
             crate::settings::SessionState::default().favorite_colors
         };
-        // 팔레트는 최대 3색 — 이전 버전 세션의 8색 목록은 잘라냅니다.
+        // 팔레트는 최대 3색.
         favorite_colors.truncate(MAX_FAVORITE_COLORS);
         if favorite_colors.is_empty() {
             favorite_colors = crate::settings::SessionState::default().favorite_colors;
@@ -697,10 +693,7 @@ impl FreeDfApp {
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
-            [
-                c[0].clamp(100.0, 2400.0),
-                c[1].clamp(100.0, 2400.0),
-            ]
+            [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
             PaperSize::A4.size_pts()
         };
@@ -710,23 +703,45 @@ impl FreeDfApp {
             ToolType::default_order()
         };
         let library_filter = String::new();
-        // Recent files live next to the default session file in the app data folder.
-        let recent_path = default_session_path
-            .parent()
-            .map(|p| p.join("recent.json"))
-            .unwrap_or_else(|| PathBuf::from("recent.json"));
-        let recents = RecentList::load(&recent_path);
+
+        // 노트 캐시 + 최근 목록 캐시 → DB에서 로드.
+        let notes = NotesManager::from_metas(
+            db.list_notes()
+                .into_iter()
+                .map(|d| freedf_core::notes::NoteMeta {
+                    id: d.id as u64,
+                    title: d.title,
+                    created_at_ms: d.created_at.max(0) as u128,
+                    updated_at_ms: d.updated_at.max(0) as u128,
+                    page_count: d.page_count.max(0) as usize,
+                })
+                .collect(),
+        );
+        let recents = RecentList {
+            items: db
+                .load_recents()
+                .into_iter()
+                .map(|r| RecentItem {
+                    kind: if r.kind == "note" { RecentKind::Note } else { RecentKind::File },
+                    doc_id: Some(r.doc_id),
+                    note_id: if r.kind == "note" { Some(r.doc_id as u64) } else { None },
+                    path: r.origin_path.map(PathBuf::from),
+                    title: r.title,
+                    opened_at_ms: r.opened_at.max(0) as u128,
+                })
+                .collect(),
+        };
+
         Self {
             notes,
-            default_session_path,
             tabs: Vec::new(),
             active: 0,
             recents,
-            recent_path,
+            db,
             current_note: None,
             document: None,
             pdfium: crate::pdf::load_pdfium().map(Box::new),
-            file_path: None,
+            doc_id: None,
             current_page: 0,
             page_size_pts: PaperSize::A4.size_pts(),
             view: ViewTransform::default(),
@@ -804,6 +819,7 @@ impl FreeDfApp {
             status: None,
             status_since: None,
             pending_open,
+            pending_doc,
             modal: None,
             asking_close: false,
             quitting: false,
@@ -812,7 +828,7 @@ impl FreeDfApp {
 
     /// 전역 기본 세션(마지막 펜 색/용지/도구 등)을 저장해 다음 시작 시 복원합니다.
     fn save_default_session(&self) {
-        crate::settings::SessionState {
+        let state = crate::settings::SessionState {
             page: 0,
             tool: self.tool,
             color_family: self.color_family,
@@ -844,8 +860,8 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
             custom_paper_size: Some(self.custom_paper_size),
-        }
-        .save(&self.default_session_path);
+        };
+        self.db.set_app_state("session", &state.to_json_value());
     }
 
     /// 새 페이지/노트에 쓸 물리적 크기 (pt). `PaperSize::Custom`이면 사용자 정의 치수.
@@ -885,6 +901,15 @@ impl FreeDfApp {
                         line_width: self.paper_line_width,
                     },
                 );
+                // DB pages 행에도 즉시 반영.
+                if let Some(doc_id) = self.doc_id {
+                    self.db.upsert_page(
+                        doc_id,
+                        self.current_page as i32,
+                        &self.current_page_paper(),
+                        self.store.is_bookmarked(self.current_page),
+                    );
+                }
                 self.render_dirty = true;
             }
         }
@@ -929,22 +954,14 @@ impl FreeDfApp {
         }
     }
 
-    /// 현재 문서의 세션 파일 경로 (노트 폴더 또는 PDF 옆 사이드카).
-    fn session_path(&self) -> Option<PathBuf> {
-        if let Some(id) = self.current_note {
-            Some(self.notes.session_path(id))
-        } else {
-            self.file_path.as_deref().map(session_path_for)
-        }
-    }
-
-    /// 열려 있는 문서의 GUI 상태를 세션 파일에 저장합니다.
+    /// 현재 문서의 GUI 상태를 DB `sessions` 테이블에 저장합니다.
     fn save_session(&self) {
         if self.document.is_none() {
             return;
         }
-        if let Some(path) = self.session_path() {
-            self.capture_session().save(&path);
+        if let Some(doc_id) = self.doc_id {
+            self.db
+                .upsert_session(doc_id, &self.capture_session().to_json_value());
         }
     }
 
@@ -991,26 +1008,22 @@ impl FreeDfApp {
     // ---------- Tabs (multiple open documents) ----------
 
     /// 같은 대상(노트 id 또는 파일 경로)이 이미 열려 있으면 탭 인덱스 반환.
-    fn note_recent(
-        &mut self,
-        kind: RecentKind,
-        title: String,
-        note_id: Option<u64>,
-        path: Option<PathBuf>,
-    ) {
+    /// 최근 항목 기록: 메모리 캐시 + DB `recents` 테이블.
+    fn note_recent(&mut self, kind: RecentKind, title: String, doc_id: i64, path: Option<PathBuf>) {
         let opened_at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0);
-        self.recents
-            .touch(RecentItem {
-                kind,
-                note_id,
-                path,
-                title,
-                opened_at_ms,
-            });
-        self.recents.save(&self.recent_path);
+        self.recents.touch(RecentItem {
+            kind,
+            doc_id: Some(doc_id),
+            note_id: (kind == RecentKind::Note).then_some(doc_id as u64),
+            path,
+            title: title.clone(),
+            opened_at_ms,
+        });
+        let kind_str = if kind == RecentKind::Note { "note" } else { "pdf" };
+        self.db.touch_recent(kind_str, doc_id, &title);
     }
 
     // ---------- Bookmarks ----------
@@ -1307,10 +1320,13 @@ impl FreeDfApp {
 impl eframe::App for FreeDfApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        // A standalone PDF passed on the command line (`freedf <file>.pdf` —
-        // also how "Open in New Window" relaunches) opens once on the first frame.
+        // CLI 시작 인자: `freedf <file.pdf>`은 import 후 열기,
+        // `freedf --doc <id>`는 DB의 문서 id로 열기("새 창" 분리 시 사용).
         if let Some(path) = self.pending_open.take() {
             self.open_pdf(&path);
+        }
+        if let Some(doc_id) = self.pending_doc.take() {
+            self.open_document(doc_id);
         }
         self.handle_shortcuts(&ctx);
 
@@ -1410,14 +1426,11 @@ impl eframe::App for FreeDfApp {
                 });
             if let Some(save) = decision {
                 if save {
-                    // Re-save everything before quitting.
-                    self.autosave();
-                    let _ = self.notes.save();
-                    self.save_pdf_if_note();
+                    // 종료 전 전부 DB에 플러시.
+                    self.flush_current_document();
                 }
                 self.save_default_session();
                 self.save_session();
-                self.recents.save(&self.recent_path);
                 self.quitting = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -1429,18 +1442,4 @@ impl eframe::App for FreeDfApp {
             ctx.request_repaint();
         }
     }
-}
-
-/// Sidecar annotation path for a standalone PDF (`doc.pdf.freedf.json`).
-fn annotation_path_for(pdf_path: &Path) -> PathBuf {
-    let mut os = pdf_path.as_os_str().to_os_string();
-    os.push(".freedf.json");
-    PathBuf::from(os)
-}
-
-/// Sidecar session path for a standalone PDF (`doc.pdf.session.json`).
-fn session_path_for(pdf_path: &Path) -> PathBuf {
-    let mut os = pdf_path.as_os_str().to_os_string();
-    os.push(".session.json");
-    PathBuf::from(os)
 }

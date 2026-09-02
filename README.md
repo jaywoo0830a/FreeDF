@@ -1,15 +1,26 @@
-# FreeDF — Lightweight PDF Viewer & Ink
+# FreeDF — Lightweight PDF Viewer & Ink (PostgreSQL-backed)
 
 An ultra-lightweight PDF viewer with a drawing-pad annotation layer, built on
 **egui 0.36.1** + **pdfium-render 0.9.3**. It is designed for taking handwritten
 notes on a tablet / drawing pad and is Windows 11-friendly (system theme, HiDPI,
 native file dialogs, Windows Ink pressure).
 
+**FreeDF v2 stores everything in PostgreSQL** — notes, PDF binaries, strokes,
+paper settings, sessions, recents and the event log all live in the database
+(JSON files are legacy and gone). Run the DB with Docker (Mac / Linux /
+Windows 11 WSL2):
+
+```bash
+docker compose up -d db
+```
+
 ```
 ├─ crates/
 │  ├─ freedf-core/   # Pure-Rust, GUI-free core (model, store, transform, history,
 │  │                 #   notes, pages, outline, search, pen, logging) + unit/integration tests
-│  └─ freedf/        # egui + pdfium-render desktop app
+│  └─ freedf/        # egui + pdfium-render + PostgreSQL desktop app
+├─ migrations/       # SQL schema (applied automatically on startup)
+└─ docker-compose.yml
 ```
 
 ## Features
@@ -19,19 +30,18 @@ native file dialogs, Windows Ink pressure).
   between them; every tab keeps its own page, zoom/pan, annotations, search, outline,
   panel open state & **panel widths**, and ink/paper settings. The tab strip scrolls
   horizontally and long titles are truncated (full name on hover)
-- 🪟 **Split a tab into a new window** — right-click any **standalone PDF** tab and
-  choose *Open in new window*: FreeDF relaunches itself as a separate OS window
-  (each window is its own process — eframe runs one window per process and PDFium
-  is single-binding per process) and **moves** the tab there — the current window
-  closes the tab (ink is flushed to the sidecar first), so the same document never
-  appears in two windows. FreeDF **notes** share one annotation file, so the option
-  is disabled for them to avoid losing ink
+- 🪟 **Split a tab into a new window** — right-click **any** tab (note or PDF)
+  and choose *Open in new window*: FreeDF relaunches itself as a separate OS
+  window (each window is its own process — eframe runs one window per process
+  and PDFium is single-binding per process) that reopens the same **database**
+  document (`freedf --doc <id>`). Because all data is in PostgreSQL, even the
+  same note can now be open in two windows without losing ink
 - 🗂️ **Library panel** — a modern side panel with a **search filter** and count
   badges groups **Notes**, **PDFs** and **Recents** into clean rows (title +
   meta), so you can jump between notebooks and recently opened files. Notes and
   PDFs support **multi-select deletion**: tick the checkboxes and press
-  *Delete selected* — notes are removed with their annotations, PDFs are deleted
-  from disk together with their sidecar files (with a confirmation dialog)
+  *Delete selected* — notes are removed with all their data, PDF documents are
+  removed from the library (the original files on disk are left untouched)
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
@@ -181,6 +191,10 @@ native file dialogs, Windows Ink pressure).
 ## Requirements
 
 - Rust 1.75+ (MSRV follows egui 0.36)
+- **PostgreSQL** (Docker 권장 — 위 `docker compose up -d db`)
+  - 연결은 `FREEDF_DATABASE_URL`(기본 `postgres://freedf:freedf@localhost:5432/freedf`)
+  - 원격 DB도 가능: `FREEDF_DATABASE_URL=postgres://user:pass@host:5432/freedf`
+  - 앱 시작 시 스키마 마이그레이션이 자동 적용됨
 - **PDFium library** placed next to the executable
 
 ### Windows 11: getting pdfium.dll
@@ -215,12 +229,44 @@ On Linux, place `libpdfium.so` next to the executable (or in `~/.local/share/fre
 # Core tests (run without a GUI or PDFium)
 cargo test -p freedf-core
 
+# DB smoke test (Docker postgres 필요)
+FREEDF_TEST_DB=1 cargo test -p freedf smoke_against_live_postgres
+
 # Build & run the app
 cargo run -p freedf
 
 # Small, fast release binary
 cargo build --release -p freedf
 ```
+
+### 데이터베이스 시작 (운영)
+
+```bash
+docker compose up -d db     # 시작 (Mac / Linux / Windows WSL2 동일)
+docker compose logs -f db   # 로그 확인
+docker compose down         # 중지 (데이터 유지)
+docker compose down -v      # 데이터까지 완전 삭제
+```
+
+- **Win 11 (WSL2)**: Docker Desktop의 WSL Integration을 켜고 WSL 터미널에서 실행.
+- **Mac / Linux**: Docker Desktop 또는 Docker Engine 그대로.
+- 백업: `docker compose exec db pg_dump -U freedf freedf > backup.sql`
+
+### 데이터 저장 구조 (전부 DB)
+
+| 데이터 | 테이블 | 비고 |
+|---|---|---|
+| 노트/PDF 문서 | `documents` | PDF 본문은 `BYTEA` (단일 진실 공급원) |
+| 주석(획) | `strokes` | **획 단위 행** — 그릴 때마다 증분 INSERT, 지우개는 DELETE |
+| 용지/북마크 | `pages` | 페이지별 그리드/색/간격/선 두께 + 북마크 |
+| GUI 세션 | `sessions` (문서별) / `app_state` (전역) | JSONB |
+| 최근 목록 | `recents` | `ON DELETE CASCADE` |
+| 이벤트 로그 | `event_log` | 구조화 JSONB |
+
+외부 PDF를 열면 **DB로 import**되어(원본 파일은 그대로 두고) 어느 기기에서나
+같은 데이터를 봅니다. 스트로크 id는 전역 시퀀스(`stroke_id_seq`)로 할당되어
+undo/redo가 정확히 같은 행을 복원합니다. 같은 노트를 **두 창에서** 여는 것도
+이제 안전합니다 (탭 우클릭 → Open in new window).
 
 You can also open a standalone PDF directly by passing it on the command line
 (this is what *Open in new window* uses to spawn a fresh process):

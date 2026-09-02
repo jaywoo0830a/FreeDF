@@ -18,14 +18,15 @@ impl FreeDfApp {
         self.persist_bookmarks();
     }
 
-    /// 북마크를 디스크에 반영합니다 (노트는 자동저장, 일반 PDF는 사이드카).
+    /// 북마크를 DB에 반영합니다 (현재 페이지의 pages 행 갱신).
     pub(crate) fn persist_bookmarks(&mut self) {
-        if self.current_note.is_some() {
-            self.autosave();
-        } else if let Some(path) = self.file_path.clone() {
-            let ann_path = annotation_path_for(&path);
-            let json = self.store.to_json();
-            let _ = std::fs::write(&ann_path, json);
+        if let Some(doc_id) = self.doc_id {
+            self.db.upsert_page(
+                doc_id,
+                self.current_page as i32,
+                &self.current_page_paper(),
+                self.store.is_bookmarked(self.current_page),
+            );
         }
         self.save_session();
     }
@@ -38,14 +39,6 @@ impl FreeDfApp {
         self.modal = Some(ModalState::alert("Error", &msg));
     }
 
-    /// Creates a note's blank PDF using the PDFium instance cached at startup.
-    pub(crate) fn create_blank_pdf_for_note(&self, path: &Path) -> Result<(), String> {
-        match &self.pdfium {
-            Ok(p) => DocumentView::create_blank_pdf_with(p, path, self.new_page_size_pts()),
-            Err(e) => Err(e.clone()),
-        }
-    }
-
     /// Returns a reference to the PDFium instance cached at startup.
     /// pdfium-render only allows one initialization per process, so everything
     /// must reuse this single instance (never call `load_pdfium` again).
@@ -54,19 +47,55 @@ impl FreeDfApp {
     }
 
     pub(crate) fn create_note_action(&mut self, title: &str) {
-        match self.notes.create_note(title) {
-            Ok(meta) => {
-                let pdf_path = self.notes.pdf_path(meta.id);
-                if let Err(e) = self.create_blank_pdf_for_note(&pdf_path) {
-                    self.show_error(e);
-                    return;
-                }
-                let _ = self.notes.set_page_count(meta.id, 1);
+        // 1) 제목 검증 + 중복 검사 (캐시 기준).
+        let title = match freedf_core::notes::validate_title(title) {
+            Ok(t) => t,
+            Err(e) => {
+                self.status = Some(format!("Could not create note: {e}"));
+                return;
+            }
+        };
+        if self
+            .notes
+            .list()
+            .iter()
+            .any(|n| n.title.eq_ignore_ascii_case(&title))
+        {
+            self.status = Some("A note with this title already exists.".to_string());
+            return;
+        }
+        // 2) 빈 PDF를 메모리에 생성 → 바이트.
+        let bytes = match self
+            .pdfium()
+            .and_then(|p| DocumentView::create_blank_view(p, self.new_page_size_pts(), &title))
+            .and_then(|view| view.save_to_bytes())
+        {
+            Ok(b) => b,
+            Err(e) => {
+                self.show_error(e);
+                return;
+            }
+        };
+        // 3) documents 행 삽입 + 캐시 반영.
+        match self.db.insert_document("note", &title, None, &bytes) {
+            Ok(doc_id) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                let meta = freedf_core::notes::NoteMeta {
+                    id: doc_id as u64,
+                    title: title.clone(),
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                    page_count: 1,
+                };
+                let _ = self.notes.insert_meta(meta);
                 self.logger.log(AppEvent::NoteCreated {
-                    note_id: meta.id,
-                    title: meta.title.clone(),
+                    note_id: doc_id as u64,
+                    title,
                 });
-                self.open_note(meta.id);
+                self.open_document(doc_id);
             }
             Err(e) => self.status = Some(format!("Could not create note: {e}")),
         }
@@ -80,75 +109,65 @@ impl FreeDfApp {
             .unwrap_or_default();
         match self.notes.rename_note(id, title) {
             Ok(()) => {
+                let _ = self.db.update_title(id as i64, title);
                 self.logger.log(AppEvent::NoteRenamed {
                     note_id: id,
                     from: old,
                     to: title.to_string(),
                 });
-                if self.current_note == Some(id) {
+                if self.current_note == Some(id as i64) {
                     self.file_name = title.to_string();
                 }
-                let _ = self.notes.save();
             }
             Err(e) => self.status = Some(format!("Rename failed: {e}")),
         }
     }
 
     pub(crate) fn delete_note_action(&mut self, id: u64) {
+        let doc_id = id as i64;
         let title = self
             .notes
             .get(id)
             .map(|m| m.title.clone())
             .unwrap_or_default();
-        match self.notes.delete_note(id) {
-            Ok(()) => {
-                self.logger.log(AppEvent::NoteDeleted { note_id: id, title });
-                // 열려 있는 탭이면 닫고, 아니면 문서 상태 정리.
-                if let Some(idx) = self.find_tab(&TabKind::Note(id)) {
-                    self.close_tab(idx);
-                } else if self.current_note == Some(id) {
-                    self.close_document();
-                }
-                // 최근 목록에서도 제거.
-                self.recents
-                    .items
-                    .retain(|r| !(r.kind == RecentKind::Note && r.note_id == Some(id)));
-                self.recents.save(&self.recent_path);
-                let _ = self.notes.save();
-            }
-            Err(e) => self.status = Some(format!("Delete failed: {e}")),
+        // 열려 있는 탭이면 닫고, 아니면 문서 상태 정리.
+        if let Some(idx) = self.find_tab(&TabKind::Note(doc_id)) {
+            self.close_tab(idx);
+        } else if self.current_note == Some(doc_id) {
+            self.close_document();
         }
+        // 캐시 제거.
+        let _ = self.notes.delete_note(id);
+        self.recents.remove(RecentKind::Note, doc_id);
+        // DB 제거 (strokes/pages/sessions/recents는 ON DELETE CASCADE).
+        if let Err(e) = self.db.delete_document(doc_id) {
+            self.status = Some(format!("Delete failed: {e}"));
+            return;
+        }
+        self.logger.log(AppEvent::NoteDeleted { note_id: id, title });
     }
 
-    /// 외부 PDF 파일을 디스크에서 삭제합니다 (주석/세션 사이드카 포함).
-    /// 열려 있는 탭이면 먼저 닫고, 최근 목록에서도 제거합니다.
-    pub(crate) fn delete_pdf_action(&mut self, path: PathBuf) {
-        let name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+    /// DB의 문서(외부 PDF)를 삭제합니다. 원본 파일은 건드리지 않습니다
+    /// (파일을 지우려면 탐색기에서 직접 삭제하세요).
+    pub(crate) fn delete_pdf_action(&mut self, doc_id: i64) {
+        let name = self
+            .db
+            .get_document(doc_id)
+            .map(|d| d.title)
+            .unwrap_or_else(|| doc_id.to_string());
         // 열린 탭 닫기 (활성 탭이면 인접 탭으로 전환됨).
-        if let Some(idx) = self.find_tab(&TabKind::Pdf(path.clone())) {
+        if let Some(idx) = self.find_tab(&TabKind::Pdf(doc_id)) {
             self.close_tab(idx);
         }
-        // 최근 목록 제거.
-        self.recents
-            .items
-            .retain(|r| !(r.kind == RecentKind::File && r.path.as_deref() == Some(path.as_path())));
-        self.recents.save(&self.recent_path);
-        // 파일 + 사이드카 삭제.
-        let mut removed = 0usize;
-        for p in [annotation_path_for(&path), session_path_for(&path), path.clone()] {
-            if p.exists() && std::fs::remove_file(&p).is_ok() {
-                removed += 1;
-            }
+        self.recents.remove(RecentKind::File, doc_id);
+        if let Err(e) = self.db.delete_document(doc_id) {
+            self.status = Some(format!("Delete failed: {e}"));
+            return;
         }
         self.logger.log(AppEvent::PdfDeleted {
             path: name.clone(),
         });
-        if removed > 0 {
-            self.status = Some(format!("Deleted {name} ({removed} file(s))"));
-        }
+        self.status = Some(format!("Deleted {name} from the library"));
     }
 
     /// 툴바의 용지 설정(스타일/색/간격/선)을 **모든 페이지**에 적용합니다.
@@ -171,12 +190,11 @@ impl FreeDfApp {
             self.store.set_paper(i, paper);
         }
         self.render_dirty = true;
-        self.autosave();
-        if self.current_note.is_none() {
-            // 스탠드얼론 PDF: 사이드카에도 반영.
-            if let Some(path) = self.file_path.clone() {
-                let _ = std::fs::write(annotation_path_for(&path), self.store.to_json());
-            }
+        if let Some(doc_id) = self.doc_id {
+            let entries: Vec<(i32, PagePaper, bool)> = (0..count)
+                .map(|i| (i as i32, paper, self.store.is_bookmarked(i)))
+                .collect();
+            self.db.replace_pages(doc_id, &entries);
         }
         self.save_session();
         self.status = Some(format!("Applied paper to all {count} pages"));
@@ -185,6 +203,7 @@ impl FreeDfApp {
     pub(crate) fn close_document(&mut self) {
         self.document = None;
         self.current_note = None;
+        self.doc_id = None;
         self.texture = None;
         self.store = AnnotationStore::new();
         self.history = History::new(256);
@@ -194,7 +213,6 @@ impl FreeDfApp {
         self.outline = Vec::new();
         self.outline_loaded = false;
         self.file_name = String::new();
-        self.file_path = None;
         self.scroll_vel = Vec2::ZERO;
         self.page_anim = None;
         self.prev_texture = None;
@@ -202,12 +220,20 @@ impl FreeDfApp {
         self.status = None;
     }
 
-    pub(crate) fn open_note(&mut self, id: u64) {
-        let Some(meta) = self.notes.get(id).cloned() else {
+    /// DB의 문서 id로 문서를 엽니다 (노트/외부 PDF 공통).
+    pub(crate) fn open_document(&mut self, doc_id: i64) {
+        let Some(row) = self.db.get_document(doc_id) else {
+            self.show_error(format!("Document {doc_id} not found in the database."));
             return;
         };
+        let is_note = row.is_note();
+        let kind = if is_note {
+            TabKind::Note(doc_id)
+        } else {
+            TabKind::Pdf(doc_id)
+        };
         // 이미 열려 있으면 해당 탭으로 전환만 합니다.
-        if let Some(idx) = self.find_tab(&TabKind::Note(id)) {
+        if let Some(idx) = self.find_tab(&kind) {
             self.switch_tab(idx);
             return;
         }
@@ -216,32 +242,25 @@ impl FreeDfApp {
         if self.document.is_some() {
             self.capture_into(self.active);
         }
-        let pdf_path = self.notes.pdf_path(id);
-        if !pdf_path.exists() {
-            if let Err(e) = self.create_blank_pdf_for_note(&pdf_path) {
-                self.show_error(e);
-                return;
-            }
-        }
-        let ann_path = self.notes.annotations_path(id);
-        let store = if ann_path.exists() {
-            std::fs::read_to_string(&ann_path)
-                .ok()
-                .and_then(|t| AnnotationStore::from_json(&t).ok())
-                .unwrap_or_default()
-        } else {
-            AnnotationStore::new()
+        let Some(bytes) = self.db.load_pdf(doc_id) else {
+            self.show_error(format!(
+                "{} has no PDF content in the database.",
+                row.title
+            ));
+            return;
         };
-        let opened = self.pdfium().and_then(|p| DocumentView::open(p, &pdf_path));
+        let opened = self
+            .pdfium()
+            .and_then(|p| DocumentView::open_bytes(p, &bytes, &row.title));
         match opened {
             Ok(doc) => {
-                self.current_note = Some(id);
+                self.doc_id = Some(doc_id);
+                self.current_note = if is_note { Some(doc_id) } else { None };
                 self.current_page = 0;
                 self.page_size_pts = doc.page_size_pts(0);
-                self.file_name = meta.title.clone();
-                self.file_path = Some(pdf_path);
+                self.file_name = row.title.clone();
                 self.document = Some(doc);
-                self.store = store;
+                self.store = self.db.load_store(doc_id);
                 self.history = History::new(256);
                 self.active_stroke = None;
                 self.pan_last = None;
@@ -259,23 +278,34 @@ impl FreeDfApp {
                 self.status = None;
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
-                let session_path = self.notes.session_path(id);
-                if session_path.exists() {
-                    let session = crate::settings::SessionState::load(&session_path);
+                if let Some(value) = self.db.load_session(doc_id) {
+                    let session = crate::settings::SessionState::from_json_value(value);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
                 }
-                self.logger.log(AppEvent::NoteOpened {
-                    note_id: id,
-                    title: meta.title.clone(),
-                    page_count,
-                });
+                if is_note {
+                    self.logger.log(AppEvent::NoteOpened {
+                        note_id: doc_id as u64,
+                        title: row.title.clone(),
+                        page_count,
+                    });
+                }
                 self.load_outline_if_needed();
-                self.add_current_as_tab(TabKind::Note(id));
-                self.note_recent(RecentKind::Note, meta.title.clone(), Some(id), None);
+                self.add_current_as_tab(kind);
+                self.note_recent(
+                    if is_note { RecentKind::Note } else { RecentKind::File },
+                    row.title.clone(),
+                    doc_id,
+                    row.origin_path.map(PathBuf::from),
+                );
             }
             Err(e) => self.show_error(e),
         }
+    }
+
+    /// 노트 열기 (라이브러리 패널용 래퍼).
+    pub(crate) fn open_note(&mut self, id: u64) {
+        self.open_document(id as i64);
     }
 
     // ---------- Standalone PDF (Open button) ----------
@@ -294,77 +324,32 @@ impl FreeDfApp {
         {
             self.modal = Some(ModalState::ask_text(
                 "Open PDF",
-                "Enter the PDF file path (e.g. C:/Users/me/doc.pdf)",
+                "Enter the PDF file path (e.g. /home/me/doc.pdf)",
                 TextAction::OpenPdf,
             ));
         }
     }
 
+    /// 외부 PDF를 **DB에 import**하고 엽니다. 같은 경로가 이미 있으면 재사용합니다.
     pub(crate) fn open_pdf(&mut self, path: &Path) {
-        // 이미 열려 있으면 해당 탭으로 전환만 합니다.
-        if let Some(idx) = self.find_tab(&TabKind::Pdf(path.to_path_buf())) {
-            self.switch_tab(idx);
+        let key = path.to_string_lossy().into_owned();
+        if let Some(doc_id) = self.db.find_document_by_path(&key) {
+            self.open_document(doc_id);
             return;
         }
-        // 현재 활성 문서 상태를 탭에 보존하고 새 문서를 엽니다.
-        self.save_session();
-        if self.document.is_some() {
-            self.capture_into(self.active);
-        }
-        let opened = self.pdfium().and_then(|p| DocumentView::open(p, path));
-        match opened {
-            Ok(doc) => {
-                self.current_note = None;
-                self.current_page = 0;
-                self.page_size_pts = doc.page_size_pts(0);
-                self.file_name = doc.file_name.clone();
-                self.file_path = Some(path.to_path_buf());
-                self.document = Some(doc);
-                self.store = AnnotationStore::new();
-                self.history = History::new(256);
-                self.active_stroke = None;
-                self.render_dirty = true;
-                self.pending_fit = Some(FitMode::Width);
-                self.outline_loaded = false;
-                self.outline = Vec::new();
-                self.search_matches = Vec::new();
-                self.search_current = None;
-                self.scroll_vel = Vec2::ZERO;
-                self.page_anim = None;
-                self.prev_texture = None;
-                self.transition_last_page = 0;
-                self.status = None;
-
-                // Auto-load a sidecar annotation file if present
-                let ann_path = annotation_path_for(path);
-                if ann_path.exists() {
-                    if let Ok(text) = std::fs::read_to_string(&ann_path) {
-                        if let Ok(store) = AnnotationStore::from_json(&text) {
-                            self.store = store;
-                            self.status = Some(format!(
-                                "Loaded sidecar annotations: {}",
-                                ann_path.file_name().unwrap_or_default().to_string_lossy()
-                            ));
-                        }
-                    }
-                }
-                // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
-                let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-                let session_path = session_path_for(path);
-                if session_path.exists() {
-                    let session = crate::settings::SessionState::load(&session_path);
-                    self.apply_session(&session, page_count);
-                    self.pending_fit = None;
-                }
-                self.load_outline_if_needed();
-                self.add_current_as_tab(TabKind::Pdf(path.to_path_buf()));
-                self.note_recent(
-                    RecentKind::File,
-                    self.file_name.clone(),
-                    None,
-                    Some(path.to_path_buf()),
-                );
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.show_error(format!("Could not read PDF file: {e}"));
+                return;
             }
+        };
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| key.clone());
+        match self.db.insert_document("pdf", &name, Some(&key), &bytes) {
+            Ok(doc_id) => self.open_document(doc_id),
             Err(e) => self.show_error(e),
         }
     }
@@ -534,9 +519,7 @@ impl FreeDfApp {
         let total = doc.page_count();
         self.logger.log(AppEvent::PageAdded { page: idx, total });
         self.on_page_changed();
-        self.autosave();
-        self.save_pdf_if_note();
-        self.sync_note_meta();
+        self.flush_current_document();
     }
 
     /// 현재 페이지를 시계/반시계 90° 회전합니다 (주석도 함께 회전).
@@ -559,9 +542,7 @@ impl FreeDfApp {
         self.logger
             .log(AppEvent::PageRotated { page: idx, total, clockwise });
         self.on_page_changed();
-        self.autosave();
-        self.save_pdf_if_note();
-        self.sync_note_meta();
+        self.flush_current_document();
     }
 
     /// 문서의 모든 페이지를 시계/반시계 90° 회전합니다 (주석도 함께).
@@ -589,9 +570,7 @@ impl FreeDfApp {
             clockwise,
         });
         self.on_page_changed();
-        self.autosave();
-        self.save_pdf_if_note();
-        self.sync_note_meta();
+        self.flush_current_document();
     }
 
     pub(crate) fn delete_page_action(&mut self) {
@@ -617,9 +596,7 @@ impl FreeDfApp {
             total,
         });
         self.on_page_changed();
-        self.autosave();
-        self.save_pdf_if_note();
-        self.sync_note_meta();
+        self.flush_current_document();
     }
 
     // ---------- Zoom / fit ----------
@@ -688,26 +665,46 @@ impl FreeDfApp {
     pub(crate) fn undo(&mut self) {
         if let Some(edit) = self.history.undo() {
             self.store.apply_edit(&edit);
+            self.persist_edit(&edit);
             self.logger.log(AppEvent::UndoRedo {
                 kind: "undo".to_string(),
             });
-            self.autosave();
         }
     }
 
     pub(crate) fn redo(&mut self) {
         if let Some(edit) = self.history.redo() {
             self.store.apply_edit(&edit);
+            self.persist_edit(&edit);
             self.logger.log(AppEvent::UndoRedo {
                 kind: "redo".to_string(),
             });
-            self.autosave();
+        }
+    }
+
+    /// undo/redo로 바뀐 스트로크만 DB에 반영합니다 (행 단위 증분).
+    fn persist_edit(&mut self, edit: &Edit) {
+        let Some(doc_id) = self.doc_id else {
+            return;
+        };
+        match edit {
+            Edit::AddStrokes { page, strokes } => {
+                self.db.insert_strokes(doc_id, *page as i32, strokes);
+            }
+            Edit::RemoveStrokes { strokes, .. } => {
+                let ids: Vec<i64> = strokes.iter().map(|s| s.id as i64).collect();
+                self.db.delete_strokes(doc_id, &ids);
+            }
         }
     }
 
     pub(crate) fn clear_page(&mut self) {
         let removed = self.store.clear_page(self.current_page);
         if !removed.is_empty() {
+            let ids: Vec<i64> = removed.iter().map(|s| s.id as i64).collect();
+            if let Some(doc_id) = self.doc_id {
+                self.db.delete_strokes(doc_id, &ids);
+            }
             self.history.push(Edit::RemoveStrokes {
                 page: self.current_page,
                 strokes: removed.clone(),
@@ -716,7 +713,6 @@ impl FreeDfApp {
                 page: self.current_page,
                 strokes: removed.len(),
             });
-            self.autosave();
         }
     }
 
@@ -770,122 +766,69 @@ impl FreeDfApp {
         }
     }
 
-    // ---------- Persistence ----------
+    // ---------- Persistence (PostgreSQL) ----------
 
-    /// Writes the current note's annotations to its note folder.
-    pub(crate) fn autosave(&mut self) {
-        let Some(id) = self.current_note else {
+    /// 현재 문서를 전부 DB로 플러시합니다: 스트로크 전체 재동기화 + pages 테이블
+    /// (용지/북마크) + 페이지 수 + PDF 본문 바이트.
+    /// (페이지 CRUD/회전 등 구조 연산과 종료 시 호출)
+    pub(crate) fn flush_current_document(&mut self) {
+        let Some(doc_id) = self.doc_id else {
             return;
         };
-        let ann_path = self.notes.annotations_path(id);
-        let json = self.store.to_json();
-        if let Err(e) = std::fs::write(&ann_path, json) {
-            self.status = Some(format!("Autosave failed: {e}"));
-            return;
+        let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+        self.db.resync_strokes(doc_id, &self.store);
+        let default_paper = PagePaper {
+            style: self.paper_style,
+            color: self.paper_color,
+            spacing: self.paper_spacing,
+            line_color: self.paper_line_color,
+            line_width: self.paper_line_width,
+        };
+        let entries: Vec<(i32, PagePaper, bool)> = (0..page_count)
+            .map(|i| {
+                let paper = self.store.paper_on(i).unwrap_or(default_paper);
+                (i as i32, paper, self.store.is_bookmarked(i))
+            })
+            .collect();
+        self.db.replace_pages(doc_id, &entries);
+        self.db.update_page_count(doc_id, page_count as i32);
+        if let Some(note_id) = self.current_note {
+            let _ = self.notes.set_page_count(note_id as u64, page_count);
         }
-        let _ = self.notes.save();
-    }
-
-    pub(crate) fn sync_note_meta(&mut self) {
-        if let Some(id) = self.current_note {
-            if let Some(doc) = &self.document {
-                let _ = self.notes.set_page_count(id, doc.page_count());
+        // PDF 본문 바이트 저장.
+        if let Some(doc) = &self.document {
+            match doc.save_to_bytes() {
+                Ok(bytes) => {
+                    if let Err(e) = self.db.save_pdf(doc_id, &bytes) {
+                        self.status = Some(format!("Save PDF failed: {e}"));
+                    }
+                }
+                Err(e) => self.status = Some(format!("Save PDF failed: {e}")),
             }
         }
     }
 
-    /// Persists page CRUD changes back into the note's PDF file.
-    pub(crate) fn save_pdf_if_note(&mut self) {
-        if self.current_note.is_none() {
-            return;
-        }
-        let Some(doc) = &self.document else {
-            return;
-        };
-        let Some(path) = self.file_path.clone() else {
-            return;
-        };
-        if let Err(e) = doc.save(&path) {
-            self.status = Some(format!("Save PDF failed: {e}"));
-        }
-    }
-
-    // ---------- File dialogs (annotations / export) ----------
+    // ---------- Save / Load buttons ----------
 
     pub(crate) fn save_annotations(&mut self) {
         if self.document.is_none() {
             self.status = Some("Open a PDF or note first.".to_string());
             return;
         }
-        let default = self
-            .file_path
-            .as_deref()
-            .map(annotation_path_for)
-            .unwrap_or_else(|| PathBuf::from("annotations.freedf.json"));
-        #[cfg(target_os = "windows")]
-        {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("FreeDF annotations", &["json"])
-                .set_file_name(
-                    default
-                        .file_name()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "annotations.freedf.json".into()),
-                )
-                .save_file()
-            {
-                self.do_save_annotations(&path);
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = default;
-            self.modal = Some(ModalState::ask_text(
-                "Save Annotations",
-                "Enter the JSON file path to save to",
-                TextAction::SaveAnnotations,
-            ));
-        }
-    }
-
-    pub(crate) fn do_save_annotations(&mut self, path: &Path) {
-        match std::fs::write(path, self.store.to_json()) {
-            Ok(()) => self.status = Some(format!("Annotations saved: {}", path.display())),
-            Err(e) => self.status = Some(format!("Save failed: {e}")),
-        }
+        self.flush_current_document();
+        self.status = Some("Saved to database.".to_string());
     }
 
     pub(crate) fn load_annotations(&mut self) {
-        #[cfg(target_os = "windows")]
-        {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("FreeDF annotations", &["json"])
-                .pick_file()
-            {
-                self.do_load_annotations(&path);
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.modal = Some(ModalState::ask_text(
-                "Load Annotations",
-                "Enter the JSON file path to load",
-                TextAction::LoadAnnotations,
-            ));
-        }
-    }
-
-    pub(crate) fn do_load_annotations(&mut self, path: &Path) {
-        match std::fs::read_to_string(path) {
-            Ok(text) => match AnnotationStore::from_json(&text) {
-                Ok(store) => {
-                    self.store = store;
-                    self.status = Some(format!("Annotations loaded: {}", path.display()));
-                }
-                Err(e) => self.status = Some(format!("Invalid annotation file: {e}")),
-            },
-            Err(e) => self.status = Some(format!("Load failed: {e}")),
-        }
+        let Some(doc_id) = self.doc_id else {
+            self.status = Some("Open a PDF or note first.".to_string());
+            return;
+        };
+        // DB에 저장된 최신 상태로 재로드 (메모리 변경 폐기).
+        self.store = self.db.load_store(doc_id);
+        self.history = History::new(256);
+        self.render_dirty = true;
+        self.status = Some("Annotations reloaded from database.".to_string());
     }
 
     pub(crate) fn export_png(&mut self) {
@@ -895,12 +838,12 @@ impl FreeDfApp {
         }
         #[cfg(target_os = "windows")]
         {
-            let default_name = self
-                .file_path
-                .as_deref()
-                .and_then(|p| p.file_stem())
-                .map(|s| format!("{}-p{}.png", s.to_string_lossy(), self.current_page + 1))
-                .unwrap_or_else(|| format!("page-{}.png", self.current_page + 1));
+            let stem = std::path::Path::new(&self.file_name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "document".to_string());
+            let default_name = format!("{stem}-p{}.png", self.current_page + 1);
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("PNG image", &["png"])
                 .set_file_name(&default_name)
@@ -977,12 +920,10 @@ impl FreeDfApp {
             TextAction::NewNote => self.create_note_action(text.trim()),
             TextAction::RenameNote => {
                 if let Some(id) = self.current_note {
-                    self.rename_note_action(id, text.trim());
+                    self.rename_note_action(id as u64, text.trim());
                 }
             }
             TextAction::OpenPdf => self.open_pdf(&PathBuf::from(text.trim())),
-            TextAction::SaveAnnotations => self.do_save_annotations(&PathBuf::from(text.trim())),
-            TextAction::LoadAnnotations => self.do_load_annotations(&PathBuf::from(text.trim())),
             TextAction::ExportPng => self.do_export_png(&PathBuf::from(text.trim())),
         }
     }
@@ -990,22 +931,21 @@ impl FreeDfApp {
     pub(crate) fn run_confirm_action(&mut self, action: ConfirmAction, text: String) {
         match action {
             ConfirmAction::DeleteNote => {
-                if let Ok(id) = text.trim().parse::<u64>() {
-                    self.delete_note_action(id);
+                if let Ok(id) = text.trim().parse::<i64>() {
+                    self.delete_note_action(id as u64);
                 }
             }
             ConfirmAction::DeleteLibrary { notes, pdfs } => {
                 let n_notes = notes.len();
                 let n_pdfs = pdfs.len();
                 for id in &notes {
-                    self.delete_note_action(*id);
+                    self.delete_note_action(*id as u64);
                 }
                 for p in pdfs {
                     self.delete_pdf_action(p);
                 }
                 self.sel_notes.clear();
                 self.sel_pdfs.clear();
-                let _ = self.notes.save();
                 self.status = Some(format!(
                     "Deleted {n_notes} note(s) and {n_pdfs} PDF(s)"
                 ));

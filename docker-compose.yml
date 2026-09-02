@@ -1,0 +1,26 @@
+# FreeDF 데이터베이스 — PostgreSQL 17
+# 시작:  docker compose up -d db
+# 종료:  docker compose down        (데이터는 볼륨에 유지됨)
+# 초기화: docker compose down -v    (데이터 삭제)
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: freedf-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: freedf
+      POSTGRES_PASSWORD: freedf
+      POSTGRES_DB: freedf
+    ports:
+      - "5432:5432"
+    volumes:
+      - freedf_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freedf -d freedf"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  freedf_pgdata:
