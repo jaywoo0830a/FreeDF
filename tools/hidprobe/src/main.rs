@@ -26,7 +26,7 @@ fn main() {
     };
     let devices: Vec<hidapi::DeviceInfo> = api
         .device_list()
-        .filter(|d| d.usage_page == 0x0D) // 디지타이저만
+        .filter(|d| d.usage_page() == 0x0D) // 디지타이저만
         .cloned()
         .collect();
     if devices.is_empty() {
@@ -38,13 +38,10 @@ fn main() {
     for d in &devices {
         println!(
             "  vid={:04x} pid={:04x} usage={:04x} product={}",
-            d.vendor_id,
-            d.product_id,
-            d.usage,
-            d.product_string
-                .as_ref()
-                .and_then(|s| s.to_str().ok())
-                .unwrap_or("?")
+            d.vendor_id(),
+            d.product_id(),
+            d.usage(),
+            d.product_string().unwrap_or("?")
         );
     }
     if list_only {
@@ -52,7 +49,7 @@ fn main() {
     }
     let chosen = devices
         .iter()
-        .find(|d| d.usage == 0x02) // 펜
+        .find(|d| d.usage() == 0x02) // 펜
         .or_else(|| devices.first());
     let Some(info) = chosen else {
         return;

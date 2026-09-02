@@ -31,14 +31,11 @@ pub fn list_devices() -> Vec<String> {
         .map(|d| {
             format!(
                 "vid={:04x} pid={:04x} usage_page={:04x} usage={:04x} product={}",
-                d.vendor_id,
-                d.product_id,
-                d.usage_page,
-                d.usage,
-                d.product_string
-                    .as_ref()
-                    .and_then(|s| s.to_str().ok())
-                    .unwrap_or("?")
+                d.vendor_id(),
+                d.product_id(),
+                d.usage_page(),
+                d.usage(),
+                d.product_string().unwrap_or("?")
             )
         })
         .collect()
@@ -53,12 +50,12 @@ pub fn spawn_monitor() -> Option<PenMonitor> {
     // 특정 태블릿만 쓰려면 여기에 vid/pid 필터를 추가하세요.
     let candidates: Vec<hidapi::DeviceInfo> = api
         .device_list()
-        .filter(|d| d.usage_page == 0x0D)
+        .filter(|d| d.usage_page() == 0x0D)
         .cloned()
         .collect();
     let chosen = candidates
         .iter()
-        .find(|d| d.usage == 0x02)
+        .find(|d| d.usage() == 0x02)
         .or_else(|| candidates.first())?;
     let device = chosen.open_device(&api).ok()?;
     // 리포트를 기다리지 않고 폴링합니다 (read_timeout으로 타임아웃).
