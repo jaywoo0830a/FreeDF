@@ -681,6 +681,17 @@ impl FreeDfApp {
                             self.save_session();
                         }
                         if ui
+                            .checkbox(&mut self.debug_hud, "Debug HUD")
+                            .on_hover_text(
+                                "Live input overlay: pressure, tilt, tip speed, tip width.\n\
+                                 Use it to check what your device actually reports.",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if ui
                             .checkbox(&mut self.mouse_draws, "Mouse ink")
                             .on_hover_text(
                                 "Draw ink with the mouse/trackpad too.\n\
@@ -728,40 +739,22 @@ impl FreeDfApp {
                                     "Speed (pt/s) where ink starvation starts — above this \
                                      the line thins and breaks like a real ballpen.",
                                 )
+                                .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(&mut self.pen_profile.tilt_k, 0.0..=1.0)
+                                        .text("Tilt"),
+                                )
+                                .on_hover_text(
+                                    "Tilt influence (continuous, no threshold): laying the pen \
+                                     down widens the line up to (1 + tilt_k) times.\n\
+                                     egui/winit don't expose pen tilt — needs the HID/WM_POINTER \
+                                     hook (`set_pen_tilt`) to feed values.",
+                                )
                                 .changed();
-                        if ui
-                            .checkbox(&mut self.pen_profile.tilt_cut_enabled, "Tilt cut")
-                            .on_hover_text(
-                                "Ballpen cut-off: laying the pen too flat stops the ink.\n\
-                                 Needs a tilt sensor (HID/WM_POINTER hook) to have effect.",
-                            )
-                            .changed()
-                        {
-                            self.save_default_session();
-                            self.save_session();
-                        }
                         if any_changed {
                             self.save_default_session();
                             self.save_session();
-                        }
-                        if self.pen_profile.tilt_cut_enabled {
-                            if ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.pen_profile.tilt_cut_deg,
-                                        10.0..=80.0,
-                                    )
-                                    .text("Cut angle"),
-                                )
-                                .on_hover_text(
-                                    "Elevation angle (deg) where the ink starts to cut out \
-                                     (90 = vertical).",
-                                )
-                                .changed()
-                            {
-                                self.save_default_session();
-                                self.save_session();
-                            }
                         }
                         // 필기 스무딩(안정화): 선택 기능. OTD(OpenTabletDriver) 등
                         // 드라이버가 이미 안정화하는 환경에서는 꺼두면 됩니다.

@@ -33,6 +33,13 @@ pub struct SessionState {
     pub hi_width: f32,
     pub eraser_radius: f32,
     pub pressure_enabled: bool,
+    /// 프로파일(펜/만년필 모델) 기본값 마이그레이션 버전 — 이전 버전이면
+    /// 저장된 프로파일 대신 새 기본값(더 강한 필압/속도/틸트 감도)을 씁니다.
+    #[serde(default)]
+    pub profile_version: u32,
+    /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부 (전역).
+    #[serde(default)]
+    pub debug_hud: bool,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일
     #[serde(default)]
     pub pen_profile: BallPenProfile,
@@ -161,6 +168,8 @@ impl Default for SessionState {
             hi_width: 16.0,
             eraser_radius: 16.0,
             pressure_enabled: true,
+            profile_version: 1,
+            debug_hud: false,
             pen_profile: BallPenProfile::default(),
             zoom: 1.0,
             pan_x: 0.0,

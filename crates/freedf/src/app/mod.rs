@@ -553,6 +553,8 @@ pub struct FreeDfApp {
     hi_width: f32,
     eraser_radius: f32,
     pressure_enabled: bool,
+    /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부.
+    debug_hud: bool,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
     pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
@@ -765,7 +767,9 @@ impl FreeDfApp {
         let hi_width = if has { s.hi_width } else { 16.0 };
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
-        let pen_profile = if has {
+        let debug_hud = if has { s.debug_hud } else { false };
+        // 이전 버전 세션은 저장된 프로파일 대신 새 기본값 사용 (감도 보정 반영).
+        let pen_profile = if has && s.profile_version >= 1 {
             s.pen_profile
         } else {
             BallPenProfile::default()
@@ -804,7 +808,7 @@ impl FreeDfApp {
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let smoothing_enabled = if has { s.smoothing_enabled } else { false };
         let ink_bleed = if has { s.ink_bleed } else { InkBleed::default() };
-        let fountain_profile = if has {
+        let fountain_profile = if has && s.profile_version >= 1 {
             s.fountain_profile
         } else {
             FountainProfile::default()
@@ -901,6 +905,7 @@ impl FreeDfApp {
             ink_bleed,
             fountain_profile,
             pen_tilt: [0.0, 0.0],
+            debug_hud,
             stroke_geom_cache: canvas::GeometryCache::new(),
             width_locker: None,
             ink_mesh: None,
@@ -1004,6 +1009,8 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
+            profile_version: 1,
+            debug_hud: self.debug_hud,
             pen_profile: self.pen_profile,
             zoom: 1.0,
             pan_x: 0.0,
@@ -1100,6 +1107,8 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
+            profile_version: 1,
+            debug_hud: self.debug_hud,
             pen_profile: self.pen_profile,
             zoom: self.view.zoom,
             pan_x: self.view.pan_x,
@@ -1171,7 +1180,15 @@ impl FreeDfApp {
         self.hi_width = s.hi_width.clamp(4.0, 40.0);
         self.eraser_radius = s.eraser_radius.clamp(4.0, 60.0);
         self.pressure_enabled = s.pressure_enabled;
-        self.pen_profile = s.pen_profile;
+        self.debug_hud = s.debug_hud;
+        // 이전 버전 세션이면 새 기본값 프로파일 사용.
+        if s.profile_version >= 1 {
+            self.pen_profile = s.pen_profile;
+            self.fountain_profile = s.fountain_profile;
+        } else {
+            self.pen_profile = BallPenProfile::default();
+            self.fountain_profile = FountainProfile::default();
+        }
         self.page_align = s.page_align;
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
@@ -1183,7 +1200,6 @@ impl FreeDfApp {
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;
         self.ink_bleed = s.ink_bleed;
-        self.fountain_profile = s.fountain_profile;
         self.mouse_draws = s.mouse_draws;
         self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {

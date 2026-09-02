@@ -690,7 +690,8 @@ impl Default for FountainProfile {
     fn default() -> Self {
         Self {
             min_width_pt: 0.3,
-            pressure_alpha: 0.8,
+            // 필압 민감도 — 힘 변화가 선폭에 더 크게 반영되도록 상향.
+            pressure_alpha: 1.0,
             speed_beta: 1.2,
             // 실제 필기 속도(100~400 pt/s)에서 곡선이 반응하도록 보정된 기준.
             // 이전 60 pt/s는 너무 낮아 보통 속도에서 곡선이 포화(굵기 일정)됨.
@@ -1046,22 +1047,27 @@ pub struct BallPenProfile {
     pub min_ratio: f32,
     /// 최대 선폭 비율 (base 대비).
     pub max_ratio: f32,
-    /// 기울기 끊김(볼펜 눕힘) 사용 여부 — 기울기 센서가 없으면 꺼둠.
-    pub tilt_cut_enabled: bool,
-    /// 끊김이 시작되는 고도각(도). 90=수직, 0=수평.
-    pub tilt_cut_deg: f32,
-    /// 끊김 전환 폭(도).
-    pub tilt_falloff_deg: f32,
+    /// 틸트 영향 (연속, 임계값 없음) — 펜을 눕히면(0..1) 선폭이 최대
+    /// (1 + tilt_k)배까지 굵어집니다. 틸트 값이 없으면(0) 영향 없음.
+    #[serde(default = "default_ballpen_tilt_k")]
+    pub tilt_k: f32,
     /// 잉크 부족 시작 속도 (pt/초).
     pub starve_v: f32,
     /// 완전히 끊기는 속도 범위 (pt/초).
     pub starve_falloff: f32,
 }
 
+/// 이전 세션 데이터에 `tilt_k`가 없을 때의 기본값.
+fn default_ballpen_tilt_k() -> f32 {
+    0.35
+}
+
 impl Default for BallPenProfile {
     fn default() -> Self {
         Self {
-            pressure_k: 0.15,
+            // 필압 감도 — 힘 변화가 선폭에 눈에 보이게 반영되도록 상향
+            // (p=0 → ×0.85, p=1 → ×1.15: 30% 폭).
+            pressure_k: 0.3,
             // 속도 영향 — 볼펜은 만년필보다 약하지만, 직선(빠름)과 곡선(느림)의
             // 굵기 차이가 눈에 보이도록 보정된 값 (이전 0.08/600은 사실상 평평).
             speed_k: 0.2,
@@ -1069,11 +1075,8 @@ impl Default for BallPenProfile {
             speed_smooth: 0.3,
             min_ratio: 0.65,
             max_ratio: 1.35,
-            // 펜이 틸트를 지원하면 기본 켜기 — 틸트 값이 없으면(0) 무해하고,
-            // HID/WM_POINTER 훅으로 `set_pen_tilt`가 값을 넣으면 즉시 동작.
-            tilt_cut_enabled: true,
-            tilt_cut_deg: 30.0,
-            tilt_falloff_deg: 15.0,
+            // 틸트: 임계값 없이 연속 반영 — 값이 들어오면 즉시 굵어짐.
+            tilt_k: 0.35,
             starve_v: 900.0,
             starve_falloff: 300.0,
         }
@@ -1081,16 +1084,6 @@ impl Default for BallPenProfile {
 }
 
 impl BallPenProfile {
-    /// 기울기 끊김 계수 (0..1): 펜을 너무 눕히면(고도각이 낮아지면) 0으로 수렴.
-    /// `tilt_mag`는 0(수직)..1(완전 수평) 기울기 크기.
-    pub fn tilt_cut_factor(&self, tilt_mag: f32) -> f32 {
-        if !self.tilt_cut_enabled {
-            return 1.0;
-        }
-        let elev_deg = 90.0 * (1.0 - tilt_mag.clamp(0.0, 1.0));
-        ((elev_deg - self.tilt_cut_deg) / self.tilt_falloff_deg.max(1.0)).clamp(0.0, 1.0)
-    }
-
     /// 과속 잉크 부족 계수 (0..1): `starve_v`를 넘으면 서서히 끊김.
     pub fn starve_factor(&self, v: f32) -> f32 {
         if v <= self.starve_v {
@@ -1106,7 +1099,9 @@ impl BallPenProfile {
         let mut w = base_pt.max(0.05)
             * (1.0 + self.pressure_k * (pressure.clamp(0.0, 1.0) - 0.5))
             * (1.0 - self.speed_k.max(0.0) * speed_norm);
-        w *= self.tilt_cut_factor(tilt_mag) * self.starve_factor(v);
+        // 틸트(연속): 눕힐수록 굵어짐 — 임계값 없이 즉시 반영.
+        w *= 1.0 + self.tilt_k.max(0.0) * tilt_mag.clamp(0.0, 1.0);
+        w *= self.starve_factor(v);
         let lo = base_pt.max(0.05) * self.min_ratio.min(self.max_ratio);
         let hi = base_pt.max(0.05) * self.max_ratio;
         w.clamp(lo.min(hi), hi.max(lo))
@@ -1281,26 +1276,21 @@ mod tests {
         let full = p.width_at(1.0, 1.0, 0.0, 300.0);
         let slow = p.width_at(1.0, 1.0, 0.0, 0.0);
         let fast = p.width_at(1.0, 1.0, 0.0, 600.0);
-        // 영향은 존재하되 작음 (±20% 안팎).
+        // 영향은 존재하되 과하지 않음 (필압 전체 범위 ±15%, 속도 최대 −20%).
         assert!(full > light, "필압↑ → 약간 굵어짐");
         assert!(slow > fast, "속도↑ → 약간 가늘어짐");
-        assert!((full - light) < 0.25, "필압 영향이 너무 큼: {} vs {}", light, full);
-        assert!((slow - fast) < 0.25, "속도 영향이 너무 큼: {} vs {}", fast, slow);
+        assert!((full - light) < 0.35, "필압 영향이 너무 큼: {} vs {}", light, full);
+        assert!((slow - fast) < 0.3, "속도 영향이 너무 큼: {} vs {}", fast, slow);
     }
 
     #[test]
-    fn ballpen_tilt_cut_skips_ink_when_laid_down() {
-        let mut p = BallPenProfile::default();
-        p.tilt_cut_enabled = true;
-        p.tilt_cut_deg = 30.0;
-        p.tilt_falloff_deg = 15.0;
-        assert!((p.tilt_cut_factor(0.0) - 1.0).abs() < 1e-5, "수직 = 끊김 없음");
-        assert!((p.tilt_cut_factor(0.5) - 1.0).abs() < 1e-5, "45° 고도 = 아직 끊김 없음");
-        assert!(p.tilt_cut_factor(0.75) < 1e-5, "낮게 누움 = 완전 끊김");
-        assert!(p.tilt_cut_factor(1.0) < 1e-5, "완전 수평 = 끊김");
-        // 끄면 항상 1.
-        p.tilt_cut_enabled = false;
-        assert!((p.tilt_cut_factor(1.0) - 1.0).abs() < 1e-5);
+    fn ballpen_tilt_widens_continuously() {
+        let p = BallPenProfile::default(); // tilt_k = 0.35
+        let flat = p.width_at(2.0, 0.5, 1.0, 0.0);
+        let mid = p.width_at(2.0, 0.5, 0.5, 0.0);
+        let vert = p.width_at(2.0, 0.5, 0.0, 0.0);
+        assert!(flat > mid && mid > vert, "틸트가 클수록 굵어짐 (연속, 임계값 없음)");
+        assert!((flat / vert - 1.35).abs() < 1e-3, "tilt_k=0.35 → 1.35배");
     }
 
     #[test]

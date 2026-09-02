@@ -369,6 +369,7 @@ impl FreeDfApp {
 
     /// Pen pressure from touch events (Windows Ink). egui reports force via
     /// `Event::Touch { force: Some(f) }`; falls back to full pressure for mouse.
+    /// 이 프레임의 모든 터치 이벤트에서 가장 최근의 force를 사용합니다.
     pub(crate) fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
         if !self.pressure_enabled {
             return 1.0;
@@ -376,13 +377,97 @@ impl FreeDfApp {
         let force: Option<f32> = ctx.input(|i| {
             i.events
                 .iter()
-                .rev()
-                .find_map(|e| match e {
-                    egui::Event::Touch { force: Some(f), .. } => Some(*f),
+                .filter_map(|e| match e {
+                    egui::Event::Touch { force, .. } => *force,
                     _ => None,
                 })
+                .last()
         });
         force.map(|f| f.clamp(0.0, 1.0)).unwrap_or(1.0)
+    }
+
+    /// 실시간 입력 디버그 HUD — 필압/틸트/속도/폭이 실제로 어떻게 들어오는지
+    /// 바로 확인할 수 있습니다 (입력 장치가 필압을 보고하지 않으면 pressure가
+    /// 계속 1.0으로 표시됩니다).
+    pub(crate) fn paint_debug_hud(&self, ctx: &egui::Context, origin: Pos2) {
+        let pressure = self.sample_pressure(ctx);
+        let (speed, tip_w, pts_n) = match &self.active_stroke {
+            Some(st) if st.points.len() >= 2 => {
+                let n = st.points.len();
+                let a = st.points[n - 2];
+                let b = st.points[n - 1];
+                let dist = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+                let dt = (b.t_ms.saturating_sub(a.t_ms)) as f32 / 1000.0;
+                let v = if dt > 1e-4 { dist / dt } else { 0.0 };
+                (v, st.points.last().map(|p| p.width).unwrap_or(0.0), n)
+            }
+            Some(st) => (
+                0.0,
+                st.points.first().map(|p| p.width).unwrap_or(0.0),
+                st.points.len(),
+            ),
+            None => (0.0, 0.0, 0),
+        };
+        let (fps, touch_events) = ctx.input(|i| {
+            let fps = if i.unstable_dt > 1e-4 {
+                1.0 / i.unstable_dt
+            } else {
+                0.0
+            };
+            let touches = i
+                .events
+                .iter()
+                .filter(|e| matches!(e, egui::Event::Touch { .. }))
+                .count();
+            (fps, touches)
+        });
+        let device = match self.input_device {
+            InputDevice::Pen => "Pen",
+            InputDevice::Mouse => "Mouse",
+        };
+        let is_fountain = self.tool == ToolType::Fountain;
+        let (p_k, s_ref, t_k) = if is_fountain {
+            (
+                self.fountain_profile.pressure_alpha,
+                self.fountain_profile.speed_ref,
+                self.fountain_profile.tilt_k,
+            )
+        } else {
+            (
+                self.pen_profile.pressure_k,
+                self.pen_profile.speed_max,
+                self.pen_profile.tilt_k,
+            )
+        };
+        egui::Area::new(egui::Id::new("freedf_debug_hud"))
+            .fixed_pos(origin + egui::vec2(14.0, 14.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.strong("Debug HUD");
+                    ui.label(format!(
+                        "device: {device}  (touch events/frame: {touch_events})"
+                    ));
+                    ui.label(format!("pressure: {pressure:.3}"));
+                    ui.label(format!(
+                        "tilt: [{:+.0}°, {:+.0}°]",
+                        self.pen_tilt[0], self.pen_tilt[1]
+                    ));
+                    ui.label(format!("tip speed: {speed:.0} pt/s"));
+                    ui.label(format!("tip width: {tip_w:.2} pt"));
+                    ui.label(format!("active points: {pts_n}"));
+                    ui.label(format!("fps: {fps:.0}"));
+                    ui.separator();
+                    ui.label(format!(
+                        "model: p_k={p_k:.2}  speed_ref/max={s_ref:.0}  tilt_k={t_k:.2}"
+                    ));
+                    ui.label(format!(
+                        "tool: {}",
+                        if is_fountain { "Fountain" } else { "Pen" }
+                    ));
+                });
+            });
     }
 
     pub(crate) fn finish_stroke(&mut self) {
@@ -827,6 +912,11 @@ impl FreeDfApp {
             }
         } else {
             ctx.set_cursor_icon(egui::CursorIcon::Default);
+        }
+
+        // Debug HUD — 실시간 입력값 확인용 오버레이.
+        if self.debug_hud {
+            self.paint_debug_hud(&ctx, origin);
         }
 
         // Zoom hint
