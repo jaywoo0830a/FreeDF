@@ -25,6 +25,9 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
     (y.atan2(x), cos_pitch)
 }
 
+/// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
+const DEFAULT_PEN_AZ: f32 = -0.6;
+
 /// 진행 중 획/번지는 후광의 지오메트리 재구성 스로틀 (ms).
 /// 사람이 못 느끼는 100ms — 최대 10Hz로만 다시 짓습니다.
 const ACTIVE_STROKE_GEOM_MS: u64 = 100;
@@ -2158,10 +2161,10 @@ impl FreeDfApp {
 
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the
-    /// current tool's shape and color (Pen = translucent gray circle,
+    /// current tool's shape and color (Pen = 벡터풍 펜 닙 (틸트 방향 추적),
     /// Highlighter = colored rectangle, Eraser = white translucent circle).
     /// 마우스 + 잉크 도구(mouse_draws 꺼짐)면 팬 십자선으로 표시합니다.
-    pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
+    pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, _time: f32) {
         // 실제로 쓰일 도구: 마우스는 기본적으로 팬처럼 동작.
         let mouse_panning = !self.mouse_draws
             && self.input_device == InputDevice::Mouse
@@ -2176,86 +2179,44 @@ impl FreeDfApp {
         };
         match tool {
             ToolType::Pen | ToolType::Fountain => {
-                match self.pen_cursor_style {
-                    PenCursorStyle::Dot => {
-                        // 작은 점.
-                        let rect = Rect::from_center_size(pos, Vec2::splat(4.0));
-                        painter.rect_filled(
-                            rect,
-                            2.0,
-                            Color32::from_rgba_unmultiplied(120, 120, 120, 230),
-                        );
-                        painter.rect_stroke(
-                            rect,
-                            2.0,
-                            Stroke::new(1.0, Color32::from_rgba_unmultiplied(70, 70, 70, 220)),
-                            egui::StrokeKind::Outside,
-                        );
-                    }
-                    PenCursorStyle::Round => {
-                        // 펜 색/굵기를 미리보는 원 + 호흡 링(인터랙션 힌트).
-                        let color = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            (self.pen_color[3] as f32 * 0.85).max(40.0) as u8,
-                        );
-                        let r = (self.pen_width * self.view.zoom * 0.5).clamp(2.5, 16.0);
-                        let breath = 1.0 + 0.06 * (time * 3.0).sin();
-                        // 흰 용지 위에서도 보이도록 어두운 윤곽을 먼저.
-                        painter.circle_stroke(
-                            pos,
-                            r + 1.5,
-                            Stroke::new(1.0, Color32::from_black_alpha(90)),
-                        );
-                        painter.circle_filled(pos, r, color);
-                        painter.circle_stroke(
-                            pos,
-                            r,
-                            Stroke::new(1.0, Color32::from_white_alpha(140)),
-                        );
-                        // 살짝 숨쉬는 바깥 링 — 커서가 살아있음을 알려줍니다.
-                        painter.circle_stroke(
-                            pos,
-                            (r + 5.0) * breath,
-                            Stroke::new(1.0, Color32::from_white_alpha(60)),
-                        );
-                        painter.circle_filled(pos, 1.2, Color32::from_white_alpha(200));
-                    }
-                }
-                // ── 틸트 추적 커서 (오른손잡이 관례): 닙은 **실제 좌표에 고정**,
-                // 배럴이 기울기 방향(방위각)으로 뻗어 그 지점을 가리킵니다 —
-                // 좌표를 중심으로 회전하는 게 아니라 펜 자체가 좌표를 찍습니다.
-                if self.pen_monitor.is_some() {
-                    let (az, cos_pitch) = tilt_azimuth(&self.pen_tilt);
-                    if cos_pitch < 0.98 {
-                        let pitch = cos_pitch.acos();
-                        // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
-                        let len = 6.0 + 20.0 * pitch.sin();
-                        let w = (3.5 * cos_pitch).max(1.0);
-                        let dir = egui::vec2(az.cos(), az.sin());
-                        let perp = egui::vec2(-dir.y, dir.x);
-                        let tail = pos + dir * len;
-                        let nib_l = pos + perp * 0.8;
-                        let nib_r = pos - perp * 0.8;
-                        let tail_l = tail + perp * w;
-                        let tail_r = tail - perp * w;
-                        let ink = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            60,
-                        );
-                        painter.add(egui::Shape::convex_polygon(
-                            vec![nib_l, nib_r, tail_r, tail_l],
-                            ink,
-                            Stroke::new(1.0, Color32::from_white_alpha(140)),
-                        ));
-                        painter.circle_filled(tail, w, ink);
-                        // 닙 끝(정확 좌표) 강조.
-                        painter.circle_filled(pos, 1.4, Color32::from_white_alpha(210));
-                    }
-                }
+                // ── 벡터풍 펜 닙 커서 (원형 미리보기 제거 — 사용자 요청).
+                // 닙 끝이 **실제 좌표**에 고정되고, 배럴이 펜 기울기 방향
+                // (방위각)을 가리킵니다. 틸트 소스가 없으면 오른손잡이 기본
+                // 각도(위-오른쪽)로 섭니다.
+                let (az, cos_pitch) = if self.pen_monitor.is_some() {
+                    tilt_azimuth(&self.pen_tilt)
+                } else {
+                    (DEFAULT_PEN_AZ, 1.0)
+                };
+                let pitch = cos_pitch.acos();
+                // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
+                let len = 18.0 + 26.0 * pitch.sin();
+                let w = (4.5 * cos_pitch).max(1.5);
+                let dir = egui::vec2(az.cos(), az.sin());
+                let perp = egui::vec2(-dir.y, dir.x);
+                let tail = pos + dir * len;
+                let tail_l = tail + perp * w;
+                let tail_r = tail - perp * w;
+                let ink = Color32::from_rgba_unmultiplied(
+                    self.pen_color[0],
+                    self.pen_color[1],
+                    self.pen_color[2],
+                    (self.pen_color[3] as f32 * 0.75).max(90.0) as u8,
+                );
+                // 닙: 좌표에 꼭짓점이 닿는 삼각형 + 둥근 꼬리 캡.
+                painter.add(egui::Shape::convex_polygon(
+                    vec![pos, tail_r, tail_l],
+                    ink,
+                    Stroke::new(1.2, Color32::from_white_alpha(190)),
+                ));
+                painter.circle_filled(tail, w, ink);
+                painter.circle_stroke(
+                    tail,
+                    w,
+                    Stroke::new(1.2, Color32::from_white_alpha(190)),
+                );
+                // 닙 끝(정확 좌표) 강조.
+                painter.circle_filled(pos, 1.6, Color32::from_white_alpha(220));
             }
             ToolType::Highlighter => {
                 // 정밀한 마커 닙 커서: **작고 반듯한 사각형** — 두께는 실제
