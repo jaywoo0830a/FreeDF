@@ -150,7 +150,8 @@ fn draw_one_stroke(
 }
 
 /// 화면과 **동일한** 외곽선→삼각분할로 스트로크를 래스터라이즈합니다.
-/// (겹침 없는 삼각형들이라 반투명 색도 균일)
+/// (겹침 없는 삼각형들이라 반투명 색도 균일 — 완전 분할이 안 되는
+/// 자기 교차 입력은 세그먼트 quad 폴백으로 커버)
 fn fill_stroke_outline(
     img: &mut RgbaImage,
     pts_xy: &[[f32; 2]],
@@ -159,11 +160,24 @@ fn fill_stroke_outline(
     color: [u8; 4],
 ) {
     let poly = freedf_core::pen::stroke_outline(pts_xy, half_widths, round_caps);
-    for tri in freedf_core::pen::triangulate_polygon(&poly) {
-        let a = poly[tri[0] as usize];
-        let b = poly[tri[1] as usize];
-        let c = poly[tri[2] as usize];
-        fill_triangle(img, a, b, c, color);
+    let (tris, complete) = freedf_core::pen::triangulate_polygon_checked(&poly);
+    if complete && !tris.is_empty() {
+        for tri in &tris {
+            let a = poly[tri[0] as usize];
+            let b = poly[tri[1] as usize];
+            let c = poly[tri[2] as usize];
+            fill_triangle(img, a, b, c, color);
+        }
+        return;
+    }
+    // 폴백: 세그먼트 quad + 조인/캡 원.
+    let fb = freedf_core::pen::stroke_fallback_geometry(pts_xy, half_widths);
+    for q in &fb.quads {
+        fill_triangle(img, q[0], q[1], q[2], color);
+        fill_triangle(img, q[0], q[2], q[3], color);
+    }
+    for (c, r) in &fb.circles {
+        draw_disk(img, *c, r.max(0.5), color);
     }
 }
 

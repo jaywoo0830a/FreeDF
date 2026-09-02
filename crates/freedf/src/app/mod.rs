@@ -106,6 +106,7 @@ pub(crate) struct PageAnim {
 }
 
 /// A stroke currently being drawn
+#[derive(Clone)]
 pub(crate) struct ActiveStroke {
     tool: ToolType,
     color: [u8; 4],
@@ -566,6 +567,8 @@ pub struct FreeDfApp {
     /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
     /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
     pen_tilt: [f32; 2],
+    /// 획별 렌더 지오메트리 캐시 (매 프레임 삼각분할 재계산 방지).
+    stroke_geom_cache: std::collections::HashMap<u64, canvas::StrokeGeom>,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -862,6 +865,7 @@ impl FreeDfApp {
             ink_bleed,
             fountain_profile,
             pen_tilt: [0.0, 0.0],
+            stroke_geom_cache: std::collections::HashMap::new(),
             paper_style,
             paper_color,
             paper_size,

@@ -12,75 +12,126 @@ fn tilt_magnitude(tilt: &[f32; 2]) -> f32 {
     (m / 90.0).min(1.0).max(0.0)
 }
 
-/// 삼각분할 결과를 egui 메시 2개로 직접 구성합니다:
-/// - `fill`: 겹침 없는 본체 채움 삼각형.
-/// - `aa`: **경계 가장자리에만** 붙는 페더링(AA) 스트립 — 내부 공유 가장자리는
-///   제외해 반투명 잉크의 이음새 얼룩을 막습니다.
-///
-/// egui의 `convex_polygon`을 쓰지 않는 이유: epaint의 페더링 테셀레이터가
-/// 슬리버(가늘고 긴) 삼각형에서 점 법선을 폭발시켜 정점이 수천 픽셀 밖으로
-/// 튀는 "빛살(starburst)" 깨짐이 생기기 때문입니다. 우리 법선은 세그먼트
-/// 단위라 어떤 입력에도 유한합니다.
-fn build_stroke_meshes(
-    poly: &[[f32; 2]],
-    tris: &[[u32; 3]],
+/// 획별 렌더 지오메트리 캐시 — 매 프레임 귀 자르기(O(n²)) 삼각분할을
+/// 반복하지 않고, 줌/팬은 정점 변환(O(n))만으로 처리합니다.
+pub(crate) struct CachedOutline {
+    /// 페이지(pt) 공간 외곽선.
+    pub(crate) poly: Vec<[f32; 2]>,
+    /// 삼각분할 (완전 분할일 때만 사용).
+    pub(crate) tris: Vec<[u32; 3]>,
+    /// 경계 가장자리 (a, b, 바깥 단위 방향 — pt 공간).
+    pub(crate) aa_edges: Vec<(u32, u32, [f32; 2])>,
+}
+
+pub(crate) struct StrokeGeom {
+    pub(crate) hash: u64,
+    pub(crate) main: CachedOutline,
+    /// 완전 삼각분할 불가(자기 교차 등) 시의 세그먼트 quad 폴백.
+    pub(crate) fallback: Option<freedf_core::pen::FallbackGeometry>,
+    /// 정착된 블리드 후광 (0.5r, 1.0r — pt 공간).
+    pub(crate) halo: Option<(CachedOutline, CachedOutline)>,
+}
+
+/// 외곽선+삼각형에서 캐시용 구조를 만듭니다 (경계 가장자리/바깥 방향 포함).
+fn build_cached_outline(poly: &[[f32; 2]], tris: &[[u32; 3]]) -> CachedOutline {
+    use std::collections::HashMap;
+    let mut counts: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in tris {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *counts.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let mut aa_edges = Vec::new();
+    for t in tris {
+        for (ia, ib) in [(0usize, 1usize), (1, 2), (2, 0)] {
+            let (a, b) = (t[ia], t[ib]);
+            if counts.get(&(a.min(b), a.max(b))) != Some(&1) {
+                continue;
+            }
+            let ic = 3 - ia - ib; // 남은 정점 = 안쪽.
+            let (pa, pb, pc) = (
+                poly[a as usize],
+                poly[b as usize],
+                poly[t[ic] as usize],
+            );
+            let (dx, dy) = (pb[0] - pa[0], pb[1] - pa[1]);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-4 {
+                continue;
+            }
+            let perp = [-dy / len, dx / len];
+            // 안쪽 정점(pc)의 반대 방향이 바깥.
+            let side = (pc[0] - pa[0]) * perp[0] + (pc[1] - pa[1]) * perp[1];
+            let dir = if side < 0.0 { perp } else { [-perp[0], -perp[1]] };
+            aa_edges.push((a, b, dir));
+        }
+    }
+    CachedOutline {
+        poly: poly.to_vec(),
+        tris: tris.to_vec(),
+        aa_edges,
+    }
+}
+
+/// 캐시된 외곽선 → egui 메시 2개 (본체 채움 + 경계 AA 페더링).
+/// `to_view`는 pt 공간 좌표를 화면 좌표로 변환합니다.
+fn outline_meshes(
+    outline: &CachedOutline,
+    to_view: &impl Fn([f32; 2]) -> Pos2,
     color: Color32,
     feather: f32,
 ) -> (egui::Mesh, egui::Mesh) {
     let mut fill = egui::Mesh::default();
-    for p in poly {
+    for p in &outline.poly {
         fill.vertices
-            .push(egui::epaint::Vertex::untextured(egui::pos2(p[0], p[1]), color));
+            .push(egui::epaint::Vertex::untextured(to_view(*p), color));
     }
-    for t in tris {
+    for t in &outline.tris {
         fill.indices.extend_from_slice(&[t[0], t[1], t[2]]);
     }
-
     let mut aa = egui::Mesh::default();
     if feather > 0.0 {
-        use std::collections::HashMap;
-        // 가장자리 공유 횟수 — 1이면 경계(외곽선) 가장자리.
-        let mut counts: HashMap<(u32, u32), u32> = HashMap::new();
-        for t in tris {
-            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                *counts.entry((a.min(b), a.max(b))).or_default() += 1;
-            }
-        }
-        for t in tris {
-            for (ia, ib) in [(0usize, 1usize), (1, 2), (2, 0)] {
-                let (a, b) = (t[ia], t[ib]);
-                if counts.get(&(a.min(b), a.max(b))) != Some(&1) {
-                    continue; // 내부 공유 가장자리 — 페더링 없음.
-                }
-                let ic = 3 - ia - ib; // 삼각형의 남은 정점 = 안쪽.
-                let pa = egui::pos2(poly[a as usize][0], poly[a as usize][1]);
-                let pb = egui::pos2(poly[b as usize][0], poly[b as usize][1]);
-                let pc = egui::pos2(poly[t[ic] as usize][0], poly[t[ic] as usize][1]);
-                let d = pb - pa;
-                let len = d.length();
-                if len < 1e-4 {
-                    continue;
-                }
-                let perp = Vec2::new(-d.y, d.x) / len;
-                // 안쪽 정점(pc)의 반대 방향이 바깥.
-                let nrm = if (pc - pa).dot(perp) < 0.0 { perp } else { -perp };
-                let (oa, ob) = (pa + nrm * feather, pb + nrm * feather);
-                let base = aa.vertices.len() as u32;
-                aa.vertices
-                    .push(egui::epaint::Vertex::untextured(pa, color));
-                aa.vertices
-                    .push(egui::epaint::Vertex::untextured(pb, color));
-                aa.vertices
-                    .push(egui::epaint::Vertex::untextured(oa, Color32::TRANSPARENT));
-                aa.vertices
-                    .push(egui::epaint::Vertex::untextured(ob, Color32::TRANSPARENT));
-                aa.indices
-                    .extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
-            }
+        for (a, b, dir) in &outline.aa_edges {
+            let pa = to_view(outline.poly[*a as usize]);
+            let pb = to_view(outline.poly[*b as usize]);
+            let nrm = egui::vec2(dir[0], dir[1]) * feather;
+            let (oa, ob) = (pa + nrm, pb + nrm);
+            let base = aa.vertices.len() as u32;
+            aa.vertices
+                .push(egui::epaint::Vertex::untextured(pa, color));
+            aa.vertices
+                .push(egui::epaint::Vertex::untextured(pb, color));
+            aa.vertices
+                .push(egui::epaint::Vertex::untextured(oa, Color32::TRANSPARENT));
+            aa.vertices
+                .push(egui::epaint::Vertex::untextured(ob, Color32::TRANSPARENT));
+            aa.indices
+                .extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
         }
     }
     (fill, aa)
 }
+
+/// 스트로크 지오메트리 해시 — 점/두께/도구가 바뀌면 캐시를 재구성합니다.
+fn stroke_geom_hash(stroke: &freedf_core::model::Stroke) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    for p in &stroke.points {
+        mix(&p.x.to_bits().to_le_bytes());
+        mix(&p.y.to_bits().to_le_bytes());
+        mix(&p.pressure.to_bits().to_le_bytes());
+        mix(&p.t_ms.to_le_bytes());
+    }
+    mix(&stroke.width.to_bits().to_le_bytes());
+    mix(&[stroke.tool as u8]);
+    h
+}
+
 
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
@@ -477,8 +528,8 @@ impl FreeDfApp {
         for stroke in &strokes {
             self.paint_stroke(&painter, stroke, draw_origin);
         }
-        if let Some(active) = &self.active_stroke {
-            self.paint_active(&painter, active, draw_origin);
+        if let Some(active) = self.active_stroke.clone() {
+            self.paint_active(&painter, &active, draw_origin);
         }
 
         // Tool cursor — custom sprite only when the pointer is actually over
@@ -1246,7 +1297,12 @@ impl FreeDfApp {
 
     // ---------- Stroke painting ----------
 
-    pub(crate) fn paint_active(&self, painter: &egui::Painter, active: &ActiveStroke, origin: Pos2) {
+    pub(crate) fn paint_active(
+        &mut self,
+        painter: &egui::Painter,
+        active: &ActiveStroke,
+        origin: Pos2,
+    ) {
         let stroke = freedf_core::model::Stroke {
             id: 0,
             tool: active.tool,
@@ -1258,66 +1314,129 @@ impl FreeDfApp {
         self.paint_stroke(painter, &stroke, origin);
     }
 
-    pub(crate) fn paint_stroke(&self, painter: &egui::Painter, stroke: &freedf_core::model::Stroke, origin: Pos2) {
+    pub(crate) fn paint_stroke(
+        &mut self,
+        painter: &egui::Painter,
+        stroke: &freedf_core::model::Stroke,
+        origin: Pos2,
+    ) {
         let color = Color32::from_rgba_unmultiplied(
             stroke.color[0],
             stroke.color[1],
             stroke.color[2],
             stroke.color[3],
         );
-        let zoom = self.view.zoom;
         let pts = &stroke.points;
         if pts.is_empty() {
             return;
         }
-        // 점별 화면(뷰) 좌표 — 줌이 두 번 적용되지 않도록 뷰 공간에서 계산.
-        let pts_view: Vec<[f32; 2]> = pts
-            .iter()
-            .map(|p| {
-                let v = self.view.page_to_view([p.x, p.y]);
-                [origin.x + v[0], origin.y + v[1]]
-            })
-            .collect();
-        // 점별 절반 두께 (화면 px).
         let n = pts.len();
-        let mut halves: Vec<f32> = Vec::with_capacity(n);
+        // ── 뷰포트 컬링: 페이지 bbox가 화면 밖이면 통째로 스킵 (줌인 시 큰 절약).
+        if let Some(bb) = stroke.bounding_box() {
+            let pad = (stroke.width * 0.7).max(6.0) + self.ink_bleed.max_spread_pt.max(0.0);
+            let a = self.view.page_to_view([bb[0] - pad, bb[1] - pad]);
+            let b = self.view.page_to_view([bb[2] + pad, bb[3] + pad]);
+            let rect = Rect::from_min_max(
+                origin + egui::vec2(a[0], a[1]),
+                origin + egui::vec2(b[0], b[1]),
+            );
+            if !rect.intersects(painter.clip_rect()) {
+                return;
+            }
+        }
+        // ── 점별 절반 두께(pt) — 모델 계산은 줌과 무관하므로 캐시 가능.
         let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
+        let mut halves_pt: Vec<f32> = Vec::with_capacity(n);
         if stroke.tool == ToolType::Highlighter {
-            // 마커: 필압/테이퍼 없이 일정한 두께.
-            let h = (stroke.width * zoom * 0.5).max(0.5);
-            halves.resize(n, h);
+            halves_pt.resize(n, (stroke.width * 0.5).max(0.5));
         } else if stroke.tool == ToolType::Fountain {
-            // 만년필: 필압 × 속도 × 기울기 물리 모델. 점별 폭(pt)을
-            // 모델로 계산해 화면 px로 환산합니다.
             let tilt = tilt_magnitude(&self.pen_tilt);
-            let widths = self.fountain_profile.widths(stroke.width, pts, tilt);
-            for w in widths {
-                halves.push((w * zoom * 0.5).max(0.3));
+            for w in self.fountain_profile.widths(stroke.width, pts, tilt) {
+                halves_pt.push((w * 0.5).max(0.3));
             }
         } else {
-            // 일반 펜: 필압·속도 영향이 작은 물리 모델 (선폭 변동폭이 좁음).
             let tilt = tilt_magnitude(&self.pen_tilt);
-            let widths = self.pen_profile.widths(stroke.width, pts, tilt);
-            for w in widths {
-                halves.push((w * zoom * 0.5).max(0.3));
+            for w in self.pen_profile.widths(stroke.width, pts, tilt) {
+                halves_pt.push((w * 0.5).max(0.3));
             }
         }
         let is_pen = stroke.tool == ToolType::Pen;
-        // 잉크 번짐(블리드) 후광: 잉크 아래에 반투명 레이어 2겹을 깔아
-        // 종이로 잉크가 퍼진 것처럼 보이게 합니다. 각 레이어는 겹침 없는
-        // 삼각분할이라 얼룩이 없습니다.
-        if is_pen && self.ink_bleed.enabled {
-            let age_sec = if stroke.created_ms == 0 {
-                0.0
+        let bleed_active = is_pen && self.ink_bleed.enabled;
+        let settle = self.ink_bleed.settle_sec().max(1e-3);
+        let age_sec = if stroke.created_ms == 0 {
+            settle
+        } else {
+            (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
+        };
+        // ── 지오메트리 캐시 (해시 불일치 시에만 재구성 — 삼각분할은 O(n²)).
+        let hash = stroke_geom_hash(stroke);
+        let need_rebuild = match self.stroke_geom_cache.get(&stroke.id) {
+            Some(g) => g.hash != hash,
+            None => true,
+        };
+        if need_rebuild {
+            let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
+            let poly = freedf_core::pen::stroke_outline(&pts_pt, &halves_pt, round_caps);
+            let (tris, complete) = freedf_core::pen::triangulate_polygon_checked(&poly);
+            let main = build_cached_outline(&poly, &tris);
+            let fallback = if complete && !tris.is_empty() {
+                None
             } else {
-                (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
+                // 자기 교차 등으로 완전 분할 불가 → 세그먼트 quad 폴백.
+                Some(freedf_core::pen::stroke_fallback_geometry(&pts_pt, &halves_pt))
             };
-            // 획 길이 + 점별 시작/끝 거리.
+            // 정착된 블리드 후광 2단 (최대 반경, pt 공간) — 캐시에 미리 생성.
+            let halo = if bleed_active && age_sec >= settle {
+                let spread = self.ink_bleed.max_spread_pt.max(0.0);
+                let mk = |extra: f32| {
+                    let hb: Vec<f32> = halves_pt
+                        .iter()
+                        .map(|h| h + spread * extra)
+                        .collect();
+                    let p = freedf_core::pen::stroke_outline(&pts_pt, &hb, true);
+                    let (t, c) = freedf_core::pen::triangulate_polygon_checked(&p);
+                    if c && !t.is_empty() {
+                        Some(build_cached_outline(&p, &t))
+                    } else {
+                        None
+                    }
+                };
+                match (mk(0.5), mk(1.0)) {
+                    (Some(mid), Some(outer)) => Some((mid, outer)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            self.stroke_geom_cache.insert(
+                stroke.id,
+                StrokeGeom {
+                    hash,
+                    main,
+                    fallback,
+                    halo,
+                },
+            );
+            if self.stroke_geom_cache.len() > 1024 {
+                self.stroke_geom_cache.clear();
+            }
+        }
+        let geom = self
+            .stroke_geom_cache
+            .get(&stroke.id)
+            .expect("stroke geometry cache");
+        let to_view = |p: [f32; 2]| -> Pos2 {
+            let v = self.view.page_to_view(p);
+            egui::pos2(origin.x + v[0], origin.y + v[1])
+        };
+        // 젊은 블리드(정착 전)는 나이가 매 프레임 변하므로 매 프레임 후광 —
+        // 그어진 지 얼마 안 된 소수의 획에만 해당합니다.
+        if bleed_active && age_sec < settle && age_sec > 0.05 {
             let len: f32 = pts
                 .windows(2)
                 .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt())
                 .sum();
-            let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n); // (d0, d1)
+            let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n);
             let mut acc = 0.0f32;
             for i in 0..n {
                 if i > 0 {
@@ -1331,46 +1450,71 @@ impl FreeDfApp {
                 .iter()
                 .map(|(d0, d1)| self.ink_bleed.radius(*d0, *d1, len, age_sec))
                 .collect();
-            // (추가 반경 비율, 알파 배율): 안쪽이 진하고 바깥이 옅은 2단.
+            let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
             for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-                let mut hb: Vec<f32> = Vec::with_capacity(n);
-                for i in 0..n {
-                    hb.push(halves[i] + radii[i] * extra);
-                }
+                let hb: Vec<f32> = (0..n).map(|i| halves_pt[i] + radii[i] * extra).collect();
                 let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
-                let halo = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-                self.paint_filled_stroke(painter, &pts_view, &hb, true, halo);
+                let halo_color =
+                    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+                let p = freedf_core::pen::stroke_outline(&pts_pt, &hb, true);
+                let (t, c) = freedf_core::pen::triangulate_polygon_checked(&p);
+                if c && !t.is_empty() {
+                    let outline = build_cached_outline(&p, &t);
+                    let (fill, _) = outline_meshes(&outline, &to_view, halo_color, 0.0);
+                    painter.add(egui::Shape::mesh(fill));
+                } else {
+                    let fb = freedf_core::pen::stroke_fallback_geometry(&pts_pt, &hb);
+                    self.paint_fallback_geom(painter, &to_view, &fb, halo_color);
+                }
             }
         }
-        // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝 — 관례적 구분.
-        self.paint_filled_stroke(painter, &pts_view, &halves, round_caps, color);
+        // 본체.
+        if let Some(fb) = &geom.fallback {
+            self.paint_fallback_geom(painter, &to_view, fb, color);
+        } else {
+            let (fill, aa) = outline_meshes(&geom.main, &to_view, color, 1.0);
+            painter.add(egui::Shape::mesh(fill));
+            if !aa.is_empty() {
+                painter.add(egui::Shape::mesh(aa));
+            }
+        }
+        // 정착 블리드 후광.
+        if let Some((mid, outer)) = &geom.halo {
+            let a1 = (color.a() as f32 * 0.35).clamp(0.0, 255.0) as u8;
+            let a2 = (color.a() as f32 * 0.12).clamp(0.0, 255.0) as u8;
+            let c1 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a1);
+            let c2 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a2);
+            let (f1, _) = outline_meshes(mid, &to_view, c1, 0.0);
+            painter.add(egui::Shape::mesh(f1));
+            let (f2, _) = outline_meshes(outer, &to_view, c2, 0.0);
+            painter.add(egui::Shape::mesh(f2));
+        }
     }
 
-    /// 외곽선 → 삼각분할 → 채움. 모든 삼각형이 겹치지 않아 반투명 색도
-    /// 균일하게 칠해집니다.
-    ///
-    /// 주의: egui의 `Shape::convex_polygon`은 **페더링 테셀레이터가 슬리버
-    /// (가늘고 긴) 삼각형에서 점 법선을 폭발**시켜 정점이 화면 밖으로 튀는
-    /// "빛살(starburst)" 깨짐이 있었습니다. 그래서 여기서는 삼각분할 결과를
-    /// **Mesh로 직접 구성**하고, AA 페더링도 경계 가장자리에만 우리가 직접
-    /// 만듭니다 (내부 공유 가장자리는 제외 → 반투명 잉크의 이음새 얼룩 없음).
-    fn paint_filled_stroke(
+    /// 폴백 지오메트리(세그먼트 quad + 조인/캡 원)를 메시로 직접 그립니다.
+    fn paint_fallback_geom(
         &self,
         painter: &egui::Painter,
-        pts_view: &[[f32; 2]],
-        half_widths: &[f32],
-        round_caps: bool,
+        to_view: &impl Fn([f32; 2]) -> Pos2,
+        fb: &freedf_core::pen::FallbackGeometry,
         color: Color32,
     ) {
-        let poly = freedf_core::pen::stroke_outline(pts_view, half_widths, round_caps);
-        let tris = freedf_core::pen::triangulate_polygon(&poly);
-        if tris.is_empty() {
-            return;
+        let mut mesh = egui::Mesh::default();
+        for q in &fb.quads {
+            let base = mesh.vertices.len() as u32;
+            for p in q {
+                mesh.vertices
+                    .push(egui::epaint::Vertex::untextured(to_view(*p), color));
+            }
+            mesh.indices
+                .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
-        let (fill, aa) = build_stroke_meshes(&poly, &tris, color, 1.0);
-        painter.add(egui::Shape::mesh(fill));
-        if !aa.is_empty() {
-            painter.add(egui::Shape::mesh(aa));
+        if !mesh.vertices.is_empty() {
+            painter.add(egui::Shape::mesh(mesh));
+        }
+        let zoom = self.view.zoom;
+        for (c, r) in &fb.circles {
+            painter.circle_filled(to_view(*c), (r * zoom).max(0.5), color);
         }
     }
 
@@ -1501,19 +1645,45 @@ impl FreeDfApp {
 mod tests {
     use super::*;
 
-    /// 외곽선 → 삼각분할 → 메시 구성 전체를 돌려, 모든 정점이 유한하고
-    /// 스트로크 근처에 머무는지 확인합니다 ("빛살/starburst" 깨짐 회귀 테스트).
+    /// 실제 렌더 경로(외곽선 → 확인된 삼각분할 → 메시 or 폴백)를 돌려,
+    /// 모든 정점이 유한하고 스트로크 근처에 머무는지 확인합니다.
     fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32], round: bool) -> egui::Rect {
-        let poly = freedf_core::pen::stroke_outline(pts, halves, round);
-        let tris = freedf_core::pen::triangulate_polygon(&poly);
-        let (fill, aa) = build_stroke_meshes(&poly, &tris, Color32::RED, 1.0);
+        let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
         let mut bounds = egui::Rect::NOTHING;
-        for mesh in [&fill, &aa] {
+        let poly = freedf_core::pen::stroke_outline(pts, halves, round);
+        let (tris, complete) = freedf_core::pen::triangulate_polygon_checked(&poly);
+        if complete && !tris.is_empty() {
+            let outline = build_cached_outline(&poly, &tris);
+            let (fill, aa) = outline_meshes(&outline, &ident, Color32::RED, 1.0);
+            for mesh in [&fill, &aa] {
+                for v in &mesh.vertices {
+                    assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
+                    bounds.extend_with(v.pos);
+                }
+                assert!(!mesh.indices.is_empty(), "빈 메시");
+            }
+        } else {
+            // 불완전 분할 → 폴백(세그먼트 quad + 원)으로 렌더해야 함.
+            let fb = freedf_core::pen::stroke_fallback_geometry(pts, halves);
+            assert!(!fb.quads.is_empty(), "폴백 quad 존재");
+            let mut mesh = egui::Mesh::default();
+            for q in &fb.quads {
+                let base = mesh.vertices.len() as u32;
+                for p in q {
+                    mesh.vertices
+                        .push(egui::epaint::Vertex::untextured(ident(*p), Color32::RED));
+                }
+                mesh.indices
+                    .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
             for v in &mesh.vertices {
-                assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN 정점: {:?}", v.pos);
+                assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
                 bounds.extend_with(v.pos);
             }
-            assert!(!mesh.indices.is_empty(), "빈 메시");
+            for (c, r) in &fb.circles {
+                bounds.extend_with(egui::pos2(c[0] - r, c[1] - r));
+                bounds.extend_with(egui::pos2(c[0] + r, c[1] + r));
+            }
         }
         bounds
     }
@@ -1524,7 +1694,8 @@ mod tests {
         let halves: Vec<f32> = vec![1.5; 24];
         // 직선 렌즈도 본체가 빠지지 않아야 함 (면적 기준 완전 커버).
         let poly = freedf_core::pen::stroke_outline(&pts, &halves, true);
-        let tris = freedf_core::pen::triangulate_polygon(&poly);
+        let (tris, complete) = freedf_core::pen::triangulate_polygon_checked(&poly);
+        assert!(complete, "직선은 완전 분할되어야 함");
         let area: f32 = tris.iter().fold(0.0, |acc, t| {
             let (a, b, c) = (
                 poly[t[0] as usize],
@@ -1542,7 +1713,8 @@ mod tests {
 
     #[test]
     fn scribble_cluster_mesh_stays_bounded() {
-        // 스크린샷과 같은 밀집 클러스터 + 급격한 루프 입력.
+        // 스크린샷과 같은 밀집 클러스터 + 급격한 루프 입력 — 완전 분할이
+        // 안 되면 폴백이 유한한 경계 안에서 커버해야 합니다.
         let mut pts: Vec<[f32; 2]> = Vec::new();
         let mut t = 0.0f32;
         while t < std::f32::consts::TAU * 3.0 {

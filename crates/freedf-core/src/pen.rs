@@ -93,13 +93,22 @@ pub fn stroke_outline(
 ///   칠해도 겹침으로 인한 진해짐(얼룩)이 없습니다.
 /// - 퇴화(면적 0/볼록 귀 없음)는 빈 결과 또는 부분 결과로 안전하게 처리됩니다.
 pub fn triangulate_polygon(poly: &[[f32; 2]]) -> Vec<[u32; 3]> {
+    triangulate_polygon_checked(poly).0
+}
+
+/// [`triangulate_polygon`]의 완전성 검사 버전.
+///
+/// `complete == false`면 입력이 자기 교차하거나 귀가 더 없어 **조기 종료**된
+/// 것이므로(다각형 일부가 안 채워짐), 호출자는 [`stroke_fallback_geometry`]
+/// 같은 폴백으로 렌더링해야 합니다.
+pub fn triangulate_polygon_checked(poly: &[[f32; 2]]) -> (Vec<[u32; 3]>, bool) {
     let n = poly.len();
     if n < 3 {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let area2 = signed_area2(poly);
     if area2.abs() < 1e-6 {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let ccw = area2 > 0.0;
     let mut idx: Vec<u32> = (0..n as u32).collect();
@@ -142,6 +151,87 @@ pub fn triangulate_polygon(poly: &[[f32; 2]]) -> Vec<[u32; 3]> {
     }
     if idx.len() == 3 {
         out.push([idx[0], idx[1], idx[2]]);
+        (out, true)
+    } else {
+        (out, false) // 조기 종료 — 부분 커버만 됨.
+    }
+}
+
+/// 자기 교차 등으로 완전 삼각분할이 불가능한 입력을 위한 **폴백 지오메트리**:
+/// 세그먼트별 quad(세그먼트 법선 — 항상 유한) + 급격히 꺾인 곳의 조인 원 +
+/// 양끝 캡 원. 어떤 입력에도 경계가 항상 폴리라인 근처에 머뭅니다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FallbackGeometry {
+    pub quads: Vec<[[f32; 2]; 4]>,
+    /// (중심, 반지름) — 양끝 캡 + 방향이 꺾인 내부 조인.
+    pub circles: Vec<([f32; 2], f32)>,
+}
+
+/// 폴백 지오메트리를 계산합니다. `points`/`half_widths`는 같은 공간(pt 또는 px).
+pub fn stroke_fallback_geometry(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+) -> FallbackGeometry {
+    let n = points.len().min(half_widths.len());
+    if n == 0 {
+        return FallbackGeometry {
+            quads: Vec::new(),
+            circles: Vec::new(),
+        };
+    }
+    if n == 1 {
+        return FallbackGeometry {
+            quads: Vec::new(),
+            circles: vec![(points[0], half_widths[0].max(0.0))],
+        };
+    }
+    let mut out = FallbackGeometry {
+        quads: Vec::with_capacity(n - 1),
+        circles: Vec::with_capacity(2 + n),
+    };
+    // 세그먼트 quad — 법선은 세그먼트 자체에 수직 (마이터 없음 → 스파이크 없음).
+    for i in 0..n - 1 {
+        let (a, b) = (points[i], points[i + 1]);
+        let dx = b[0] - a[0];
+        let dy = b[1] - a[1];
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            continue;
+        }
+        let (nx, ny) = (-dy / len, dx / len);
+        let (h0, h1) = (half_widths[i], half_widths[i + 1]);
+        out.quads.push([
+            [a[0] + nx * h0, a[1] + ny * h0],
+            [a[0] - nx * h0, a[1] - ny * h0],
+            [b[0] - nx * h1, b[1] - ny * h1],
+            [b[0] + nx * h1, b[1] + ny * h1],
+        ]);
+    }
+    // 양끝 캡 원.
+    out.circles.push((points[0], half_widths[0].max(0.0)));
+    out.circles.push((points[n - 1], half_widths[n - 1].max(0.0)));
+    // 방향이 약 15° 이상 꺾이는 내부 점에 조인 원 (이웃 quad 사이 틈 메움).
+    for i in 1..n - 1 {
+        let (dx0, dy0) = (
+            points[i][0] - points[i - 1][0],
+            points[i][1] - points[i - 1][1],
+        );
+        let (dx1, dy1) = (
+            points[i + 1][0] - points[i][0],
+            points[i + 1][1] - points[i][1],
+        );
+        let l0 = (dx0 * dx0 + dy0 * dy0).sqrt();
+        let l1 = (dx1 * dx1 + dy1 * dy1).sqrt();
+        if l0 < 1e-6 || l1 < 1e-6 {
+            continue;
+        }
+        let dot = (dx0 * dx1 + dy0 * dy1) / (l0 * l1);
+        if dot < 0.966 {
+            let r = half_widths[i]
+                .max(half_widths[i - 1])
+                .max(half_widths[i + 1]);
+            out.circles.push((points[i], r));
+        }
     }
     out
 }
@@ -967,6 +1057,49 @@ mod tests {
         let area: f32 = tris.iter().map(|t| triangle_area(t, &l)).sum();
         assert!((area - poly_area).abs() < 1e-3, "겹침 없이 정확히 한 번 덮음");
         assert!(poly_area > 60.0, "L자 면적 확인");
+    }
+
+    #[test]
+    fn checked_triangulation_reports_incomplete_for_self_intersecting() {
+        // 자기 교차가 생기는 스크리블 외곽선 — 완전 분할 불가를 감지해야 함.
+        let mut pts: Vec<[f32; 2]> = Vec::new();
+        let mut t = 0.0f32;
+        while t < std::f32::consts::TAU * 3.0 {
+            let r = 20.0 + 8.0 * (t * 3.0).sin();
+            pts.push([100.0 + r * t.cos(), 100.0 + r * t.sin() * 0.7]);
+            t += 0.08;
+        }
+        let halves: Vec<f32> = vec![1.0; pts.len()];
+        let poly = stroke_outline(&pts, &halves, true);
+        let (tris, complete) = triangulate_polygon_checked(&poly);
+        // 완전하지 않으면 폴백이 반드시 존재해야 함.
+        if !complete {
+            let fb = stroke_fallback_geometry(&pts, &halves);
+            assert!(!fb.quads.is_empty(), "폴백 quad 존재");
+        }
+        assert!(!tris.is_empty(), "부분이라도 삼각형은 있음");
+    }
+
+    #[test]
+    fn fallback_geometry_is_bounded_even_for_scribbles() {
+        let mut pts: Vec<[f32; 2]> = Vec::new();
+        let mut t = 0.0f32;
+        while t < std::f32::consts::TAU * 3.0 {
+            let r = 20.0 + 8.0 * (t * 3.0).sin();
+            pts.push([100.0 + r * t.cos(), 100.0 + r * t.sin() * 0.7]);
+            t += 0.08;
+        }
+        let halves: Vec<f32> = vec![1.5; pts.len()];
+        let fb = stroke_fallback_geometry(&pts, &halves);
+        for p in fb.quads.iter().flatten() {
+            let d = min_dist_to_polyline(*p, &pts);
+            assert!(d <= 1.5 + 1e-3, "폴백 quad 경계: {d}");
+        }
+        for (c, r) in &fb.circles {
+            assert!(*r <= 1.5 + 1e-3);
+            let d = min_dist_to_polyline(*c, &pts);
+            assert!(d <= 1.5 + 1e-3);
+        }
     }
 
     #[test]
