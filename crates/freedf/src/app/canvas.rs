@@ -28,6 +28,37 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
 /// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
 const DEFAULT_PEN_AZ: f32 = -0.6;
 
+/// 틸트 노이즈 필터 — 패드 진입 시(호버 시작) 격렬하게 떨리는 틸트 리포트를
+/// 무시합니다. 리포트당 최대 변화를 제한하고 EMA로 부드럽게 수렴시킵니다.
+fn smooth_tilt(prev: [f32; 2], next: [f32; 2]) -> [f32; 2] {
+    const MAX_STEP: f32 = 24.0; // 한 리포트당 최대 변화(도) — 이보다 큰 점프는 잘라냄.
+    const ALPHA: f32 = 0.3; // EMA 계수.
+    let mut out = prev;
+    for i in 0..2 {
+        let d = (next[i] - prev[i]).clamp(-MAX_STEP, MAX_STEP);
+        out[i] = prev[i] + d * ALPHA;
+    }
+    out
+}
+
+/// 손잡이에 따라 방위각을 유효 반평면으로 되돌립니다 — 오른손잡이는 배럴이
+/// 오른쪽(1·4사분면), 왼손잡이는 왼쪽(2·3사분면)에만 머뭅니다. 반대편이면
+/// 세로축 대칭으로 접어서 같은 상하 방향의 반대쪽으로 보냅니다.
+fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
+    let ok = if left_handed {
+        az.cos() <= 0.0
+    } else {
+        az.cos() >= 0.0
+    };
+    if ok {
+        az
+    } else if az >= 0.0 {
+        std::f32::consts::PI - az
+    } else {
+        -std::f32::consts::PI - az
+    }
+}
+
 /// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 사실상 매 프레임
 /// (리본이 O(n)으로 저렴해져 지연 없이 바로 따라갑니다).
 const ACTIVE_STROKE_GEOM_MS: u64 = 10;
@@ -649,7 +680,8 @@ impl FreeDfApp {
                     ));
                 }
                 self.last_pen_state_ms = Some(now_ms());
-                self.pen_tilt = st.tilt;
+                // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
+                self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
                 self.live_pressure = st.pressure;
             }
         }
@@ -2058,11 +2090,15 @@ impl FreeDfApp {
                 } else {
                     Color32::from_rgb(250, 252, 255)
                 };
-                let (az, cos_pitch) = if self.pen_monitor.is_some() {
+                let (az_raw, cos_pitch) = if self.pen_monitor.is_some() {
                     tilt_azimuth(&self.pen_tilt)
+                } else if self.left_handed {
+                    (-std::f32::consts::PI - DEFAULT_PEN_AZ, 1.0) // 위-왼쪽 기본.
                 } else {
                     (DEFAULT_PEN_AZ, 1.0)
                 };
+                // 손잡이 반평면 제한 — 오른손잡이는 오른쪽, 왼손잡이는 왼쪽만.
+                let az = clamp_azimuth_hand(az_raw, self.left_handed);
                 let pitch = cos_pitch.acos();
                 // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
                 let len = 24.0 + 30.0 * pitch.sin();
@@ -2367,5 +2403,40 @@ mod tests {
             (az2 - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
             "사용자 쪽 기울기 → +90°"
         );
+    }
+
+    #[test]
+    fn clamp_azimuth_hand_keeps_half_plane() {
+        // 오른손잡이: 오른쪽 반평면(|az| ≤ 90°)만.
+        assert!(clamp_azimuth_hand(-0.6, false).abs() < 1.0);
+        assert!(clamp_azimuth_hand(2.2, false).cos() >= 0.0, "왼쪽 아래 → 오른쪽");
+        assert!(clamp_azimuth_hand(-2.2, false).cos() >= 0.0, "왼쪽 위 → 오른쪽");
+        // 왼손잡이: 왼쪽 반평면만.
+        assert!(clamp_azimuth_hand(0.6, true).cos() <= 0.0, "오른쪽 → 왼쪽");
+        assert!(clamp_azimuth_hand(-2.2, true).cos() <= 0.0);
+        // 경계는 유지.
+        let f = std::f32::consts::FRAC_PI_2;
+        assert!((clamp_azimuth_hand(f, false) - f).abs() < 1e-4);
+        assert!((clamp_azimuth_hand(-f, true) - (-f)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn smooth_tilt_rejects_violent_jumps() {
+        // 패드 진입 시 ±90° 스파이크가 연달아 와도 한 걸음이 24°×0.3 = 7.2°를
+        // 넘지 않고, 같은 값이 계속되면 서서히 수렴합니다.
+        let mut t = [0.0f32, 0.0];
+        for _ in 0..8 {
+            let prev = t;
+            t = smooth_tilt(t, [90.0, -90.0]);
+            assert!((t[0] - prev[0]).abs() <= 7.2 + 1e-3, "급격 점프 제한");
+            assert!((t[1] - prev[1]).abs() <= 7.2 + 1e-3);
+        }
+        assert!(t[0] > 40.0 && t[1] < -40.0, "결국 목표로 수렴");
+        // 상수 입력에는 정확히 수렴.
+        let mut t2 = [10.0f32, -10.0];
+        for _ in 0..50 {
+            t2 = smooth_tilt(t2, [20.0, 5.0]);
+        }
+        assert!((t2[0] - 20.0).abs() < 0.5 && (t2[1] - 5.0).abs() < 0.5);
     }
 }

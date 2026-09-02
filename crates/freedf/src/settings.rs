@@ -40,6 +40,10 @@ pub struct SessionState {
     /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부 (전역).
     #[serde(default)]
     pub debug_hud: bool,
+    /// 왼손잡이 여부 — 펜 커서 배럴이 왼쪽(2·3사분면)만 가리킵니다.
+    /// (오른손잡이는 오른쪽 1·4사분면만)
+    #[serde(default)]
+    pub left_handed: bool,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일
     #[serde(default)]
     pub pen_profile: BallPenProfile,
@@ -170,6 +174,7 @@ impl Default for SessionState {
             pressure_enabled: true,
             profile_version: 1,
             debug_hud: false,
+            left_handed: false,
             pen_profile: BallPenProfile::default(),
             zoom: 1.0,
             pan_x: 0.0,

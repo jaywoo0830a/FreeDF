@@ -681,6 +681,17 @@ impl FreeDfApp {
                             self.save_session();
                         }
                         if ui
+                            .checkbox(&mut self.left_handed, "Left-handed")
+                            .on_hover_text(
+                                "Pen cursor barrel points to the LEFT half-plane\n\
+                                 (right-handed = right half-plane).",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if ui
                             .checkbox(&mut self.debug_hud, "Debug HUD")
                             .on_hover_text(
                                 "Live input overlay: pressure, tilt, tip speed, tip width.\n\

@@ -555,6 +555,8 @@ pub struct FreeDfApp {
     pressure_enabled: bool,
     /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부.
     debug_hud: bool,
+    /// 왼손잡이 여부 — 펜 커서 배럴 방향을 왼쪽 반평면으로 제한.
+    left_handed: bool,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
     pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
@@ -798,6 +800,7 @@ impl FreeDfApp {
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
         let debug_hud = if has { s.debug_hud } else { false };
+        let left_handed = if has { s.left_handed } else { false };
         // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
         let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
@@ -942,6 +945,7 @@ impl FreeDfApp {
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
+            left_handed,
             width_locker: None,
             pen_monitor,
             live_pressure: None,
@@ -1053,6 +1057,7 @@ impl FreeDfApp {
             pressure_enabled: self.pressure_enabled,
             profile_version: 1,
             debug_hud: self.debug_hud,
+            left_handed: self.left_handed,
             pen_profile: self.pen_profile,
             zoom: 1.0,
             pan_x: 0.0,
@@ -1151,6 +1156,7 @@ impl FreeDfApp {
             pressure_enabled: self.pressure_enabled,
             profile_version: 1,
             debug_hud: self.debug_hud,
+            left_handed: self.left_handed,
             pen_profile: self.pen_profile,
             zoom: self.view.zoom,
             pan_x: self.view.pan_x,
@@ -1223,6 +1229,7 @@ impl FreeDfApp {
         self.eraser_radius = s.eraser_radius.clamp(4.0, 60.0);
         self.pressure_enabled = s.pressure_enabled;
         self.debug_hud = s.debug_hud;
+        self.left_handed = s.left_handed;
         // 이전 버전 세션이면 새 기본값 프로파일 사용.
         if s.profile_version >= 1 {
             self.pen_profile = s.pen_profile;
