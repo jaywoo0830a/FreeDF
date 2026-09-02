@@ -18,7 +18,7 @@ use freedf_core::paper::{
     clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle, PAPER_COLORS,
     PAPER_WHITE,
 };
-use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
+use freedf_core::pen::{ink_modifier, uses_own_profile, ColorFamily, Palette, PressureCurve};
 use freedf_core::search::{find_matches, text_line_highlights, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
 use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
@@ -72,9 +72,22 @@ impl ActiveStroke {
 fn tool_label(tool: ToolType) -> &'static str {
     match tool {
         ToolType::Pen => "Pen",
+        ToolType::Ballpoint => "Ballpoint",
+        ToolType::Fountain => "Fountain",
         ToolType::Highlighter => "Highlighter",
         ToolType::Eraser => "Eraser",
         ToolType::Pan => "Pan",
+    }
+}
+
+fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
+    match tool {
+        ToolType::Pen => icons::PEN,
+        ToolType::Ballpoint => icons::PEN_NIB_STRAIGHT,
+        ToolType::Fountain => icons::PEN_NIB,
+        ToolType::Highlighter => icons::MARKER_CIRCLE,
+        ToolType::Eraser => icons::ERASER,
+        ToolType::Pan => icons::HAND,
     }
 }
 
@@ -364,6 +377,28 @@ pub struct TabEntry {
     paper_spacing: f32,
 }
 
+/// 펜 커서 모양.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PenCursorStyle {
+    /// 작은 점 (기존)
+    Dot,
+    /// 펜 색/굵기를 미리보는 둥근 원
+    Round,
+}
+
+impl PenCursorStyle {
+    fn label(self) -> &'static str {
+        match self {
+            PenCursorStyle::Dot => "Dot",
+            PenCursorStyle::Round => "Round",
+        }
+    }
+
+    fn all() -> [PenCursorStyle; 2] {
+        [PenCursorStyle::Round, PenCursorStyle::Dot]
+    }
+}
+
 pub struct FreeDfApp {
     // ---------- Notes ----------
     notes: NotesManager,
@@ -409,6 +444,13 @@ pub struct FreeDfApp {
     eraser_radius: f32,
     pressure_enabled: bool,
     pressure_curve: PressureCurve,
+    /// 펜 커서 모양 (펜 도구일 때)
+    pen_cursor_style: PenCursorStyle,
+    /// 도구 선택기 순서 (드래그 앤 드롭 재정렬)
+    tool_order: Vec<ToolType>,
+    /// 드래그 앤 드롭 상태 (임시)
+    tool_drag: Option<usize>,
+    tool_drop: Option<usize>,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -474,6 +516,11 @@ pub struct FreeDfApp {
     // ---------- Default session (global GUI state) ----------
     default_session_path: PathBuf,
 
+    // ---------- CLI startup / new-window ----------
+    /// A standalone PDF passed on the command line (`freedf <file>.pdf`);
+    /// opened on the very first frame of this window.
+    pending_open: Option<PathBuf>,
+
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
     // ---------- Close confirmation ----------
@@ -487,6 +534,7 @@ impl FreeDfApp {
         notes: NotesManager,
         logger: Logger,
         default_session_path: PathBuf,
+        pending_open: Option<PathBuf>,
     ) -> Self {
         // Disable egui's built-in Ctrl+scroll zoom folding: it multiplies the
         // zoom by exp(speed * scroll), which jumps ~28% per wheel notch. We do
@@ -548,6 +596,11 @@ impl FreeDfApp {
             crate::settings::SessionState::default().favorite_colors
         };
         let text_highlight_snap = if has { s.text_highlight_snap } else { true };
+        let tool_order = if has {
+            s.tool_order.clone()
+        } else {
+            ToolType::default_order()
+        };
         let library_filter = String::new();
         // Recent files live next to the default session file in the app data folder.
         let recent_path = default_session_path
@@ -588,6 +641,10 @@ impl FreeDfApp {
             eraser_radius,
             pressure_enabled,
             pressure_curve,
+            pen_cursor_style: PenCursorStyle::Round,
+            tool_order,
+            tool_drag: None,
+            tool_drop: None,
             paper_style,
             paper_color,
             paper_size,
@@ -621,6 +678,7 @@ impl FreeDfApp {
             file_name: String::new(),
             status: None,
             status_since: None,
+            pending_open,
             modal: None,
             asking_close: false,
             quitting: false,
@@ -655,6 +713,7 @@ impl FreeDfApp {
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
+            tool_order: self.tool_order.clone(),
         }
         .save(&self.default_session_path);
     }
@@ -718,6 +777,7 @@ impl FreeDfApp {
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
+            tool_order: self.tool_order.clone(),
         }
     }
 
@@ -778,6 +838,44 @@ impl FreeDfApp {
     /// 같은 대상(노트 id 또는 파일 경로)이 이미 열려 있으면 탭 인덱스 반환.
     fn find_tab(&self, kind: &TabKind) -> Option<usize> {
         self.tabs.iter().position(|t| &t.kind == kind)
+    }
+
+    /// A tab can be launched in a separate OS window by re-running this
+    /// executable with a document path. Standalone PDFs reopen faithfully
+    /// (the sidecar annotations and per-file session are re-loaded by the new
+    /// process). FreeDF notes share a single annotation JSON, so splitting one
+    /// into a second window would race on autosave and lose ink — they are not
+    /// offered here.
+    fn tab_launch(&self, idx: usize) -> Option<PathBuf> {
+        let tab = self.tabs.get(idx)?;
+        match &tab.kind {
+            TabKind::Pdf(path) if path.is_file() => Some(path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Relaunches this executable as a separate OS window that opens `path`.
+    /// eframe runs one window per process, so this is how "open in a new
+    /// window" is realized (pdfium is also a single-binding-per-process lib).
+    fn open_in_new_window(&mut self, path: &Path) {
+        let exe = match std::env::current_exe() {
+            Ok(e) => e,
+            Err(e) => {
+                self.status = Some(format!("Could not locate executable: {e}"));
+                return;
+            }
+        };
+        match std::process::Command::new(&exe).arg(path).spawn() {
+            Ok(_) => {
+                self.status = Some(format!(
+                    "Opened in a new window: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ));
+            }
+            Err(e) => {
+                self.status = Some(format!("Could not open a new window: {e}"));
+            }
+        }
     }
 
     /// 현재 활성 문서 상태를 `tabs[idx]`에 복사해 둡니다.
@@ -1642,7 +1740,9 @@ impl FreeDfApp {
 
     fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
-            ToolType::Pen => (self.pen_color, self.pen_width),
+            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
+                (self.pen_color, self.pen_width)
+            }
             ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
@@ -2122,8 +2222,10 @@ impl FreeDfApp {
                 }
                 let mut to_switch: Option<usize> = None;
                 let mut to_close: Option<usize> = None;
+                let mut to_detach: Option<usize> = None;
                 let active_fill = crate::theme::nord::semantic::BG_SURFACE;
                 let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
+                let weak_border = crate::theme::nord::semantic::OVERLAY_BORDER;
                 // Scrollable tab strip: many tabs or long titles scroll
                 // instead of wrapping to a new line ("folding").
                 egui::ScrollArea::horizontal()
@@ -2131,6 +2233,7 @@ impl FreeDfApp {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
                             for (i, tab) in self.tabs.iter().enumerate() {
                                 let selected = i == self.active;
                                 // The active tab's title lives in `self.file_name`
@@ -2141,6 +2244,18 @@ impl FreeDfApp {
                                 } else {
                                     &tab.label
                                 };
+                                // 제목 폭을 내용에 맞춰(최대 190px) — 짧은 제목은
+                                // 탭이 좁아져 큰 빈 여백이 생기지 않습니다.
+                                let title_w = ui
+                                    .painter()
+                                    .layout_no_wrap(
+                                        title.to_string(),
+                                        egui::FontId::proportional(14.0),
+                                        egui::Color32::WHITE,
+                                    )
+                                    .rect
+                                    .width()
+                                    .clamp(24.0, 190.0);
                                 egui::Frame::new()
                                     .fill(if selected {
                                         active_fill
@@ -2150,24 +2265,73 @@ impl FreeDfApp {
                                     .stroke(if selected {
                                         Stroke::new(1.0, accent)
                                     } else {
-                                        Stroke::NONE
+                                        Stroke::new(1.0, weak_border)
                                     })
-                                    .corner_radius(6)
-                                    .inner_margin(egui::Margin::symmetric(8, 3))
+                                    .corner_radius(5)
+                                    .inner_margin(egui::Margin::symmetric(6, 3))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                                            // Fixed-width truncated title; full
-                                            // name is shown on hover.
-                                            let title_resp = ui.add_sized(
-                                                egui::vec2(180.0, 22.0),
+                                            let tr = ui.add_sized(
+                                                egui::vec2(title_w, 22.0),
                                                 egui::Label::new(egui::RichText::new(title))
                                                     .truncate()
                                                     .sense(egui::Sense::click()),
                                             );
-                                            if title_resp.on_hover_text(title).clicked() {
+                                            let tr = tr.on_hover_text(title);
+                                            if tr.clicked() {
                                                 to_switch = Some(i);
                                             }
+                                            // Right-click a tab: open this document in
+                                            // a separate OS window (eframe = 1 window
+                                            // per process, so we relaunch the exe with
+                                            // the file path).
+                                            let launch_path = self.tab_launch(i);
+                                            let is_note =
+                                                matches!(&tab.kind, TabKind::Note(_));
+                                            tr.context_menu(|ui| {
+                                                ui.set_min_width(190.0);
+                                                ui.label(
+                                                    egui::RichText::new("Tab")
+                                                        .weak()
+                                                        .small(),
+                                                );
+                                                ui.separator();
+                                                match launch_path {
+                                                    Some(_) => {
+                                                        if ui
+                                                            .button("Open in new window")
+                                                            .clicked()
+                                                        {
+                                                            to_detach = Some(i);
+                                                            ui.close();
+                                                        }
+                                                    }
+                                                    None if is_note => {
+                                                        ui.add_enabled_ui(false, |ui| {
+                                                            let _ =
+                                                                ui.button("Open in new window");
+                                                        })
+                                                        .response
+                                                        .on_hover_text(
+                                                            "FreeDF notes share one \
+                                                             annotation file — opening \
+                                                             the same note in two windows \
+                                                             would race and lose ink. \
+                                                             Standalone PDFs can be split \
+                                                             into a new window.",
+                                                        );
+                                                    }
+                                                    _ => {
+                                                        ui.add_enabled_ui(false, |ui| {
+                                                            let _ =
+                                                                ui.button("Open in new window");
+                                                        })
+                                                        .response
+                                                        .on_hover_text("File no longer exists");
+                                                    }
+                                                }
+                                            });
                                             let close = ui.add(
                                                 egui::Button::new(icon_text(ui, "", icons::X))
                                                     .frame(false)
@@ -2186,6 +2350,11 @@ impl FreeDfApp {
                 }
                 if let Some(i) = to_switch {
                     self.switch_tab(i);
+                }
+                if let Some(i) = to_detach {
+                    if let Some(p) = self.tab_launch(i) {
+                        self.open_in_new_window(&p);
+                    }
                 }
             });
         });
@@ -2487,29 +2656,80 @@ impl FreeDfApp {
             ui.separator();
             ui.add_space(2.0);
 
-            // Row 3: drawing tools (icon-only picker + settings)
+            // Row 3: drawing tools (drag to reorder) + settings
             toolbar_row(ui, |ui| {
                 ui.horizontal(|ui| {
-                let tool_buttons = [
-                    (ToolType::Pen, icons::PEN, "Pen"),
-                    (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlight"),
-                    (ToolType::Eraser, icons::ERASER, "Eraser"),
-                    (ToolType::Pan, icons::HAND, "Pan"),
-                ];
-                for (tool, ic, label) in tool_buttons {
-                    if ui
-                        .selectable_label(self.tool == tool, icon_text(ui, "", ic))
-                        .on_hover_text(format!("{label} (P / H / E / V)"))
-                        .clicked()
-                    {
+                // ── 도구 선택기 (드래그 앤 드롭 재정렬) ─────────────
+                let mut order = self.tool_order.clone();
+                let mut rects: Vec<egui::Rect> = Vec::with_capacity(order.len());
+                let mut src = self.tool_drag;
+                let mut dst = self.tool_drop;
+                for (i, tool) in order.iter().copied().enumerate() {
+                    let label = tool.label();
+                    let selected = self.tool == tool;
+                    let btn = egui::Button::new(icon_text(ui, "", tool_icon(tool))).selected(selected);
+                    let resp = ui
+                        .add(btn.sense(egui::Sense::click_and_drag()))
+                        .on_hover_text(format!("{label}  (drag to reorder)"));
+                    rects.push(resp.rect);
+                    if resp.clicked() {
                         self.tool = tool;
                         self.save_session();
+                    }
+                    if resp.drag_started() {
+                        src = Some(i);
+                        dst = Some(i);
+                    }
+                    if resp.dragged() && src == Some(i) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    }
+                }
+                // 드래그 중 포인터가 놓인 버튼을 드롭 대상으로 지정.
+                if let Some(_s) = src {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        if let Some(idx) = rects.iter().position(|r| r.contains(pos)) {
+                            dst = Some(idx);
+                        }
+                    }
+                }
+                // 놓으면 순서 이동 + 저장.
+                let down = ui.input(|i| i.pointer.any_down());
+                if src.is_some() && !down {
+                    if let (Some(s), Some(d)) = (src, dst) {
+                        if s != d && s < order.len() && d < order.len() {
+                            let item = order.remove(s);
+                            order.insert(d, item);
+                            self.tool_order = order;
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                    }
+                    src = None;
+                    dst = None;
+                }
+                self.tool_drag = src;
+                self.tool_drop = dst;
+                // 드롭 대상 표시 (작은 캐럿)
+                if let Some(d) = self.tool_drop {
+                    if self.tool_drag.is_some() {
+                        if let Some(r) = rects.get(d) {
+                            let x = r.left();
+                            let y0 = r.top();
+                            let y1 = r.bottom();
+                            ui.painter().line_segment(
+                                [egui::pos2(x, y0), egui::pos2(x, y1)],
+                                egui::Stroke::new(
+                                    2.0,
+                                    egui::Color32::from_rgba_unmultiplied(255, 200, 60, 220),
+                                ),
+                            );
+                        }
                     }
                 }
                 ui.separator();
 
                 match self.tool {
-                    ToolType::Pen => {
+                    ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
                         egui::ComboBox::from_id_salt("family")
                             .selected_text(self.color_family.label())
                             .show_ui(ui, |ui| {
@@ -2551,6 +2771,19 @@ impl FreeDfApp {
                         {
                             self.save_session();
                         }
+                        egui::ComboBox::from_id_salt("pen_cursor_style")
+                            .selected_text(self.pen_cursor_style.label())
+                            .show_ui(ui, |ui| {
+                                for style in PenCursorStyle::all() {
+                                    ui.selectable_value(
+                                        &mut self.pen_cursor_style,
+                                        style,
+                                        style.label(),
+                                    );
+                                }
+                            })
+                            .response
+                            .on_hover_text("Pen cursor shape");
                         if ui.checkbox(&mut self.pressure_enabled, "Pressure").changed() {
                             self.save_session();
                         }
@@ -3281,16 +3514,15 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(5))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                        // 도구 선택 (세로).
-                        let tools = [
-                            (ToolType::Pen, icons::PEN, "Pen (P)"),
-                            (ToolType::Highlighter, icons::MARKER_CIRCLE, "Highlighter (H)"),
-                            (ToolType::Eraser, icons::ERASER, "Eraser (E)"),
-                            (ToolType::Pan, icons::HAND, "Pan (V)"),
-                        ];
-                        for (tool, ic, label) in tools {
+                        // 도구 선택 (세로, 설정된 순서를 따름).
+                        let order = self.tool_order.clone();
+                        for tool in order {
+                            let label = tool.label();
                             if ui
-                                .selectable_label(self.tool == tool, icon_text(ui, "", ic))
+                                .selectable_label(
+                                    self.tool == tool,
+                                    icon_text(ui, "", tool_icon(tool)),
+                                )
                                 .on_hover_text(label)
                                 .clicked()
                             {
@@ -3534,7 +3766,7 @@ impl FreeDfApp {
         let primary_down = ctx.input(|i| i.pointer.primary_down());
 
         match self.tool {
-            ToolType::Pen | ToolType::Highlighter => {
+            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain | ToolType::Highlighter => {
                 let page_w = self.page_size_pts[0];
                 let page_h = self.page_size_pts[1];
                 if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
@@ -3662,10 +3894,15 @@ impl FreeDfApp {
             let a = self.view.page_to_view([w[0].x, w[0].y]);
             let b = self.view.page_to_view([w[1].x, w[1].y]);
             let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-            let wpx = self
-                .pressure_curve
-                .apply(stroke.width * zoom, pressure)
-                .max(0.5);
+            let wpx = if uses_own_profile(stroke.tool) {
+                // 볼펜/만년필: 전역 곡선 대신 자체 닙 프로파일 사용.
+                let speed = ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt();
+                (stroke.width * zoom * ink_modifier(stroke.tool, pressure, speed)).max(0.5)
+            } else {
+                self.pressure_curve
+                    .apply(stroke.width * zoom, pressure)
+                    .max(0.5)
+            };
             let pa = origin + Vec2::new(a[0], a[1]);
             let pb = origin + Vec2::new(b[0], b[1]);
             painter.line_segment([pa, pb], Stroke::new(wpx, color));
@@ -3675,22 +3912,56 @@ impl FreeDfApp {
     /// Draws a custom cursor sprite confined to the canvas, previewing the
     /// current tool's shape and color (Pen = translucent gray circle,
     /// Highlighter = colored rectangle, Eraser = white translucent circle).
-    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, _time: f32) {
+    fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
         match self.tool {
-            ToolType::Pen => {
-                // Small 4×4 pen dot.
-                let rect = Rect::from_center_size(pos, Vec2::splat(4.0));
-                painter.rect_filled(
-                    rect,
-                    0.0,
-                    Color32::from_rgba_unmultiplied(120, 120, 120, 230),
-                );
-                painter.rect_stroke(
-                    rect,
-                    0.0,
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(70, 70, 70, 220)),
-                    egui::StrokeKind::Outside,
-                );
+            ToolType::Pen | ToolType::Ballpoint | ToolType::Fountain => {
+                match self.pen_cursor_style {
+                    PenCursorStyle::Dot => {
+                        // 작은 점.
+                        let rect = Rect::from_center_size(pos, Vec2::splat(4.0));
+                        painter.rect_filled(
+                            rect,
+                            2.0,
+                            Color32::from_rgba_unmultiplied(120, 120, 120, 230),
+                        );
+                        painter.rect_stroke(
+                            rect,
+                            2.0,
+                            Stroke::new(1.0, Color32::from_rgba_unmultiplied(70, 70, 70, 220)),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    PenCursorStyle::Round => {
+                        // 펜 색/굵기를 미리보는 원 + 호흡 링(인터랙션 힌트).
+                        let color = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            (self.pen_color[3] as f32 * 0.85).max(40.0) as u8,
+                        );
+                        let r = (self.pen_width * self.view.zoom * 0.5).clamp(2.5, 16.0);
+                        let breath = 1.0 + 0.06 * (time * 3.0).sin();
+                        // 흰 용지 위에서도 보이도록 어두운 윤곽을 먼저.
+                        painter.circle_stroke(
+                            pos,
+                            r + 1.5,
+                            Stroke::new(1.0, Color32::from_black_alpha(90)),
+                        );
+                        painter.circle_filled(pos, r, color);
+                        painter.circle_stroke(
+                            pos,
+                            r,
+                            Stroke::new(1.0, Color32::from_white_alpha(140)),
+                        );
+                        // 살짝 숨쉬는 바깥 링 — 커서가 살아있음을 알려줍니다.
+                        painter.circle_stroke(
+                            pos,
+                            (r + 5.0) * breath,
+                            Stroke::new(1.0, Color32::from_white_alpha(60)),
+                        );
+                        painter.circle_filled(pos, 1.2, Color32::from_white_alpha(200));
+                    }
+                }
             }
             ToolType::Highlighter => {
                 // Translucent rectangle in the highlighter color.
@@ -3903,6 +4174,11 @@ impl FreeDfApp {
 impl eframe::App for FreeDfApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // A standalone PDF passed on the command line (`freedf <file>.pdf` —
+        // also how "Open in New Window" relaunches) opens once on the first frame.
+        if let Some(path) = self.pending_open.take() {
+            self.open_pdf(&path);
+        }
         self.handle_shortcuts(&ctx);
         self.tabs_bar(ui);
         self.toolbar(ui);

@@ -255,18 +255,29 @@ impl DocumentView {
     }
 
     /// 페이지의 텍스트 세그먼트를 검색용 `TextRun` 목록으로 변환합니다.
+    ///
+    /// pdfium의 텍스트 좌표는 페이지 **좌하단 원점(y 위)** 이지만 앱의 페이지
+    /// 좌표는 **좌상단 원점(y 아래)** 입니다. 여기서 세로를 뒤집어 앱 좌표로
+    /// 맞춥니다. (그래야 텍스트 하이라이트 스냅/검색 하이라이트가 제자리에 옴)
     pub fn page_text_runs(&self, index: usize) -> Result<Vec<TextRun>, String> {
         let page = self
             .document
             .pages()
             .get(index as i32)
             .map_err(|e| format!("Could not read page: {e}"))?;
+        let page_h = page.height().value;
         let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
             let txt = seg.text();
             let b = seg.bounds();
-            let rect = [b.left().value, b.top().value, b.right().value, b.bottom().value];
+            // pdf: bottom <= top (y up) → 앱: y0 = page_h - top, y1 = page_h - bottom
+            let rect = [
+                b.left().value,
+                page_h - b.top().value,
+                b.right().value,
+                page_h - b.bottom().value,
+            ];
             // pdfium-render 0.9.3은 문자 단위 좌표를 노출하지 않으므로 빈 벡터.
             // core의 find_matches가 run.rect 비율 폴백으로 처리합니다.
             runs.push(TextRun::new(txt, rect, Vec::new()));

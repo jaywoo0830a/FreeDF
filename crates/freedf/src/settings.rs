@@ -60,6 +60,9 @@ pub struct SessionState {
     /// 하이라이터가 문서 텍스트를 인식해 깔끔하게 칠하는 모드 (전역 기본값)
     #[serde(default = "default_true")]
     pub text_highlight_snap: bool,
+    /// 도구 선택기 순서 (드래그 앤 드롭 재정렬, 전역 기본값)
+    #[serde(default = "default_tool_order")]
+    pub tool_order: Vec<ToolType>,
 }
 
 /// 이전 버전 세션 파일(필드 없음)에서도 팔레트를 기본 표시.
@@ -69,6 +72,10 @@ fn default_show_palette() -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_tool_order() -> Vec<ToolType> {
+    ToolType::default_order()
 }
 
 fn default_paper_spacing() -> f32 {
@@ -134,6 +141,7 @@ impl Default for SessionState {
                 [128, 80, 200, 255], // Purple
             ],
             text_highlight_snap: true,
+            tool_order: ToolType::default_order(),
         }
     }
 }

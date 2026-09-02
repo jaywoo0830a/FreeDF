@@ -33,6 +33,20 @@ fn app_data_dir() -> PathBuf {
 }
 
 fn main() -> eframe::Result<()> {
+    // Optional CLI: `freedf <file.pdf>` (or `freedf --open <file.pdf>`) opens a
+    // standalone PDF on startup. "Open in New Window" from the tab bar re-launches
+    // this executable with a document path as its argument.
+    let mut args = std::env::args().skip(1);
+    let mut open_path: Option<PathBuf> = None;
+    while let Some(a) = args.next() {
+        if a == "--open" {
+            open_path = args.next().map(PathBuf::from);
+        } else if !a.starts_with("--") {
+            open_path = Some(PathBuf::from(a));
+        }
+    }
+    let open_path = open_path.filter(|p| p.is_file());
+
     let options = eframe::NativeOptions {
         // wgpu(DX12) 대신 호환성 높은 OpenGL(glow) 렌더러 사용 (Windows 크래시 방지)
         renderer: eframe::Renderer::Glow,
@@ -72,6 +86,7 @@ fn main() -> eframe::Result<()> {
                 notes,
                 logger,
                 default_session_path,
+                open_path,
             )))
         }),
     )

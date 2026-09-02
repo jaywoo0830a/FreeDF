@@ -19,6 +19,12 @@ native file dialogs, Windows Ink pressure).
   between them; every tab keeps its own page, zoom/pan, annotations, search, outline,
   panel open state & **panel widths**, and ink/paper settings. The tab strip scrolls
   horizontally and long titles are truncated (full name on hover)
+- 🪟 **Split a tab into a new window** — right-click any **standalone PDF** tab and
+  choose *Open in new window*: FreeDF relaunches itself as a separate OS window that
+  opens that file (each window is its own process — eframe runs one window per
+  process and PDFium is single-binding per process). Sidecar annotations and the
+  per-file session are restored in the new window too. FreeDF **notes** share one
+  annotation file, so the option is disabled for them to avoid losing ink
 - 🗂️ **Library panel** — a modern side panel with a **search filter** and count
   badges groups **Notes**, **PDFs** and **Recents** into clean rows (title +
   meta), so you can jump between notebooks and recently opened files
@@ -37,8 +43,13 @@ native file dialogs, Windows Ink pressure).
 - 🔍 **In-page word search** — case-insensitive; press **Ctrl+F** to toggle the
   search bar (with focus), yellow highlights for matches, an orange border for
   the current one, prev/next and a result counter
-- ✏️ **Pen / Highlighter / Eraser / Pan** — strokes are stored in page coordinates,
-  so they never drift under zoom/pan
+- ✏️ **Pen variants (Ballpoint / Fountain)** — three ink tools (Pen, Ballpoint,
+  Fountain) that follow GoodNotes-style profiles: Ballpoint keeps a steady,
+  even width regardless of speed, while Fountain gets **thinner when you write
+  fast** and thicker with pressure for that live calligraphy feel. Strokes are
+  stored in page coordinates, so they never drift under zoom/pan
+- ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
+  hand Pan tool complete the toolkit
 - 🔖 **Text-aware highlighter** — by default the Highlighter recognizes the
   document's actual text and snaps to it: swipe across a paragraph and you get
   clean highlights exactly over the words (turn off with “Snap to text”)
@@ -62,8 +73,9 @@ native file dialogs, Windows Ink pressure).
   labels**, so every action is recognizable
 - 🗂️ **Three-tier toolbar** — panels / bookmarks / undo-save on the first row;
   **Page** tools (insert / delete + paper grid & color) on the second row; ink
-  tool picker & settings (icon-only Pen / Highlighter / Eraser / Pan) on the
-  third row. The search bar appears only on `Ctrl+F`
+  ink tool picker & settings (icon-only Pen / Ballpoint / Fountain / Highlighter /
+  Eraser / Pan) on the third row — **drag a tool icon to reorder the toolbar**
+  (the order is saved to `session.json`). The search bar appears only on `Ctrl+F`
 - 🔍 **Zoom stays put** — expanding/collapsing the Library/Outline panels or
   resizing the window re-centers the page at the **current zoom** instead of
   resetting it
@@ -100,9 +112,10 @@ native file dialogs, Windows Ink pressure).
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
-- 🖊️ **Custom cursors** — Pen = small 4×4 dot, Highlighter = colored rectangle,
-  Eraser = white translucent circle with a drop shadow, Pan = small move
-  crosshair; the OS cursor is restored outside the page
+- 🖊️ **Custom cursors** — Pen = small dot **or a round ring cursor** with a
+  breathing halo (switch style in the pen settings), Highlighter = colored
+  rectangle, Eraser = white translucent circle with a drop shadow, Pan = small
+  move crosshair; the OS cursor is restored outside the page
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
@@ -150,6 +163,15 @@ cargo run -p freedf
 
 # Small, fast release binary
 cargo build --release -p freedf
+```
+
+You can also open a standalone PDF directly by passing it on the command line
+(this is what *Open in new window* uses to spawn a fresh process):
+
+```bash
+freedf /path/to/document.pdf
+# or
+freedf --open /path/to/document.pdf
 ```
 
 > When distributing, ship `pdfium.dll` next to `target/release/freedf.exe`.
