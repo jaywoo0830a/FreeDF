@@ -29,6 +29,9 @@ pub struct SessionState {
     pub color_family: ColorFamily,
     pub pen_color: [u8; 4],
     pub pen_width: f32,
+    /// 만년필 전용 색/두께 — 볼펜과 완전히 독립.
+    pub fountain_color: [u8; 4],
+    pub fountain_width: f32,
     pub hi_color: [u8; 4],
     pub hi_width: f32,
     pub eraser_radius: f32,
@@ -168,6 +171,8 @@ impl Default for SessionState {
             color_family: ColorFamily::Black,
             pen_color: [20, 20, 20, 255],
             pen_width: 2.5,
+            fountain_color: [20, 20, 20, 255],
+            fountain_width: 2.0,
             hi_color: [255, 235, 59, 90],
             hi_width: 16.0,
             eraser_radius: 16.0,

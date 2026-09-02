@@ -102,6 +102,8 @@ impl FreeDfApp {
         tab.color_family = self.color_family;
         tab.pen_color = self.pen_color;
         tab.pen_width = self.pen_width;
+        tab.fountain_color = self.fountain_color;
+        tab.fountain_width = self.fountain_width;
         tab.hi_color = self.hi_color;
         tab.hi_width = self.hi_width;
         tab.eraser_radius = self.eraser_radius;
@@ -148,6 +150,8 @@ impl FreeDfApp {
             color_family,
             pen_color,
             pen_width,
+            fountain_color,
+            fountain_width,
             hi_color,
             hi_width,
             eraser_radius,
@@ -192,6 +196,8 @@ impl FreeDfApp {
                 tab.color_family,
                 tab.pen_color,
                 tab.pen_width,
+                tab.fountain_color,
+                tab.fountain_width,
                 tab.hi_color,
                 tab.hi_width,
                 tab.eraser_radius,
@@ -249,6 +255,8 @@ impl FreeDfApp {
         self.color_family = color_family;
         self.pen_color = pen_color;
         self.pen_width = pen_width;
+        self.fountain_color = fountain_color;
+        self.fountain_width = fountain_width;
         self.hi_color = hi_color;
         self.hi_width = hi_width;
         self.eraser_radius = eraser_radius;
@@ -334,6 +342,8 @@ impl FreeDfApp {
             color_family: self.color_family,
             pen_color: self.pen_color,
             pen_width: self.pen_width,
+            fountain_color: self.fountain_color,
+            fountain_width: self.fountain_width,
             hi_color: self.hi_color,
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,

@@ -195,7 +195,8 @@ fn bleed_radii(pts_pt: &[[f32; 2]], age_sec: f32, bleed: InkBleed) -> Vec<f32> {
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
-            ToolType::Pen | ToolType::Fountain => (self.pen_color, self.pen_width),
+            ToolType::Pen => (self.pen_color, self.pen_width),
+            ToolType::Fountain => (self.fountain_color, self.fountain_width),
             ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
@@ -1125,11 +1126,16 @@ impl FreeDfApp {
                         ui.separator();
 
                         // 현재 펜 색 + 즐겨찾기에 추가 버튼.
+                        let cur_rgba = if self.tool == ToolType::Fountain {
+                            self.fountain_color
+                        } else {
+                            self.pen_color
+                        };
                         let cur = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            self.pen_color[3],
+                            cur_rgba[0],
+                            cur_rgba[1],
+                            cur_rgba[2],
+                            cur_rgba[3],
                         );
                         if color_circle_swatch(ui, "current_color", cur, false)
                             .on_hover_text("Current pen color")
@@ -1159,15 +1165,23 @@ impl FreeDfApp {
                         for i in 0..self.favorite_colors.len() {
                             let c = self.favorite_colors[i]; // Copy
                             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-                            let selected = self.pen_color == c;
+                            let selected = if self.tool == ToolType::Fountain {
+                                self.fountain_color == c
+                            } else {
+                                self.pen_color == c
+                            };
                             let resp = color_circle_swatch(ui, ("fav_swatch", i), col, selected);
                             if resp
                                 .clone()
                                 .on_hover_text("Set pen color (right-click to remove)")
                                 .clicked()
                             {
-                                self.pen_color = c;
-                                self.tool = ToolType::Pen;
+                                if self.tool == ToolType::Fountain {
+                                    self.fountain_color = c;
+                                } else {
+                                    self.pen_color = c;
+                                    self.tool = ToolType::Pen;
+                                }
                                 self.save_default_session();
                                 self.save_session();
                             }

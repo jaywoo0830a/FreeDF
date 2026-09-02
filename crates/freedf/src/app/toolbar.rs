@@ -872,8 +872,7 @@ impl FreeDfApp {
                         }
                     }
                     ToolType::Fountain => {
-                        // 만년필: 색상은 펜과 공유하고, 선폭은 필압×속도×기울기
-                        // 물리 모델이 결정합니다 (아래 파라미터로 커스텀).
+                        // 만년필: 색/두께 모두 볼펜과 **완전히 독립**.
                         let swatches = Palette::swatches(self.color_family);
                         for (i, swatch) in swatches.iter().enumerate() {
                             let color = Color32::from_rgba_unmultiplied(
@@ -882,33 +881,36 @@ impl FreeDfApp {
                                 swatch[2],
                                 swatch[3],
                             );
-                            let selected = *swatch == self.pen_color;
+                            let selected = *swatch == self.fountain_color;
                             if color_circle_swatch(ui, ("fountain_swatch", i), color, selected)
                                 .on_hover_text("Ink color")
                                 .clicked()
                             {
-                                self.pen_color = *swatch;
+                                self.fountain_color = *swatch;
                                 self.save_default_session();
                                 self.save_session();
                             }
                         }
-                        let mut pen_color = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            self.pen_color[3],
+                        let mut fountain_color = Color32::from_rgba_unmultiplied(
+                            self.fountain_color[0],
+                            self.fountain_color[1],
+                            self.fountain_color[2],
+                            self.fountain_color[3],
                         );
                         if ui
-                            .color_edit_button_srgba(&mut pen_color)
+                            .color_edit_button_srgba(&mut fountain_color)
                             .on_hover_text("Custom ink color")
                             .changed()
                         {
-                            self.pen_color = pen_color.to_array();
+                            self.fountain_color = fountain_color.to_array();
                             self.save_default_session();
                             self.save_session();
                         }
                         let nib_resp = ui
-                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Nib"))
+                            .add(
+                                egui::Slider::new(&mut self.fountain_width, 0.5..=12.0)
+                                    .text("Nib"),
+                            )
                             .on_hover_text(
                                 "Nib width = maximum line width (pt).\n\
                                  The model varies it by pressure, speed and tilt.",

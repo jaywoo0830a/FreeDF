@@ -448,6 +448,8 @@ pub struct TabEntry {
     color_family: ColorFamily,
     pen_color: [u8; 4],
     pen_width: f32,
+    fountain_color: [u8; 4],
+    fountain_width: f32,
     hi_color: [u8; 4],
     hi_width: f32,
     eraser_radius: f32,
@@ -549,6 +551,9 @@ pub struct FreeDfApp {
     color_family: ColorFamily,
     pen_color: [u8; 4],
     pen_width: f32,
+    /// 만년필 전용 색/두께 — 볼펜과 완전히 독립.
+    fountain_color: [u8; 4],
+    fountain_width: f32,
     hi_color: [u8; 4],
     hi_width: f32,
     eraser_radius: f32,
@@ -793,9 +798,11 @@ impl FreeDfApp {
         };
         let pen_color = if has { s.pen_color } else { theme_pen };
         let hi_color = if has { s.hi_color } else { theme_hi };
+        let fountain_color = if has { s.fountain_color } else { theme_pen };
         let tool = if has { s.tool } else { ToolType::Pen };
         let color_family = if has { s.color_family } else { ColorFamily::Black };
         let pen_width = if has { s.pen_width } else { 2.5 };
+        let fountain_width = if has { s.fountain_width } else { 2.0 };
         let hi_width = if has { s.hi_width } else { 16.0 };
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
@@ -928,6 +935,8 @@ impl FreeDfApp {
             color_family,
             pen_color,
             pen_width,
+            fountain_color,
+            fountain_width,
             hi_color,
             hi_width,
             eraser_radius,
@@ -1051,6 +1060,8 @@ impl FreeDfApp {
             color_family: self.color_family,
             pen_color: self.pen_color,
             pen_width: self.pen_width,
+            fountain_color: self.fountain_color,
+            fountain_width: self.fountain_width,
             hi_color: self.hi_color,
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
@@ -1150,6 +1161,8 @@ impl FreeDfApp {
             color_family: self.color_family,
             pen_color: self.pen_color,
             pen_width: self.pen_width,
+            fountain_color: self.fountain_color,
+            fountain_width: self.fountain_width,
             hi_color: self.hi_color,
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
@@ -1224,6 +1237,8 @@ impl FreeDfApp {
         self.color_family = s.color_family;
         self.pen_color = s.pen_color;
         self.pen_width = s.pen_width.clamp(0.5, 12.0);
+        self.fountain_color = s.fountain_color;
+        self.fountain_width = s.fountain_width.clamp(0.5, 12.0);
         self.hi_color = s.hi_color;
         self.hi_width = s.hi_width.clamp(4.0, 40.0);
         self.eraser_radius = s.eraser_radius.clamp(4.0, 60.0);
