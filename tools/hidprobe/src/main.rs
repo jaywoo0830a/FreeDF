@@ -28,6 +28,25 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse::<usize>().ok());
 
+    // ── 0순위: OTD 데몬 IPC (--otd) — VMulti 우회, 틸트 직접 수신 ──
+    if args.iter().any(|a| a == "--otd") {
+        if let Some(rx) = pen_input::spawn_otd_monitor() {
+            println!("[hidprobe] OTD 데몬 IPC 스트림 시작 — 그려 보세요 (Ctrl+C 종료).");
+            while let Ok(st) = rx.recv() {
+                println!(
+                    "tilt=[{:+.0}°, {:+.0}°]  pressure={:.3}  contact={}",
+                    st.tilt[0],
+                    st.tilt[1],
+                    st.pressure.unwrap_or(0.0),
+                    st.contact
+                );
+            }
+        } else {
+            println!("[hidprobe] OTD 데몬에 연결할 수 없습니다 (OTD daemon 실행 중인지 확인).");
+        }
+        return;
+    }
+
     // ── 1순위: Raw Input — 드라이버 독점이어도 리포트 바이트를 받습니다 ──
     if !list_only && index_arg.is_none() {
         if let Some(rx) = pen_input::spawn_raw_reports() {

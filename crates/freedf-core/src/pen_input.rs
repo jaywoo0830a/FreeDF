@@ -362,6 +362,229 @@ pub fn open_best() -> Option<PenMonitor> {
     None
 }
 
+// ── OTD(OpenTabletDriver) 데몬 IPC — 틸트/필압 직접 수신 (Windows) ──────────
+// VMulti/Raw Input/HIDAPI를 모두 우회하는 가장 확실한 경로:
+// OTD 데몬이 `\\.\pipe\OpenTabletDriver.Daemon`에서 StreamJsonRpc(헤더 프레이밍
+// JSON-RPC)로 `DeviceReport` 알림을 보냅니다. `SetTabletDebug(true)`를 호출하면
+// 활성화되며, 리포트의 `Data`에 Position/Pressure/PenButtons/**Tilt**가 들어
+// 있습니다 (TiltTabletReport — Tilt.X/Y는 ±도 단위).
+
+/// Windows에서 OTD 데몬 IPC에 연결해 펜 상태 스트림을 받습니다.
+#[cfg(target_os = "windows")]
+pub fn spawn_otd_monitor() -> Option<std::sync::mpsc::Receiver<PenState>> {
+    otd_ipc::spawn()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_otd_monitor() -> Option<std::sync::mpsc::Receiver<PenState>> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+mod otd_ipc {
+    use super::PenState;
+    use std::io::{Read, Write};
+
+    const PIPE_NAME: &str = r"\\.\pipe\OpenTabletDriver.Daemon";
+
+    pub(super) fn spawn() -> Option<std::sync::mpsc::Receiver<PenState>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // 데몬 시작 타이밍 여유 (최대 ~5초 재시도).
+            let mut pipe = None;
+            for _ in 0..10 {
+                match std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(PIPE_NAME)
+                {
+                    Ok(p) => {
+                        pipe = Some(p);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(500)),
+                }
+            }
+            let Some(pipe) = pipe else {
+                return;
+            };
+            let _ = run(pipe, tx);
+        });
+        Some(rx)
+    }
+
+    fn run(mut pipe: std::fs::File, tx: std::sync::mpsc::Sender<PenState>) -> std::io::Result<()> {
+        // 태블릿 디버그(리포트 스트림) 활성화.
+        send_rpc(
+            &mut pipe,
+            1,
+            "SetTabletDebug",
+            "true",
+        )?;
+        let mut reader = std::io::BufReader::new(pipe.try_clone()?);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut max_pressure: f32 = 4096.0;
+        loop {
+            let Some(msg) = read_message(&mut reader, &mut buf)? else {
+                break; // 스트림 종료.
+            };
+            if msg.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&msg) else {
+                continue;
+            };
+            // 응답({... "id":.. "result":..})은 무시, DeviceReport 알림만 처리.
+            if v["method"].as_str() != Some("DeviceReport") {
+                continue;
+            }
+            // 최대 필압은 첫 리포트의 Tablet 정보에서 읽습니다.
+            if let Some(mp) = v["params"][0]["Tablet"]["Properties"]["Specifications"]["Pen"]
+                ["MaxPressure"]
+                .as_u64()
+            {
+                max_pressure = mp.max(1) as f32;
+            }
+            let data = &v["params"][0]["Data"];
+            let tilt_x = data["Tilt"]["X"].as_f64().unwrap_or(0.0) as f32;
+            let tilt_y = data["Tilt"]["Y"].as_f64().unwrap_or(0.0) as f32;
+            let pressure_raw = data["Pressure"].as_u64().unwrap_or(0) as f32;
+            let pressure = (pressure_raw / max_pressure).clamp(0.0, 1.0);
+            let tip = data["PenButtons"]
+                .as_array()
+                .and_then(|b| b.first())
+                .and_then(|t| t.as_bool())
+                .unwrap_or(false);
+            if tx
+                .send(PenState {
+                    tilt: [tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)],
+                    pressure: Some(pressure),
+                    contact: tip || pressure > 0.0,
+                })
+                .is_err()
+            {
+                break; // 소비자 종료.
+            }
+        }
+        Ok(())
+    }
+
+    /// StreamJsonRpc 헤더 프레이밍(Content-Length)으로 요청 전송.
+    fn send_rpc(
+        w: &mut impl Write,
+        id: u64,
+        method: &str,
+        params_json: &str,
+    ) -> std::io::Result<()> {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":[{params_json}]}}"#
+        );
+        write!(
+            w,
+            "Content-Length: {}\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}",
+            body.len(),
+            body
+        )?;
+        w.flush()
+    }
+
+    /// 헤더 프레이밍 메시지 하나를 읽습니다. (헤더 없는 JSON은 괄호 카운트
+    /// 폴백으로 처리)
+    fn read_message(
+        reader: &mut std::io::BufReader<std::fs::File>,
+        buf: &mut Vec<u8>,
+    ) -> std::io::Result<Option<String>> {
+        loop {
+            // 헤더 블록 찾기.
+            if let Some(hdr_end) = find_subslice(buf, b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&buf[..hdr_end]).to_string();
+                let len = header
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .trim()
+                            .strip_prefix("content-length:")
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                let body_start = hdr_end + 4;
+                if len > 0 && buf.len() >= body_start + len {
+                    let body = String::from_utf8_lossy(&buf[body_start..body_start + len]).into_owned();
+                    buf.drain(..body_start + len);
+                    return Ok(Some(body));
+                }
+                if len == 0 {
+                    // 헤더가 아니라 JSON 시작일 수 있음 — 폴백.
+                    return read_headerless(reader, buf);
+                }
+            } else if buf.starts_with(b"{") {
+                return read_headerless(reader, buf);
+            }
+            // 더 읽기.
+            let mut chunk = [0u8; 4096];
+            let n = reader.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(None);
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    fn read_headerless(
+        reader: &mut std::io::BufReader<std::fs::File>,
+        buf: &mut Vec<u8>,
+    ) -> std::io::Result<Option<String>> {
+        loop {
+            // 중괄호 카운트로 완전한 JSON 객체 찾기.
+            let mut depth = 0i32;
+            let mut in_str = false;
+            let mut esc = false;
+            let mut end = None;
+            for (i, &b) in buf.iter().enumerate() {
+                if in_str {
+                    if esc {
+                        esc = false;
+                    } else if b == b'\\' {
+                        esc = true;
+                    } else if b == b'"' {
+                        in_str = false;
+                    }
+                } else {
+                    match b {
+                        b'"' => in_str = true,
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = Some(i + 1);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(end) = end {
+                let body = String::from_utf8_lossy(&buf[..end]).into_owned();
+                buf.drain(..end);
+                return Ok(Some(body));
+            }
+            let mut chunk = [0u8; 4096];
+            let n = reader.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(None);
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|w| w == needle)
+    }
+}
+
 // ── Windows Raw Input (WM_INPUT → RAWHID 바이트) ────────────────────────────
 // HIDAPI 직접 읽기는 태블릿 드라이버(예: XP-Pen)가 장치를 **독점**하면
 // ReadFile이 "액세스 거부"로 실패합니다. Raw Input(입력 싱크)은 드라이버가
@@ -418,7 +641,6 @@ mod windows_raw {
 
     /// 메시지 전용 창 생성 + Raw Input 등록 + 메시지 루프.
     fn run(tx: Sender<RawReport>) -> Result<(), ()> {
-        eprintln!("[pen_input] 1: GetModuleHandleW");
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
         let instance: windows::Win32::Foundation::HINSTANCE = module.into();
         let class: Vec<u16> = "FreeDFPenRawInput\0".encode_utf16().collect();
@@ -434,9 +656,7 @@ mod windows_raw {
             lpszMenuName: PCWSTR::null(),
             lpszClassName: PCWSTR(class.as_ptr()),
         };
-        eprintln!("[pen_input] 2: RegisterClassW");
         unsafe { RegisterClassW(&wc) };
-        eprintln!("[pen_input] 3: CreateWindowExW");
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -471,14 +691,12 @@ mod windows_raw {
                 hwndTarget: hwnd,
             },
         ];
-        eprintln!("[pen_input] 4: RegisterRawInputDevices");
         unsafe {
             RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32)
         }
         .map_err(|_| ())?;
 
         REPORT_TX.with(|slot| *slot.borrow_mut() = Some(tx));
-        eprintln!("[pen_input] 5: message loop 시작");
 
         let mut msg = MSG {
             hwnd: HWND(ptr::null_mut()),

@@ -45,12 +45,16 @@ pub fn list_devices() -> Vec<String> {
         .collect()
 }
 
-/// 펜(디지타이저) 장치를 선택해 모니터를 시작합니다.
+/// 펜(디지타이저) 입력 공급원을 시작합니다. 우선순위:
 ///
-/// 1순위: **Raw Input**(WM_INPUT) — 태블릿 드라이버가 장치를 독점해도
-/// 시스템이 HID 리포트 바이트를 전달하므로 보통 이 경로로 동작합니다.
-/// 2순위: hidapi 직접 읽기 폴백.
+/// 1순위: **OTD 데몬 IPC** — VMulti/Raw Input/HIDAPI를 전부 우회, OTD가
+/// 파싱한 리포트(틸트·필압 포함)를 데몬에서 직접 받습니다.
+/// 2순위: Raw Input(WM_INPUT) — OTD가 없으면 가상/일반 HID 펜 리포트.
+/// 3순위: hidapi 직접 읽기 폴백.
 pub fn spawn_monitor() -> Option<PenMonitor> {
+    if let Some(rx) = freedf_core::pen_input::spawn_otd_monitor() {
+        return Some(pen_input::from_receiver(rx));
+    }
     if let Some(rx) = freedf_core::pen_input::spawn_raw_reports() {
         return Some(monitor_from_raw_reports(rx));
     }
