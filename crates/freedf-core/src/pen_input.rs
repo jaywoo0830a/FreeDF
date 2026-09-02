@@ -418,6 +418,7 @@ mod windows_raw {
 
     /// 메시지 전용 창 생성 + Raw Input 등록 + 메시지 루프.
     fn run(tx: Sender<RawReport>) -> Result<(), ()> {
+        eprintln!("[pen_input] 1: GetModuleHandleW");
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
         let instance: windows::Win32::Foundation::HINSTANCE = module.into();
         let class: Vec<u16> = "FreeDFPenRawInput\0".encode_utf16().collect();
@@ -433,7 +434,9 @@ mod windows_raw {
             lpszMenuName: PCWSTR::null(),
             lpszClassName: PCWSTR(class.as_ptr()),
         };
+        eprintln!("[pen_input] 2: RegisterClassW");
         unsafe { RegisterClassW(&wc) };
+        eprintln!("[pen_input] 3: CreateWindowExW");
         let hwnd = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -468,12 +471,14 @@ mod windows_raw {
                 hwndTarget: hwnd,
             },
         ];
+        eprintln!("[pen_input] 4: RegisterRawInputDevices");
         unsafe {
             RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32)
         }
         .map_err(|_| ())?;
 
         REPORT_TX.with(|slot| *slot.borrow_mut() = Some(tx));
+        eprintln!("[pen_input] 5: message loop 시작");
 
         let mut msg = MSG {
             hwnd: HWND(ptr::null_mut()),
@@ -533,6 +538,7 @@ mod windows_raw {
         let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
         let mut size: u32 = 0;
         let r1 = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
+        eprintln!("[pen_input] read_hid: r1={r1} size={size}");
         if r1 == u32::MAX || size < header_size + 8 || size > 64 * 1024 {
             return None;
         }
@@ -554,10 +560,13 @@ mod windows_raw {
         // 헤더는 unaligned read로 **값 복사** (짧은 버퍼에 참조를 만들지 않음).
         let header: RAWINPUTHEADER =
             unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const RAWINPUTHEADER) };
+        eprintln!("[pen_input] read_hid: dwType={}", header.dwType);
         if header.dwType != RIM_TYPEHID.0 {
             return None;
         }
+        eprintln!("[pen_input] read_hid: device_name 조회");
         let device = device_name(header.hDevice);
+        eprintln!("[pen_input] read_hid: device={device}");
         // RAWHID 레이아웃: dwSizeHid(4) + dwCount(4) + bRawData[dwCount].
         let base = header_size as usize;
         if base + 8 > buf.len() {
@@ -580,6 +589,7 @@ mod windows_raw {
     fn device_name(handle: HANDLE) -> String {
         let mut size: u32 = 0;
         let r1 = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
+        eprintln!("[pen_input] device_name: r1={r1} size={size}");
         if r1 == u32::MAX || size == 0 || size == u32::MAX || size > 8192 {
             return String::new();
         }
