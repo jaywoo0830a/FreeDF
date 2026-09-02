@@ -29,6 +29,21 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
 /// 사람이 못 느끼는 100ms — 최대 10Hz로만 다시 짓습니다.
 const ACTIVE_STROKE_GEOM_MS: u64 = 100;
 
+/// 펜 진단 로그 — 필압/폭이 변하지 않을 때 원인을 찾기 위한 흔적.
+/// stderr와 `freedf_pendebug.log`(앱 실행 폴더) 둘 다에 남깁니다.
+fn pen_trace(msg: &str) {
+    let line = format!("[{}] {msg}", now_ms());
+    eprintln!("[pen-trace] {line}");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("freedf_pendebug.log")
+    {
+        use std::io::Write as _;
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 // ── 획별 지오메트리 캐시 (LRU, pt 공간 — 줌과 무관) ─────────────────────────
 
 /// 잉크 설정 스냅샷 — 캐시된 지오메트리가 어떤 모델 파라미터로 만들어졌는지.
@@ -389,13 +404,21 @@ impl FreeDfApp {
     /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
     /// → (없으면) 풀 필압.
     pub(crate) fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
+        self.pressure_source(ctx).0
+    }
+
+    /// (압력, 출처) — 진단 로그가 어느 입력이 실제로 쓰였는지 알 수 있게 합니다.
+    fn pressure_source(&self, ctx: &egui::Context) -> (f32, &'static str) {
         if !self.pressure_enabled {
-            return 1.0;
+            return (1.0, "off(체크박스)");
         }
-        // evdev에서 직접 읽은 필압이 있으면 그것을 우선 사용합니다
-        // (egui Touch force보다 안정적).
         if let Some(p) = self.live_pressure {
-            return p.clamp(0.0, 1.0);
+            return (p.clamp(0.0, 1.0), "pen-monitor");
+        }
+        if let Some(mon) = &self.pen_monitor {
+            if let Some(p) = mon.snapshot().pressure {
+                return (p.clamp(0.0, 1.0), "pen-monitor(스냅샷)");
+            }
         }
         let force: Option<f32> = ctx.input(|i| {
             i.events
@@ -406,7 +429,10 @@ impl FreeDfApp {
                 })
                 .last()
         });
-        force.map(|f| f.clamp(0.0, 1.0)).unwrap_or(1.0)
+        match force {
+            Some(f) => (f.clamp(0.0, 1.0), "egui-touch"),
+            None => (1.0, "없음(1.0 고정)"),
+        }
     }
 
     /// 실시간 입력 디버그 HUD — 필압/틸트/속도/폭이 실제로 어떻게 들어오는지
@@ -414,6 +440,7 @@ impl FreeDfApp {
     /// 계속 1.0으로 표시됩니다).
     pub(crate) fn paint_debug_hud(&self, ctx: &egui::Context, origin: Pos2) {
         let pressure = self.sample_pressure(ctx);
+        let (_, p_src) = self.pressure_source(ctx);
         let (speed, tip_w, pts_n) = match &self.active_stroke {
             Some(st) if st.points.len() >= 2 => {
                 let n = st.points.len();
@@ -478,12 +505,7 @@ impl FreeDfApp {
                         "device: {device}  (touch events/frame: {touch_events})"
                     ));
                     ui.label(format!(
-                        "pressure: {pressure:.3}  (src: {})",
-                        if self.live_pressure.is_some() {
-                            pen_src
-                        } else {
-                            "egui touch"
-                        }
+                        "pressure: {pressure:.3}  (src: {p_src})"
                     ));
                     ui.label(format!(
                         "tilt: [{:+.0}°, {:+.0}°]  (src: {})",
@@ -498,6 +520,16 @@ impl FreeDfApp {
                     ui.label(format!("tip speed: {speed:.0} pt/s"));
                     ui.label(format!("tip width: {tip_w:.2} pt"));
                     ui.label(format!("active points: {pts_n}"));
+                    ui.label(format!(
+                        "pen stream: {}",
+                        match self.last_pen_state_ms {
+                            Some(t) => format!("수신됨 ({}ms 전)", now_ms().saturating_sub(t)),
+                            None => "수신 없음 — OTD/장치 확인".to_string(),
+                        }
+                    ));
+                    if let Some(v) = &self.pen_verdict {
+                        ui.label(format!("verdict: {v}"));
+                    }
                     ui.label("render: ribbon ≈ O(n) · 100ms 스로틀  (완성 획: 정확+캐시)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
@@ -527,6 +559,39 @@ impl FreeDfApp {
                         *last = final_pt;
                     }
                 }
+            }
+            // ── 펜 진단: 획이 끝나면 필압/폭 변화량을 로그로 남깁니다.
+            if active.tool != ToolType::Highlighter {
+                let n_pt = active.points.len();
+                let (mut pmn, mut pmx) = (f32::MAX, f32::MIN);
+                let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
+                let mut unlocked = 0usize;
+                for p in &active.points {
+                    pmn = pmn.min(p.pressure);
+                    pmx = pmx.max(p.pressure);
+                    if p.width > 0.0 {
+                        wmn = wmn.min(p.width);
+                        wmx = wmx.max(p.width);
+                    } else {
+                        unlocked += 1;
+                    }
+                }
+                let verdict = if n_pt < 8 {
+                    "점 부족"
+                } else if pmx - pmn < 0.05 {
+                    "필압 일정 → 입력 문제 (OTD 연결/필압 소스 확인)"
+                } else if unlocked > 0 {
+                    "폭 잠금 안 됨 → locker 버그"
+                } else if wmx - wmn < 0.03 {
+                    "필압은 변하는데 폭 고정 → 모델/잠금 버그"
+                } else {
+                    "OK — 폭 변화 정상"
+                };
+                self.pen_verdict = Some(verdict.to_string());
+                pen_trace(&format!(
+                    "stroke end: tool={:?} n={n_pt} pressure=[{pmn:.3}..{pmx:.3}] width=[{wmn:.3}..{wmx:.3}] unlocked={unlocked} live_pressure={:?} tilt=[{:+.0},{:+.0}] → {verdict}",
+                    active.tool, self.live_pressure, self.pen_tilt[0], self.pen_tilt[1]
+                ));
             }
             // 하이라이터 + 텍스트 인식 모드면 스와이프가 닿은 문서 텍스트 위로
             // 깔끔한 하이라이트를 만들어 저장하고, 원본 자유선은 버립니다.
@@ -773,9 +838,16 @@ impl FreeDfApp {
         self.apply_pending_fit(canvas_size);
         self.ensure_texture(&ctx);
 
-        // evdev 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
+        // evdev/OTD 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
         if let Some(mon) = &mut self.pen_monitor {
             if let Some(st) = mon.poll() {
+                if self.last_pen_state_ms.is_none() {
+                    pen_trace(&format!(
+                        "pen stream 연결됨: tilt=[{:+.0}, {:+.0}] pressure={:?} contact={}",
+                        st.tilt[0], st.tilt[1], st.pressure, st.contact
+                    ));
+                }
+                self.last_pen_state_ms = Some(now_ms());
                 self.pen_tilt = st.tilt;
                 self.live_pressure = st.pressure;
             }
@@ -1623,7 +1695,7 @@ impl FreeDfApp {
                             && raw[1] >= 0.0
                             && raw[1] <= page_h;
                         let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-                        let pressure = self.sample_pressure(ctx);
+                        let (pressure, p_src) = self.pressure_source(ctx);
                         if self.active_stroke.is_none() {
                             if inside {
                                 // 새 스트로크 시작: 스무딩 필터를 리셋해
@@ -1648,6 +1720,16 @@ impl FreeDfApp {
                                     width,
                                     points: Vec::new(),
                                 });
+                                pen_trace(&format!(
+                                    "stroke start: tool={:?} base_w={width:.1}pt pressure_enabled={} device={:?} p_k={:.2} s_k={:.2} src={p_src} tilt=[{:+.0},{:+.0}]",
+                                    self.tool,
+                                    self.pressure_enabled,
+                                    self.input_device,
+                                    self.pen_profile.pressure_k,
+                                    self.pen_profile.speed_k,
+                                    self.pen_tilt[0],
+                                    self.pen_tilt[1]
+                                ));
                             }
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
@@ -1679,6 +1761,14 @@ impl FreeDfApp {
                                         }
                                     }
                                     st.points.push(tip);
+                                    // 진단: 25점마다 압력/잠금 폭을 남깁니다.
+                                    if st.points.len() % 25 == 0 {
+                                        pen_trace(&format!(
+                                            "pt {}: pressure={p:.3} (src={p_src}) locked_w={:.3}",
+                                            st.points.len(),
+                                            st.points.last().map(|q| q.width).unwrap_or(0.0)
+                                        ));
+                                    }
                                 } else {
                                     st.push([x, y], p, t_ms);
                                 }
@@ -1800,6 +1890,26 @@ impl FreeDfApp {
         let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
         let tilt = tilt_magnitude(&self.pen_tilt);
         let halves_pt = stroke_halves(stroke, &self.pen_profile, &self.fountain_profile, tilt);
+        // ── 라이브 진단: 그리는 중 렌더 폭이 평평하면(변화 없음) 경고 로그.
+        if n >= 8 && now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
+            let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
+            for h in &halves_pt {
+                wmn = wmn.min(*h);
+                wmx = wmx.max(*h);
+            }
+            let (mut pmn, mut pmx) = (f32::MAX, f32::MIN);
+            for p in pts.iter() {
+                pmn = pmn.min(p.pressure);
+                pmx = pmx.max(p.pressure);
+            }
+            if wmx - wmn < 0.05 {
+                self.pen_flat_log_ms = now_ms();
+                pen_trace(&format!(
+                    "LIVE-FLAT: n={n} widths=[{wmn:.3}..{wmx:.3}] pressure=[{pmn:.3}..{pmx:.3}] live_pressure={:?}",
+                    self.live_pressure
+                ));
+            }
+        }
         let is_pen = stroke.tool == ToolType::Pen;
         let bleed_active = is_pen && self.ink_bleed.enabled;
         let settle = self.ink_bleed.settle_sec().max(1e-3);

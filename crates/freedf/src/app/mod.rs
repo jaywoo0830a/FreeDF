@@ -590,6 +590,12 @@ pub struct FreeDfApp {
     pen_monitor: Option<freedf_core::pen_input::PenMonitor>,
     /// evdev에서 직접 읽은 최신 필압 (없으면 egui Touch force 사용).
     live_pressure: Option<f32>,
+    /// OTD/evdev 펜 스트림이 마지막으로 도착한 시각 (ms) — 진단용.
+    last_pen_state_ms: Option<u64>,
+    /// 마지막 획의 진단 판정 문구 (Debug HUD 표시용).
+    pen_verdict: Option<String>,
+    /// LIVE-FLAT 경고 로그 스로틀 (ms).
+    pen_flat_log_ms: u64,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
@@ -939,6 +945,9 @@ impl FreeDfApp {
             width_locker: None,
             pen_monitor,
             live_pressure: None,
+            last_pen_state_ms: None,
+            pen_verdict: None,
+            pen_flat_log_ms: 0,
             ink_mesh: None,
             ink_fallback: Vec::new(),
             ink_key: (
