@@ -1758,6 +1758,7 @@ impl FreeDfApp {
                                     width,
                                     points: Vec::new(),
                                 });
+                                self.lift_cut_logged = false;
                                 pen_trace(&format!(
                                     "stroke start: tool={:?} base_w={width:.1}pt pressure_enabled={} device={:?} p_k={:.2} s_k={:.2} src={p_src} tilt=[{:+.0},{:+.0}]",
                                     self.tool,
@@ -1772,43 +1773,63 @@ impl FreeDfApp {
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
                             if inside {
-                                // 만년필 모델은 점별 시각으로 속도를 계산합니다.
-                                let t_ms = now_ms();
-                                // 1€ 필터(선택적) — OTD 같은 드라이버가 이미
-                                // 안정화하는 환경에서는 꺼둘 수 있습니다.
-                                let (x, y, p) = if self.smoothing_enabled
-                                    && self.smoothing > 0.001
-                                    && self.smooth_active
-                                {
-                                    let t = ctx.input(|i| i.time);
-                                    let sx = self.smooth_x.filter(page[0], t);
-                                    let sy = self.smooth_y.filter(page[1], t);
-                                    let sp = self.smooth_p.filter(pressure, t);
-                                    (sx, sy, sp.clamp(0.0, 1.0))
+                                // ── 펜 떼기 직전 처리: 펜 접촉이 이미 해제된
+                                // 뒤 도착한 꼬리 리포트(필압 0으로 떨어지는)는
+                                // **버립니다** — 펜 떼는 순간 끝이 갑자기
+                                // 가늘어지는 "확 바뀜"의 원인이었습니다.
+                                // (첫 점 4개는 접촉 시작 타이밍 차이로 잘릴 수
+                                // 있으니 점이 어느 정도 쌓인 뒤에만 적용)
+                                let contact_lost = st.points.len() >= 4
+                                    && self
+                                        .pen_monitor
+                                        .as_ref()
+                                        .is_some_and(|m| !m.snapshot().contact);
+                                if contact_lost {
+                                    if !self.lift_cut_logged {
+                                        self.lift_cut_logged = true;
+                                        pen_trace(
+                                            "LIFT-CUT: 접촉 해제 뒤 도착한 꼬리 점 제거 (펜 떼는 순간 가늘어지는 것 방지)",
+                                        );
+                                    }
                                 } else {
-                                    (page[0], page[1], pressure)
-                                };
-                                let raw = StrokePoint::with_time(x, y, p, t_ms);
-                                if let Some(locker) = &mut self.width_locker {
-                                    // 이전 점의 폭을 확정하고 새 점을 잠급니다 —
-                                    // 미래 점이 이전 폭을 바꾸는 일이 없습니다.
-                                    let (locked_prev, tip) = locker.push(raw);
-                                    if let Some(prev) = locked_prev {
-                                        if let Some(last) = st.points.last_mut() {
-                                            *last = prev;
+                                    // 만년필 모델은 점별 시각으로 속도를 계산합니다.
+                                    let t_ms = now_ms();
+                                    // 1€ 필터(선택적) — OTD 같은 드라이버가 이미
+                                    // 안정화하는 환경에서는 꺼둘 수 있습니다.
+                                    let (x, y, p) = if self.smoothing_enabled
+                                        && self.smoothing > 0.001
+                                        && self.smooth_active
+                                    {
+                                        let t = ctx.input(|i| i.time);
+                                        let sx = self.smooth_x.filter(page[0], t);
+                                        let sy = self.smooth_y.filter(page[1], t);
+                                        let sp = self.smooth_p.filter(pressure, t);
+                                        (sx, sy, sp.clamp(0.0, 1.0))
+                                    } else {
+                                        (page[0], page[1], pressure)
+                                    };
+                                    let raw = StrokePoint::with_time(x, y, p, t_ms);
+                                    if let Some(locker) = &mut self.width_locker {
+                                        // 이전 점의 폭을 확정하고 새 점을 잠급니다 —
+                                        // 미래 점이 이전 폭을 바꾸는 일이 없습니다.
+                                        let (locked_prev, tip) = locker.push(raw);
+                                        if let Some(prev) = locked_prev {
+                                            if let Some(last) = st.points.last_mut() {
+                                                *last = prev;
+                                            }
                                         }
+                                        st.points.push(tip);
+                                        // 진단: 25점마다 압력/잠금 폭을 남깁니다.
+                                        if st.points.len() % 25 == 0 {
+                                            pen_trace(&format!(
+                                                "pt {}: pressure={p:.3} (src={p_src}) locked_w={:.3}",
+                                                st.points.len(),
+                                                st.points.last().map(|q| q.width).unwrap_or(0.0)
+                                            ));
+                                        }
+                                    } else {
+                                        st.push([x, y], p, t_ms);
                                     }
-                                    st.points.push(tip);
-                                    // 진단: 25점마다 압력/잠금 폭을 남깁니다.
-                                    if st.points.len() % 25 == 0 {
-                                        pen_trace(&format!(
-                                            "pt {}: pressure={p:.3} (src={p_src}) locked_w={:.3}",
-                                            st.points.len(),
-                                            st.points.last().map(|q| q.width).unwrap_or(0.0)
-                                        ));
-                                    }
-                                } else {
-                                    st.push([x, y], p, t_ms);
                                 }
                             }
                         }

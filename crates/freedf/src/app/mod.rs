@@ -599,6 +599,8 @@ pub struct FreeDfApp {
     /// 방금 끝난 획의 id — 병합 메시에서 그 획의 정착 렌더 폭을 대조 로그로
     /// 남기기 위한 표식 (진단용).
     last_finished_id: Option<u64>,
+    /// LIFT-CUT 로그가 이번 획에서 이미 나왔는지 (스팸 방지).
+    lift_cut_logged: bool,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
@@ -952,6 +954,7 @@ impl FreeDfApp {
             pen_verdict: None,
             pen_flat_log_ms: 0,
             last_finished_id: None,
+            lift_cut_logged: false,
             ink_mesh: None,
             ink_fallback: Vec::new(),
             ink_key: (
