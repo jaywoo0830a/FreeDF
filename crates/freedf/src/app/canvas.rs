@@ -456,7 +456,7 @@ impl FreeDfApp {
                     ui.label(format!(
                         "pressure: {pressure:.3}  (src: {})",
                         if self.live_pressure.is_some() {
-                            "evdev"
+                            "HID"
                         } else {
                             "egui touch"
                         }
@@ -466,7 +466,7 @@ impl FreeDfApp {
                         self.pen_tilt[0],
                         self.pen_tilt[1],
                         if self.pen_monitor.is_some() {
-                            "evdev"
+                            "HID"
                         } else {
                             "없음"
                         }

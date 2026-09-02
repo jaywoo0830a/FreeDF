@@ -16,9 +16,6 @@
 //!   --list           # 장치 목록만
 //!   --index N        # 목록의 N번째 장치 선택 (기본: 펜 usage=0x02 첫 번째)
 
-#[cfg(target_os = "windows")]
-use freedf_core::pen_input;
-#[cfg(not(target_os = "windows"))]
 use freedf_core::pen_input;
 
 #[cfg(target_os = "windows")]
@@ -30,6 +27,23 @@ fn main() {
         .position(|a| a == "--index")
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse::<usize>().ok());
+
+    // ── 1순위: Raw Input — 드라이버 독점이어도 리포트 바이트를 받습니다 ──
+    if !list_only && index_arg.is_none() {
+        if let Some(rx) = pen_input::spawn_raw_reports() {
+            println!("[hidprobe] Raw Input 캡처 시작 (드라이버 독점이어도 동작).");
+            println!("[hidprobe] 바이트 중 **움직이는 위치**가 X/Y/필압/틸트 필드입니다.");
+            while let Ok(bytes) = rx.recv() {
+                let hex: Vec<String> =
+                    bytes.iter().map(|b| format!("{b:02x}")).collect();
+                println!("report({}B): {}", bytes.len(), hex.join(" "));
+            }
+            println!("[hidprobe] Raw Input 스트림이 종료되었습니다.");
+            return;
+        }
+    }
+
+    // ── 2순위: hidapi 직접 읽기 (장치 목록/선택 포함) ──
     let api = match hidapi::HidApi::new() {
         Ok(a) => a,
         Err(e) => {

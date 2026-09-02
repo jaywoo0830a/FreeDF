@@ -354,6 +354,193 @@ pub fn open_best() -> Option<PenMonitor> {
     None
 }
 
+// ── Windows Raw Input (WM_INPUT → RAWHID 바이트) ────────────────────────────
+// HIDAPI 직접 읽기는 태블릿 드라이버(예: XP-Pen)가 장치를 **독점**하면
+// ReadFile이 "액세스 거부"로 실패합니다. Raw Input(입력 싱크)은 드라이버가
+// 실행 중이어도 시스템이 HID 리포트 바이트를 그대로 전달해 줍니다.
+// 참고: https://learn.microsoft.com/en-us/windows/win32/inputdev/raw-input
+
+/// Windows에서 디지타이저(펜)의 원시 HID 리포트 바이트를 캡처하는 스레드를
+/// 시작합니다. 실패(등록 불가 등)하면 None.
+#[cfg(target_os = "windows")]
+pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<Vec<u8>>> {
+    windows_raw::spawn()
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<Vec<u8>>> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+mod windows_raw {
+    use std::cell::RefCell;
+    use std::ptr;
+    use std::sync::mpsc::{Receiver, Sender};
+
+    use windows::core::PCWSTR;
+    use windows::Win32::Devices::HumanInterfaceDevice::HID_USAGE_PAGE_DIGITIZER;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Graphics::Gdi::HBRUSH;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Input::{
+        GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
+        RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEHID,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HCURSOR, HICON,
+        PostQuitMessage, RegisterClassW, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
+        WNDCLASSW, WNDCLASS_STYLES, HWND_MESSAGE, MSG, WM_CLOSE, WM_INPUT,
+    };
+
+    // WndProc은 상태 없는 함수여야 하므로, 스레드 로컬로 송신부를 공유합니다
+    // (창과 메시지 루프가 같은 스레드에서 돌기 때문에 안전합니다).
+    thread_local! {
+        static REPORT_TX: RefCell<Option<Sender<Vec<u8>>>> = RefCell::new(None);
+    }
+
+    pub(super) fn spawn() -> Option<Receiver<Vec<u8>>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = run(tx);
+        });
+        Some(rx)
+    }
+
+    /// 메시지 전용 창 생성 + Raw Input 등록 + 메시지 루프.
+    fn run(tx: Sender<Vec<u8>>) -> Result<(), ()> {
+        let instance = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
+        let class: Vec<u16> = "FreeDFPenRawInput\0".encode_utf16().collect();
+        let wc = WNDCLASSW {
+            style: WNDCLASS_STYLES(0),
+            lpfnWndProc: Some(wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: instance,
+            hIcon: HICON(ptr::null_mut()),
+            hCursor: HCURSOR(ptr::null_mut()),
+            hbrBackground: HBRUSH(ptr::null_mut()),
+            lpszMenuName: PCWSTR::null(),
+            lpszClassName: PCWSTR(class.as_ptr()),
+        };
+        unsafe { RegisterClassW(&wc) };
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PCWSTR(class.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                Some(instance),
+                None,
+            )
+        }
+        .map_err(|_| ())?;
+
+        // 디지타이저 페이지의 펜(0x02)/디지타이저(0x01)를 입력 싱크로 등록 —
+        // 다른 앱/드라이버가 포커스를 가져도 리포트를 받습니다.
+        let devices = [
+            RAWINPUTDEVICE {
+                usUsagePage: HID_USAGE_PAGE_DIGITIZER,
+                usUsage: 0x02, // 펜
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+            RAWINPUTDEVICE {
+                usUsagePage: HID_USAGE_PAGE_DIGITIZER,
+                usUsage: 0x01, // 디지타이저
+                dwFlags: RIDEV_INPUTSINK,
+                hwndTarget: hwnd,
+            },
+        ];
+        unsafe {
+            RegisterRawInputDevices(&devices, std::mem::size_of::<RAWINPUTDEVICE>() as u32)
+        }
+        .map_err(|_| ())?;
+
+        REPORT_TX.with(|slot| *slot.borrow_mut() = Some(tx));
+
+        let mut msg = MSG {
+            hwnd: HWND(ptr::null_mut()),
+            message: 0,
+            wParam: WPARAM(0),
+            lParam: LPARAM(0),
+            time: 0,
+            pt: POINT { x: 0, y: 0 },
+        };
+        loop {
+            let ret = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+            if ret.0 <= 0 {
+                break; // WM_QUIT 또는 오류.
+            }
+            unsafe {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        Ok(())
+    }
+
+    extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match msg {
+            WM_INPUT => {
+                if let Some(bytes) = read_hid_bytes(lparam) {
+                    REPORT_TX.with(|slot| {
+                        if let Some(tx) = &*slot.borrow() {
+                            let _ = tx.send(bytes);
+                        }
+                    });
+                }
+                LRESULT(0)
+            }
+            WM_CLOSE => {
+                unsafe { PostQuitMessage(0) };
+                LRESULT(0)
+            }
+            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+    }
+
+    /// WM_INPUT의 lParam에서 HID 리포트 바이트를 추출합니다
+    /// (GetRawInputData 2단계: 크기 조회 → 복사).
+    fn read_hid_bytes(lparam: LPARAM) -> Option<Vec<u8>> {
+        let hraw = HRAWINPUT(lparam.0 as *mut core::ffi::c_void);
+        let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
+        let mut size: u32 = 0;
+        let _ = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
+        if size == 0 || size == u32::MAX {
+            return None;
+        }
+        let mut buf: Vec<u8> = vec![0u8; size as usize];
+        let copied = unsafe {
+            GetRawInputData(
+                hraw,
+                RID_INPUT,
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut size,
+                header_size,
+            )
+        };
+        if copied == u32::MAX || copied == 0 {
+            return None;
+        }
+        buf.truncate(size as usize);
+        let raw: &RAWINPUT = unsafe { &*(buf.as_ptr() as *const RAWINPUT) };
+        if raw.header.dwType != RIM_TYPEHID.0 {
+            return None;
+        }
+        let hid = unsafe { raw.data.hid };
+        let bytes =
+            unsafe { std::slice::from_raw_parts(hid.bRawData.as_ptr(), hid.dwCount as usize) };
+        Some(bytes.to_vec())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -42,7 +42,37 @@ pub fn list_devices() -> Vec<String> {
 }
 
 /// 펜(디지타이저) 장치를 선택해 모니터를 시작합니다.
+///
+/// 1순위: **Raw Input**(WM_INPUT) — 태블릿 드라이버가 장치를 독점해도
+/// 시스템이 HID 리포트 바이트를 전달하므로 보통 이 경로로 동작합니다.
+/// 2순위: hidapi 직접 읽기 폴백.
 pub fn spawn_monitor() -> Option<PenMonitor> {
+    if let Some(rx) = freedf_core::pen_input::spawn_raw_reports() {
+        return Some(monitor_from_raw_reports(rx));
+    }
+    spawn_hidapi_monitor()
+}
+
+/// Raw Input 리포트 바이트 → `parse_report` → 앱 모니터.
+fn monitor_from_raw_reports(
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+) -> PenMonitor {
+    let (tx, monitor) = pen_input::channel();
+    std::thread::spawn(move || {
+        while let Ok(bytes) = rx.recv() {
+            if let Some(state) = parse_report(&bytes) {
+                if tx.send(state).is_err() {
+                    break; // 앱 종료.
+                }
+            }
+        }
+    });
+    monitor
+}
+
+/// hidapi 직접 읽기 폴백 — 드라이버가 장치를 독점 중이면 ReadFile이
+/// "액세스 거부"로 실패할 수 있습니다.
+fn spawn_hidapi_monitor() -> Option<PenMonitor> {
     let api = hidapi::HidApi::new().ok()?;
 
     // ── 장치 선택 ──
