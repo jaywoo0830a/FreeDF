@@ -499,12 +499,18 @@ mod windows_raw {
     extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_INPUT => {
-                if let Some(rep) = read_hid(lparam) {
-                    REPORT_TX.with(|slot| {
-                        if let Some(tx) = &*slot.borrow() {
-                            let _ = tx.send(rep);
-                        }
-                    });
+                // FFI 경계에서의 패닉 방지 (예상 못 한 입력이 와도 프로세스 유지).
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(rep) = read_hid(lparam) {
+                        REPORT_TX.with(|slot| {
+                            if let Some(tx) = &*slot.borrow() {
+                                let _ = tx.send(rep);
+                            }
+                        });
+                    }
+                }));
+                if result.is_err() {
+                    eprintln!("[pen_input] WM_INPUT 처리 중 패닉 무시");
                 }
                 LRESULT(0)
             }
@@ -526,11 +532,12 @@ mod windows_raw {
         let hraw = HRAWINPUT(lparam.0 as *mut core::ffi::c_void);
         let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
         let mut size: u32 = 0;
-        let _ = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
-        if size == u32::MAX || size < header_size + 8 {
+        let r1 = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
+        if r1 == u32::MAX || size < header_size + 8 || size > 64 * 1024 {
             return None;
         }
-        let mut buf: Vec<u8> = vec![0u8; size as usize];
+        // 여유분(+16) — 어떤 경우에도 쓸 범위를 넘기지 않도록.
+        let mut buf: Vec<u8> = vec![0u8; size as usize + 16];
         let copied = unsafe {
             GetRawInputData(
                 hraw,
@@ -543,17 +550,21 @@ mod windows_raw {
         if copied == u32::MAX || copied < header_size + 8 {
             return None;
         }
-        buf.truncate(size as usize);
-        // 헤더만 참조 (버퍼 최소 크기 보장됨).
-        let header: &RAWINPUTHEADER = unsafe { &*(buf.as_ptr() as *const RAWINPUTHEADER) };
+        buf.truncate((copied as usize).min(buf.len()));
+        // 헤더는 unaligned read로 **값 복사** (짧은 버퍼에 참조를 만들지 않음).
+        let header: RAWINPUTHEADER =
+            unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const RAWINPUTHEADER) };
         if header.dwType != RIM_TYPEHID.0 {
             return None;
         }
         let device = device_name(header.hDevice);
         // RAWHID 레이아웃: dwSizeHid(4) + dwCount(4) + bRawData[dwCount].
         let base = header_size as usize;
-        let count_bytes: [u8; 4] = buf[base + 4..base + 8].try_into().ok()?;
-        let count = u32::from_le_bytes(count_bytes) as usize;
+        if base + 8 > buf.len() {
+            return None;
+        }
+        let count = u32::from_le_bytes([buf[base + 4], buf[base + 5], buf[base + 6], buf[base + 7]])
+            as usize;
         let data_off = base + 8;
         let end = data_off.checked_add(count)?;
         if end > buf.len() {
@@ -568,20 +579,23 @@ mod windows_raw {
     /// hDevice의 장치 경로(`\\?\HID#...`)를 조회합니다.
     fn device_name(handle: HANDLE) -> String {
         let mut size: u32 = 0;
-        let _ = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
-        if size == 0 || size == u32::MAX {
+        let r1 = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
+        if r1 == u32::MAX || size == 0 || size == u32::MAX || size > 8192 {
             return String::new();
         }
-        let mut buf: Vec<u16> = vec![0; (size / 2) as usize];
-        let copied = unsafe {
+        // 여유분(+8 워드) — 종료 널 등 오프바이원 쓰기를 전부 흡수합니다.
+        let words = (size / 2) as usize + 8;
+        let mut buf: Vec<u16> = vec![0; words];
+        let mut cap_bytes = (words * 2) as u32;
+        let r2 = unsafe {
             GetRawInputDeviceInfoW(
                 Some(handle),
                 RIDI_DEVICENAME,
                 Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
-                &mut size,
+                &mut cap_bytes,
             )
         };
-        if copied == u32::MAX || copied == 0 {
+        if r2 == u32::MAX {
             return String::new();
         }
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
