@@ -78,7 +78,7 @@ fn draw_one_stroke(
     img: &mut RgbaImage,
     stroke: &Stroke,
     scale: f32,
-    bleed: InkBleed,
+    _bleed: InkBleed,
     fountain: FountainProfile,
     pen: BallPenProfile,
 ) {
@@ -114,33 +114,10 @@ fn draw_one_stroke(
             halves.push((w * scale * 0.5).max(0.05));
         }
     }
-    let is_fountain = stroke.tool == ToolType::Fountain;
-    // 잉크 번짐 후광 (만년필 전용, 화면과 동일한 2단 레이어) — **점별 나이** 기준.
-    if is_fountain && bleed.enabled {
-        let now = crate::app::now_ms();
-        let ages: Vec<f32> = pts
-            .iter()
-            .map(|p| {
-                if p.t_ms == 0 {
-                    0.0
-                } else {
-                    (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                }
-            })
-            .collect();
-        let radii = crate::app::canvas::bleed_radii(&pts_xy, &ages, bleed);
-        // 후광이 아니라 **몸체가 퍼져 채워지는** 번짐 — 점별 나이만큼 두꺼워짐.
-        let mut hb: Vec<f32> = Vec::with_capacity(n);
-        for i in 0..n {
-            hb.push(halves[i] + radii[i]);
-        }
-        fill_stroke_outline(img, &pts_xy, &hb, true, color);
-    }
-    // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝.
-    // (번짐이 이미 몸체를 채웠으면 중복 채움으로 색이 진해지지 않게 생략)
-    if !(is_fountain && bleed.enabled) {
-        fill_stroke_outline(img, &pts_xy, &halves, round_caps, color);
-    }
+    // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝. 내보내기는 완전히
+    // 포화된(진해진) 최종 상태를 **쓴 굵기 그대로** 저장합니다 — 잉크 스밈은
+    // 색만 진해지고 선 두께는 변하지 않으므로 추가 채움이 필요 없습니다.
+    fill_stroke_outline(img, &pts_xy, &halves, round_caps, color);
 }
 
 /// 화면과 **동일한** 외곽선→삼각분할로 스트로크를 래스터라이즈합니다.

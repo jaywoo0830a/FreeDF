@@ -171,32 +171,6 @@ fn stroke_halves(
     halves
 }
 
-/// 점별 번짐 반경(pt) — **점별 나이**(그 점이 종이에 닿은 뒤 경과 시간)
-/// 기준. 펜 닙 근처(나이≈0)는 안 퍼지고, 뒤로 갈수록 퍼져 나가므로
-/// 라이브 스트로크에서 잉크가 닿자마자 서서히 번지는 애니메이션이 됩니다.
-pub(crate) fn bleed_radii(pts_pt: &[[f32; 2]], ages_sec: &[f32], bleed: InkBleed) -> Vec<f32> {
-    let n = pts_pt.len();
-    let len: f32 = pts_pt
-        .windows(2)
-        .map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt())
-        .sum();
-    let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n);
-    let mut acc = 0.0f32;
-    for i in 0..n {
-        if i > 0 {
-            let a = pts_pt[i - 1];
-            let b = pts_pt[i];
-            acc += ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
-        }
-        dists.push((acc, len - acc));
-    }
-    dists
-        .iter()
-        .zip(ages_sec)
-        .map(|((d0, d1), age)| bleed.radius(*d0, *d1, len, *age))
-        .collect()
-}
-
 
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
@@ -1760,7 +1734,7 @@ impl FreeDfApp {
             bb[3] = bb[3].max(p.y);
         }
         {
-            let pad = (width * 0.7).max(6.0) + self.ink_bleed.max_spread_pt.max(0.0);
+            let pad = (width * 0.7).max(6.0);
             let a = self.view.page_to_view([bb[0] - pad, bb[1] - pad]);
             let b = self.view.page_to_view([bb[2] + pad, bb[3] + pad]);
             let rect = Rect::from_min_max(
@@ -1794,11 +1768,11 @@ impl FreeDfApp {
                 ));
             }
         }
-        // 번짐은 **만년필 전용** (볼펜은 잉크가 안 번짐).
+        // 잉크 스밈은 **만년필 전용** — 굵기는 쓴 그대로, 색만 점점 진해짐.
         let bleed_active = tool == ToolType::Fountain && self.ink_bleed.enabled;
-        let settle = self.ink_bleed.settle_sec().max(1e-3);
+        let sat_deadline = self.ink_bleed.saturate_sec.max(1e-3);
         let age_sec = if created_ms == 0 {
-            settle
+            sat_deadline
         } else {
             (now_ms().saturating_sub(created_ms)) as f32 / 1000.0
         };
@@ -1864,41 +1838,31 @@ impl FreeDfApp {
         };
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
         let mut mesh = egui::Mesh::default();
-        // 번지는 본체 폭: 점별 나이만큼 스트로크 몸체가 **퍼져서 채워집니다**
-        // (후광 없이 선 자체가 두꺼워짐). 동시에 잉크가 스며들며 **점점 진해짐**
-        // (닿은 직후 옅게 → 포화). 닙 근처는 원래 폭·옅은 색, 뒤로 갈수록 번지고 진해짐.
-        let body_halves: Vec<f32>;
-        let body_sat: Option<Vec<f32>>;
-        if bleed_active {
+        // 잉크 스밈: **굵기는 쓴 그대로**, 색만 점별 나이에 따라 옅게(35%) →
+        // 포화(원색)로 진해집니다. 닙 근처는 옅고 뒤로 갈수록 진해짐.
+        let body_sat: Option<Vec<f32>> = if bleed_active {
             let now = now_ms();
-            let ages: Vec<f32> = pts
-                .iter()
-                .map(|p| {
-                    if p.t_ms == 0 {
-                        age_sec
-                    } else {
-                        (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                    }
-                })
-                .collect();
-            let radii = bleed_radii(&pts_pt, &ages, self.ink_bleed);
-            body_halves = (0..n).map(|i| halves_pt[i] + radii[i]).collect();
             let sat_sec = self.ink_bleed.saturate_sec.max(1e-3);
-            body_sat = Some(
-                ages
-                    .iter()
-                    .map(|age| INK_SAT_INITIAL + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0))
+            Some(
+                pts.iter()
+                    .map(|p| {
+                        let age = if p.t_ms == 0 {
+                            age_sec
+                        } else {
+                            (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                        };
+                        INK_SAT_INITIAL + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
+                    })
                     .collect(),
-            );
+            )
         } else {
-            body_halves = halves_pt;
-            body_sat = None;
-        }
+            None
+        };
         append_ribbon(
             &mut mesh,
             &freedf_core::pen::stroke_ribbon(
                 &pts_pt,
-                &body_halves,
+                &halves_pt,
                 feather_pt,
                 round_caps,
                 body_sat.as_deref(),
@@ -1927,22 +1891,21 @@ impl FreeDfApp {
             egui::pos2(origin.x + v[0], origin.y + v[1])
         };
         let bleed = self.ink_bleed;
-        let settle = bleed.settle_sec().max(1e-3);
+        let sat_deadline = bleed.saturate_sec.max(1e-3);
         let ball = self.pen_profile;
         let fountain = self.fountain_profile;
         let tilt = tilt_magnitude(&self.pen_tilt);
         let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
-        // 1차 패스: 다음 정착 시각 — **점별** (그 점이 닿은 시각 +
-        // 번짐 정착과 잉크 포화 중 늦은 쪽). 전부 끝나면 재구성을 멈춥니다.
-        let settle_deadline = settle.max(bleed.saturate_sec);
+        // 1차 패스: 다음 재구성 시각 — **점별** (그 점이 닿은 시각 +
+        // 포화 시간). 전부 진해지면 재구성을 멈춥니다.
         let mut next_settle = u64::MAX;
         for s in strokes {
             if bleed.enabled && s.tool == ToolType::Fountain {
                 for p in &s.points {
                     if p.t_ms > 0 {
                         let settle_ms =
-                            p.t_ms.saturating_add((settle_deadline * 1000.0) as u64);
+                            p.t_ms.saturating_add((sat_deadline * 1000.0) as u64);
                         if now < settle_ms {
                             next_settle = next_settle.min(settle_ms);
                         }
@@ -1959,7 +1922,7 @@ impl FreeDfApp {
             }
             // 뷰포트 컬링.
             if let Some(bb) = s.bounding_box() {
-                let pad = (s.width * 0.7).max(6.0) + bleed.max_spread_pt.max(0.0);
+                let pad = (s.width * 0.7).max(6.0);
                 let a = view.page_to_view([bb[0] - pad, bb[1] - pad]);
                 let b = view.page_to_view([bb[2] + pad, bb[3] + pad]);
                 let rect = Rect::from_min_max(
@@ -1999,43 +1962,32 @@ impl FreeDfApp {
                 }
             }
             let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
-            // 번지는 본체 폭 + 스며들며 진해지는 포화도 — 점별 나이 기준
-            // (후광 없이 몸체가 퍼지고 진해짐), settle/saturate에서 멈춤.
-            let body_halves: Vec<f32>;
-            let body_sat: Option<Vec<f32>>;
-            if bleed_on {
-                let ages: Vec<f32> = s
-                    .points
-                    .iter()
-                    .map(|p| {
-                        if p.t_ms == 0 {
-                            settle
-                        } else {
-                            (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                        }
-                    })
-                    .collect();
-                let radii = bleed_radii(&pts_pt, &ages, bleed);
-                body_halves = (0..halves.len()).map(|i| halves[i] + radii[i]).collect();
+            // 잉크 스밈: **굵기는 쓴 그대로**, 색만 점별 나이에 따라 진해짐
+            // (옅게 → 포화, saturate_sec에서 멈춤).
+            let body_sat: Option<Vec<f32>> = if bleed_on {
                 let sat_sec = bleed.saturate_sec.max(1e-3);
-                body_sat = Some(
-                    ages
+                Some(
+                    s.points
                         .iter()
-                        .map(|age| {
+                        .map(|p| {
+                            let age = if p.t_ms == 0 {
+                                sat_deadline
+                            } else {
+                                (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                            };
                             INK_SAT_INITIAL
                                 + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
                         })
                         .collect(),
-                );
+                )
             } else {
-                body_halves = halves;
-                body_sat = None;
-            }
+                None
+            };
             append_ribbon(
                 &mut mesh,
                 &freedf_core::pen::stroke_ribbon(
                     &pts_pt,
-                    &body_halves,
+                    &halves,
                     feather_pt,
                     round_caps,
                     body_sat.as_deref(),

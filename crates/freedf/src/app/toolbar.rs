@@ -845,14 +845,15 @@ impl FreeDfApp {
                         if nib_resp.changed() {
                             self.save_session();
                         }
-                        // 잉크 번짐(블리드): **만년필 전용** 선택 기능 — 그어진 뒤
-                        // 잉크가 종이로 퍼져나가는 효과. 시작/중간/끝 구간별
-                        // 속도(pt/초)를 따로 커스텀할 수 있고, 기본 활성화입니다.
+                        // 잉크 스밈: **만년필 전용** 선택 기능 — 잉크가 종이에
+                        // 스며들며 **굵기는 그대로, 색만 점점 진해지는** 효과.
+                        // 진해지는 시간(Soak time)을 커스텀할 수 있고, 기본 활성화.
                         if ui
-                            .checkbox(&mut self.ink_bleed.enabled, "Ink bleed")
+                            .checkbox(&mut self.ink_bleed.enabled, "Ink soak")
                             .on_hover_text(
-                                "Fountain ink bleed: ink slowly spreads into the paper \
-                                 after you write. Start/mid/end speeds are customizable.",
+                                "Fountain ink soak: after you write, the ink gradually \
+                                 darkens as it soaks into the paper. Line thickness \
+                                 stays exactly as drawn — only the color deepens.",
                             )
                             .changed()
                         {
@@ -860,60 +861,20 @@ impl FreeDfApp {
                             self.save_session();
                         }
                         if self.ink_bleed.enabled {
-                            let any_changed = ui
+                            if ui
                                 .add(
                                     egui::Slider::new(
-                                        &mut self.ink_bleed.start_rate,
-                                        0.0..=3.0,
+                                        &mut self.ink_bleed.saturate_sec,
+                                        0.5..=5.0,
                                     )
-                                    .text("Start speed"),
+                                    .text("Soak time"),
                                 )
                                 .on_hover_text(
-                                    "How fast ink bleeds at the beginning of a stroke \
-                                     (pt per second). 0 = no bleed there.",
+                                    "How long (seconds) fresh ink takes to deepen \
+                                     from its light state to the full ink color.",
                                 )
                                 .changed()
-                                | ui
-                                    .add(
-                                        egui::Slider::new(
-                                            &mut self.ink_bleed.mid_rate,
-                                            0.0..=3.0,
-                                        )
-                                        .text("Mid speed"),
-                                    )
-                                    .on_hover_text(
-                                        "How fast ink bleeds in the middle of a stroke \
-                                         (pt per second).",
-                                    )
-                                    .changed()
-                                | ui
-                                    .add(
-                                        egui::Slider::new(
-                                            &mut self.ink_bleed.end_rate,
-                                            0.0..=3.0,
-                                        )
-                                        .text("End speed"),
-                                    )
-                                    .on_hover_text(
-                                        "How fast ink bleeds at the end of a stroke \
-                                         (pt per second).",
-                                    )
-                                    .changed()
-                                | ui
-                                    .add(
-                                        egui::Slider::new(
-                                            &mut self.ink_bleed.max_spread_pt,
-                                            1.0..=12.0,
-                                        )
-                                        .text("Max spread"),
-                                    )
-                                    .on_hover_text(
-                                        "Upper limit of the bleed radius (pt).\n\
-                                         Fresh ink spreads quickly at first and then \
-                                         slows down until it reaches this size.",
-                                    )
-                                    .changed();
-                            if any_changed {
+                            {
                                 self.save_default_session();
                                 self.save_session();
                             }
