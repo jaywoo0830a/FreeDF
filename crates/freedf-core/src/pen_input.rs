@@ -409,7 +409,8 @@ mod windows_raw {
 
     /// 메시지 전용 창 생성 + Raw Input 등록 + 메시지 루프.
     fn run(tx: Sender<Vec<u8>>) -> Result<(), ()> {
-        let instance = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
+        let module = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
+        let instance: windows::Win32::Foundation::HINSTANCE = module.into();
         let class: Vec<u16> = "FreeDFPenRawInput\0".encode_utf16().collect();
         let wc = WNDCLASSW {
             style: WNDCLASS_STYLES(0),
