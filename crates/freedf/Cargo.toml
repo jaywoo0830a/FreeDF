@@ -27,3 +27,5 @@ egui_phosphor_icons = { version = "0.5", default-features = false }
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = "0.15"
+# Windows 펜 틸트/필압 — 저수준 HID 리포트 읽기 (pen_hid_windows 모듈).
+hidapi = "2"

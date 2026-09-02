@@ -8,5 +8,9 @@ description = "FreeDF 핵심 로직: 메모/필기 스트로크 모델, 페이�
 serde.workspace = true
 serde_json.workspace = true
 
+# Linux evdev 펜 입력(틸트/필압) — pen_input 모듈용.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 approx = "0.5"

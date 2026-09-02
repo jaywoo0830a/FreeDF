@@ -367,12 +367,16 @@ impl FreeDfApp {
         }
     }
 
-    /// Pen pressure from touch events (Windows Ink). egui reports force via
-    /// `Event::Touch { force: Some(f) }`; falls back to full pressure for mouse.
-    /// 이 프레임의 모든 터치 이벤트에서 가장 최근의 force를 사용합니다.
+    /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
+    /// → (없으면) 풀 필압.
     pub(crate) fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
         if !self.pressure_enabled {
             return 1.0;
+        }
+        // evdev에서 직접 읽은 필압이 있으면 그것을 우선 사용합니다
+        // (egui Touch force보다 안정적).
+        if let Some(p) = self.live_pressure {
+            return p.clamp(0.0, 1.0);
         }
         let force: Option<f32> = ctx.input(|i| {
             i.events
@@ -449,10 +453,23 @@ impl FreeDfApp {
                     ui.label(format!(
                         "device: {device}  (touch events/frame: {touch_events})"
                     ));
-                    ui.label(format!("pressure: {pressure:.3}"));
                     ui.label(format!(
-                        "tilt: [{:+.0}°, {:+.0}°]",
-                        self.pen_tilt[0], self.pen_tilt[1]
+                        "pressure: {pressure:.3}  (src: {})",
+                        if self.live_pressure.is_some() {
+                            "evdev"
+                        } else {
+                            "egui touch"
+                        }
+                    ));
+                    ui.label(format!(
+                        "tilt: [{:+.0}°, {:+.0}°]  (src: {})",
+                        self.pen_tilt[0],
+                        self.pen_tilt[1],
+                        if self.pen_monitor.is_some() {
+                            "evdev"
+                        } else {
+                            "없음"
+                        }
                     ));
                     ui.label(format!("tip speed: {speed:.0} pt/s"));
                     ui.label(format!("tip width: {tip_w:.2} pt"));
@@ -728,6 +745,14 @@ impl FreeDfApp {
         // Apply pending fit + render cache
         self.apply_pending_fit(canvas_size);
         self.ensure_texture(&ctx);
+
+        // evdev 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
+        if let Some(mon) = &mut self.pen_monitor {
+            if let Some(st) = mon.poll() {
+                self.pen_tilt = st.tilt;
+                self.live_pressure = st.pressure;
+            }
+        }
 
         // ---------- Input ----------
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);

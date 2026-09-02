@@ -30,6 +30,8 @@ mod dictionary;
 mod panels;
 mod tabs;
 mod toolbar;
+#[cfg(target_os = "windows")]
+pub(crate) mod pen_hid_windows;
 
 pub(crate) use std::path::{Path, PathBuf};
 
@@ -585,6 +587,11 @@ pub struct FreeDfApp {
     /// 진행 중 스트로크의 선폭 확정기 — 점이 입력되는 즉시 폭을 잠급니다
     /// (펜을 뗀 뒤 폭이 변하지 않음).
     width_locker: Option<freedf_core::pen::WidthLocker>,
+    /// evdev 펜 모니터 — egui가 노출하지 않는 **틸트/필압** 자동 공급원
+    /// (Linux 전용, 장치가 없으면 None).
+    pen_monitor: Option<freedf_core::pen_input::PenMonitor>,
+    /// evdev에서 직접 읽은 최신 필압 (없으면 egui Touch force 사용).
+    live_pressure: Option<f32>,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
@@ -768,6 +775,11 @@ impl FreeDfApp {
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
         let debug_hud = if has { s.debug_hud } else { false };
+        // 펜 입력 공급원 — Windows는 hidapi(pen_hid_windows), Linux는 evdev.
+        #[cfg(target_os = "windows")]
+        let pen_monitor = pen_hid_windows::spawn_monitor();
+        #[cfg(not(target_os = "windows"))]
+        let pen_monitor = freedf_core::pen_input::open_best();
         // 이전 버전 세션은 저장된 프로파일 대신 새 기본값 사용 (감도 보정 반영).
         let pen_profile = if has && s.profile_version >= 1 {
             s.pen_profile
@@ -908,6 +920,8 @@ impl FreeDfApp {
             debug_hud,
             stroke_geom_cache: canvas::GeometryCache::new(),
             width_locker: None,
+            pen_monitor,
+            live_pressure: None,
             ink_mesh: None,
             ink_fallback: Vec::new(),
             ink_key: (

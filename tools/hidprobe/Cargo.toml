@@ -1,0 +1,16 @@
+[package]
+name = "freedf-hidprobe"
+version.workspace = true
+edition.workspace = true
+description = "FreeDF 진단 도구 — 디지타이저(펜)의 틸트/필압이 시스템에 보고되는지 확인"
+
+[[bin]]
+name = "freedf-hidprobe"
+path = "src/main.rs"
+
+[dependencies]
+freedf-core = { path = "../../crates/freedf-core" }
+
+# Windows: 펜 디지타이저 원시 리포트 바이트 덤프용.
+[target.'cfg(target_os = "windows")'.dependencies]
+hidapi = "2"
