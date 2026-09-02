@@ -92,7 +92,12 @@ fn draw_one_stroke(
     let pts_xy: Vec<[f32; 2]> = pts.iter().map(|p| scale_point(p, scale)).collect();
     let mut halves: Vec<f32> = Vec::with_capacity(n);
     let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
-    if stroke.tool == ToolType::Highlighter {
+    if stroke.has_locked_widths() {
+        // 입력 시점에 잠금된 폭 그대로 (화면과 동일).
+        for p in pts {
+            halves.push((p.width * scale * 0.5).max(0.5));
+        }
+    } else if stroke.tool == ToolType::Highlighter {
         // 마커: 필압/테이퍼 없이 일정한 두께.
         halves.resize(n, (stroke.width * scale * 0.5).max(0.5));
     } else if stroke.tool == ToolType::Fountain {
@@ -159,25 +164,24 @@ fn fill_stroke_outline(
     round_caps: bool,
     color: [u8; 4],
 ) {
-    let poly = freedf_core::pen::stroke_outline(pts_xy, half_widths, round_caps);
-    let (tris, complete) = freedf_core::pen::triangulate_polygon_checked(&poly);
-    if complete && !tris.is_empty() {
-        for tri in &tris {
-            let a = poly[tri[0] as usize];
-            let b = poly[tri[1] as usize];
-            let c = poly[tri[2] as usize];
-            fill_triangle(img, a, b, c, color);
+    match freedf_core::pen::stroke_geometry(pts_xy, half_widths, round_caps) {
+        freedf_core::pen::StrokeFill::Tris(t) => {
+            for tri in &t.tris {
+                let a = t.poly[tri[0] as usize];
+                let b = t.poly[tri[1] as usize];
+                let c = t.poly[tri[2] as usize];
+                fill_triangle(img, a, b, c, color);
+            }
         }
-        return;
-    }
-    // 폴백: 세그먼트 quad + 조인/캡 원.
-    let fb = freedf_core::pen::stroke_fallback_geometry(pts_xy, half_widths);
-    for q in &fb.quads {
-        fill_triangle(img, q[0], q[1], q[2], color);
-        fill_triangle(img, q[0], q[2], q[3], color);
-    }
-    for (c, r) in &fb.circles {
-        draw_disk(img, *c, r.max(0.5), color);
+        freedf_core::pen::StrokeFill::Fallback(fb) => {
+            for q in &fb.quads {
+                fill_triangle(img, q[0], q[1], q[2], color);
+                fill_triangle(img, q[0], q[2], q[3], color);
+            }
+            for (c, r) in &fb.circles {
+                draw_disk(img, *c, r.max(0.5), color);
+            }
+        }
     }
 }
 

@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::StrokePoint;
+use crate::model::{StrokePoint, ToolType};
 
 // ── 스트로크 외곽선 + 삼각분할 (관례적 렌더링 지오메트리) ─────────────────────
 
@@ -234,6 +234,234 @@ pub fn stroke_fallback_geometry(
         }
     }
     out
+}
+
+// ── 통합 스트로크 지오메트리 (캔버스/내보내기 공용 진입점) ───────────────────
+
+/// 완전 삼각분할된 스트로크 지오메트리 (pt 공간).
+///
+/// `aa_edges`는 **경계 가장자리만** (a, b, 바깥 단위 방향) — 내부 공유
+/// 가장자리를 제외해 반투명 잉크의 이음새 얼룩을 막고, 안티앨리어싱 페더
+/// 스트립을 만들 때 씁니다. `bbox` = [min_x, min_y, max_x, max_y].
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrokeTris {
+    pub poly: Vec<[f32; 2]>,
+    pub tris: Vec<[u32; 3]>,
+    pub aa_edges: Vec<(u32, u32, [f32; 2])>,
+    pub bbox: [f32; 4],
+}
+
+/// 스트로크 렌더 지오메트리 — 완전 분할이면 [`StrokeTris`], 자기 교차
+/// 등으로 불가능하면 [`FallbackGeometry`]. 캔버스와 내보내기가 **같은
+/// 진입점**을 씁니다.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StrokeFill {
+    Tris(StrokeTris),
+    Fallback(FallbackGeometry),
+}
+
+/// 외곽선 → (확인된) 삼각분할 → 경계 가장자리/bbox까지 한 번에 계산합니다.
+pub fn stroke_geometry(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    round_caps: bool,
+) -> StrokeFill {
+    let poly = stroke_outline(points, half_widths, round_caps);
+    let (tris, complete) = triangulate_polygon_checked(&poly);
+    if !complete || tris.is_empty() {
+        return StrokeFill::Fallback(stroke_fallback_geometry(points, half_widths));
+    }
+    // 경계 가장자리: 삼각형들 사이에서 1번만 공유된 가장자리.
+    let mut counts: std::collections::HashMap<(u32, u32), u32> =
+        std::collections::HashMap::new();
+    for t in &tris {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *counts.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let mut aa_edges = Vec::new();
+    for t in &tris {
+        for (ia, ib) in [(0usize, 1usize), (1, 2), (2, 0)] {
+            let (a, b) = (t[ia], t[ib]);
+            if counts.get(&(a.min(b), a.max(b))) != Some(&1) {
+                continue;
+            }
+            let ic = 3 - ia - ib; // 남은 정점 = 안쪽.
+            let (pa, pb, pc) = (
+                poly[a as usize],
+                poly[b as usize],
+                poly[t[ic] as usize],
+            );
+            let (dx, dy) = (pb[0] - pa[0], pb[1] - pa[1]);
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 1e-4 {
+                continue;
+            }
+            let perp = [-dy / len, dx / len];
+            // 안쪽 정점(pc)의 반대 방향이 바깥.
+            let side = (pc[0] - pa[0]) * perp[0] + (pc[1] - pa[1]) * perp[1];
+            let dir = if side < 0.0 { perp } else { [-perp[0], -perp[1]] };
+            aa_edges.push((a, b, dir));
+        }
+    }
+    let mut bbox = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for p in &poly {
+        bbox[0] = bbox[0].min(p[0]);
+        bbox[1] = bbox[1].min(p[1]);
+        bbox[2] = bbox[2].max(p[0]);
+        bbox[3] = bbox[3].max(p[1]);
+    }
+    StrokeFill::Tris(StrokeTris {
+        poly,
+        tris,
+        aa_edges,
+        bbox,
+    })
+}
+
+// ── 인과적(온라인) 선폭 확정기 ───────────────────────────────────────────────
+
+/// 스트로크 진행 중 점별 선폭을 **입력 즉시 확정**하는 계산기.
+///
+/// "그리는 동안 보이던 굵기"와 "펜을 뗀 뒤의 굵기"가 **정확히 같도록**
+/// 배치 함수([`BallPenProfile::widths`], [`FountainProfile::widths`])와 같은
+/// 공식을 순차(인과)적으로 적용합니다:
+/// - 속도는 **직전 점과 현재 점**만 사용 (미래 점 금지).
+/// - 속도 평활은 EMA(과거 값만 참조).
+/// - 이탤릭 닙 계수는 "다음 세그먼트 방향"을 쓰므로, 다음 점이 도착하는
+///   순간 이전 점의 폭을 확정합니다 (마지막 점은 이전 세그먼트 — 배치와 동일).
+#[derive(Debug, Clone, Copy)]
+enum LockerProfile {
+    /// 하이라이터 — 모든 점 동일 폭.
+    Constant,
+    BallPen(BallPenProfile),
+    Fountain(FountainProfile),
+}
+
+#[derive(Debug, Clone)]
+pub struct WidthLocker {
+    profile: LockerProfile,
+    max_width_pt: f32,
+    tilt_mag: f32,
+    alpha: f32,
+    /// 마지막 스무딩 속도 (EMA 상태).
+    prev_speed: f32,
+    /// 마지막 점 (아직 폭 확정 전) — 다음 점 도착 시 폭 확정.
+    prev_point: Option<StrokePoint>,
+    /// 첫 점 (속도가 첫 세그먼트에서 결정되므로 두 번째 점까지 보류).
+    first_point: Option<StrokePoint>,
+    /// 두 번째 점이 도착해 첫 점이 확정된 이후인지.
+    started: bool,
+}
+
+impl WidthLocker {
+    pub fn new(
+        tool: ToolType,
+        max_width_pt: f32,
+        ball: BallPenProfile,
+        fountain: FountainProfile,
+        tilt_mag: f32,
+    ) -> Self {
+        let (profile, alpha) = match tool {
+            ToolType::Highlighter => (LockerProfile::Constant, 0.0),
+            ToolType::Fountain => (LockerProfile::Fountain(fountain), fountain.speed_smooth),
+            _ => (LockerProfile::BallPen(ball), ball.speed_smooth),
+        };
+        Self {
+            profile,
+            max_width_pt,
+            tilt_mag: tilt_mag.clamp(0.0, 1.0),
+            alpha: alpha.clamp(0.0, 1.0),
+            prev_speed: 0.0,
+            prev_point: None,
+            first_point: None,
+            started: false,
+        }
+    }
+
+    fn lock_width(&self, pressure: f32, speed: f32, dir: [f32; 2]) -> f32 {
+        match self.profile {
+            LockerProfile::Constant => self.max_width_pt,
+            LockerProfile::BallPen(b) => b.width_at(self.max_width_pt, pressure, self.tilt_mag, speed),
+            LockerProfile::Fountain(f) => {
+                let w = f.width_at(self.max_width_pt, pressure, self.tilt_mag, speed);
+                let lo = f.min_width_pt.max(0.05).min(self.max_width_pt.max(0.05));
+                let hi = self.max_width_pt.max(0.05);
+                (w * f.italic_factor(dir[0], dir[1])).clamp(lo, hi)
+            }
+        }
+    }
+
+    /// 새 점을 추가합니다.
+    ///
+    /// 반환: `.0` = 이전 점의 **확정본**(첫 점이면 None — canvas가 이 값으로
+    /// 마지막 점의 폭을 교체), `.1` = 새 점(임시 폭 — 렌더에 바로 사용).
+    pub fn push(&mut self, p: StrokePoint) -> (Option<StrokePoint>, StrokePoint) {
+        if let Some(first) = self.first_point.take() {
+            // 두 번째 점: 첫 점 확정(첫 세그먼트 속도/방향 — 배치와 동일) + 새 점.
+            let (v, dir) = seg_speed_dir(&first, &p);
+            let s0 = self.alpha * v; // EMA 초기값 0 (배치 ema_speeds와 동일)
+            let mut locked_first = first;
+            locked_first.width = self.lock_width(first.pressure, s0, dir);
+            // 두 번째 점의 배치 속도: 같은 세그먼트로 EMA 한 번 더.
+            let s1 = self.alpha * v + (1.0 - self.alpha) * s0;
+            self.prev_speed = s1;
+            self.started = true;
+            let mut tip = p;
+            tip.width = self.lock_width(p.pressure, s1, dir);
+            self.prev_point = Some(tip);
+            (Some(locked_first), tip)
+        } else if self.started {
+            // 세 번째 이후: 이전 점 확정(이탤릭 "다음 세그먼트" 규칙) + 새 점.
+            let prev = self.prev_point.expect("started이면 이전 점 존재");
+            let (v, dir) = seg_speed_dir(&prev, &p);
+            let s = self.alpha * v + (1.0 - self.alpha) * self.prev_speed;
+            let mut locked_prev = prev;
+            locked_prev.width = self.lock_width(prev.pressure, self.prev_speed, dir);
+            self.prev_speed = s;
+            let mut tip = p;
+            tip.width = self.lock_width(p.pressure, s, dir);
+            self.prev_point = Some(tip);
+            (Some(locked_prev), tip)
+        } else {
+            // 첫 점: 속도는 두 번째 점 도착 시 확정 — 임시 폭(배치 n=1 규칙)으로
+            // 바로 그려지도록 합니다.
+            let mut tip = p;
+            tip.width = self.lock_width(p.pressure, 0.0, [1.0, 0.0]);
+            self.first_point = Some(p);
+            (None, tip)
+        }
+    }
+
+    /// 펜을 뗄 때: 마지막 점의 확정 폭을 반환합니다.
+    /// (배치 함수의 마지막 점 규칙 — 이탤릭은 이전 세그먼트 방향 — 과 동일)
+    pub fn finish(&mut self) -> Option<StrokePoint> {
+        if let Some(mut first) = self.first_point.take() {
+            first.width = self.lock_width(first.pressure, 0.0, [1.0, 0.0]);
+            return Some(first);
+        }
+        self.prev_point.take()
+    }
+}
+
+/// 직전 점→현재 점 세그먼트의 (속도, 단위 방향) — 배치 `ema_speeds`와
+/// 같은 속도 규칙 (시각 0 또는 dt ≤ 0.1ms면 속도 0).
+fn seg_speed_dir(a: &StrokePoint, b: &StrokePoint) -> (f32, [f32; 2]) {
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let len = (dx * dx + dy * dy).sqrt();
+    let dir = if len < 1e-6 { [1.0, 0.0] } else { [dx / len, dy / len] };
+    let v = if a.t_ms == 0 || b.t_ms == 0 {
+        0.0
+    } else {
+        let dt = (b.t_ms.saturating_sub(a.t_ms)) as f32 / 1000.0;
+        if dt <= 1e-4 {
+            0.0
+        } else {
+            len / dt
+        }
+    };
+    (v, dir)
 }
 
 // ── 잉크 번짐(블리드) ────────────────────────────────────────────────────────
@@ -1344,5 +1572,122 @@ mod tests {
 
     fn polygon_area(poly: &[[f32; 2]]) -> f32 {
         signed_area2(poly).abs() * 0.5
+    }
+
+    // ---------- 통합 지오메트리 + 인과적 선폭 확정 ----------
+
+    /// 만년필(이탤릭 켜짐) 곡선 스트로크 — 배치 `widths`와
+    /// `WidthLocker`(입력 즉시 확정)의 최종 폭이 정확히 일치해야 합니다.
+    /// 이 불변식이 "펜을 떼도 굵기가 변하지 않음"을 보장합니다.
+    #[test]
+    fn locker_matches_batch_fountain_widths_with_italic() {
+        let mut f = FountainProfile::default();
+        f.italic = true;
+        f.italic_k = 0.35;
+        f.nib_angle_deg = 45.0;
+        let t0 = 1_700_000_000_000u64;
+        let mut pts: Vec<StrokePoint> = Vec::new();
+        let mut locker =
+            WidthLocker::new(ToolType::Fountain, 2.5, BallPenProfile::default(), f, 0.0);
+        for i in 0..40 {
+            let x = i as f32 * 6.0 + (i as f32 * 0.7).sin() * 8.0;
+            let y = 100.0 + (i as f32 * 0.35).cos() * 30.0 + i as f32 * 1.5;
+            let p = StrokePoint::with_time(
+                x,
+                y,
+                0.4 + 0.5 * (i % 7) as f32 / 7.0,
+                t0 + i as u64 * 8,
+            );
+            let (locked_prev, tip) = locker.push(p);
+            if let Some(prev) = locked_prev {
+                if let Some(last) = pts.last_mut() {
+                    *last = prev;
+                }
+            }
+            pts.push(tip);
+        }
+        if let Some(final_pt) = locker.finish() {
+            if let Some(last) = pts.last_mut() {
+                *last = final_pt;
+            }
+        }
+        let batch = f.widths(2.5, &pts, 0.0);
+        for (i, p) in pts.iter().enumerate() {
+            assert!(
+                (p.width - batch[i]).abs() < 1e-4,
+                "점 {i}: 잠금 {:.4} vs 배치 {:.4}",
+                p.width,
+                batch[i]
+            );
+        }
+    }
+
+    /// 일반 펜(볼펜)도 배치와 일치 (첫 점 속도는 두 번째 점 도착 시 확정).
+    #[test]
+    fn locker_matches_batch_ballpen_widths() {
+        let b = BallPenProfile::default();
+        let t0 = 1_700_000_000_000u64;
+        let mut pts: Vec<StrokePoint> = Vec::new();
+        let mut locker =
+            WidthLocker::new(ToolType::Pen, 2.0, b, FountainProfile::default(), 0.0);
+        for i in 0..25 {
+            let p = StrokePoint::with_time(
+                i as f32 * 5.0,
+                60.0 + (i as f32 * 0.9).sin() * 10.0,
+                0.3 + 0.6 * (i % 5) as f32 / 5.0,
+                t0 + i as u64 * 12,
+            );
+            let (locked_prev, tip) = locker.push(p);
+            if let Some(prev) = locked_prev {
+                if let Some(last) = pts.last_mut() {
+                    *last = prev;
+                }
+            }
+            pts.push(tip);
+        }
+        if let Some(final_pt) = locker.finish() {
+            if let Some(last) = pts.last_mut() {
+                *last = final_pt;
+            }
+        }
+        let batch = b.widths(2.0, &pts, 0.0);
+        for (i, p) in pts.iter().enumerate() {
+            assert!(
+                (p.width - batch[i]).abs() < 1e-4,
+                "점 {i}: 잠금 {:.4} vs 배치 {:.4}",
+                p.width,
+                batch[i]
+            );
+        }
+    }
+
+    /// 한 점(도트) 스트로크도 확정 폭이 배치와 같아야 합니다.
+    #[test]
+    fn locker_single_point_matches_batch() {
+        let f = FountainProfile::default();
+        let p = StrokePoint::with_time(10.0, 20.0, 0.8, 0);
+        let mut locker =
+            WidthLocker::new(ToolType::Fountain, 2.5, BallPenProfile::default(), f, 0.0);
+        let (_, tip) = locker.push(p);
+        let done = locker.finish().unwrap();
+        let batch = f.widths(2.5, &[p], 0.0);
+        assert!((tip.width - batch[0]).abs() < 1e-4, "임시 폭도 일치");
+        assert!((done.width - batch[0]).abs() < 1e-4, "확정 폭 일치");
+    }
+
+    /// 통합 진입점 `stroke_geometry`: 직선 렌즈는 완전 분할 + 면적 일치.
+    #[test]
+    fn stroke_geometry_covers_straight_lens_exactly() {
+        let pts: Vec<[f32; 2]> = (0..10).map(|i| [10.0 + i as f32 * 9.0, 50.0]).collect();
+        let halves: Vec<f32> = vec![1.5; 10];
+        match stroke_geometry(&pts, &halves, true) {
+            StrokeFill::Tris(t) => {
+                let area: f32 = t.tris.iter().map(|tr| triangle_area(tr, &t.poly)).sum();
+                let expected = 81.0 * 3.0 + std::f32::consts::PI * 1.5 * 1.5;
+                assert!((area - expected).abs() < 1.0, "면적 {area} vs {expected}");
+                assert!(!t.aa_edges.is_empty(), "경계 AA 가장자리 존재");
+            }
+            StrokeFill::Fallback(_) => panic!("직선 렌즈는 완전 분할이어야 함"),
+        }
     }
 }

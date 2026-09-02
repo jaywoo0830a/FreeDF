@@ -75,6 +75,12 @@ pub struct StrokePoint {
     /// 이전 형식 데이터에는 없음(0이면 속도 0으로 처리).
     #[serde(default)]
     pub t_ms: u64,
+    /// **입력 시점에 확정(잠금)된 선폭** (포인트, 전체 폭).
+    /// 0이면 이전 형식 데이터 — 렌더 시 프로파일 배치 계산으로 폴백합니다.
+    /// 잠금된 폭은 이후 절대 다시 계산되지 않습니다 (그리는 동안 보이던
+    /// 굵기와 펜을 뗀 뒤의 굵기가 항상 같습니다).
+    #[serde(default)]
+    pub width: f32,
 }
 
 impl StrokePoint {
@@ -84,6 +90,7 @@ impl StrokePoint {
             y,
             pressure: pressure.clamp(0.0, 1.0),
             t_ms: 0,
+            width: 0.0,
         }
     }
 
@@ -94,6 +101,7 @@ impl StrokePoint {
             y,
             pressure: pressure.clamp(0.0, 1.0),
             t_ms,
+            width: 0.0,
         }
     }
 
@@ -123,6 +131,12 @@ pub struct Stroke {
 impl Stroke {
     pub fn is_empty(&self) -> bool {
         self.points.is_empty()
+    }
+
+    /// 모든 점에 입력 시점에 잠금된 선폭이 있는지 (새 형식 데이터).
+    /// true면 렌더/내보내기가 프로파일을 다시 계산하지 않고 이 폭을 씁니다.
+    pub fn has_locked_widths(&self) -> bool {
+        !self.points.is_empty() && self.points.iter().all(|p| p.width > 0.0)
     }
 
     /// [min_x, min_y, max_x, max_y] 경계 상자.

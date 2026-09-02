@@ -25,11 +25,24 @@ pub struct AnnotationStore {
     /// 사용자 북마크 페이지 (정렬 유지).
     pub(crate) bookmarks: Vec<PageIndex>,
     next_stroke_id: u64,
+    /// 스트로크 변경마다 증가하는 수정 버전 — 렌더러가 병합 잉크 메시를
+    /// 다시 만들 시점을 판별하는 데 사용합니다 (내용이 같으면 재구성 없음).
+    #[serde(default)]
+    rev: u64,
 }
 
 impl AnnotationStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 스트로크 데이터 수정 버전 (추가/삭제/변경마다 증가).
+    pub fn rev(&self) -> u64 {
+        self.rev
+    }
+
+    fn bump_rev(&mut self) {
+        self.rev = self.rev.wrapping_add(1);
     }
 
     /// 주석이 존재하는 페이지 수.
@@ -127,6 +140,7 @@ impl AnnotationStore {
             created_ms: 0,
         };
         self.ensure_page(page_index).strokes.push(stroke);
+        self.bump_rev();
         id
     }
 
@@ -136,6 +150,7 @@ impl AnnotationStore {
         self.next_stroke_id = self.next_stroke_id.max(max_id);
         let page = self.ensure_page(page_index);
         page.strokes.extend(strokes);
+        self.bump_rev();
     }
 
     /// DB 시퀀스에서 미리 할당받은 id로 스트로크 하나를 추가합니다.
@@ -158,6 +173,7 @@ impl AnnotationStore {
             points,
             created_ms: 0,
         });
+        self.bump_rev();
     }
 
     /// 임시 로컬 id를 DB의 최종 id로 교체합니다.
@@ -173,6 +189,7 @@ impl AnnotationStore {
             }
         }
         self.next_stroke_id = self.next_stroke_id.max(to + 1);
+        self.bump_rev();
     }
 
     /// 스트로크의 생성 시각(epoch ms)을 기록합니다 — 잉크 번짐(블리드)의
@@ -181,6 +198,7 @@ impl AnnotationStore {
         if let Some(page) = self.pages.get_mut(&page_index) {
             if let Some(s) = page.strokes.iter_mut().find(|s| s.id == id) {
                 s.created_ms = ms;
+                self.bump_rev();
                 return true;
             }
         }
@@ -196,7 +214,9 @@ impl AnnotationStore {
     pub fn remove_stroke(&mut self, page_index: PageIndex, stroke_id: u64) -> Option<Stroke> {
         let page = self.pages.get_mut(&page_index)?;
         let index = page.strokes.iter().position(|s| s.id == stroke_id)?;
-        Some(page.strokes.remove(index))
+        let removed = page.strokes.remove(index);
+        self.bump_rev();
+        Some(removed)
     }
 
     /// 페이지에서 여러 스트로크를 일괄 제거하고, 제거된 목록을 반환합니다.
@@ -212,15 +232,23 @@ impl AnnotationStore {
                 }
             });
         }
+        if !removed.is_empty() {
+            self.bump_rev();
+        }
         removed
     }
 
     /// 페이지의 모든 스트로크 제거. 제거된 목록을 반환합니다.
     pub fn clear_page(&mut self, page_index: PageIndex) -> Vec<Stroke> {
-        self.pages
+        let removed = self
+            .pages
             .remove(&page_index)
             .map(|p| p.strokes)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !removed.is_empty() {
+            self.bump_rev();
+        }
+        removed
     }
 
     /// `point`(페이지 좌표) 반경 `radius` 안에 닿는 스트로크 ID 목록.
@@ -263,6 +291,7 @@ impl AnnotationStore {
                     p.y = ny;
                 }
             }
+            self.bump_rev();
         }
     }
 

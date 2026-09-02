@@ -207,7 +207,7 @@ impl FreeDfApp {
         self.texture = None;
         self.prefetch = None;
         self.prefetch_pending = false;
-        self.store = AnnotationStore::new();
+        self.set_store(AnnotationStore::new());
         self.history = History::new(256);
         self.active_stroke = None;
         self.search_matches = Vec::new();
@@ -262,7 +262,7 @@ impl FreeDfApp {
                 self.page_size_pts = doc.page_size_pts(0);
                 self.file_name = row.title.clone();
                 self.document = Some(doc);
-                self.store = self.db.load_store(doc_id);
+                self.set_store(self.db.load_store(doc_id));
                 // 편집 저널 재생 → 재시작 전의 undo/redo 가능.
                 self.restore_history_from_db();
                 self.active_stroke = None;
@@ -855,7 +855,7 @@ impl FreeDfApp {
             return;
         };
         // DB에 저장된 최신 상태로 재로드 (메모리 변경 폐기).
-        self.store = self.db.load_store(doc_id);
+        self.set_store(self.db.load_store(doc_id));
         self.restore_history_from_db();
         self.render_dirty = true;
         self.status = Some("Annotations reloaded from database.".to_string());

@@ -232,7 +232,7 @@ impl FreeDfApp {
         self.page_size_pts = page_size_pts;
         self.view = view;
         self.page_align = page_align;
-        self.store = store;
+        self.set_store(store);
         self.history = history;
         self.search_query = search_query;
         self.search_matches = search_matches;

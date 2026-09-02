@@ -131,6 +131,17 @@ fn tool_label(tool: ToolType) -> &'static str {
     }
 }
 
+impl FreeDfApp {
+    /// 스토어를 통째로 교체합니다 (문서 열기/탭 전환) — 세대를 올려 이전
+    /// 문서의 병합 잉크 메시가 재사용되지 않게 합니다.
+    pub(crate) fn set_store(&mut self, store: AnnotationStore) {
+        self.store_generation = self.store_generation.wrapping_add(1);
+        self.ink_mesh = None;
+        self.ink_next_settle_ms = u64::MAX;
+        self.store = store;
+    }
+}
+
 fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
     match tool {
         ToolType::Pen => icons::PEN,
@@ -567,8 +578,33 @@ pub struct FreeDfApp {
     /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
     /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
     pen_tilt: [f32; 2],
-    /// 획별 렌더 지오메트리 캐시 (매 프레임 삼각분할 재계산 방지).
-    stroke_geom_cache: std::collections::HashMap<u64, canvas::StrokeGeom>,
+    /// 획별 렌더 지오메트리 캐시 (LRU, pt 공간 — 매 프레임 삼각분할 재계산 방지).
+    stroke_geom_cache: canvas::GeometryCache,
+    /// 진행 중 스트로크의 선폭 확정기 — 점이 입력되는 즉시 폭을 잠급니다
+    /// (펜을 뗀 뒤 폭이 변하지 않음).
+    width_locker: Option<freedf_core::pen::WidthLocker>,
+    /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
+    ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
+    /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
+    ink_fallback: Vec<(egui::Pos2, f32, egui::Color32)>,
+    /// 병합 메시가 만들어진 시점의 (페이지, 스토어 버전, 세대, 뷰, 잉크 설정).
+    ink_key: (
+        usize,
+        u64,
+        u64,
+        f32,
+        f32,
+        f32,
+        InkBleed,
+        BallPenProfile,
+        FountainProfile,
+    ),
+    /// 병합 메시를 만든 시각 (ms).
+    ink_built_at: u64,
+    /// 다음 블리드 정착 시각 (젊은 후광 동안 매 프레임 재구성).
+    ink_next_settle_ms: u64,
+    /// 스토어 교체(문서 열기/탭 전환)마다 증가 — 캐시 키 충돌 방지.
+    store_generation: u64,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -865,7 +901,24 @@ impl FreeDfApp {
             ink_bleed,
             fountain_profile,
             pen_tilt: [0.0, 0.0],
-            stroke_geom_cache: std::collections::HashMap::new(),
+            stroke_geom_cache: canvas::GeometryCache::new(),
+            width_locker: None,
+            ink_mesh: None,
+            ink_fallback: Vec::new(),
+            ink_key: (
+                0,
+                0,
+                0,
+                0.0,
+                0.0,
+                0.0,
+                InkBleed::default(),
+                BallPenProfile::default(),
+                FountainProfile::default(),
+            ),
+            ink_built_at: 0,
+            ink_next_settle_ms: u64::MAX,
+            store_generation: 0,
             paper_style,
             paper_color,
             paper_size,
