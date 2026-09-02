@@ -27,6 +27,14 @@ pub struct PenDeviceInfo {
     pub has_pressure: bool,
 }
 
+/// Windows Raw Input으로 받은 리포트 하나 — 어느 장치에서 왔는지
+/// (장치 경로)와 원시 바이트를 함께 담습니다.
+#[derive(Debug, Clone)]
+pub struct RawReport {
+    pub device: String,
+    pub bytes: Vec<u8>,
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::{PenDeviceInfo, PenState};
@@ -363,29 +371,30 @@ pub fn open_best() -> Option<PenMonitor> {
 /// Windows에서 디지타이저(펜)의 원시 HID 리포트 바이트를 캡처하는 스레드를
 /// 시작합니다. 실패(등록 불가 등)하면 None.
 #[cfg(target_os = "windows")]
-pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<Vec<u8>>> {
+pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<RawReport>> {
     windows_raw::spawn()
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<Vec<u8>>> {
+pub fn spawn_raw_reports() -> Option<std::sync::mpsc::Receiver<RawReport>> {
     None
 }
 
 #[cfg(target_os = "windows")]
 mod windows_raw {
+    use super::RawReport;
     use std::cell::RefCell;
     use std::ptr;
     use std::sync::mpsc::{Receiver, Sender};
 
     use windows::core::PCWSTR;
     use windows::Win32::Devices::HumanInterfaceDevice::HID_USAGE_PAGE_DIGITIZER;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::Graphics::Gdi::HBRUSH;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::{
-        GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
-        RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEHID,
+        GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT, RAWINPUT,
+        RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT, RIM_TYPEHID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HCURSOR, HICON,
@@ -396,10 +405,10 @@ mod windows_raw {
     // WndProc은 상태 없는 함수여야 하므로, 스레드 로컬로 송신부를 공유합니다
     // (창과 메시지 루프가 같은 스레드에서 돌기 때문에 안전합니다).
     thread_local! {
-        static REPORT_TX: RefCell<Option<Sender<Vec<u8>>>> = RefCell::new(None);
+        static REPORT_TX: RefCell<Option<Sender<RawReport>>>> = RefCell::new(None);
     }
 
-    pub(super) fn spawn() -> Option<Receiver<Vec<u8>>> {
+    pub(super) fn spawn() -> Option<Receiver<RawReport>> {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let _ = run(tx);
@@ -408,7 +417,7 @@ mod windows_raw {
     }
 
     /// 메시지 전용 창 생성 + Raw Input 등록 + 메시지 루프.
-    fn run(tx: Sender<Vec<u8>>) -> Result<(), ()> {
+    fn run(tx: Sender<RawReport>) -> Result<(), ()> {
         let module = unsafe { GetModuleHandleW(PCWSTR::null()) }.map_err(|_| ())?;
         let instance: windows::Win32::Foundation::HINSTANCE = module.into();
         let class: Vec<u16> = "FreeDFPenRawInput\0".encode_utf16().collect();
@@ -480,7 +489,7 @@ mod windows_raw {
                 break; // WM_QUIT 또는 오류.
             }
             unsafe {
-                TranslateMessage(&msg);
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }
@@ -490,10 +499,10 @@ mod windows_raw {
     extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_INPUT => {
-                if let Some(bytes) = read_hid_bytes(lparam) {
+                if let Some(rep) = read_hid(lparam) {
                     REPORT_TX.with(|slot| {
                         if let Some(tx) = &*slot.borrow() {
-                            let _ = tx.send(bytes);
+                            let _ = tx.send(rep);
                         }
                     });
                 }
@@ -507,9 +516,9 @@ mod windows_raw {
         }
     }
 
-    /// WM_INPUT의 lParam에서 HID 리포트 바이트를 추출합니다
+    /// WM_INPUT의 lParam에서 (장치 경로, HID 리포트 바이트)를 추출합니다
     /// (GetRawInputData 2단계: 크기 조회 → 복사).
-    fn read_hid_bytes(lparam: LPARAM) -> Option<Vec<u8>> {
+    fn read_hid(lparam: LPARAM) -> Option<RawReport> {
         let hraw = HRAWINPUT(lparam.0 as *mut core::ffi::c_void);
         let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
         let mut size: u32 = 0;
@@ -535,10 +544,37 @@ mod windows_raw {
         if raw.header.dwType != RIM_TYPEHID.0 {
             return None;
         }
+        let device = device_name(raw.header.hDevice);
         let hid = unsafe { raw.data.hid };
         let bytes =
             unsafe { std::slice::from_raw_parts(hid.bRawData.as_ptr(), hid.dwCount as usize) };
-        Some(bytes.to_vec())
+        Some(RawReport {
+            device,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    /// hDevice의 장치 경로(`\\?\HID#...`)를 조회합니다.
+    fn device_name(handle: HANDLE) -> String {
+        let mut size: u32 = 0;
+        let _ = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
+        if size == 0 || size == u32::MAX {
+            return String::new();
+        }
+        let mut buf: Vec<u16> = vec![0; (size / 2) as usize];
+        let copied = unsafe {
+            GetRawInputDeviceInfoW(
+                Some(handle),
+                RIDI_DEVICENAME,
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut size,
+            )
+        };
+        if copied == u32::MAX || copied == 0 {
+            return String::new();
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..len])
     }
 }
 

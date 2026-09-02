@@ -36,8 +36,13 @@ fn main() {
             println!("[hidprobe] 여러 바이트의 다른 ID 리포트가 섞여 나와야 합니다.");
             let mut last: Option<Vec<u8>> = None;
             let mut repeat: u32 = 0;
-            while let Ok(bytes) = rx.recv() {
-                if last.as_ref() == Some(&bytes) {
+            let mut last_dev = String::new();
+            while let Ok(rep) = rx.recv() {
+                if rep.device != last_dev {
+                    println!("[device] {}", rep.device);
+                    last_dev = rep.device;
+                }
+                if last.as_ref() == Some(&rep.bytes) {
                     repeat += 1;
                     continue;
                 }
@@ -46,10 +51,10 @@ fn main() {
                     repeat = 0;
                 }
                 let hex: Vec<String> =
-                    bytes.iter().map(|b| format!("{b:02x}")).collect();
-                let marker = if bytes.len() > 1 { " ← 펜 데이터!" } else { "" };
-                println!("report({}B): {}{marker}", bytes.len(), hex.join(" "));
-                last = Some(bytes);
+                    rep.bytes.iter().map(|b| format!("{b:02x}")).collect();
+                let marker = if rep.bytes.len() > 1 { " ← 펜 데이터!" } else { "" };
+                println!("report({}B): {}{marker}", rep.bytes.len(), hex.join(" "));
+                last = Some(rep.bytes);
             }
             println!("[hidprobe] Raw Input 스트림이 종료되었습니다.");
             return;

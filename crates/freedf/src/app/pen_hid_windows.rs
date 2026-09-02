@@ -59,12 +59,12 @@ pub fn spawn_monitor() -> Option<PenMonitor> {
 
 /// Raw Input 리포트 바이트 → `parse_report` → 앱 모니터.
 fn monitor_from_raw_reports(
-    rx: std::sync::mpsc::Receiver<Vec<u8>>,
+    rx: std::sync::mpsc::Receiver<freedf_core::pen_input::RawReport>,
 ) -> PenMonitor {
     let (tx, monitor) = pen_input::channel();
     std::thread::spawn(move || {
-        while let Ok(bytes) = rx.recv() {
-            if let Some(state) = parse_report(&bytes) {
+        while let Ok(report) = rx.recv() {
+            if let Some(state) = parse_report(&report.bytes) {
                 if tx.send(state).is_err() {
                     break; // 앱 종료.
                 }
