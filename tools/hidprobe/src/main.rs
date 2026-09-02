@@ -32,11 +32,24 @@ fn main() {
     if !list_only && index_arg.is_none() {
         if let Some(rx) = pen_input::spawn_raw_reports() {
             println!("[hidprobe] Raw Input 캡처 시작 (드라이버 독점이어도 동작).");
-            println!("[hidprobe] 바이트 중 **움직이는 위치**가 X/Y/필압/틸트 필드입니다.");
+            println!("[hidprobe] 같은 리포트는 압축해 표시합니다 — 펜을 대고 그리면");
+            println!("[hidprobe] 여러 바이트의 다른 ID 리포트가 섞여 나와야 합니다.");
+            let mut last: Option<Vec<u8>> = None;
+            let mut repeat: u32 = 0;
             while let Ok(bytes) = rx.recv() {
+                if last.as_ref() == Some(&bytes) {
+                    repeat += 1;
+                    continue;
+                }
+                if repeat > 0 {
+                    println!("  … 위 리포트 {repeat}회 반복");
+                    repeat = 0;
+                }
                 let hex: Vec<String> =
                     bytes.iter().map(|b| format!("{b:02x}")).collect();
-                println!("report({}B): {}", bytes.len(), hex.join(" "));
+                let marker = if bytes.len() > 1 { " ← 펜 데이터!" } else { "" };
+                println!("report({}B): {}{marker}", bytes.len(), hex.join(" "));
+                last = Some(bytes);
             }
             println!("[hidprobe] Raw Input 스트림이 종료되었습니다.");
             return;
