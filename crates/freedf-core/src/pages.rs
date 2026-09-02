@@ -156,10 +156,24 @@ mod tests {
 
     #[test]
     fn paper_settings_shift_with_pages() {
-        use crate::paper::{PagePaper, PaperStyle, PAPER_WHITE};
+        use crate::paper::{PagePaper, PaperStyle, GRID_SPACING_PTS, PAPER_WHITE};
         let mut store = AnnotationStore::new();
-        store.set_paper(0, PagePaper { style: PaperStyle::Grid, color: PAPER_WHITE });
-        store.set_paper(2, PagePaper { style: PaperStyle::Ruled, color: PAPER_WHITE });
+        store.set_paper(
+            0,
+            PagePaper {
+                style: PaperStyle::Grid,
+                color: PAPER_WHITE,
+                spacing: GRID_SPACING_PTS,
+            },
+        );
+        store.set_paper(
+            2,
+            PagePaper {
+                style: PaperStyle::Ruled,
+                color: PAPER_WHITE,
+                spacing: GRID_SPACING_PTS,
+            },
+        );
 
         // 1번 페이지 삽입 → 기존 2번 용지는 3번으로 이동
         store.insert_page(1);

@@ -114,14 +114,21 @@ impl Default for PaperSize {
     }
 }
 
-/// 한 페이지의 용지 설정 (스타일 + 배경 색).
+/// 한 페이지의 용지 설정 (스타일 + 배경 색 + 줄/격자 간격).
 ///
 /// 페이지마다 독립적으로 저장되어 노트 내에서 페이지별로 다른
-/// 그리드/줄/점선과 배경 색을 쓸 수 있습니다.
+/// 그리드/줄/점선과 배경 색, 간격을 쓸 수 있습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PagePaper {
     pub style: PaperStyle,
     pub color: [u8; 4],
+    /// 줄/격자/점 간격 (포인트). 0 이하면 `GRID_SPACING_PTS`로 대체.
+    #[serde(default = "default_spacing")]
+    pub spacing: f32,
+}
+
+fn default_spacing() -> f32 {
+    GRID_SPACING_PTS
 }
 
 impl Default for PagePaper {
@@ -129,33 +136,44 @@ impl Default for PagePaper {
         Self {
             style: PaperStyle::Blank,
             color: PAPER_WHITE,
+            spacing: GRID_SPACING_PTS,
         }
+    }
+}
+
+/// 유효한 용지 간격(포인트). 너무 작으면 12, 크면 120으로 제한.
+pub fn clamp_spacing(spacing: f32) -> f32 {
+    if !spacing.is_finite() || spacing <= 0.0 {
+        GRID_SPACING_PTS
+    } else {
+        spacing.clamp(12.0, 120.0)
     }
 }
 
 /// 용지 스타일에 따라 그릴 선분 [x0, y0, x1, y1] (페이지 포인트)을 반환합니다.
 /// Ruled는 가로줄, Grid는 가로+세로, Blank/Dotted는 빈 벡터.
-pub fn paper_lines(w: f32, h: f32, style: PaperStyle) -> Vec<[f32; 4]> {
+pub fn paper_lines(w: f32, h: f32, style: PaperStyle, spacing: f32) -> Vec<[f32; 4]> {
+    let gap = clamp_spacing(spacing);
     let mut out = Vec::new();
     match style {
         PaperStyle::Blank | PaperStyle::Dotted => {}
         PaperStyle::Ruled => {
-            let mut y = GRID_SPACING_PTS;
+            let mut y = gap;
             while y < h {
                 out.push([0.0, y, w, y]);
-                y += GRID_SPACING_PTS;
+                y += gap;
             }
         }
         PaperStyle::Grid => {
-            let mut y = GRID_SPACING_PTS;
+            let mut y = gap;
             while y < h {
                 out.push([0.0, y, w, y]);
-                y += GRID_SPACING_PTS;
+                y += gap;
             }
-            let mut x = GRID_SPACING_PTS;
+            let mut x = gap;
             while x < w {
                 out.push([x, 0.0, x, h]);
-                x += GRID_SPACING_PTS;
+                x += gap;
             }
         }
     }
@@ -163,20 +181,21 @@ pub fn paper_lines(w: f32, h: f32, style: PaperStyle) -> Vec<[f32; 4]> {
 }
 
 /// Dotted 스타일의 점 위치 [x, y] (페이지 포인트).
-pub fn paper_dots(w: f32, h: f32, style: PaperStyle) -> Vec<[f32; 2]> {
+pub fn paper_dots(w: f32, h: f32, style: PaperStyle, spacing: f32) -> Vec<[f32; 2]> {
     if style != PaperStyle::Dotted {
         return Vec::new();
     }
+    let gap = clamp_spacing(spacing);
     let mut out = Vec::new();
-    let half = GRID_SPACING_PTS / 2.0;
+    let half = gap / 2.0;
     let mut y = half;
     while y < h {
         let mut x = half;
         while x < w {
             out.push([x, y]);
-            x += GRID_SPACING_PTS;
+            x += gap;
         }
-        y += GRID_SPACING_PTS;
+        y += gap;
     }
     out
 }
@@ -187,13 +206,13 @@ mod tests {
 
     #[test]
     fn blank_has_no_lines_or_dots() {
-        assert!(paper_lines(595.0, 842.0, PaperStyle::Blank).is_empty());
-        assert!(paper_dots(595.0, 842.0, PaperStyle::Blank).is_empty());
+        assert!(paper_lines(595.0, 842.0, PaperStyle::Blank, 24.0).is_empty());
+        assert!(paper_dots(595.0, 842.0, PaperStyle::Blank, 24.0).is_empty());
     }
 
     #[test]
     fn ruled_only_horizontal() {
-        let lines = paper_lines(595.0, 100.0, PaperStyle::Ruled);
+        let lines = paper_lines(595.0, 100.0, PaperStyle::Ruled, 24.0);
         assert!(!lines.is_empty());
         for l in &lines {
             // 가로줄: y0 == y1, 페이지 폭을 가로지름
@@ -204,7 +223,7 @@ mod tests {
 
     #[test]
     fn grid_has_horizontal_and_vertical() {
-        let lines = paper_lines(595.0, 100.0, PaperStyle::Grid);
+        let lines = paper_lines(595.0, 100.0, PaperStyle::Grid, 24.0);
         assert!(!lines.is_empty());
         let horiz = lines.iter().filter(|l| (l[1] - l[3]).abs() < 1e-3).count();
         let vert = lines.iter().filter(|l| (l[0] - l[2]).abs() < 1e-3).count();
@@ -214,8 +233,8 @@ mod tests {
 
     #[test]
     fn dotted_has_dots_not_lines() {
-        assert!(paper_lines(100.0, 100.0, PaperStyle::Dotted).is_empty());
-        let dots = paper_dots(100.0, 100.0, PaperStyle::Dotted);
+        assert!(paper_lines(100.0, 100.0, PaperStyle::Dotted, 24.0).is_empty());
+        let dots = paper_dots(100.0, 100.0, PaperStyle::Dotted, 24.0);
         assert!(!dots.is_empty());
         for d in &dots {
             assert!(d[0] > 0.0 && d[1] > 0.0);

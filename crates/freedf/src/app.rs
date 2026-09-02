@@ -15,10 +15,11 @@ use freedf_core::model::{PageIndex, StrokePoint, ToolType};
 use freedf_core::notes::NotesManager;
 use freedf_core::outline::{flatten, OutlineNode};
 use freedf_core::paper::{
-    paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle, PAPER_COLORS, PAPER_WHITE,
+    clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle, PAPER_COLORS,
+    PAPER_WHITE,
 };
 use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
-use freedf_core::search::{find_matches, TextMatch, TextRun};
+use freedf_core::search::{find_matches, text_line_highlights, TextMatch, TextRun};
 use freedf_core::store::AnnotationStore;
 use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
@@ -105,6 +106,87 @@ fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui:
         );
     }
     job.into()
+}
+
+/// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
+/// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
+fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
+    let height = 26.0;
+    let width = ui.available_width();
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    let visuals = ui.visuals();
+    let bg = if selected {
+        visuals.selection.bg_fill
+    } else if resp.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 6.0, bg);
+    if selected {
+        painter.rect_stroke(
+            rect,
+            6.0,
+            egui::Stroke::new(1.0, visuals.selection.stroke.color),
+            egui::StrokeKind::Inside,
+        );
+    }
+    // 오른쪽 메타 폭 계산
+    let meta_w = if meta.is_empty() {
+        0.0
+    } else {
+        painter
+            .layout_no_wrap(
+                meta.to_string(),
+                egui::FontId::proportional(11.0),
+                egui::Color32::WHITE,
+            )
+            .rect
+            .width()
+    };
+    // 제목: 메타와 겹치지 않게 잘라낸다.
+    let max_title_w = (rect.width() - 20.0 - meta_w - 8.0).max(24.0);
+    let mut t = title.to_string();
+    {
+        let font = egui::FontId::proportional(14.0);
+        let w_of = |s: &str| {
+            painter
+                .layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE)
+                .rect
+                .width()
+        };
+        if w_of(&t) > max_title_w {
+            while !t.is_empty() {
+                let mut cand = t.clone();
+                cand.pop();
+                let cw = w_of(&format!("{cand}…"));
+                if cw <= max_title_w {
+                    t = format!("{cand}…");
+                    break;
+                }
+                t = cand;
+            }
+        }
+    }
+    painter.text(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        t,
+        egui::FontId::proportional(14.0),
+        visuals.text_color(),
+    );
+    if !meta.is_empty() {
+        painter.text(
+            egui::pos2(rect.right() - 10.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            meta,
+            egui::FontId::proportional(11.0),
+            visuals.weak_text_color(),
+        );
+    }
+    resp.clicked()
 }
 
 /// Renders a left-aligned row of controls in the toolbar.
@@ -278,6 +360,8 @@ pub struct TabEntry {
     paper_style: PaperStyle,
     paper_color: [u8; 4],
     paper_size: PaperSize,
+    /// 줄/격자/점 간격 기본값 (pt)
+    paper_spacing: f32,
 }
 
 pub struct FreeDfApp {
@@ -331,6 +415,8 @@ pub struct FreeDfApp {
     paper_color: [u8; 4],
     /// 종이 크기 (새 페이지/노트 기본값)
     paper_size: PaperSize,
+    /// 줄/격자/점 간격 기본값 (pt)
+    paper_spacing: f32,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -373,6 +459,10 @@ pub struct FreeDfApp {
     show_palette: bool,
     /// Frequently-used pen colors (global pref)
     favorite_colors: Vec<[u8; 4]>,
+    /// Highlighter snaps to recognized document text (global pref)
+    text_highlight_snap: bool,
+    /// Library 패널 검색 필터 (일시적)
+    library_filter: String,
 
     // ---------- Logging / status ----------
     logger: Logger,
@@ -442,6 +532,11 @@ impl FreeDfApp {
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
         let paper_size = if has { s.paper_size } else { PaperSize::A4 };
+        let paper_spacing = if has {
+            clamp_spacing(s.paper_spacing)
+        } else {
+            24.0
+        };
         let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
         let library_width = if has { s.library_width } else { 260.0 };
@@ -452,6 +547,8 @@ impl FreeDfApp {
         } else {
             crate::settings::SessionState::default().favorite_colors
         };
+        let text_highlight_snap = if has { s.text_highlight_snap } else { true };
+        let library_filter = String::new();
         // Recent files live next to the default session file in the app data folder.
         let recent_path = default_session_path
             .parent()
@@ -494,6 +591,7 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
+            paper_spacing,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -517,6 +615,8 @@ impl FreeDfApp {
             outline_width,
             show_palette,
             favorite_colors,
+            text_highlight_snap,
+            library_filter,
             logger,
             file_name: String::new(),
             status: None,
@@ -547,12 +647,14 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            paper_spacing: self.paper_spacing,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
             outline_width: self.outline_width,
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
+            text_highlight_snap: self.text_highlight_snap,
         }
         .save(&self.default_session_path);
     }
@@ -564,6 +666,7 @@ impl FreeDfApp {
             PagePaper {
                 style: self.paper_style,
                 color: self.paper_color,
+                spacing: self.paper_spacing,
             },
         )
     }
@@ -577,6 +680,7 @@ impl FreeDfApp {
                     PagePaper {
                         style: self.paper_style,
                         color: self.paper_color,
+                        spacing: self.paper_spacing,
                     },
                 );
                 self.render_dirty = true;
@@ -606,12 +710,14 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            paper_spacing: self.paper_spacing,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
             outline_width: self.outline_width,
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
+            text_highlight_snap: self.text_highlight_snap,
         }
     }
 
@@ -650,6 +756,7 @@ impl FreeDfApp {
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
         self.paper_size = s.paper_size;
+        self.paper_spacing = clamp_spacing(s.paper_spacing);
         self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
         self.library_width = s.library_width.clamp(160.0, 460.0);
@@ -711,6 +818,7 @@ impl FreeDfApp {
         tab.paper_style = self.paper_style;
         tab.paper_color = self.paper_color;
         tab.paper_size = self.paper_size;
+        tab.paper_spacing = self.paper_spacing;
     }
 
     /// `tabs[idx]`의 상태를 활성 문서로 복원합니다. (활성 탭의 document는 None이 됨)
@@ -748,6 +856,7 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
+            paper_spacing,
         ) = {
             let tab = self.tabs.get_mut(idx).expect("tab index in range");
             (
@@ -783,6 +892,7 @@ impl FreeDfApp {
                 tab.paper_style,
                 tab.paper_color,
                 tab.paper_size,
+                tab.paper_spacing,
             )
         };
         // 일시적인 렌더/입력 상태 초기화.
@@ -829,6 +939,7 @@ impl FreeDfApp {
         self.paper_style = paper_style;
         self.paper_color = paper_color;
         self.paper_size = paper_size;
+        self.paper_spacing = paper_spacing;
         self.search_runs = Vec::new();
         self.status = None;
         self.search_update();
@@ -906,6 +1017,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            paper_spacing: self.paper_spacing,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
@@ -1322,6 +1434,7 @@ impl FreeDfApp {
         let default_paper = PagePaper {
             style: self.paper_style,
             color: self.paper_color,
+            spacing: self.paper_spacing,
         };
         let default_size = self.paper_size.size_pts();
         let (idx, size, paper) = match target {
@@ -1558,6 +1671,15 @@ impl FreeDfApp {
             if active.points.is_empty() {
                 return;
             }
+            // 하이라이터 + 텍스트 인식 모드면 스와이프가 닿은 문서 텍스트 위로
+            // 깔끔한 하이라이트를 만들어 저장하고, 원본 자유선은 버립니다.
+            if active.tool == ToolType::Highlighter
+                && self.text_highlight_snap
+                && self.document.is_some()
+                && self.add_text_highlights(&active)
+            {
+                return;
+            }
             let id = self.store.add_stroke(
                 self.current_page,
                 active.tool,
@@ -1579,6 +1701,69 @@ impl FreeDfApp {
             }
             self.autosave();
         }
+    }
+
+    /// 스트로크가 닿은 텍스트 줄 위로 하이라이트 사각형 스트로크를 추가합니다.
+    /// 성공(텍스트 하이라이트를 만든 경우)하면 `true`를 반환합니다.
+    fn add_text_highlights(&mut self, active: &ActiveStroke) -> bool {
+        let Some(doc) = &self.document else {
+            return false;
+        };
+        let (mut x0, mut y0, mut x1, mut y1) =
+            (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in &active.points {
+            x0 = x0.min(p.x);
+            y0 = y0.min(p.y);
+            x1 = x1.max(p.x);
+            y1 = y1.max(p.y);
+        }
+        if x1 < x0 || y1 < y0 {
+            return false;
+        }
+        let runs = if self.search_runs.is_empty() {
+            doc.page_text_runs(self.current_page).unwrap_or_default()
+        } else {
+            self.search_runs.clone()
+        };
+        let rects = text_line_highlights(&runs, [x0, y0, x1, y1], 3.0);
+        if rects.is_empty() {
+            return false;
+        }
+        let mut strokes = Vec::new();
+        for r in rects {
+            let line_h = (r[3] - r[1]).max(2.0);
+            let yc = (r[1] + r[3]) * 0.5;
+            // 두께가 정확히 줄 높이가 되도록(비율 1.0) 필압 역산.
+            let pressure = self.pressure_curve.pressure_of(line_h, line_h);
+            let id = self.store.add_stroke(
+                self.current_page,
+                ToolType::Highlighter,
+                active.color,
+                line_h,
+                vec![
+                    StrokePoint::new(r[0], yc, pressure),
+                    StrokePoint::new(r[2], yc, pressure),
+                ],
+            );
+            if let Some(st) = self.store.stroke(self.current_page, id).cloned() {
+                strokes.push(st);
+            }
+        }
+        if strokes.is_empty() {
+            return false;
+        }
+        self.history.push(Edit::AddStrokes {
+            page: self.current_page,
+            strokes: strokes.clone(),
+        });
+        self.logger.log(AppEvent::StrokeAdded {
+            page: self.current_page,
+            points: strokes.len() * 2,
+            tool: "Highlighter".to_string(),
+            width: active.width,
+        });
+        self.autosave();
+        true
     }
 
     fn commit_dot(&mut self, point: [f32; 2], pressure: f32) {
@@ -1860,6 +2045,7 @@ impl FreeDfApp {
                         scale,
                         paper.style,
                         paper.color,
+                        paper.spacing,
                     );
                 }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
@@ -2277,6 +2463,23 @@ impl FreeDfApp {
                     })
                     .response
                     .on_hover_text("Size of new pages & new notes");
+                // 줄/격자 간격 (숫자 직접 입력).
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.paper_spacing)
+                            .range(12.0..=120.0)
+                            .speed(1.0)
+                            .prefix("Spacing ")
+                            .suffix("pt"),
+                    )
+                    .on_hover_text("Ruled/Grid/Dotted spacing applied to the current page")
+                    .changed()
+                {
+                    self.paper_spacing = clamp_spacing(self.paper_spacing);
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
                 });
             });
 
@@ -2395,6 +2598,17 @@ impl FreeDfApp {
                         {
                             self.save_session();
                         }
+                        if ui
+                            .checkbox(&mut self.text_highlight_snap, "Snap to text")
+                            .on_hover_text(
+                                "Highlight the recognized document text your stroke touches\n\
+                                 (off = freehand translucent stroke)",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
                     }
                     ToolType::Eraser => {
                         if ui
@@ -2469,90 +2683,112 @@ impl FreeDfApp {
     // ---------- UI: library panel (Notes / PDFs / Recents) ----------
 
     fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
-        ui.add_space(4.0);
-        ui.heading("Library");
-        ui.add_space(2.0);
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
+        ui.add_space(6.0);
 
-        // --- Notes ------------------------------------------------------
-        egui::CollapsingHeader::new(icon_text(ui, "Notes", icons::NOTE_PENCIL))
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let has_note = self.current_note.is_some();
-                    if ui
-                        .add_enabled(
-                            has_note,
-                            egui::Button::new(icon_text(ui, "Rename", icons::PENCIL_SIMPLE)),
-                        )
-                        .on_hover_text("Rename note")
-                        .clicked()
-                    {
-                        if let Some(id) = self.current_note {
-                            let current = self
-                                .notes
-                                .get(id)
-                                .map(|m| m.title.clone())
-                                .unwrap_or_default();
-                            let mut modal = ModalState::ask_text(
-                                "Rename Note",
-                                "New title:",
-                                TextAction::RenameNote,
-                            );
-                            modal.text = current;
-                            self.modal = Some(modal);
-                        }
-                    }
-                    if ui
-                        .add_enabled(
-                            has_note,
-                            egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
-                        )
-                        .on_hover_text("Delete note")
-                        .clicked()
-                    {
-                        if let Some(id) = self.current_note {
-                            let mut modal = ModalState::confirm(
-                                "Delete Note",
-                                "Delete this note and all its annotations? This cannot be undone.",
-                                ConfirmAction::DeleteNote,
-                            );
-                            modal.text = id.to_string();
-                            self.modal = Some(modal);
-                        }
-                    }
-                });
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        let notes: Vec<(u64, String, usize)> = self
-                            .notes
-                            .list()
-                            .iter()
-                            .map(|m| (m.id, m.title.clone(), m.page_count))
-                            .collect();
-                        if notes.is_empty() {
-                            ui.label("No notes yet. Use ＋ New to create one.");
-                        }
-                        for (id, title, page_count) in notes {
-                            let selected = self.current_note == Some(id);
-                            let text = if page_count > 0 {
-                                format!("{title}  ({}p)", page_count)
-                            } else {
-                                title
-                            };
-                            if ui.selectable_label(selected, text).clicked() {
-                                self.open_note(id);
-                            }
-                        }
-                    });
+        // ── 헤더 + 검색 필터 ──────────────────────────────────────────
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Library").strong().size(16.0));
+            let total = self.notes.list().len() + self.recents.sorted().len();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    egui::RichText::new(format!("{total} items"))
+                        .weak()
+                        .small(),
+                );
             });
+        });
+        ui.add_space(3.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut self.library_filter)
+                .hint_text("Search notes & files…")
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(2.0);
         ui.separator();
 
-        // --- PDFs (recently opened files) --------------------------------
-        egui::CollapsingHeader::new(icon_text(ui, "PDFs", icons::FILE_PDF))
-            .default_open(false)
+        let filter = self.library_filter.trim().to_lowercase();
+        let matches = |t: &str| filter.is_empty() || t.to_lowercase().contains(&filter);
+        let has_note = self.current_note.is_some();
+        let mut rename_note = false;
+        let mut delete_note = false;
+
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
             .show(ui, |ui| {
+                // ── Notes ──────────────────────────────────────────────
+                let all_notes: Vec<(u64, String, usize)> = self
+                    .notes
+                    .list()
+                    .iter()
+                    .map(|m| (m.id, m.title.clone(), m.page_count))
+                    .collect();
+                let notes: Vec<(u64, String, usize)> = all_notes
+                    .iter()
+                    .filter(|(_, t, _)| matches(t))
+                    .cloned()
+                    .collect();
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                    ui.label(icon_text(ui, "Notes", icons::NOTE_PENCIL));
+                    ui.label(
+                        egui::RichText::new(all_notes.len().to_string())
+                            .weak()
+                            .small(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
+                        if ui
+                            .add_enabled(
+                                has_note,
+                                egui::Button::new(icon_text(ui, "", icons::PENCIL_SIMPLE))
+                                    .frame(false)
+                                    .small(),
+                            )
+                            .on_hover_text("Rename current note")
+                            .clicked()
+                        {
+                            rename_note = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                has_note,
+                                egui::Button::new(icon_text(ui, "", icons::TRASH_SIMPLE))
+                                    .frame(false)
+                                    .small(),
+                            )
+                            .on_hover_text("Delete current note")
+                            .clicked()
+                        {
+                            delete_note = true;
+                        }
+                    });
+                });
+                ui.add_space(2.0);
+                if notes.is_empty() {
+                    ui.label(
+                        egui::RichText::new("No notes yet — use ＋ New to create one.")
+                            .weak()
+                            .small(),
+                    );
+                } else {
+                    for (id, title, page_count) in &notes {
+                        let meta = if *page_count > 0 {
+                            format!("{page_count}p")
+                        } else {
+                            String::new()
+                        };
+                        let selected = self.current_note == Some(*id);
+                        if library_row(ui, selected, title, &meta) {
+                            self.open_note(*id);
+                        }
+                    }
+                }
+                ui.add_space(4.0);
+                ui.separator();
+
+                // ── PDFs (recently opened files) ──────────────────────
                 let files: Vec<RecentItem> = self
                     .recents
                     .sorted()
@@ -2560,56 +2796,104 @@ impl FreeDfApp {
                     .filter(|r| r.kind == RecentKind::File)
                     .cloned()
                     .collect();
-                if files.is_empty() {
-                    ui.label("No PDFs opened yet.");
-                }
-                let mut open: Option<PathBuf> = None;
-                for f in &files {
-                    let path = f.path.clone().unwrap_or_default();
-                    if ui.button(&f.title).clicked() {
-                        open = Some(path);
+                let visible: Vec<RecentItem> = files
+                    .iter()
+                    .filter(|f| matches(&f.title))
+                    .cloned()
+                    .collect();
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(icon_text(ui, "PDFs", icons::FILE_PDF));
+                    ui.label(
+                        egui::RichText::new(files.len().to_string())
+                            .weak()
+                            .small(),
+                    );
+                });
+                ui.add_space(2.0);
+                if visible.is_empty() {
+                    ui.label(egui::RichText::new("No PDFs opened yet.").weak().small());
+                } else {
+                    for f in &visible {
+                        if library_row(ui, false, &f.title, "PDF") {
+                            if let Some(p) = &f.path {
+                                self.open_pdf(p);
+                            }
+                        }
                     }
                 }
-                if let Some(p) = open {
-                    self.open_pdf(&p);
-                }
-            });
-        ui.separator();
+                ui.add_space(4.0);
+                ui.separator();
 
-        // --- Recents (notes + PDFs) --------------------------------------
-        egui::CollapsingHeader::new(icon_text(ui, "Recents", icons::CLOCK_COUNTER_CLOCKWISE))
-            .default_open(false)
-            .show(ui, |ui| {
-                let recents: Vec<RecentItem> =
-                    self.recents.sorted().into_iter().cloned().collect();
+                // ── Recents (notes + PDFs) ────────────────────────────
+                let recents: Vec<RecentItem> = self
+                    .recents
+                    .sorted()
+                    .into_iter()
+                    .filter(|r| matches(&r.title))
+                    .cloned()
+                    .collect();
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.label(icon_text(ui, "Recents", icons::CLOCK_COUNTER_CLOCKWISE));
+                    ui.label(
+                        egui::RichText::new(self.recents.sorted().len().to_string())
+                            .weak()
+                            .small(),
+                    );
+                });
+                ui.add_space(2.0);
                 if recents.is_empty() {
-                    ui.label("No recent files yet.");
-                }
-                let mut act: Option<(RecentKind, Option<u64>, Option<PathBuf>)> = None;
-                for item in &recents {
-                    let label = match item.kind {
-                        RecentKind::Note => format!("📄 {}", item.title),
-                        RecentKind::File => format!("📎 {}", item.title),
-                    };
-                    if ui.button(label).clicked() {
-                        act = Some((item.kind, item.note_id, item.path.clone()));
-                    }
-                }
-                if let Some((kind, id, path)) = act {
-                    match kind {
-                        RecentKind::Note => {
-                            if let Some(id) = id {
-                                self.open_note(id);
-                            }
-                        }
-                        RecentKind::File => {
-                            if let Some(p) = path {
-                                self.open_pdf(&p);
+                    ui.label(egui::RichText::new("No recent files yet.").weak().small());
+                } else {
+                    for item in &recents {
+                        let meta = match item.kind {
+                            RecentKind::Note => "note".to_string(),
+                            RecentKind::File => "pdf".to_string(),
+                        };
+                        if library_row(ui, false, &item.title, &meta) {
+                            match item.kind {
+                                RecentKind::Note => {
+                                    if let Some(id) = item.note_id {
+                                        self.open_note(id);
+                                    }
+                                }
+                                RecentKind::File => {
+                                    if let Some(p) = &item.path {
+                                        self.open_pdf(p);
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                ui.add_space(4.0);
             });
+
+        if rename_note {
+            if let Some(id) = self.current_note {
+                let current = self
+                    .notes
+                    .get(id)
+                    .map(|m| m.title.clone())
+                    .unwrap_or_default();
+                let mut modal =
+                    ModalState::ask_text("Rename Note", "New title:", TextAction::RenameNote);
+                modal.text = current;
+                self.modal = Some(modal);
+            }
+        }
+        if delete_note {
+            if let Some(id) = self.current_note {
+                let mut modal = ModalState::confirm(
+                    "Delete Note",
+                    "Delete this note and all its annotations? This cannot be undone.",
+                    ConfirmAction::DeleteNote,
+                );
+                modal.text = id.to_string();
+                self.modal = Some(modal);
+            }
+        }
     }
 
     // ---------- UI: outline panel ----------
@@ -3107,9 +3391,11 @@ impl FreeDfApp {
     fn paint_paper(&self, painter: &egui::Painter, origin: Pos2) {
         let w = self.page_size_pts[0];
         let h = self.page_size_pts[1];
-        let style = self.current_page_paper().style;
+        let paper = self.current_page_paper();
+        let style = paper.style;
+        let spacing = paper.spacing;
         let line = Color32::from_rgba_unmultiplied(120, 120, 140, 100);
-        for [x0, y0, x1, y1] in paper_lines(w, h, style) {
+        for [x0, y0, x1, y1] in paper_lines(w, h, style, spacing) {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);
             painter.line_segment(
@@ -3117,7 +3403,7 @@ impl FreeDfApp {
                 Stroke::new(2.0, line),
             );
         }
-        for [x, y] in paper_dots(w, h, style) {
+        for [x, y] in paper_dots(w, h, style, spacing) {
             let v = self.view.page_to_view([x, y]);
             painter.circle_filled(origin + Vec2::new(v[0], v[1]), 2.0, line);
         }

@@ -112,6 +112,56 @@ fn union(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// 하이라이터 스트로크가 지나간 영역(`bbox`, 페이지 좌표)과 겹치는 텍스트를
+/// 찾아, **줄 단위로 합친** 하이라이트 사각형 목록을 반환합니다.
+///
+/// - `bbox`는 스트로크 경계([x0, y0, x1, y1]).
+/// - `margin`은 페이지 좌표로 몇 pt 안까지 텍스트에 닿은 것으로 칠지.
+/// - 결과 각 사각형은 같은 줄(y 근처)에 있는 닿은 런들을 하나로 이어붙인 것.
+///
+/// 순수 데이터 연산이라 GUI 없이 단위 테스트로 검증합니다.
+pub fn text_line_highlights(runs: &[TextRun], bbox: [f32; 4], margin: f32) -> Vec<[f32; 4]> {
+    let (bx0, by0, bx1, by1) = (
+        bbox[0] - margin,
+        bbox[1] - margin,
+        bbox[2] + margin,
+        bbox[3] + margin,
+    );
+    // 1) 스트로크에 닿은(겹치는) 런만 남긴다.
+    let touched: Vec<&TextRun> = runs
+        .iter()
+        .filter(|r| {
+            !r.text.trim().is_empty()
+                && r.rect[0] <= bx1
+                && r.rect[2] >= bx0
+                && r.rect[1] <= by1
+                && r.rect[3] >= by0
+        })
+        .collect();
+    if touched.is_empty() {
+        return Vec::new();
+    }
+    // 2) 닿은 런들을 줄(y 근처) 단위로 묶어 x 범위를 합친다.
+    let mut lines: Vec<[f32; 4]> = Vec::new();
+    for r in touched {
+        let yc = (r.rect[1] + r.rect[3]) * 0.5;
+        let h = (r.rect[3] - r.rect[1]).max(1.0);
+        let mut placed = false;
+        for line in lines.iter_mut() {
+            let lyc = (line[1] + line[3]) * 0.5;
+            if (yc - lyc).abs() < h * 0.8 {
+                *line = union(*line, r.rect);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            lines.push(r.rect);
+        }
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +258,30 @@ mod tests {
     fn query_is_trimmed() {
         let runs = vec![run("hello world", vec![])];
         assert_eq!(find_matches(&runs, "  world  ").len(), 1);
+    }
+
+    #[test]
+    fn text_highlights_union_same_line_and_filter_far() {
+        // 한 줄에 여러 런, 그 아래 다른 줄 하나.
+        let runs = vec![
+            TextRun::new("Hello ", [10.0, 10.0, 60.0, 26.0], vec![]),
+            TextRun::new("World", [60.0, 10.0, 120.0, 26.0], vec![]),
+            TextRun::new("Below", [10.0, 40.0, 60.0, 56.0], vec![]),
+        ];
+        // 위 줄(첫 두 런)만 덮는 스트로크.
+        let rects = text_line_highlights(&runs, [0.0, 5.0, 200.0, 30.0], 2.0);
+        assert_eq!(rects.len(), 1);
+        // 같은 줄 두 런이 하나로 합쳐져야 함.
+        let r = rects[0];
+        assert!((r[0] - 10.0).abs() < 1e-3);
+        assert!((r[2] - 120.0).abs() < 1e-3);
+        assert!(r[3] <= 30.0, "아랫줄은 포함되면 안 됨");
+    }
+
+    #[test]
+    fn text_highlights_no_touch_returns_empty() {
+        let runs = vec![TextRun::new("Hello", [10.0, 10.0, 60.0, 26.0], vec![])];
+        // 텍스트와 멀리 떨어진 스트로크.
+        assert!(text_line_highlights(&runs, [200.0, 200.0, 300.0, 260.0], 2.0).is_empty());
     }
 }

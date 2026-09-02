@@ -19,8 +19,9 @@ native file dialogs, Windows Ink pressure).
   between them; every tab keeps its own page, zoom/pan, annotations, search, outline,
   panel open state & **panel widths**, and ink/paper settings. The tab strip scrolls
   horizontally and long titles are truncated (full name on hover)
-- �️ **Library panel** — one collapsible side panel groups **Notes**, **PDFs** and
-  **Recents** so you can jump between notebooks and recently opened files
+- 🗂️ **Library panel** — a modern side panel with a **search filter** and count
+  badges groups **Notes**, **PDFs** and **Recents** into clean rows (title +
+  meta), so you can jump between notebooks and recently opened files
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
@@ -38,6 +39,9 @@ native file dialogs, Windows Ink pressure).
   the current one, prev/next and a result counter
 - ✏️ **Pen / Highlighter / Eraser / Pan** — strokes are stored in page coordinates,
   so they never drift under zoom/pan
+- 🔖 **Text-aware highlighter** — by default the Highlighter recognizes the
+  document's actual text and snaps to it: swipe across a paragraph and you get
+  clean highlights exactly over the words (turn off with “Snap to text”)
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
@@ -83,6 +87,9 @@ native file dialogs, Windows Ink pressure).
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
   dotted) and color (white, cream, ice blue, mint, light gray), applied
   independently and exported to PNG
+- 🔢 **Numerical paper spacing** — the ruled/grid/dotted spacing is a number
+  (in points, 12–120) you can type directly in the Paper options; it is saved
+  per page
 - 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal for new notes and pages
 - 💾 **Remembers your last settings** — the most recently used pen ink color and
   paper style/color/size are saved to the default `session.json` and restored on

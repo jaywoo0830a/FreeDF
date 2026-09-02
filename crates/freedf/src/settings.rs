@@ -41,6 +41,9 @@ pub struct SessionState {
     pub paper_style: PaperStyle,
     pub paper_color: [u8; 4],
     pub paper_size: PaperSize,
+    /// 줄/격자/점 간격 (포인트) 기본값
+    #[serde(default = "default_paper_spacing")]
+    pub paper_spacing: f32,
     pub show_notes: bool,
     pub show_outline: bool,
     /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
@@ -54,11 +57,22 @@ pub struct SessionState {
     /// 자주 쓰는 펜 색상 팔레트 (전역 기본값)
     #[serde(default = "default_favorite_colors")]
     pub favorite_colors: Vec<[u8; 4]>,
+    /// 하이라이터가 문서 텍스트를 인식해 깔끔하게 칠하는 모드 (전역 기본값)
+    #[serde(default = "default_true")]
+    pub text_highlight_snap: bool,
 }
 
 /// 이전 버전 세션 파일(필드 없음)에서도 팔레트를 기본 표시.
 fn default_show_palette() -> bool {
     true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_paper_spacing() -> f32 {
+    24.0
 }
 
 fn default_library_width() -> f32 {
@@ -103,6 +117,7 @@ impl Default for SessionState {
             paper_style: PaperStyle::Blank,
             paper_color: [255, 255, 255, 255],
             paper_size: PaperSize::A4,
+            paper_spacing: 24.0,
             show_notes: true,
             show_outline: false,
             library_width: 260.0,
@@ -118,6 +133,7 @@ impl Default for SessionState {
                 [232, 120, 30, 255], // Orange
                 [128, 80, 200, 255], // Purple
             ],
+            text_highlight_snap: true,
         }
     }
 }
