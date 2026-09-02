@@ -2023,7 +2023,7 @@ impl FreeDfApp {
     /// current tool's shape and color (Pen = 은색, Fountain = 금색 금속 닙 +
     /// 입체 그림자, Highlighter = colored rectangle, Eraser = white circle).
     /// 마우스 + 잉크 도구(mouse_draws 꺼짐)면 팬 십자선으로 표시합니다.
-    pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, _time: f32) {
+    pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
         // 실제로 쓰일 도구: 마우스는 기본적으로 팬처럼 동작.
         let mouse_panning = !self.mouse_draws
             && self.input_device == InputDevice::Mouse
@@ -2038,22 +2038,25 @@ impl FreeDfApp {
         };
         match tool {
             ToolType::Pen | ToolType::Fountain => {
-                // ── 벡터풍 금속 펜 닙 커서 — 만년필=반짝이는 금+뾰족 닙,
-                // 볼펜=반짝이는 은+볼 닙. 닙 끝(볼펜은 볼 중심)이 **실제
-                // 좌표**에 고정되고, 배럴이 펜 기울기 방향(방위각)을 가리킵니다.
+                // ── 게임풍 금속 펜 닙 커서 — GPU 정점색 그라데이션(원통 음영) +
+                // 배럴을 따라 **흐르는 반짝임 밴드** + 2겹 입체 그림자.
+                // 만년필=금+뾰족 닙, 볼펜=은+볼 닙. 닙 끝(볼 중심)이 실제 좌표에 고정.
                 let is_fountain = tool == ToolType::Fountain;
-                let (base, dark, bright) = if is_fountain {
-                    (
-                        Color32::from_rgb(0xE6, 0xB4, 0x22), // 금
-                        Color32::from_rgb(0x8A, 0x64, 0x06), // 어두운 금 (윤곽)
-                        Color32::from_rgb(0xFF, 0xF0, 0xA0), // 밝은 금 (반짝임)
-                    )
+                // 금속 기본색 (금/은, f32 채널).
+                let (br, bg, bb) = if is_fountain {
+                    (0.82f32, 0.60, 0.08)
                 } else {
-                    (
-                        Color32::from_rgb(0xC9, 0xCD, 0xD3), // 은
-                        Color32::from_rgb(0x76, 0x7B, 0x82), // 어두운 은 (윤곽)
-                        Color32::from_rgb(0xFF, 0xFF, 0xFF), // 흰 하이라이트
-                    )
+                    (0.74, 0.77, 0.80)
+                };
+                let dark = if is_fountain {
+                    Color32::from_rgb(74, 52, 6)
+                } else {
+                    Color32::from_rgb(58, 62, 68)
+                };
+                let bright = if is_fountain {
+                    Color32::from_rgb(255, 240, 160)
+                } else {
+                    Color32::from_rgb(250, 252, 255)
                 };
                 let (az, cos_pitch) = if self.pen_monitor.is_some() {
                     tilt_azimuth(&self.pen_tilt)
@@ -2070,47 +2073,67 @@ impl FreeDfApp {
                 let ball_r = if is_fountain { 0.0 } else { 3.2 };
                 let tip = pos - dir * ball_r;
                 let tail = pos + dir * len;
-                let tail_l = tail + perp * w;
-                let tail_r = tail - perp * w;
+                let tl = tail + perp * w;
+                let tr = tail - perp * w;
+                // 금속 채널 → 색 (k = 밝기 배율).
+                let mk_col = |k: f32| -> Color32 {
+                    let c = |v: f32| (v * k * 255.0).clamp(0.0, 255.0) as u8;
+                    Color32::from_rgb(c(br), c(bg), c(bb))
+                };
 
-                // 1) 입체 그림자 — 오른쪽 아래로 살짝 밀린 어두운 실루엣.
-                let sh = egui::vec2(3.0, 4.0);
-                let shadow = Color32::from_black_alpha(40);
-                painter.add(egui::Shape::convex_polygon(
-                    vec![tip + sh, tail_r + sh, tail_l + sh],
-                    shadow,
-                    Stroke::NONE,
-                ));
-                painter.circle_filled(tail + sh, w, shadow);
-                if ball_r > 0.0 {
-                    painter.circle_filled(pos + sh, ball_r, shadow);
+                // 1) 입체 그림자 2겹 (넓고 옅게 + 좁고 진하게).
+                for (sh, alpha) in [(egui::vec2(4.0, 5.0), 26u8), (egui::vec2(2.0, 2.5), 44u8)] {
+                    let sc = Color32::from_black_alpha(alpha);
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![tip + sh, tr + sh, tl + sh],
+                        sc,
+                        Stroke::NONE,
+                    ));
+                    painter.circle_filled(tail + sh, w, sc);
+                    if ball_r > 0.0 {
+                        painter.circle_filled(pos + sh, ball_r, sc);
+                    }
                 }
 
-                // 2) 본체 — 금속색 테이퍼 배럴 + 어두운 금속 윤곽.
-                painter.add(egui::Shape::convex_polygon(
-                    vec![tip, tail_r, tail_l],
-                    base,
-                    Stroke::new(1.4, dark),
-                ));
-                painter.circle_filled(tail, w, base);
-                painter.circle_stroke(tail, w, Stroke::new(1.4, dark));
+                // 2) 배럴 — 링 3개 × 폭 컬럼 5개의 정점색 메시.
+                // 폭 방향 = 원통 음영(어두운 쪽 → 밝은 림), 길이 방향 = 흐르는
+                // 반짝임 밴드, 전체 = 은은한 숨(펄스).
+                let glint_x = 0.45 + 0.45 * (time * 1.6).sin();
+                let pulse = 0.94 + 0.06 * (time * 2.2).sin();
+                let mut m = egui::Mesh::default();
+                let rings = [0.0f32, 0.55, 1.0];
+                let cols = [0.0f32, 0.25, 0.5, 0.75, 1.0];
+                for &f in &rings {
+                    let c = pos + dir * (ball_r + (len - ball_r) * f);
+                    let rw = w * f.max(0.02);
+                    for &u in &cols {
+                        let p = c + perp * (rw * (u * 2.0 - 1.0));
+                        let shade = 0.42 + 0.88 * u;
+                        let glint = 1.0 + 1.35 * (-(f - glint_x).powi(2) / 0.018).exp();
+                        let k = (shade * glint * pulse).clamp(0.0, 2.4);
+                        m.vertices
+                            .push(egui::epaint::Vertex::untextured(p, mk_col(k)));
+                    }
+                }
+                let cc = cols.len() as u32;
+                for ri in 0..rings.len() - 1 {
+                    for ci in 0..cols.len() - 1 {
+                        let a = ri as u32 * cc + ci as u32;
+                        m.indices
+                            .extend_from_slice(&[a, a + 1, a + cc, a + 1, a + cc + 1, a + cc]);
+                    }
+                }
+                painter.add(egui::Shape::mesh(m));
+                // 긴 변의 어두운 윤곽 + 꼬리 캡(중간톤 + 밝은 면).
+                painter.line_segment([tip, tl], Stroke::new(1.0, dark));
+                painter.line_segment([tip, tr], Stroke::new(1.0, dark));
+                painter.circle_filled(tail, w, mk_col(0.55 * pulse));
+                painter.circle_filled(tail + perp * (w * 0.45), w * 0.5, mk_col(1.5 * pulse));
+                painter.circle_stroke(tail, w, Stroke::new(1.2, dark));
 
-                // 3) 반짝임 — 배럴 한쪽을 따라 흐르는 밝은 스트릭.
-                let s0 = tip + dir * 5.0;
-                let s1 = tail;
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        s0 + perp * (w * 0.55),
-                        s0 + perp * (w * 0.15),
-                        s1 + perp * (w * 0.15),
-                        s1 + perp * (w * 0.55),
-                    ],
-                    bright.gamma_multiply(0.8),
-                    Stroke::NONE,
-                ));
-
-                // 4) 닙 끝 — 만년필: 뾰족한 금속 팁, 볼펜: 좌표 위의 볼.
+                // 3) 닙 끝.
                 if is_fountain {
+                    // 뾰족한 밝은 금속 팁 + 좌우로 미끄러지는 반짝임 점.
                     let t_len = 8.0;
                     let t1 = pos + dir * t_len + perp * 2.4;
                     let t2 = pos + dir * t_len - perp * 2.4;
@@ -2120,22 +2143,47 @@ impl FreeDfApp {
                         Stroke::new(1.0, dark),
                     ));
                     // 닙 숨구멍(원형 홀) — 만년필 특유의 디테일.
-                    painter.circle_stroke(
-                        pos + dir * 5.0,
-                        1.1,
-                        Stroke::new(1.0, dark.gamma_multiply(0.9)),
-                    );
-                    // 정확 좌표 = 뾰족 끝의 흰 반짝임.
-                    painter.circle_filled(pos + egui::vec2(-0.6, -0.6), 0.9, Color32::WHITE);
+                    painter.circle_stroke(pos + dir * 5.0, 1.1, Stroke::new(1.0, dark));
+                    let gx = (time * 3.0).sin() * 1.2;
+                    painter.circle_filled(pos + dir * 2.5 + perp * gx, 1.1, Color32::WHITE);
                 } else {
-                    // 볼 — 좌표 중심에 놓인 은색 구 + 하이라이트.
-                    painter.circle_filled(pos, ball_r, bright);
+                    // 볼 — 방사형 그라데이션 팬(어두운 림 → 밝은 코어) + 회전 반사점.
+                    let mut bm = egui::Mesh::default();
+                    let ring_r = [1.0f32, 0.62, 0.3];
+                    let ring_k = [0.35f32, 0.8, 1.7];
+                    for (&rr, &rk) in ring_r.iter().zip(ring_k.iter()) {
+                        for k in 0..12 {
+                            let a = std::f32::consts::TAU * (k as f32 / 12.0);
+                            let p = pos + egui::vec2(a.cos(), a.sin()) * (ball_r * rr);
+                            bm.vertices
+                                .push(egui::epaint::Vertex::untextured(p, mk_col(rk * pulse)));
+                        }
+                    }
+                    let center = bm.vertices.len() as u32;
+                    bm.vertices
+                        .push(egui::epaint::Vertex::untextured(pos, mk_col(2.2 * pulse)));
+                    for ri in 0..2usize {
+                        for k in 0..12 {
+                            let k2 = (k + 1) % 12;
+                            let a0 = (ri * 12 + k) as u32;
+                            let a1 = (ri * 12 + k2) as u32;
+                            let b0 = ((ri + 1) * 12 + k) as u32;
+                            let b1 = ((ri + 1) * 12 + k2) as u32;
+                            bm.indices
+                                .extend_from_slice(&[a0, a1, b0, a1, b1, b0]);
+                        }
+                    }
+                    for k in 0..12 {
+                        let k2 = (k + 1) % 12;
+                        bm.indices
+                            .extend_from_slice(&[(2 * 12 + k) as u32, center, (2 * 12 + k2) as u32]);
+                    }
+                    painter.add(egui::Shape::mesh(bm));
                     painter.circle_stroke(pos, ball_r, Stroke::new(1.2, dark));
-                    painter.circle_filled(
-                        pos + egui::vec2(-ball_r * 0.35, -ball_r * 0.35),
-                        ball_r * 0.35,
-                        Color32::WHITE,
-                    );
+                    // 회전하는 흰 반사점 — 구체감.
+                    let sa = time * 1.4;
+                    let sp = pos + egui::vec2(sa.cos(), sa.sin()) * (ball_r * 0.38);
+                    painter.circle_filled(sp, ball_r * 0.22, Color32::WHITE);
                 }
             }
             ToolType::Highlighter => {
