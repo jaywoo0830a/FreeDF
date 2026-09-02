@@ -853,7 +853,13 @@ impl FreeDfApp {
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let smoothing_enabled = if has { s.smoothing_enabled } else { false };
-        let ink_bleed = if has { s.ink_bleed } else { InkBleed::default() };
+        // 프로파일 v2: 잉크 번짐이 만년필 전용으로 바뀌고 기본 활성화 —
+        // 이전 세션이면 새 기본값 사용.
+        let ink_bleed = if has && s.profile_version >= 2 {
+            s.ink_bleed
+        } else {
+            InkBleed::default()
+        };
         let fountain_profile = if has && s.profile_version >= 1 {
             s.fountain_profile
         } else {
@@ -1066,7 +1072,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 1,
+            profile_version: 2,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1167,7 +1173,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 1,
+            profile_version: 2,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1263,7 +1269,11 @@ impl FreeDfApp {
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;
-        self.ink_bleed = s.ink_bleed;
+        if s.profile_version >= 2 {
+            self.ink_bleed = s.ink_bleed;
+        } else {
+            self.ink_bleed = InkBleed::default();
+        }
         self.mouse_draws = s.mouse_draws;
         self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {

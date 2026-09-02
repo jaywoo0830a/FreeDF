@@ -1788,8 +1788,8 @@ impl FreeDfApp {
                 ));
             }
         }
-        let is_pen = tool == ToolType::Pen;
-        let bleed_active = is_pen && self.ink_bleed.enabled;
+        // 번짐은 **만년필 전용** (볼펜은 잉크가 안 번짐).
+        let bleed_active = tool == ToolType::Fountain && self.ink_bleed.enabled;
         let settle = self.ink_bleed.settle_sec().max(1e-3);
         let age_sec = if created_ms == 0 {
             settle
@@ -1911,7 +1911,7 @@ impl FreeDfApp {
         // 동안만 병합 메시를 다시 만듭니다).
         let mut next_settle = u64::MAX;
         for s in strokes {
-            if bleed.enabled && s.tool == ToolType::Pen && s.created_ms > 0 {
+            if bleed.enabled && s.tool == ToolType::Fountain && s.created_ms > 0 {
                 let settle_ms = s.created_ms.saturating_add((settle * 1000.0) as u64);
                 if now < settle_ms {
                     next_settle = next_settle.min(settle_ms);
@@ -1966,7 +1966,7 @@ impl FreeDfApp {
                     ));
                 }
             }
-            let bleed_on = s.tool == ToolType::Pen && bleed.enabled;
+            let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
             let age_sec = if s.created_ms == 0 {
                 settle
             } else {

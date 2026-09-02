@@ -177,7 +177,7 @@ impl Default for SessionState {
             hi_width: 16.0,
             eraser_radius: 16.0,
             pressure_enabled: true,
-            profile_version: 1,
+            profile_version: 2,
             debug_hud: false,
             left_handed: false,
             pen_profile: BallPenProfile::default(),

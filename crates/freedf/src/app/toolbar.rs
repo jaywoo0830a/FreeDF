@@ -797,13 +797,61 @@ impl FreeDfApp {
                             self.save_default_session();
                             self.save_session();
                         }
-                        // 잉크 번짐(블리드): 선택 기능. 그어진 뒤 잉크가 종이로
-                        // 퍼져나가는 효과이며, 시작/중간/끝 구간별 속도(pt/초)를
-                        // 따로 커스텀할 수 있습니다.
+                    }
+                    ToolType::Fountain => {
+                        // 만년필: 색/두께 모두 볼펜과 **완전히 독립**.
+                        let swatches = Palette::swatches(self.color_family);
+                        for (i, swatch) in swatches.iter().enumerate() {
+                            let color = Color32::from_rgba_unmultiplied(
+                                swatch[0],
+                                swatch[1],
+                                swatch[2],
+                                swatch[3],
+                            );
+                            let selected = *swatch == self.fountain_color;
+                            if color_circle_swatch(ui, ("fountain_swatch", i), color, selected)
+                                .on_hover_text("Ink color")
+                                .clicked()
+                            {
+                                self.fountain_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                        let mut fountain_color = Color32::from_rgba_unmultiplied(
+                            self.fountain_color[0],
+                            self.fountain_color[1],
+                            self.fountain_color[2],
+                            self.fountain_color[3],
+                        );
+                        if ui
+                            .color_edit_button_srgba(&mut fountain_color)
+                            .on_hover_text("Custom ink color")
+                            .changed()
+                        {
+                            self.fountain_color = fountain_color.to_array();
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        let nib_resp = ui
+                            .add(
+                                egui::Slider::new(&mut self.fountain_width, 0.5..=12.0)
+                                    .text("Nib"),
+                            )
+                            .on_hover_text(
+                                "Nib width = maximum line width (pt).\n\
+                                 The model varies it by pressure, speed and tilt.",
+                            );
+                        if nib_resp.changed() {
+                            self.save_session();
+                        }
+                        // 잉크 번짐(블리드): **만년필 전용** 선택 기능 — 그어진 뒤
+                        // 잉크가 종이로 퍼져나가는 효과. 시작/중간/끝 구간별
+                        // 속도(pt/초)를 따로 커스텀할 수 있고, 기본 활성화입니다.
                         if ui
                             .checkbox(&mut self.ink_bleed.enabled, "Ink bleed")
                             .on_hover_text(
-                                "Creative ink bleed: ink slowly spreads into the paper \
+                                "Fountain ink bleed: ink slowly spreads into the paper \
                                  after you write. Start/mid/end speeds are customizable.",
                             )
                             .changed()
@@ -869,54 +917,6 @@ impl FreeDfApp {
                                 self.save_default_session();
                                 self.save_session();
                             }
-                        }
-                    }
-                    ToolType::Fountain => {
-                        // 만년필: 색/두께 모두 볼펜과 **완전히 독립**.
-                        let swatches = Palette::swatches(self.color_family);
-                        for (i, swatch) in swatches.iter().enumerate() {
-                            let color = Color32::from_rgba_unmultiplied(
-                                swatch[0],
-                                swatch[1],
-                                swatch[2],
-                                swatch[3],
-                            );
-                            let selected = *swatch == self.fountain_color;
-                            if color_circle_swatch(ui, ("fountain_swatch", i), color, selected)
-                                .on_hover_text("Ink color")
-                                .clicked()
-                            {
-                                self.fountain_color = *swatch;
-                                self.save_default_session();
-                                self.save_session();
-                            }
-                        }
-                        let mut fountain_color = Color32::from_rgba_unmultiplied(
-                            self.fountain_color[0],
-                            self.fountain_color[1],
-                            self.fountain_color[2],
-                            self.fountain_color[3],
-                        );
-                        if ui
-                            .color_edit_button_srgba(&mut fountain_color)
-                            .on_hover_text("Custom ink color")
-                            .changed()
-                        {
-                            self.fountain_color = fountain_color.to_array();
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        let nib_resp = ui
-                            .add(
-                                egui::Slider::new(&mut self.fountain_width, 0.5..=12.0)
-                                    .text("Nib"),
-                            )
-                            .on_hover_text(
-                                "Nib width = maximum line width (pt).\n\
-                                 The model varies it by pressure, speed and tilt.",
-                            );
-                        if nib_resp.changed() {
-                            self.save_session();
                         }
                         // 모델 파라미터는 `self.fountain_profile`을 직접 수정합니다
                         // (장시간 borrow를 피해 저장 호출과 충돌하지 않게).

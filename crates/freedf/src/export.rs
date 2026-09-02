@@ -114,9 +114,9 @@ fn draw_one_stroke(
             halves.push((w * scale * 0.5).max(0.05));
         }
     }
-    let is_pen = stroke.tool == ToolType::Pen;
-    // 잉크 번짐 후광 (펜 전용, 화면과 동일한 2단 레이어).
-    if is_pen && bleed.enabled {
+    let is_fountain = stroke.tool == ToolType::Fountain;
+    // 잉크 번짐 후광 (만년필 전용, 화면과 동일한 2단 레이어).
+    if is_fountain && bleed.enabled {
         let age_sec = if stroke.created_ms == 0 {
             0.0
         } else {

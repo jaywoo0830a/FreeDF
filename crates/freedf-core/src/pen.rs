@@ -785,11 +785,12 @@ pub struct InkBleed {
 impl Default for InkBleed {
     fn default() -> Self {
         Self {
-            enabled: false,
-            max_spread_pt: 5.0,
-            start_rate: 0.6,
-            mid_rate: 0.25,
-            end_rate: 0.45,
+            // 만년필 전용 잉크 번짐 — 기본 활성화, 은은하게 (사용자 요청).
+            enabled: true,
+            max_spread_pt: 4.0,
+            start_rate: 0.45,
+            mid_rate: 0.2,
+            end_rate: 0.35,
         }
     }
 }
