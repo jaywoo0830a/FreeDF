@@ -2106,7 +2106,7 @@ impl FreeDfApp {
                 let dir = egui::vec2(az.cos(), az.sin());
                 let perp = egui::vec2(-dir.y, dir.x);
                 // 볼펜은 볼 반지름만큼 뒤에서 배럴이 시작 (볼이 좌표에 놓임).
-                let ball_r = if is_fountain { 0.0 } else { 2.4 };
+                let ball_r = if is_fountain { 0.0 } else { 1.2 };
                 let tip = pos - dir * ball_r;
                 let tail = pos + dir * len;
                 let tl = tail + perp * w;
