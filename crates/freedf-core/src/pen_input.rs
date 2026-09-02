@@ -405,7 +405,7 @@ mod windows_raw {
     // WndProc은 상태 없는 함수여야 하므로, 스레드 로컬로 송신부를 공유합니다
     // (창과 메시지 루프가 같은 스레드에서 돌기 때문에 안전합니다).
     thread_local! {
-        static REPORT_TX: RefCell<Option<Sender<RawReport>>>> = RefCell::new(None);
+        static REPORT_TX: RefCell<Option<Sender<RawReport>> > = RefCell::new(None);
     }
 
     pub(super) fn spawn() -> Option<Receiver<RawReport>> {
