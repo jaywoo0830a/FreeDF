@@ -409,6 +409,8 @@ impl FreeDfApp {
             style: self.paper_style,
             color: self.paper_color,
             spacing: self.paper_spacing,
+            line_color: self.paper_line_color,
+            line_width: self.paper_line_width,
         };
         let default_size = self.paper_size.size_pts();
         let (idx, size, paper) = match target {
@@ -420,8 +422,8 @@ impl FreeDfApp {
                     .paper_on_or(self.current_page, default_paper);
                 (self.current_page + 1, size, paper)
             }
-            InsertTarget::FrontBegin => (0, default_size, default_paper),
-            InsertTarget::FrontEnd => (total, default_size, default_paper),
+            InsertTarget::AtVeryFront => (0, default_size, default_paper),
+            InsertTarget::AtVeryBack => (total, default_size, default_paper),
             InsertTarget::BeforeCurrent => (self.current_page, default_size, default_paper),
             InsertTarget::AfterCurrent => (self.current_page + 1, default_size, default_paper),
         };
@@ -844,6 +846,8 @@ impl FreeDfApp {
                         paper.style,
                         paper.color,
                         paper.spacing,
+                        paper.line_color,
+                        paper.line_width,
                     );
                 }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();

@@ -41,8 +41,8 @@ pub(crate) use freedf_core::model::{PageIndex, StrokePoint, ToolType};
 pub(crate) use freedf_core::notes::NotesManager;
 pub(crate) use freedf_core::outline::{flatten, OutlineNode};
 pub(crate) use freedf_core::paper::{
-    clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle, PAPER_COLORS,
-    PAPER_WHITE,
+    clamp_line_width, clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle,
+    PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
     base_width_factor, ink_modifier, ink_profile_hint, uses_own_profile, ColorFamily, Palette,
@@ -289,9 +289,9 @@ pub(crate) enum InsertTarget {
     /// 현재 페이지의 크기/용지를 그대로 써서 바로 다음에 삽입
     FromCurrent,
     /// 문서 맨 앞(0번)에 삽입
-    FrontBegin,
+    AtVeryFront,
     /// 문서 맨 끝에 삽입
-    FrontEnd,
+    AtVeryBack,
     /// 현재 페이지 앞에 삽입
     BeforeCurrent,
     /// 현재 페이지 뒤에 삽입
@@ -410,6 +410,9 @@ pub struct TabEntry {
     paper_size: PaperSize,
     /// 줄/격자/점 간격 기본값 (pt)
     paper_spacing: f32,
+    /// 줄/격자/점 색/두께 기본값 (pt) — 페이퍼 라인 옵션.
+    paper_line_color: [u8; 4],
+    paper_line_width: f32,
 }
 
 /// 펜 커서 모양.
@@ -494,6 +497,10 @@ pub struct FreeDfApp {
     paper_size: PaperSize,
     /// 줄/격자/점 간격 기본값 (pt)
     paper_spacing: f32,
+    /// 줄/격자/점 색 (RGBA)
+    paper_line_color: [u8; 4],
+    /// 줄/격자/점 두께 기본값 (pt)
+    paper_line_width: f32,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -523,6 +530,10 @@ pub struct FreeDfApp {
     /// While the window is narrow the UI collapses to canvas + palette; set to
     /// `true` to temporarily show the full chrome (tabs/toolbar) again.
     narrow_chrome_expanded: bool,
+    /// Manual "focus" mode: hides all toolbars regardless of the window width
+    /// (toggled with Ctrl+Shift+M, or from the floating pill). Always shows the
+    /// writing palette; the pill restores the chrome.
+    manual_minimal: bool,
 
     // ---------- Search ----------
     search_query: String,
@@ -632,6 +643,12 @@ impl FreeDfApp {
         } else {
             24.0
         };
+        let paper_line_color = if has { s.paper_line_color } else { PAPER_LINE };
+        let paper_line_width = if has {
+            clamp_line_width(s.paper_line_width)
+        } else {
+            PAPER_LINE_WIDTH_PT
+        };
         let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
         let library_width = if has { s.library_width } else { 260.0 };
@@ -696,6 +713,8 @@ impl FreeDfApp {
             paper_color,
             paper_size,
             paper_spacing,
+            paper_line_color,
+            paper_line_width,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -709,6 +728,7 @@ impl FreeDfApp {
             prev_texture: None,
             transition_last_page: 0,
             narrow_chrome_expanded: false,
+            manual_minimal: false,
             search_query: String::new(),
             search_runs: Vec::new(),
             search_matches: Vec::new(),
@@ -757,6 +777,8 @@ impl FreeDfApp {
             paper_color: self.paper_color,
             paper_size: self.paper_size,
             paper_spacing: self.paper_spacing,
+            paper_line_color: self.paper_line_color,
+            paper_line_width: self.paper_line_width,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
@@ -777,6 +799,8 @@ impl FreeDfApp {
                 style: self.paper_style,
                 color: self.paper_color,
                 spacing: self.paper_spacing,
+                line_color: self.paper_line_color,
+                line_width: self.paper_line_width,
             },
         )
     }
@@ -791,6 +815,8 @@ impl FreeDfApp {
                         style: self.paper_style,
                         color: self.paper_color,
                         spacing: self.paper_spacing,
+                        line_color: self.paper_line_color,
+                        line_width: self.paper_line_width,
                     },
                 );
                 self.render_dirty = true;
@@ -821,6 +847,8 @@ impl FreeDfApp {
             paper_color: self.paper_color,
             paper_size: self.paper_size,
             paper_spacing: self.paper_spacing,
+            paper_line_color: self.paper_line_color,
+            paper_line_width: self.paper_line_width,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
@@ -868,6 +896,8 @@ impl FreeDfApp {
         self.paper_color = s.paper_color;
         self.paper_size = s.paper_size;
         self.paper_spacing = clamp_spacing(s.paper_spacing);
+        self.paper_line_color = s.paper_line_color;
+        self.paper_line_width = clamp_line_width(s.paper_line_width);
         self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
         self.library_width = s.library_width.clamp(160.0, 460.0);
@@ -977,6 +1007,14 @@ impl FreeDfApp {
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::E)) {
             self.export_png();
         }
+        if ctrl && shift && ctx.input(|i| i.key_pressed(egui::Key::M)) {
+            // 최소(포커스) 모드: 화면 크기와 무관하게 모든 툴바를 숨깁니다.
+            // 팔레트는 항상 켜 두고, 우상단 pill(☰ Show UI)로 복귀합니다.
+            self.manual_minimal = !self.manual_minimal;
+            self.narrow_chrome_expanded = false;
+            self.show_palette = true;
+            self.save_default_session();
+        }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::F)) {
             // Toggle the search row; Ctrl+F shows it and focuses the box.
             self.show_search = !self.show_search;
@@ -1034,7 +1072,7 @@ impl FreeDfApp {
     /// - 크롬(탭/툴바)이 접혀 있으면 "☰ Show UI"를 눌러 전체 크롬을 잠시
     ///   다시 켜고, 켜져 있으면 "✕"로 다시 접습니다.
     /// - 필기 팔레트(오른쪽 색상 바)도 여기서 켜고 끌 수 있습니다.
-    fn compact_pill(&mut self, ctx: &egui::Context, minimal: bool) {
+    fn compact_pill(&mut self, ctx: &egui::Context, minimal: bool, narrow: bool) {
         egui::Area::new(egui::Id::new("compact_pill"))
             .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
             .order(egui::Order::Foreground)
@@ -1051,13 +1089,22 @@ impl FreeDfApp {
                             if ui
                                 .button(label)
                                 .on_hover_text(
-                                    "Show/hide the tabs & toolbar. The canvas and \
-                                     palette stay available for quick multitasking.",
+                                    "Show/hide all toolbars. The canvas and palette stay \
+                                     available. Shortcut: Ctrl+Shift+M",
                                 )
                                 .clicked()
                             {
-                                // minimal → 크롬 켬(expanded=true), 아니면 접음.
-                                self.narrow_chrome_expanded = minimal;
+                                if minimal {
+                                    // 숨김 → 크롬 표시.
+                                    self.manual_minimal = false;
+                                    self.narrow_chrome_expanded = true;
+                                } else if narrow {
+                                    // 좁은 자동 모드에서 크롬 표시 → 다시 접기.
+                                    self.narrow_chrome_expanded = false;
+                                } else {
+                                    // 넓은 창에서 크롬 표시 → 수동 최소 모드로.
+                                    self.manual_minimal = true;
+                                }
                             }
                             if ui
                                 .selectable_label(self.show_palette, "Palette")
@@ -1184,11 +1231,14 @@ impl eframe::App for FreeDfApp {
             None => window_w < COMPACT_MIN_WIDTH,
         };
         if !narrow {
+            // 자동 접힘은 창이 다시 넓어지면 해제하되, 수동 최소 모드는 유지.
             self.narrow_chrome_expanded = false;
         }
-        // 문서가 하나도 없으면(시작 화면) 좁아도 크롬을 유지해 파일을
-        // 열 수 있게 합니다.
-        let minimal = narrow && !self.narrow_chrome_expanded && !self.tabs.is_empty();
+        // 자동: 좁은 창 & 아직 크롬을 다시 켜지 않았을 때 (시작 화면 제외).
+        let auto_minimal = narrow && !self.narrow_chrome_expanded && !self.tabs.is_empty();
+        // 수동: 화면 크기와 무관하게 Ctrl+Shift+M(또는 플로팅 버튼)으로
+        // 모든 툴바를 숨깁니다 (팔레트는 유지).
+        let minimal = self.manual_minimal || auto_minimal;
 
         if !minimal {
             self.tabs_bar(ui);
@@ -1224,9 +1274,9 @@ impl eframe::App for FreeDfApp {
             self.canvas(ui);
         });
 
-        // 좁은 창에서 크롬 토글/팔레트 제어 (멀티태스킹용 플로팅 버튼).
-        if narrow {
-            self.compact_pill(&ctx, minimal);
+        // 플로팅 제어: 좁은 창이거나 수동 최소 모드일 때만 표시 (복귀 장치).
+        if narrow || self.manual_minimal {
+            self.compact_pill(&ctx, minimal, narrow);
         }
 
         self.fallback_dialog(&ctx);

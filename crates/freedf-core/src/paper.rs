@@ -48,6 +48,28 @@ pub const PAPER_WHITE: [u8; 4] = [255, 255, 255, 255];
 /// 그리드 간격 (포인트, 약 6mm).
 pub const GRID_SPACING_PTS: f32 = 24.0;
 
+/// 기본 줄/격자/점 색 (약간 투명한 회색).
+pub const PAPER_LINE: [u8; 4] = [120, 120, 140, 110];
+/// 기본 줄/격자/점 두께 (포인트).
+pub const PAPER_LINE_WIDTH_PT: f32 = 1.2;
+
+fn default_line_color() -> [u8; 4] {
+    PAPER_LINE
+}
+
+fn default_line_width() -> f32 {
+    PAPER_LINE_WIDTH_PT
+}
+
+/// 유효한 용지 라인 두께(포인트). 0.25~8로 제한.
+pub fn clamp_line_width(w: f32) -> f32 {
+    if !w.is_finite() || w <= 0.0 {
+        PAPER_LINE_WIDTH_PT
+    } else {
+        w.clamp(0.25, 8.0)
+    }
+}
+
 /// 표준 종이 크기.
 ///
 /// 새 노트/페이지를 만들 때 물리적 PDF 페이지 크기로 사용합니다.
@@ -114,10 +136,10 @@ impl Default for PaperSize {
     }
 }
 
-/// 한 페이지의 용지 설정 (스타일 + 배경 색 + 줄/격자 간격).
+/// 한 페이지의 용지 설정 (스타일 + 배경 색 + 줄/격자 간격 + 라인 두께/색).
 ///
 /// 페이지마다 독립적으로 저장되어 노트 내에서 페이지별로 다른
-/// 그리드/줄/점선과 배경 색, 간격을 쓸 수 있습니다.
+/// 그리드/줄/점선과 배경 색, 간격, 라인 굵기/색을 쓸 수 있습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PagePaper {
     pub style: PaperStyle,
@@ -125,6 +147,12 @@ pub struct PagePaper {
     /// 줄/격자/점 간격 (포인트). 0 이하면 `GRID_SPACING_PTS`로 대체.
     #[serde(default = "default_spacing")]
     pub spacing: f32,
+    /// 줄/격자/점 색 (RGBA).
+    #[serde(default = "default_line_color")]
+    pub line_color: [u8; 4],
+    /// 줄/격자/점 두께 (포인트).
+    #[serde(default = "default_line_width")]
+    pub line_width: f32,
 }
 
 fn default_spacing() -> f32 {
@@ -137,6 +165,8 @@ impl Default for PagePaper {
             style: PaperStyle::Blank,
             color: PAPER_WHITE,
             spacing: GRID_SPACING_PTS,
+            line_color: PAPER_LINE,
+            line_width: PAPER_LINE_WIDTH_PT,
         }
     }
 }

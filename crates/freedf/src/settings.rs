@@ -4,7 +4,7 @@
 //! - **문서별 세션**(마지막 페이지, 줌/팬 등) → 노트 폴더(또는 PDF 옆) `session.json`
 
 use freedf_core::model::ToolType;
-use freedf_core::paper::{PaperSize, PaperStyle};
+use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
 use freedf_core::pen::{ColorFamily, PressureCurve};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,12 @@ pub struct SessionState {
     /// 줄/격자/점 간격 (포인트) 기본값
     #[serde(default = "default_paper_spacing")]
     pub paper_spacing: f32,
+    /// 줄/격자/점 색 (RGBA) 기본값
+    #[serde(default = "default_paper_line_color")]
+    pub paper_line_color: [u8; 4],
+    /// 줄/격자/점 두께 (포인트) 기본값
+    #[serde(default = "default_paper_line_width")]
+    pub paper_line_width: f32,
     pub show_notes: bool,
     pub show_outline: bool,
     /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
@@ -80,6 +86,14 @@ fn default_tool_order() -> Vec<ToolType> {
 
 fn default_paper_spacing() -> f32 {
     24.0
+}
+
+fn default_paper_line_color() -> [u8; 4] {
+    PAPER_LINE
+}
+
+fn default_paper_line_width() -> f32 {
+    PAPER_LINE_WIDTH_PT
 }
 
 fn default_library_width() -> f32 {
@@ -125,6 +139,8 @@ impl Default for SessionState {
             paper_color: [255, 255, 255, 255],
             paper_size: PaperSize::A4,
             paper_spacing: 24.0,
+            paper_line_color: PAPER_LINE,
+            paper_line_width: PAPER_LINE_WIDTH_PT,
             show_notes: true,
             show_outline: false,
             library_width: 260.0,

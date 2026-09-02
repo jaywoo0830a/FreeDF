@@ -431,6 +431,7 @@ mod tests {
             style: crate::paper::PaperStyle::Grid,
             color: [240, 248, 241, 255],
             spacing: 24.0,
+            ..Default::default()
         };
         store.set_paper(0, grid);
         store.set_paper(2, PagePaper::default());
@@ -451,6 +452,7 @@ mod tests {
             style: crate::paper::PaperStyle::Ruled,
             color: [253, 247, 231, 255],
             spacing: 36.0,
+            ..Default::default()
         });
         let json = store.to_json();
         let restored = AnnotationStore::from_json(&json).expect("JSON 파싱 실패");

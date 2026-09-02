@@ -4,7 +4,9 @@
 //! "메모한 페이지 내보내기" 기능을 제공합니다.
 
 use freedf_core::model::{Stroke, StrokePoint};
-use freedf_core::paper::{clamp_spacing, paper_dots, paper_lines, PaperStyle};
+use freedf_core::paper::{
+    clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
+};
 use freedf_core::pen::{base_width_factor, ink_modifier, uses_own_profile, PressureCurve};
 use image::{Rgba, RgbaImage};
 
@@ -24,6 +26,8 @@ pub fn draw_paper(
     style: PaperStyle,
     color: [u8; 4],
     spacing: f32,
+    line_color: [u8; 4],
+    line_width: f32,
 ) {
     // 배경 색 틴트 (흰색이 아닐 때만)
     if color != [255, 255, 255, 255] {
@@ -42,21 +46,22 @@ pub fn draw_paper(
             }
         }
     }
-    // 그리드/줄 선
+    // 그리드/줄 선 (색/두께는 페이지별 설정, 두께는 포인트 단위 → scale 곱)
     let spacing = clamp_spacing(spacing);
-    let line = [120, 120, 140, 100];
+    let line_w = (clamp_line_width(line_width) * scale).clamp(0.5, 64.0);
     for [x0, y0, x1, y1] in paper_lines(w_pts, h_pts, style, spacing) {
         draw_segment(
             img,
             [x0 * scale, y0 * scale],
             [x1 * scale, y1 * scale],
-            2.0,
-            line,
+            line_w,
+            line_color,
         );
     }
     // 점선
+    let dot_r = (line_w * 0.4).max(0.6);
     for [x, y] in paper_dots(w_pts, h_pts, style, spacing) {
-        draw_disk(img, [x * scale, y * scale], 2.0, line);
+        draw_disk(img, [x * scale, y * scale], dot_r, line_color);
     }
 }
 

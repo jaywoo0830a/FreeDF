@@ -48,9 +48,9 @@ native file dialogs, Windows Ink pressure).
   Fountain) that are **visibly different** even with a mouse: Ballpoint draws
   **thin & steady** (~0.6× the Width setting), Fountain draws **thicker** (~1.25×)
   and gets **thinner when you write fast** for a live calligraphy feel, and Pen is
-  the medium, pressure-following reference (each tool shows its profile hint under
-  the Width slider). Strokes are stored in page coordinates, so they never drift
-  under zoom/pan
+  the medium, pressure-following reference (each tool's profile hint appears
+  on hover over its Width slider). Strokes are stored in page coordinates, so
+  they never drift under zoom/pan
 - ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
   hand Pan tool complete the toolkit
 - 🔖 **Text-aware highlighter** — by default the Highlighter recognizes the
@@ -108,17 +108,18 @@ native file dialogs, Windows Ink pressure).
   of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
   Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
   toolbar)
-- 🪟 **Split-view focus mode** — when the window is **half or narrower than the
-  monitor** (Windows snap / split view), FreeDF auto-collapses to just the
-  canvas + palette; a small top-right control (`☰ Show UI`) brings the tabs and
-  toolbar back on demand for multitasking, and `✕ Hide UI` hides them again
 - 🪟 **Split-view focus mode** — when the window gets narrow (e.g. Windows split
   view), FreeDF auto-collapses to **canvas + writing palette** only; a small
   floating control (top-right “☰ Show UI”) restores the tabs/toolbar on demand,
-  and toggles the palette — great for multitasking side-by-side
+  and toggles the palette — great for multitasking side-by-side. `Ctrl+Shift+M`
+  toggles the same focus mode at **any** window size
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
   dotted) and color (white, cream, ice blue, mint, light gray), applied
   independently and exported to PNG
+- 🎨 **Custom ruling** — the **line color** (any RGBA) and **line thickness** of
+  the ruled / grid / dotted paper are adjustable per page; the thickness is
+  stored in page points (scales with zoom & export). Settings live in the Paper
+  options next to the spacing field
 - 🔢 **Numerical paper spacing** — the ruled/grid/dotted spacing is a number
   (in points, 12–120) you can type directly in the Paper options; it is saved
   per page
@@ -206,6 +207,8 @@ freedf --open /path/to/document.pdf
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |
 | `Ctrl+S` | Save annotations |
 | `Ctrl+E` | Export current page as PNG |
+| `Ctrl+Shift+M` | Toggle **focus mode**: hide all toolbars (any window size);
+  canvas + palette remain, `☰ Show UI` (top-right) or the shortcut restores them |
 | `PgDn` / `PgUp` | Next / previous page (on a note, PgDn adds a new page at the end) |
 | `←` / `→` | Previous / next page |
 | `+` / `-` | Zoom in / out |

@@ -602,24 +602,36 @@ impl FreeDfApp {
     }
 
     /// Draws the paper grid / ruling / dots onto the page (notes only).
+    ///
+    /// The line **color and thickness are per-page settings** (`PagePaper`):
+    /// thickness is stored in page points and scaled with the zoom so it stays
+    /// proportional to the page, like real printed ruling.
     pub(crate) fn paint_paper(&self, painter: &egui::Painter, origin: Pos2) {
         let w = self.page_size_pts[0];
         let h = self.page_size_pts[1];
         let paper = self.current_page_paper();
         let style = paper.style;
         let spacing = paper.spacing;
-        let line = Color32::from_rgba_unmultiplied(120, 120, 140, 100);
+        let line = Color32::from_rgba_unmultiplied(
+            paper.line_color[0],
+            paper.line_color[1],
+            paper.line_color[2],
+            paper.line_color[3],
+        );
+        let zoom = self.view.zoom;
+        let stroke_w = (paper.line_width * zoom).clamp(0.5, 24.0);
+        let dot_r = (paper.line_width * zoom * 0.4).clamp(0.6, 8.0);
         for [x0, y0, x1, y1] in paper_lines(w, h, style, spacing) {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);
             painter.line_segment(
                 [origin + Vec2::new(a[0], a[1]), origin + Vec2::new(b[0], b[1])],
-                Stroke::new(2.0, line),
+                Stroke::new(stroke_w, line),
             );
         }
         for [x, y] in paper_dots(w, h, style, spacing) {
             let v = self.view.page_to_view([x, y]);
-            painter.circle_filled(origin + Vec2::new(v[0], v[1]), 2.0, line);
+            painter.circle_filled(origin + Vec2::new(v[0], v[1]), dot_r, line);
         }
     }
 

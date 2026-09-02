@@ -164,6 +164,7 @@ mod tests {
                 style: PaperStyle::Grid,
                 color: PAPER_WHITE,
                 spacing: GRID_SPACING_PTS,
+                ..Default::default()
             },
         );
         store.set_paper(
@@ -172,6 +173,7 @@ mod tests {
                 style: PaperStyle::Ruled,
                 color: PAPER_WHITE,
                 spacing: GRID_SPACING_PTS,
+                ..Default::default()
             },
         );
 

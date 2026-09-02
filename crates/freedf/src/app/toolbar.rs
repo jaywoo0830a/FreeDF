@@ -165,8 +165,8 @@ impl FreeDfApp {
                 ui.menu_button(icon_text(ui, "Insert Page", icons::PLUS_SQUARE), |ui| {
                     let insert = [
                         (InsertTarget::FromCurrent, "From current page"),
-                        (InsertTarget::FrontBegin, "Front begin"),
-                        (InsertTarget::FrontEnd, "Front end"),
+                        (InsertTarget::AtVeryFront, "At the very front"),
+                        (InsertTarget::AtVeryBack, "At the very back"),
                         (InsertTarget::BeforeCurrent, "Before current page"),
                         (InsertTarget::AfterCurrent, "After current page"),
                     ];
@@ -294,6 +294,41 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
+                // 줄/격자/점 색과 두께 (페이지에 바로 적용, 새 페이지 기본값으로 기억).
+                let mut line_color = Color32::from_rgba_unmultiplied(
+                    self.paper_line_color[0],
+                    self.paper_line_color[1],
+                    self.paper_line_color[2],
+                    self.paper_line_color[3],
+                );
+                if ui
+                    .color_edit_button_srgba(&mut line_color)
+                    .on_hover_text("Line color (ruled / grid / dotted)")
+                    .changed()
+                {
+                    self.paper_line_color =
+                        [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.paper_line_width)
+                            .range(0.25..=8.0)
+                            .speed(0.05)
+                            .fixed_decimals(2)
+                            .prefix("Line ")
+                            .suffix("pt"),
+                    )
+                    .on_hover_text("Line thickness (ruled / grid / dotted)")
+                    .changed()
+                {
+                    self.paper_line_width = clamp_line_width(self.paper_line_width);
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
                 });
             });
 
@@ -410,21 +445,18 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
-                        if ui
-                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
-                            .changed()
-                        {
-                            self.save_session();
-                        }
-                        // 도구별 프로필 설명 (같은 Width여도 실제 굵기가 다름).
+                        // 도구별 프로필 설명은 Width 슬라이더에 마우스를 올리면
+                        // 툴팁으로 표시됩니다 (항상 보이는 라벨은 제거).
                         let hint = ink_profile_hint(self.tool);
-                        if !hint.is_empty() {
-                            ui.label(
-                                egui::RichText::new(hint)
-                                    .weak()
-                                    .small()
-                                    .color(ui.visuals().weak_text_color()),
-                            );
+                        let width_resp =
+                            ui.add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"));
+                        let width_resp = if hint.is_empty() {
+                            width_resp.on_hover_text("Stroke width")
+                        } else {
+                            width_resp.on_hover_text(hint)
+                        };
+                        if width_resp.changed() {
+                            self.save_session();
                         }
                         egui::ComboBox::from_id_salt("pen_cursor_style")
                             .selected_text(self.pen_cursor_style.label())

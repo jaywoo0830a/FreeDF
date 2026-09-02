@@ -114,6 +114,8 @@ impl FreeDfApp {
         tab.paper_color = self.paper_color;
         tab.paper_size = self.paper_size;
         tab.paper_spacing = self.paper_spacing;
+        tab.paper_line_color = self.paper_line_color;
+        tab.paper_line_width = self.paper_line_width;
     }
 
     /// `tabs[idx]`의 상태를 활성 문서로 복원합니다. (활성 탭의 document는 None이 됨)
@@ -152,6 +154,8 @@ impl FreeDfApp {
             paper_color,
             paper_size,
             paper_spacing,
+            paper_line_color,
+            paper_line_width,
         ) = {
             let tab = self.tabs.get_mut(idx).expect("tab index in range");
             (
@@ -188,6 +192,8 @@ impl FreeDfApp {
                 tab.paper_color,
                 tab.paper_size,
                 tab.paper_spacing,
+                tab.paper_line_color,
+                tab.paper_line_width,
             )
         };
         // 일시적인 렌더/입력 상태 초기화.
@@ -235,6 +241,8 @@ impl FreeDfApp {
         self.paper_color = paper_color;
         self.paper_size = paper_size;
         self.paper_spacing = paper_spacing;
+        self.paper_line_color = paper_line_color;
+        self.paper_line_width = paper_line_width;
         self.search_runs = Vec::new();
         self.status = None;
         self.search_update();
@@ -313,6 +321,8 @@ impl FreeDfApp {
             paper_color: self.paper_color,
             paper_size: self.paper_size,
             paper_spacing: self.paper_spacing,
+            paper_line_color: self.paper_line_color,
+            paper_line_width: self.paper_line_width,
         };
         self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
