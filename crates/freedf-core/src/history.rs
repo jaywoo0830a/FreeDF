@@ -4,13 +4,17 @@
 //! 아끼고, `AnnotationStore::apply_edit` / `apply_inverse` 로 되돌립니다.
 
 use crate::model::{PageIndex, Stroke};
+use serde::{Deserialize, Serialize};
 
 /// 저장소에 적용할 수 있는 단일 변경 단위.
 ///
 /// 두 가지뿐이므로 undo/redo가 매우 단순합니다:
 /// - 추가(그리기) ↔ 제거(지우개/전체 지우기)가 서로의 역연산
 /// - "페이지 전체 지우기"는 `RemoveStrokes`(모든 스트로크)로 표현
-#[derive(Debug, Clone, PartialEq)]
+///
+/// FreeDF v2: DB의 `doc_edits` 테이블(영속 편집 저널)에도 같은 구조로 저장되어
+/// 앱 재시작 후 undo 스택을 복원합니다.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Edit {
     /// 스트로크 추가 (지우개/전체 지우기의 undo 복원에도 사용).
     AddStrokes { page: PageIndex, strokes: Vec<Stroke> },

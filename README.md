@@ -243,9 +243,10 @@ cargo build --release -p freedf
 
 ```bash
 docker compose up -d db     # 시작 (Mac / Linux / Windows WSL2 동일)
+./scripts/up.sh             # 시작 + 준비 대기 (docker/docker.exe 자동 감지)
+./scripts/down.sh           # 중지 (데이터 유지)
+./scripts/down.sh --wipe    # 중지 + 데이터 완전 삭제
 docker compose logs -f db   # 로그 확인
-docker compose down         # 중지 (데이터 유지)
-docker compose down -v      # 데이터까지 완전 삭제
 ```
 
 - **Win 11 (WSL2)**: Docker Desktop의 WSL Integration을 켜고 WSL 터미널에서 실행.
@@ -259,9 +260,12 @@ docker compose down -v      # 데이터까지 완전 삭제
 | 노트/PDF 문서 | `documents` | PDF 본문은 `BYTEA` (단일 진실 공급원) |
 | 주석(획) | `strokes` | **획 단위 행** — 그릴 때마다 증분 INSERT, 지우개는 DELETE |
 | 용지/북마크 | `pages` | 페이지별 그리드/색/간격/선 두께 + 북마크 |
+| **영속 히스토리** | `doc_edits` | 그리기/지우기 한 번 = 행 하나(Edit JSONB) — **재시작 후에도 undo/redo 복원**, 문서당 500건 유지 |
+| **미디어/첨부** | `media` | 이미지/오디오/파일용 스키마 준비 (클라우드·미디어 기능 대비) |
 | GUI 세션 | `sessions` (문서별) / `app_state` (전역) | JSONB |
 | 최근 목록 | `recents` | `ON DELETE CASCADE` |
 | 이벤트 로그 | `event_log` | 구조화 JSONB |
+| 제목 전문 검색 | GIN 표현식 인덱스 (`documents_title_fts_idx`) | 라이브러리 검색 대비 |
 
 외부 PDF를 열면 **DB로 import**되어(원본 파일은 그대로 두고) 어느 기기에서나
 같은 데이터를 봅니다. 스트로크 id는 전역 시퀀스(`stroke_id_seq`)로 할당되어

@@ -19,7 +19,10 @@ use std::sync::{Arc, Mutex};
 /// 기본 연결 문자열 (docker-compose.yml과 일치).
 pub const DEFAULT_DATABASE_URL: &str = "postgres://freedf:freedf@localhost:5432/freedf";
 
-const MIGRATIONS: &[(&str, &str)] = &[("0001_init", include_str!("../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_init", include_str!("../migrations/0001_init.sql")),
+    ("0002_extensions", include_str!("../migrations/0002_extensions.sql")),
+];
 
 /// 문서 행 (documents 테이블).
 #[derive(Debug, Clone)]
@@ -549,6 +552,42 @@ impl Db {
         );
     }
 
+    // ---------- edit journal (영속 히스토리) ----------
+
+    /// 편집 하나를 저널에 기록하고 문서당 최근 500건만 유지합니다.
+    pub fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
+        let mut c = conn_guard(&self.conn);
+        let value = serde_json::to_value(edit).unwrap_or(Value::Null);
+        let now = now_ms();
+        let _ = c.execute(
+            "INSERT INTO doc_edits (doc_id, edit, created_at) VALUES ($1, $2, $3)",
+            &[&doc_id, &value, &now],
+        );
+        let _ = c.execute(
+            "DELETE FROM doc_edits WHERE doc_id = $1 AND id NOT IN \
+             (SELECT id FROM doc_edits WHERE doc_id = $1 ORDER BY id DESC LIMIT 500)",
+            &[&doc_id],
+        );
+    }
+
+    /// 편집 저널을 시간 순으로 로드합니다 (재시작 후 undo 스택 복원용).
+    pub fn load_edits(&self, doc_id: i64) -> Vec<freedf_core::history::Edit> {
+        let mut c = conn_guard(&self.conn);
+        c.query(
+            "SELECT edit FROM doc_edits WHERE doc_id = $1 ORDER BY id ASC",
+            &[&doc_id],
+        )
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| {
+                    let v: Value = r.get(0);
+                    serde_json::from_value(v).ok()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     // ---------- event log ----------
 
     pub fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
@@ -661,11 +700,43 @@ mod tests {
         // ── event log ──
         db.insert_log(123, 1, &serde_json::json!({"kind": "AppStart"}));
 
+        // ── 영속 편집 저널 (doc_edits) ──
+        use freedf_core::history::Edit;
+        db.log_edit(
+            doc_id,
+            &Edit::AddStrokes {
+                page: 0,
+                strokes: strokes.clone(),
+            },
+        );
+        db.log_edit(
+            doc_id,
+            &Edit::RemoveStrokes {
+                page: 0,
+                strokes: strokes.clone(),
+            },
+        );
+        let edits = db.load_edits(doc_id);
+        assert_eq!(edits.len(), 2);
+        assert!(matches!(edits[0], Edit::AddStrokes { .. }));
+        assert!(matches!(edits[1], Edit::RemoveStrokes { .. }));
+
+        // ── media 테이블 존재 (스키마 준비 확인) ──
+        {
+            let mut c = conn_guard(&db.conn);
+            let n: i64 = c
+                .query_one("SELECT count(*) FROM media", &[])
+                .map(|r| r.get(0))
+                .unwrap_or(-1);
+            assert_eq!(n, 0);
+        }
+
         // ── delete + cascade ──
         db.delete_document(doc_id).expect("delete");
         assert!(db.get_document(doc_id).is_none());
         assert_eq!(db.load_store(doc_id).total_stroke_count(), 0);
         assert!(db.load_session(doc_id).is_none());
         assert!(db.load_recents().iter().all(|r| r.doc_id != doc_id));
+        assert!(db.load_edits(doc_id).is_empty());
     }
 }

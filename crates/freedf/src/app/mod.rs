@@ -965,6 +965,25 @@ impl FreeDfApp {
         }
     }
 
+    /// 편집을 메모리 히스토리에 쌓고 DB 저널(`doc_edits`)에도 기록합니다.
+    /// (재시작 후 undo 스택 복원의 근거 — 그리기/지우기/전체 지우기마다 호출)
+    pub(crate) fn push_history(&mut self, edit: Edit) {
+        self.history.push(edit.clone());
+        if let Some(doc_id) = self.doc_id {
+            self.db.log_edit(doc_id, &edit);
+        }
+    }
+
+    /// DB 편집 저널을 재생해 undo 스택을 복원합니다 (문서 열기/재로드 시).
+    pub(crate) fn restore_history_from_db(&mut self) {
+        self.history = History::new(256);
+        if let Some(doc_id) = self.doc_id {
+            for edit in self.db.load_edits(doc_id) {
+                self.history.push(edit);
+            }
+        }
+    }
+
     /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
     fn apply_session(&mut self, s: &crate::settings::SessionState, page_count: usize) {
         self.current_page = s.page.min(page_count.saturating_sub(1));

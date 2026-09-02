@@ -261,7 +261,8 @@ impl FreeDfApp {
                 self.file_name = row.title.clone();
                 self.document = Some(doc);
                 self.store = self.db.load_store(doc_id);
-                self.history = History::new(256);
+                // 편집 저널 재생 → 재시작 전의 undo/redo 가능.
+                self.restore_history_from_db();
                 self.active_stroke = None;
                 self.pan_last = None;
                 self.middle_pan_last = None;
@@ -705,7 +706,7 @@ impl FreeDfApp {
             if let Some(doc_id) = self.doc_id {
                 self.db.delete_strokes(doc_id, &ids);
             }
-            self.history.push(Edit::RemoveStrokes {
+            self.push_history(Edit::RemoveStrokes {
                 page: self.current_page,
                 strokes: removed.clone(),
             });
@@ -826,7 +827,7 @@ impl FreeDfApp {
         };
         // DB에 저장된 최신 상태로 재로드 (메모리 변경 폐기).
         self.store = self.db.load_store(doc_id);
-        self.history = History::new(256);
+        self.restore_history_from_db();
         self.render_dirty = true;
         self.status = Some("Annotations reloaded from database.".to_string());
     }

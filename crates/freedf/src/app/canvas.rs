@@ -194,7 +194,7 @@ impl FreeDfApp {
                 ),
             };
             if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
-                self.history.push(Edit::AddStrokes {
+                self.push_history(Edit::AddStrokes {
                     page: self.current_page,
                     strokes: vec![stroke.clone()],
                 });
@@ -267,7 +267,7 @@ impl FreeDfApp {
             self.db
                 .insert_strokes(doc_id, self.current_page as i32, &strokes);
         }
-        self.history.push(Edit::AddStrokes {
+        self.push_history(Edit::AddStrokes {
             page: self.current_page,
             strokes: strokes.clone(),
         });
@@ -1143,7 +1143,7 @@ impl FreeDfApp {
                                     removed.iter().map(|s| s.id as i64).collect();
                                 self.db.delete_strokes(doc_id, &ids);
                             }
-                            self.history.push(Edit::RemoveStrokes {
+                            self.push_history(Edit::RemoveStrokes {
                                 page: self.current_page,
                                 strokes: removed.clone(),
                             });
