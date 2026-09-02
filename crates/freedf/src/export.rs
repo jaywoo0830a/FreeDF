@@ -7,7 +7,10 @@ use freedf_core::model::{Stroke, StrokePoint, ToolType};
 use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
 };
-use freedf_core::pen::{base_width_factor, ink_modifier, uses_own_profile, PressureCurve};
+use freedf_core::pen::{
+    base_width_factor, ink_modifier, taper_factors, uses_own_profile, uses_taper, PressureCurve,
+    TAPER_LEN_PTS,
+};
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
@@ -77,6 +80,10 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
         let r = if stroke.tool == ToolType::Highlighter {
             // 마커: 일정한 두께
             stroke.width * scale / 2.0
+        } else if uses_own_profile(stroke.tool) {
+            stroke.width * scale * base_width_factor(stroke.tool)
+                * ink_modifier(stroke.tool, pts[0].pressure, 0.0)
+                / 2.0
         } else {
             curve.apply(stroke.width, pts[0].pressure)
                 * base_width_factor(stroke.tool)
@@ -87,7 +94,18 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
         return;
     }
     let wfactor = base_width_factor(stroke.tool);
-    for w in pts.windows(2) {
+    // 화면과 동일: 펜/만년필은 양끝 테이퍼 (볼펜/마커는 일정).
+    let tapers: Vec<f32> = if uses_taper(stroke.tool) {
+        taper_factors(pts, TAPER_LEN_PTS)
+    } else {
+        vec![1.0; pts.len()]
+    };
+    // 만년필 시작점 잉크 방울 (화면과 동일).
+    if stroke.tool == ToolType::Fountain {
+        let blob = stroke.width * scale * wfactor * ink_modifier(ToolType::Fountain, 1.0, 0.0) / 2.0;
+        draw_disk(img, scale_point(&pts[0], scale), blob, color);
+    }
+    for (i, w) in pts.windows(2).enumerate() {
         let a = scale_point(&w[0], scale);
         let b = scale_point(&w[1], scale);
         let pressure = (w[0].pressure + w[1].pressure) * 0.5;
@@ -99,7 +117,8 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
             stroke.width * wfactor * ink_modifier(stroke.tool, pressure, speed) * scale
         } else {
             curve.apply(stroke.width, pressure) * wfactor * scale
-        };
+        } * 0.5
+            * (tapers[i] + tapers[i + 1]);
         draw_segment(img, a, b, width, color);
     }
 }

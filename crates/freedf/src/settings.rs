@@ -60,7 +60,7 @@ pub struct SessionState {
     /// 캔버스 오른쪽 필기구/색상 팔레트 표시 여부 (전역 기본값)
     #[serde(default = "default_show_palette")]
     pub show_palette: bool,
-    /// 자주 쓰는 펜 색상 팔레트 (전역 기본값)
+    /// 자주 쓰는 펜 색상 팔레트 (전역 기본값, 최대 3개)
     #[serde(default = "default_favorite_colors")]
     pub favorite_colors: Vec<[u8; 4]>,
     /// 하이라이터가 문서 텍스트를 인식해 깔끔하게 칠하는 모드 (전역 기본값)
@@ -70,6 +70,15 @@ pub struct SessionState {
     /// 도구 선택기 순서 (드래그 앤 드롭 재정렬, 전역 기본값)
     #[serde(default = "default_tool_order")]
     pub tool_order: Vec<ToolType>,
+    /// 줌 잠금 — 잠그면 휠/핀치/단축키/버튼 줌이 전부 무시됩니다 (실수 방지)
+    #[serde(default = "default_false")]
+    pub zoom_lock: bool,
+    /// 펜 입력 스무딩(안정화) 강도 0..1 — 0이면 원본 그대로
+    #[serde(default = "default_smoothing")]
+    pub smoothing: f32,
+    /// 사용자 정의 용지 크기 [가로, 세로] (포인트). `PaperSize::Custom`일 때 사용.
+    #[serde(default)]
+    pub custom_paper_size: Option<[f32; 2]>,
 }
 
 /// 이전 버전 세션 파일(필드 없음)에서도 팔레트를 기본 표시.
@@ -77,8 +86,15 @@ fn default_show_palette() -> bool {
     true
 }
 
+/// 자주 쓰는 색 팔레트 최대 개수 (기본 3색 제한).
+pub const MAX_FAVORITE_COLORS: usize = 3;
+
 fn default_false() -> bool {
     false
+}
+
+fn default_smoothing() -> f32 {
+    0.4
 }
 
 fn default_tool_order() -> Vec<ToolType> {
@@ -105,17 +121,12 @@ fn default_outline_width() -> f32 {
     240.0
 }
 
-/// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 8개.
+/// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 3개 (검정/빨강/파랑).
 fn default_favorite_colors() -> Vec<[u8; 4]> {
     vec![
         [20, 20, 20, 255],   // Black
-        [90, 90, 90, 255],   // Gray
-        [29, 78, 216, 255],  // Blue
         [200, 40, 40, 255],  // Red
-        [46, 160, 67, 255],  // Green
-        [240, 180, 0, 255],  // Amber
-        [232, 120, 30, 255], // Orange
-        [128, 80, 200, 255], // Purple
+        [29, 78, 216, 255],  // Blue
     ]
 }
 
@@ -149,16 +160,14 @@ impl Default for SessionState {
             show_palette: true,
             favorite_colors: vec![
                 [20, 20, 20, 255],   // Black
-                [90, 90, 90, 255],   // Gray
-                [29, 78, 216, 255],  // Blue
                 [200, 40, 40, 255],  // Red
-                [46, 160, 67, 255],  // Green
-                [240, 180, 0, 255],  // Amber
-                [232, 120, 30, 255], // Orange
-                [128, 80, 200, 255], // Purple
+                [29, 78, 216, 255],  // Blue
             ],
             text_highlight_snap: false,
             tool_order: ToolType::default_order(),
+            zoom_lock: false,
+            smoothing: 0.4,
+            custom_paper_size: None,
         }
     }
 }

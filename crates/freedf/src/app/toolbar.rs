@@ -6,6 +6,70 @@
 
 use super::*;
 
+/// 펜/볼펜/만년필의 **실제 잉크 수식**을 그대로 보여주는 미니 스트로크 미리보기.
+///
+/// 화면 렌더링과 같은 함수(필압 곡선 / 닙 프로파일 / 기본 두께 배율)로 가상의
+/// 곡선을 그립니다 — 세 도구의 차이가 "연속 입력 → 두께" 함수 형태의 차이임을
+/// 한눈에 확인할 수 있습니다:
+/// - Pen: 두께 = f(필압) — 눌렀다 떼는 압력 물결을 그대로 따라감
+/// - Ballpoint: 두께 ≈ 일정 — 어떤 속도/압력에서도 균일한 선
+/// - Fountain: 두께 = f(필압, 속도) — 빠르게 긋는 구간이 얇아짐
+fn pen_profile_preview(
+    ui: &mut egui::Ui,
+    tool: ToolType,
+    color: Color32,
+    width: f32,
+    curve: &PressureCurve,
+) {
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
+    let wfactor = base_width_factor(tool);
+    let n = 64;
+    let x0 = rect.left() + 3.0;
+    let x1 = rect.right() - 3.0;
+    let cy = rect.center().y;
+    let amp = rect.height() * 0.30;
+    let mut pts: Vec<egui::Pos2> = Vec::with_capacity(n);
+    let mut widths: Vec<f32> = Vec::with_capacity(n);
+    let mut max_w: f32 = 0.5;
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let x = x0 + (x1 - x0) * t;
+        let y = cy + (t * 2.0 * std::f32::consts::PI).sin() * amp;
+        // 도구별 가상의 연속 입력 신호:
+        let (pressure, speed) = match tool {
+            // 펜: 필압이 물결처럼 오르내림 → 두께가 그대로 따라감.
+            ToolType::Pen => (
+                0.25 + 0.75 * (t * 3.0 * std::f32::consts::PI).sin().abs(),
+                0.0,
+            ),
+            // 만년필: 필압 일정 + 속도 물결 → 빠른 구간이 얇아짐.
+            ToolType::Fountain => (
+                0.6,
+                15.0 + 200.0 * (t * 4.0 * std::f32::consts::PI).sin().abs(),
+            ),
+            // 볼펜: 둘 다 일정 → 두께가 거의 변하지 않음.
+            _ => (0.6, 15.0),
+        };
+        let w = if uses_own_profile(tool) {
+            width * wfactor * ink_modifier(tool, pressure, speed)
+        } else {
+            width * wfactor * curve.apply(1.0, pressure)
+        };
+        pts.push(egui::pos2(x, y));
+        widths.push(w);
+        max_w = max_w.max(w);
+    }
+    let scale = (rect.height() * 0.40 / max_w).clamp(0.3, 1.6);
+    for i in 0..n - 1 {
+        let wpx = (widths[i] + widths[i + 1]) * 0.5 * scale;
+        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(wpx, color));
+    }
+    let _ = resp.on_hover_text(ink_profile_hint(tool));
+}
+
 impl FreeDfApp {
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
@@ -229,8 +293,9 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                // Paper (grid / ruling / color) — applied per page;
-                // paper size selects the size for new pages & notes.
+                // Paper (grid / ruling / color) — applied to the **current
+                // page**; new pages use these values as their defaults.
+                // "Apply to all" pushes the current values onto every page.
                 ui.label(icon_text(ui, "Paper", icons::NOTEBOOK));
                 egui::ComboBox::from_id_salt("paper_style")
                     .selected_text(self.paper_style.label())
@@ -247,13 +312,16 @@ impl FreeDfApp {
                         }
                     })
                     .response
-                    .on_hover_text("Style applied to the current page");
+                    .on_hover_text(
+                        "Paper style for the current page.\n\
+                         New pages & new notes use it as their default.",
+                    );
                 for (i, paper) in PAPER_COLORS.iter().enumerate() {
                     let color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
                     let selected = self.paper_color == *paper;
                     if color_circle_swatch(ui, ("paper_swatch", i), color, selected)
-                        .on_hover_text("Paper color")
+                        .on_hover_text("Paper color (current page)")
                         .clicked()
                     {
                         self.paper_color = *paper;
@@ -261,6 +329,23 @@ impl FreeDfApp {
                         self.save_default_session();
                         self.save_session();
                     }
+                }
+                // 프리셋 5색 외에 원하는 배경색을 직접 고릅니다.
+                let mut paper_color = Color32::from_rgba_unmultiplied(
+                    self.paper_color[0],
+                    self.paper_color[1],
+                    self.paper_color[2],
+                    self.paper_color[3],
+                );
+                if ui
+                    .color_edit_button_srgba(&mut paper_color)
+                    .on_hover_text("Custom paper color (current page)")
+                    .changed()
+                {
+                    self.paper_color = paper_color.to_array();
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
                 }
                 egui::ComboBox::from_id_salt("paper_size")
                     .selected_text(self.paper_size.label())
@@ -276,7 +361,39 @@ impl FreeDfApp {
                         }
                     })
                     .response
-                    .on_hover_text("Size of new pages & new notes");
+                    .on_hover_text(
+                        "Size of new pages & new notes (existing pages keep their size).",
+                    );
+                // 사용자 정의 크기: mm 단위 숫자 입력.
+                if self.paper_size == PaperSize::Custom {
+                    const MM_TO_PT: f32 = 72.0 / 25.4;
+                    let mut w_mm = self.custom_paper_size[0] / MM_TO_PT;
+                    let mut h_mm = self.custom_paper_size[1] / MM_TO_PT;
+                    let w_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut w_mm)
+                                .range(50.0..=1200.0)
+                                .speed(1.0)
+                                .prefix("W "),
+                        )
+                        .on_hover_text("Custom page width (mm)")
+                        .changed();
+                    let h_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut h_mm)
+                                .range(50.0..=1200.0)
+                                .speed(1.0)
+                                .prefix("H "),
+                        )
+                        .on_hover_text("Custom page height (mm)")
+                        .changed();
+                    if w_changed || h_changed {
+                        self.custom_paper_size =
+                            [(w_mm * MM_TO_PT).clamp(100.0, 3400.0), (h_mm * MM_TO_PT).clamp(100.0, 3400.0)];
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
                 // 줄/격자 간격 (숫자 직접 입력).
                 if ui
                     .add(
@@ -328,6 +445,20 @@ impl FreeDfApp {
                     self.apply_paper_to_current_page();
                     self.save_default_session();
                     self.save_session();
+                }
+                // 현재 툴바의 Paper 설정을 문서의 모든 페이지에 복사합니다.
+                if ui
+                    .add_enabled(
+                        page_count > 0,
+                        egui::Button::new(icon_text(ui, "Apply to all", icons::CHECK_SQUARE_OFFSET)),
+                    )
+                    .on_hover_text(
+                        "Copy these paper settings (style/color/spacing/line) \
+                         onto every page of this document.",
+                    )
+                    .clicked()
+                {
+                    self.apply_paper_to_all_pages();
                 }
                 });
             });
@@ -445,6 +576,22 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
+                        // 계열 스와치 외의 원하는 색을 직접 고릅니다.
+                        let mut pen_color = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            self.pen_color[3],
+                        );
+                        if ui
+                            .color_edit_button_srgba(&mut pen_color)
+                            .on_hover_text("Custom pen color")
+                            .changed()
+                        {
+                            self.pen_color = pen_color.to_array();
+                            self.save_default_session();
+                            self.save_session();
+                        }
                         // 도구별 프로필 설명은 Width 슬라이더에 마우스를 올리면
                         // 툴팁으로 표시됩니다 (항상 보이는 라벨은 제거).
                         let hint = ink_profile_hint(self.tool);
@@ -458,6 +605,21 @@ impl FreeDfApp {
                         if width_resp.changed() {
                             self.save_session();
                         }
+                        // 미니 스트로크 미리보기: 실제 잉크 수식으로 그려
+                        // 펜/볼펜/만년필의 차이를 보여줍니다.
+                        let preview_color = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            self.pen_color[3],
+                        );
+                        pen_profile_preview(
+                            ui,
+                            self.tool,
+                            preview_color,
+                            self.pen_width,
+                            &self.pressure_curve,
+                        );
                         egui::ComboBox::from_id_salt("pen_cursor_style")
                             .selected_text(self.pen_cursor_style.label())
                             .show_ui(ui, |ui| {
@@ -471,7 +633,13 @@ impl FreeDfApp {
                             })
                             .response
                             .on_hover_text("Pen cursor shape");
-                        if ui.checkbox(&mut self.pressure_enabled, "Pressure").changed() {
+                        if ui
+                            .checkbox(&mut self.pressure_enabled, "Pressure")
+                            .on_hover_text(
+                                "Use pen/tablet pressure. Off = always full pressure.",
+                            )
+                            .changed()
+                        {
                             self.save_session();
                         }
                         if self.pressure_enabled {
@@ -482,6 +650,10 @@ impl FreeDfApp {
                                         0.1..=1.0,
                                     )
                                     .text("Min"),
+                                )
+                                .on_hover_text(
+                                    "Min: thickness multiplier at the lightest touch.\n\
+                                     e.g. Min=0.4 → the thinnest line is 40% of the Width.",
                                 )
                                 .changed()
                             {
@@ -495,10 +667,27 @@ impl FreeDfApp {
                                     )
                                     .text("Max"),
                                 )
+                                .on_hover_text(
+                                    "Max: thickness multiplier at full pressure.\n\
+                                     e.g. Max=1.4 → the boldest line is 140% of the Width.",
+                                )
                                 .changed()
                             {
                                 self.save_session();
                             }
+                        }
+                        // 필기 스무딩(안정화): 손떨림을 줄여 선을 매끄럽게.
+                        if ui
+                            .add(egui::Slider::new(&mut self.smoothing, 0.0..=1.0).text("Smoothing"))
+                            .on_hover_text(
+                                "Stabilizer: filters hand tremor while keeping fast strokes \
+                                 responsive. 0 = raw input, 1 = silky smooth.",
+                            )
+                            .changed()
+                        {
+                            self.smoothing = self.smoothing.clamp(0.0, 1.0);
+                            self.save_default_session();
+                            self.save_session();
                         }
                     }
                     ToolType::Highlighter => {

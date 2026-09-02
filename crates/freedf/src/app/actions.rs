@@ -41,7 +41,7 @@ impl FreeDfApp {
     /// Creates a note's blank PDF using the PDFium instance cached at startup.
     pub(crate) fn create_blank_pdf_for_note(&self, path: &Path) -> Result<(), String> {
         match &self.pdfium {
-            Ok(p) => DocumentView::create_blank_pdf_with(p, path, self.paper_size.size_pts()),
+            Ok(p) => DocumentView::create_blank_pdf_with(p, path, self.new_page_size_pts()),
             Err(e) => Err(e.clone()),
         }
     }
@@ -118,6 +118,68 @@ impl FreeDfApp {
             }
             Err(e) => self.status = Some(format!("Delete failed: {e}")),
         }
+    }
+
+    /// 외부 PDF 파일을 디스크에서 삭제합니다 (주석/세션 사이드카 포함).
+    /// 열려 있는 탭이면 먼저 닫고, 최근 목록에서도 제거합니다.
+    pub(crate) fn delete_pdf_action(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        // 열린 탭 닫기 (활성 탭이면 인접 탭으로 전환됨).
+        if let Some(idx) = self.find_tab(&TabKind::Pdf(path.clone())) {
+            self.close_tab(idx);
+        }
+        // 최근 목록 제거.
+        self.recents
+            .items
+            .retain(|r| !(r.kind == RecentKind::File && r.path.as_deref() == Some(path.as_path())));
+        self.recents.save(&self.recent_path);
+        // 파일 + 사이드카 삭제.
+        let mut removed = 0usize;
+        for p in [annotation_path_for(&path), session_path_for(&path), path.clone()] {
+            if p.exists() && std::fs::remove_file(&p).is_ok() {
+                removed += 1;
+            }
+        }
+        self.logger.log(AppEvent::PdfDeleted {
+            path: name.clone(),
+        });
+        if removed > 0 {
+            self.status = Some(format!("Deleted {name} ({removed} file(s))"));
+        }
+    }
+
+    /// 툴바의 용지 설정(스타일/색/간격/선)을 **모든 페이지**에 적용합니다.
+    pub(crate) fn apply_paper_to_all_pages(&mut self) {
+        let Some(doc) = &self.document else {
+            return;
+        };
+        let count = doc.page_count();
+        if count == 0 {
+            return;
+        }
+        let paper = PagePaper {
+            style: self.paper_style,
+            color: self.paper_color,
+            spacing: self.paper_spacing,
+            line_color: self.paper_line_color,
+            line_width: self.paper_line_width,
+        };
+        for i in 0..count {
+            self.store.set_paper(i, paper);
+        }
+        self.render_dirty = true;
+        self.autosave();
+        if self.current_note.is_none() {
+            // 스탠드얼론 PDF: 사이드카에도 반영.
+            if let Some(path) = self.file_path.clone() {
+                let _ = std::fs::write(annotation_path_for(&path), self.store.to_json());
+            }
+        }
+        self.save_session();
+        self.status = Some(format!("Applied paper to all {count} pages"));
     }
 
     pub(crate) fn close_document(&mut self) {
@@ -432,13 +494,7 @@ impl FreeDfApp {
 
     /// 새 빈 페이지를 삽입합니다. `target`에 따라 위치/크기/용지가 달라집니다.
     pub(crate) fn insert_page_action(&mut self, target: InsertTarget) {
-        let Some(doc) = &mut self.document else {
-            return;
-        };
-        let total = doc.page_count();
-        if total == 0 {
-            return;
-        }
+        // (self.document를 가변 빌리기 전에 self 값을 미리 계산)
         let default_paper = PagePaper {
             style: self.paper_style,
             color: self.paper_color,
@@ -446,7 +502,14 @@ impl FreeDfApp {
             line_color: self.paper_line_color,
             line_width: self.paper_line_width,
         };
-        let default_size = self.paper_size.size_pts();
+        let default_size = self.new_page_size_pts();
+        let Some(doc) = &mut self.document else {
+            return;
+        };
+        let total = doc.page_count();
+        if total == 0 {
+            return;
+        }
         let (idx, size, paper) = match target {
             // 현재 페이지의 크기/용지를 그대로 써서 바로 다음에 삽입.
             InsertTarget::FromCurrent => {
@@ -562,6 +625,9 @@ impl FreeDfApp {
     // ---------- Zoom / fit ----------
 
     pub(crate) fn zoom_by(&mut self, factor: f32) {
+        if self.zoom_lock {
+            return;
+        }
         let anchor = [self.last_canvas[0] * 0.5, self.last_canvas[1] * 0.5];
         self.view.zoom_at(anchor, factor, MIN_ZOOM, MAX_ZOOM);
         self.render_dirty = true;
@@ -569,10 +635,16 @@ impl FreeDfApp {
     }
 
     pub(crate) fn fit_width(&mut self) {
+        if self.zoom_lock {
+            return;
+        }
         self.pending_fit = Some(FitMode::Width);
     }
 
     pub(crate) fn fit_height(&mut self) {
+        if self.zoom_lock {
+            return;
+        }
         self.pending_fit = Some(FitMode::Height);
     }
 
@@ -921,6 +993,22 @@ impl FreeDfApp {
                 if let Ok(id) = text.trim().parse::<u64>() {
                     self.delete_note_action(id);
                 }
+            }
+            ConfirmAction::DeleteLibrary { notes, pdfs } => {
+                let n_notes = notes.len();
+                let n_pdfs = pdfs.len();
+                for id in &notes {
+                    self.delete_note_action(*id);
+                }
+                for p in pdfs {
+                    self.delete_pdf_action(p);
+                }
+                self.sel_notes.clear();
+                self.sel_pdfs.clear();
+                let _ = self.notes.save();
+                self.status = Some(format!(
+                    "Deleted {n_notes} note(s) and {n_pdfs} PDF(s)"
+                ));
             }
         }
     }

@@ -37,6 +37,8 @@ impl FreeDfApp {
         let has_note = self.current_note.is_some();
         let mut rename_note = false;
         let mut delete_note = false;
+        // 다중 삭제: (선택된 노트 id, 선택된 PDF 경로) — 확인 모달로 전달.
+        let mut delete_selected: Option<(Vec<u64>, Vec<PathBuf>)> = None;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -99,15 +101,41 @@ impl FreeDfApp {
                     );
                 } else {
                     for (id, title, page_count) in &notes {
-                        let meta = if *page_count > 0 {
-                            format!("{page_count}p")
-                        } else {
-                            String::new()
-                        };
-                        let selected = self.current_note == Some(*id);
-                        if library_row(ui, selected, title, &meta) {
-                            self.open_note(*id);
-                        }
+                        let mut sel = self.sel_notes.contains(id);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            if ui
+                                .checkbox(&mut sel, "")
+                                .on_hover_text("Select for multi-delete")
+                                .changed()
+                            {
+                                if sel {
+                                    self.sel_notes.insert(*id);
+                                } else {
+                                    self.sel_notes.remove(id);
+                                }
+                            }
+                            let meta = if *page_count > 0 {
+                                format!("{page_count}p")
+                            } else {
+                                String::new()
+                            };
+                            let selected = self.current_note == Some(*id);
+                            if library_row(ui, selected, title, &meta) {
+                                self.open_note(*id);
+                            }
+                        });
+                    }
+                    let n_sel = self.sel_notes.len();
+                    if ui
+                        .add_enabled(n_sel > 0, egui::Button::new(format!("Delete selected ({n_sel})")))
+                        .on_hover_text(
+                            "Delete all checked notes (and their annotations).",
+                        )
+                        .clicked()
+                    {
+                        let ids: Vec<u64> = self.sel_notes.iter().copied().collect();
+                        delete_selected = Some((ids, Vec::new()));
                     }
                 }
                 ui.add_space(4.0);
@@ -140,11 +168,43 @@ impl FreeDfApp {
                     ui.label(egui::RichText::new("No PDFs opened yet.").weak().small());
                 } else {
                     for f in &visible {
-                        if library_row(ui, false, &f.title, "PDF") {
-                            if let Some(p) = &f.path {
-                                self.open_pdf(p);
+                        let mut sel = f
+                            .path
+                            .as_ref()
+                            .is_some_and(|p| self.sel_pdfs.contains(p));
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            if ui
+                                .checkbox(&mut sel, "")
+                                .on_hover_text("Select for multi-delete")
+                                .changed()
+                            {
+                                if let Some(p) = &f.path {
+                                    if sel {
+                                        self.sel_pdfs.insert(p.clone());
+                                    } else {
+                                        self.sel_pdfs.remove(p);
+                                    }
+                                }
                             }
-                        }
+                            if library_row(ui, false, &f.title, "PDF") {
+                                if let Some(p) = &f.path {
+                                    self.open_pdf(p);
+                                }
+                            }
+                        });
+                    }
+                    let n_sel = self.sel_pdfs.len();
+                    if ui
+                        .add_enabled(n_sel > 0, egui::Button::new(format!("Delete selected ({n_sel})")))
+                        .on_hover_text(
+                            "Delete the checked PDF files from disk (annotations and \
+                             per-file session are removed too).",
+                        )
+                        .clicked()
+                    {
+                        let paths: Vec<PathBuf> = self.sel_pdfs.iter().cloned().collect();
+                        delete_selected = Some((Vec::new(), paths));
                     }
                 }
                 ui.add_space(4.0);
@@ -194,6 +254,31 @@ impl FreeDfApp {
                 }
                 ui.add_space(4.0);
             });
+
+        if let Some((nids, ppaths)) = delete_selected {
+            let mut parts: Vec<String> = Vec::new();
+            if !nids.is_empty() {
+                parts.push(format!("{} note(s) and their annotations", nids.len()));
+            }
+            if !ppaths.is_empty() {
+                parts.push(format!("{} PDF file(s) from disk", ppaths.len()));
+            }
+            let msg = format!(
+                "Delete {}?\nThis cannot be undone.",
+                parts.join(" and ")
+            );
+            self.modal = Some(ModalState {
+                kind: ModalKind::Confirm {
+                    title: "Delete from Library".to_string(),
+                    message: msg,
+                    action: ConfirmAction::DeleteLibrary {
+                        notes: nids,
+                        pdfs: ppaths,
+                    },
+                },
+                text: String::new(),
+            });
+        }
 
         if rename_note {
             if let Some(id) = self.current_note {

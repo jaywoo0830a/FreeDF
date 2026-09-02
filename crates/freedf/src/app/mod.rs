@@ -45,8 +45,8 @@ pub(crate) use freedf_core::paper::{
     PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    base_width_factor, ink_modifier, ink_profile_hint, uses_own_profile, ColorFamily, Palette,
-    PressureCurve,
+    base_width_factor, ink_modifier, ink_profile_hint, taper_factors, uses_own_profile,
+    uses_taper, ColorFamily, OneEuroFilter, Palette, PressureCurve, TAPER_LEN_PTS,
 };
 pub(crate) use freedf_core::search::{char_line_highlights, find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::store::AnnotationStore;
@@ -55,8 +55,10 @@ pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_
 pub(crate) use crate::export::draw_strokes_on_image;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
+pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
 pub(crate) use egui_phosphor_icons::icons;
 pub(crate) use pdfium_render::prelude::Pdfium;
+use std::collections::HashSet;
 
 /// Canvas margin around the page
 const CANVAS_MARGIN: f32 = 16.0;
@@ -280,9 +282,11 @@ pub(crate) enum TextAction {
     ExportPng,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ConfirmAction {
     DeleteNote,
+    /// Library 다중 삭제: 선택된 노트 id + PDF 경로 (PDF는 디스크에서 삭제).
+    DeleteLibrary { notes: Vec<u64>, pdfs: Vec<PathBuf> },
 }
 
 /// 새 빈 페이지를 삽입하는 위치/방식.
@@ -415,6 +419,12 @@ pub struct TabEntry {
     /// 줄/격자/점 색/두께 기본값 (pt) — 페이퍼 라인 옵션.
     paper_line_color: [u8; 4],
     paper_line_width: f32,
+    /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
+    custom_paper_size: [f32; 2],
+    /// 펜 입력 스무딩 강도 0..1
+    smoothing: f32,
+    /// 줌 잠금 (휠/핀치/단축키 줌 무시)
+    zoom_lock: bool,
 }
 
 /// 펜 커서 모양.
@@ -503,11 +513,23 @@ pub struct FreeDfApp {
     paper_line_color: [u8; 4],
     /// 줄/격자/점 두께 기본값 (pt)
     paper_line_width: f32,
+    /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
+    custom_paper_size: [f32; 2],
+    /// 펜 입력 스무딩 강도 0..1
+    smoothing: f32,
+    /// 줌 잠금 (휠/핀치/단축키 줌 무시)
+    zoom_lock: bool,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
     pan_last: Option<Pos2>,
     middle_pan_last: Option<Pos2>,
+    /// 펜 입력 스무딩 필터 (x/y/필압 채널, 스트로크 시작 시 리셋)
+    smooth_x: OneEuroFilter,
+    smooth_y: OneEuroFilter,
+    smooth_p: OneEuroFilter,
+    /// 현재 스트로크가 스무딩 필터를 사용 중인지
+    smooth_active: bool,
     /// Trackpad/wheel momentum (points/sec) for inertial panning
     scroll_vel: Vec2,
     /// Ctrl+wheel zoom acceleration ramp (0.01 per notch, capped)
@@ -567,6 +589,9 @@ pub struct FreeDfApp {
     text_highlight_snap: bool,
     /// Library 패널 검색 필터 (일시적)
     library_filter: String,
+    /// Library 패널 다중 삭제 선택 상태 (일시적)
+    sel_notes: HashSet<u64>,
+    sel_pdfs: HashSet<PathBuf>,
 
     // ---------- Logging / status ----------
     logger: Logger,
@@ -658,12 +683,27 @@ impl FreeDfApp {
         let library_width = if has { s.library_width } else { 260.0 };
         let outline_width = if has { s.outline_width } else { 240.0 };
         let show_palette = if has { s.show_palette } else { true };
-        let favorite_colors = if has {
+        let mut favorite_colors = if has {
             s.favorite_colors.clone()
         } else {
             crate::settings::SessionState::default().favorite_colors
         };
+        // 팔레트는 최대 3색 — 이전 버전 세션의 8색 목록은 잘라냅니다.
+        favorite_colors.truncate(MAX_FAVORITE_COLORS);
+        if favorite_colors.is_empty() {
+            favorite_colors = crate::settings::SessionState::default().favorite_colors;
+        }
         let text_highlight_snap = if has { s.text_highlight_snap } else { false };
+        let zoom_lock = if has { s.zoom_lock } else { false };
+        let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
+        let custom_paper_size = if let Some(c) = s.custom_paper_size {
+            [
+                c[0].clamp(100.0, 2400.0),
+                c[1].clamp(100.0, 2400.0),
+            ]
+        } else {
+            PaperSize::A4.size_pts()
+        };
         let tool_order = if has {
             s.tool_order.clone()
         } else {
@@ -719,9 +759,16 @@ impl FreeDfApp {
             paper_spacing,
             paper_line_color,
             paper_line_width,
+            custom_paper_size,
+            smoothing,
+            zoom_lock,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
+            smooth_x: OneEuroFilter::from_smoothing(0.4),
+            smooth_y: OneEuroFilter::from_smoothing(0.4),
+            smooth_p: OneEuroFilter::from_smoothing(0.4),
+            smooth_active: false,
             scroll_vel: Vec2::ZERO,
             zoom_accel: 0.0,
             zoom_accel_last: 0.0,
@@ -750,6 +797,8 @@ impl FreeDfApp {
             favorite_colors,
             text_highlight_snap,
             library_filter,
+            sel_notes: HashSet::new(),
+            sel_pdfs: HashSet::new(),
             logger,
             file_name: String::new(),
             status: None,
@@ -792,8 +841,20 @@ impl FreeDfApp {
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
             tool_order: self.tool_order.clone(),
+            zoom_lock: self.zoom_lock,
+            smoothing: self.smoothing,
+            custom_paper_size: Some(self.custom_paper_size),
         }
         .save(&self.default_session_path);
+    }
+
+    /// 새 페이지/노트에 쓸 물리적 크기 (pt). `PaperSize::Custom`이면 사용자 정의 치수.
+    pub(crate) fn new_page_size_pts(&self) -> [f32; 2] {
+        if self.paper_size == PaperSize::Custom {
+            self.custom_paper_size
+        } else {
+            self.paper_size.size_pts()
+        }
     }
 
     /// 현재 페이지의 용지 설정 (저장된 값, 없으면 툴바 기본값).
@@ -862,6 +923,9 @@ impl FreeDfApp {
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
             tool_order: self.tool_order.clone(),
+            zoom_lock: self.zoom_lock,
+            smoothing: self.smoothing,
+            custom_paper_size: Some(self.custom_paper_size),
         }
     }
 
@@ -903,6 +967,11 @@ impl FreeDfApp {
         self.paper_spacing = clamp_spacing(s.paper_spacing);
         self.paper_line_color = s.paper_line_color;
         self.paper_line_width = clamp_line_width(s.paper_line_width);
+        self.zoom_lock = s.zoom_lock;
+        self.smoothing = s.smoothing.clamp(0.0, 1.0);
+        if let Some(c) = s.custom_paper_size {
+            self.custom_paper_size = [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)];
+        }
         self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
         self.library_width = s.library_width.clamp(160.0, 460.0);
@@ -1030,6 +1099,22 @@ impl FreeDfApp {
                 self.search_clear();
             }
         }
+        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::L)) {
+            // 줌 잠금 토글 — 실수로 확대/축소되는 것을 막습니다.
+            self.zoom_lock = !self.zoom_lock;
+            if self.zoom_lock {
+                // 진행 중이던 줌 애니메이션은 즉시 종료합니다.
+                if let Some(t) = self.zoom_target {
+                    self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
+                    self.render_dirty = true;
+                }
+                self.zoom_target = None;
+                self.zoom_anchor_page = None;
+                self.zoom_anchor_ui = None;
+            }
+            self.save_default_session();
+            self.save_session();
+        }
         // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
         // 노트에서는 PgDn 시 마지막 페이지면 새 페이지를 자동으로 추가합니다.
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
@@ -1053,11 +1138,12 @@ impl FreeDfApp {
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) {
                 self.prev_page();
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals))
+            if !self.zoom_lock
+                && ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals))
             {
                 self.zoom_by(1.25);
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
+            if !self.zoom_lock && ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
                 self.zoom_by(1.0 / 1.25);
             }
             // Tool shortcuts

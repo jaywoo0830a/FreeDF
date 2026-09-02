@@ -28,7 +28,10 @@ native file dialogs, Windows Ink pressure).
   is disabled for them to avoid losing ink
 - 🗂️ **Library panel** — a modern side panel with a **search filter** and count
   badges groups **Notes**, **PDFs** and **Recents** into clean rows (title +
-  meta), so you can jump between notebooks and recently opened files
+  meta), so you can jump between notebooks and recently opened files. Notes and
+  PDFs support **multi-select deletion**: tick the checkboxes and press
+  *Delete selected* — notes are removed with their annotations, PDFs are deleted
+  from disk together with their sidecar files (with a confirmation dialog)
 - 🔖 **Bookmarks** — mark pages and jump back to them from the Bookmarks menu;
   bookmarks are stored per document and survive restarts
 - 🗂️ **Notes (CRUD)** — create, rename, delete and switch between notes; each note
@@ -48,9 +51,27 @@ native file dialogs, Windows Ink pressure).
   Fountain) that are **visibly different** even with a mouse: Ballpoint draws
   **thin & steady** (~0.6× the Width setting), Fountain draws **thicker** (~1.25×)
   and gets **thinner when you write fast** for a live calligraphy feel, and Pen is
-  the medium, pressure-following reference (each tool's profile hint appears
-  on hover over its Width slider). Strokes are stored in page coordinates, so
-  they never drift under zoom/pan
+  the medium, pressure-following reference. Each tool shows a **live mini-stroke
+  preview** next to the Width slider that plots the actual ink function of that
+  tool (Pen: width = f(pressure) · Ballpoint: ≈ constant · Fountain: width =
+  f(pressure, speed)) — hover it for the profile description. Strokes are stored
+  in page coordinates, so they never drift under zoom/pan
+- 🖊️ **Real-pen ink feel** — pen & fountain strokes **taper** at both ends like
+  real ink (thin start, thin flick-off), fountain pens leave a small **ink blob**
+  where the nib first touches the paper, and every stroke is drawn as one smooth
+  **variable-width ribbon** (per-point widths, no more circle-stacking “beading”).
+  A **stabilizer slider** (Smoothing, 0–1) filters hand tremor with a
+  speed-adaptive **One Euro filter** — silky lines, zero lag on fast strokes
+  (unit-tested in `freedf-core`)
+- 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
+  the right edge of the canvas holds the writing tools + your favorite colors
+  (**exactly 3 slots**: black / red / blue by default); click a **round** swatch
+  to ink with it, **+** to add the current color (disabled when full),
+  right-click a swatch to replace it (saved in `session.json`)
+- 🖊️ **Pen pressure** — pressure is read from touch events (Windows Ink) and mapped
+  to stroke width via an adjustable `min/max` pressure curve (0.4×–1.4× by default);
+  **Min** = thickness multiplier at the lightest touch, **Max** = multiplier at
+  full pressure (both explained on hover)
 - ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
   hand Pan tool complete the toolkit
 - 🔖 **Highlighter (default: plain marker)** — the Highlighter draws a clean,
@@ -66,12 +87,6 @@ native file dialogs, Windows Ink pressure).
   it falls back to the plain marker stroke
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
-- 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
-  the right edge of the canvas holds the writing tools + your favorite colors;
-  click a **round** swatch to ink with it, **+** to add the current color,
-  right-click a swatch to remove it (saved in `session.json`)
-- 🖊️ **Pen pressure** — pressure is read from touch events (Windows Ink) and mapped
-  to stroke width via an adjustable `min/max` pressure curve (0.4×–1.4× by default)
 - ↩️ **Undo / Redo** — diff-based, up to 256 steps; eraser and clear are undoable
 - 🖼️ **PNG export** — renders the annotated page at 150 dpi
 - 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
@@ -115,17 +130,24 @@ native file dialogs, Windows Ink pressure).
   writing. The step logic is defined by unit tests
   (`transform::browser_page_step`)
 - 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
-  of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
+  of the canvas shows `Prev [page]/[total] Next`, zoom in/out, **zoom lock**, and
   Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
-  toolbar)
+  toolbar). The **lock** (or `Ctrl+L`) freezes the zoom — wheel, pinch,
+  shortcuts and the zoom/fit buttons are all ignored until you unlock, so
+  accidental zooming is impossible
 - 🪟 **Split-view focus mode** — when the window gets narrow (e.g. Windows split
   view), FreeDF auto-collapses to **canvas + writing palette** only; a small
   floating control (top-right “☰ Show UI”) restores the tabs/toolbar on demand,
   and toggles the palette — great for multitasking side-by-side. `Ctrl+Shift+M`
   toggles the same focus mode at **any** window size
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
-  dotted) and color (white, cream, ice blue, mint, light gray), applied
-  independently and exported to PNG
+  dotted) and color, applied independently and exported to PNG. The Paper
+  section edits the **current page** and becomes the **default for new pages**;
+  press **Apply to all** to copy the current paper onto every page at once
+- 🎨 **Fully custom paper** — paper **color** accepts any color from a full color
+  picker (beyond the 5 presets), the ruling **line color / thickness / spacing**
+  are all adjustable, and the page size supports a **Custom** size with
+  width × height entered in millimetres (new pages & notes use it)
 - 🎨 **Custom ruling** — the **line color** (any RGBA) and **line thickness** of
   the ruled / grid / dotted paper are adjustable per page; the thickness is
   stored in page points (scales with zoom & export). Settings live in the Paper
@@ -133,7 +155,8 @@ native file dialogs, Windows Ink pressure).
 - 🔢 **Numerical paper spacing** — the ruled/grid/dotted spacing is a number
   (in points, 12–120) you can type directly in the Paper options; it is saved
   per page
-- 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal for new notes and pages
+- 📐 **Paper sizes** — A3 / A4 / A5 / Letter / Legal / **Custom (mm)** for new
+  notes and pages
 - 💾 **Remembers your last settings** — the most recently used pen ink color and
   paper style/color/size are saved to the default `session.json` and restored on
   startup
@@ -143,10 +166,13 @@ native file dialogs, Windows Ink pressure).
 - 🎨 **Gray canvas** — neutral gray background behind the page (dark/light aware)
 - ↔️ **Page alignment** — with the side panels collapsed, align the page
   left / center / right
+- 🎨 **Custom pen color** — in addition to the family swatches, the pen tools
+  accept **any color** via a full color picker (RGBA, right next to the swatches)
 - 🖊️ **Custom cursors** — Pen = small dot **or a round ring cursor** with a
   breathing halo (switch style in the pen settings), Highlighter = colored
   rectangle, Eraser = white translucent circle with a drop shadow, Pan = small
-  move crosshair; the OS cursor is restored outside the page
+  move crosshair; the OS cursor is always restored outside the page and never
+  disappears (even under floating overlays / side panels)
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end

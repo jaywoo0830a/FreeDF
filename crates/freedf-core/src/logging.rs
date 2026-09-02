@@ -14,6 +14,7 @@ pub enum AppEvent {
     NoteCreated { note_id: u64, title: String },
     NoteRenamed { note_id: u64, from: String, to: String },
     NoteDeleted { note_id: u64, title: String },
+    PdfDeleted { path: String },
     PageChanged { page: usize, total: usize },
     PageAdded { page: usize, total: usize },
     PageDeleted { page: usize, total: usize },

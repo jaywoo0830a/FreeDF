@@ -80,6 +80,8 @@ pub enum PaperSize {
     A5,
     Letter,
     Legal,
+    /// 사용자 정의 크기 — 실제 치수는 앱 상태(custom_paper_size)가 들고 있습니다.
+    Custom,
 }
 
 impl PaperSize {
@@ -90,20 +92,25 @@ impl PaperSize {
             PaperSize::A5 => "A5",
             PaperSize::Letter => "Letter",
             PaperSize::Legal => "Legal",
+            PaperSize::Custom => "Custom",
         }
     }
 
-    pub fn all() -> [PaperSize; 5] {
+    pub fn all() -> [PaperSize; 6] {
         [
             PaperSize::A3,
             PaperSize::A4,
             PaperSize::A5,
             PaperSize::Letter,
             PaperSize::Legal,
+            PaperSize::Custom,
         ]
     }
 
     /// 페이지 크기(포인트). 세로 방향 기준 [width, height].
+    ///
+    /// `Custom`은 자체 치수가 없어 A4를 반환합니다 — 호출부에서
+    /// 사용자 정의 치수를 대신 사용해야 합니다.
     pub fn size_pts(self) -> [f32; 2] {
         match self {
             PaperSize::A3 => [841.89, 1190.55],
@@ -111,6 +118,7 @@ impl PaperSize {
             PaperSize::A5 => [419.53, 595.28],
             PaperSize::Letter => [612.0, 792.0],
             PaperSize::Legal => [612.0, 1008.0],
+            PaperSize::Custom => [595.28, 841.89],
         }
     }
 

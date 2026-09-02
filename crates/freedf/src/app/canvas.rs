@@ -73,6 +73,50 @@ fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
     poly
 }
 
+/// 폴리라인을 점별 절반 두께(`half_widths`)의 **세그먼트별 사각형(quad)** 으로
+/// 분해합니다. 인접 quad는 같은 모서리를 공유해(butt 결합) 반투명 잉크도
+/// 겹침 얼룩 없이 이어지고, 점별 두께 변화(필압/속도/테이퍼)가 자연스럽게
+/// 표현됩니다.
+fn stroke_ribbon_quads(points: &[Pos2], half_widths: &[f32]) -> Vec<[Pos2; 4]> {
+    let n = points.len();
+    if n < 2 || half_widths.len() != n {
+        return Vec::new();
+    }
+    // 점별 수직 방향 = 인접 두 세그먼트 방향의 평균(마이터).
+    let mut norms = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = if i > 0 {
+            points[i] - points[i - 1]
+        } else {
+            points[1] - points[0]
+        };
+        let b = if i + 1 < n {
+            points[i + 1] - points[i]
+        } else {
+            points[n - 1] - points[n - 2]
+        };
+        let d = unit_dir(a) + unit_dir(b);
+        let dir = if d.length_sq() < 1e-6 {
+            Vec2::new(-a.y, a.x).normalized()
+        } else {
+            unit_dir(d)
+        };
+        norms.push(Vec2::new(-dir.y, dir.x));
+    }
+    let mut quads = Vec::with_capacity(n - 1);
+    for i in 0..n - 1 {
+        let h0 = half_widths[i];
+        let h1 = half_widths[i + 1];
+        quads.push([
+            points[i] + norms[i] * h0,
+            points[i] - norms[i] * h0,
+            points[i + 1] - norms[i + 1] * h1,
+            points[i + 1] + norms[i + 1] * h1,
+        ]);
+    }
+    quads
+}
+
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
@@ -104,6 +148,7 @@ impl FreeDfApp {
 
     pub(crate) fn finish_stroke(&mut self) {
         if let Some(active) = self.active_stroke.take() {
+            self.smooth_active = false;
             if active.points.is_empty() {
                 return;
             }
@@ -433,15 +478,21 @@ impl FreeDfApp {
             self.paint_active(&painter, active, draw_origin);
         }
 
-        // Tool cursor — custom sprite over the page, OS cursor restored
-        // everywhere else (so it never disappears outside the canvas).
-        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-            if draw_rect.contains(pos) {
-                ctx.set_cursor_icon(egui::CursorIcon::None);
-                let time = ctx.input(|i| i.time) as f32;
+        // Tool cursor — custom sprite only when the pointer is actually over
+        // the canvas (not covered by a floating overlay, not over a side
+        // panel) *and* inside the page rect. `response.hovered()` is false when
+        // an overlay Area sits on top, and false outside the canvas rect — so
+        // the OS cursor is always restored elsewhere (it used to disappear:
+        // `draw_rect` could extend past the canvas / under overlays and then
+        // `CursorIcon::None` hid the pointer with no custom sprite drawn).
+        let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
+        let over_page = pointer_pos
+            .is_some_and(|pos| canvas.contains(pos) && draw_rect.contains(pos));
+        if response.hovered() && over_page {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+            let time = ctx.input(|i| i.time) as f32;
+            if let Some(pos) = pointer_pos {
                 self.paint_custom_cursor(&painter, pos, time);
-            } else {
-                ctx.set_cursor_icon(egui::CursorIcon::Default);
             }
         } else {
             ctx.set_cursor_icon(egui::CursorIcon::Default);
@@ -523,30 +574,91 @@ impl FreeDfApp {
                             }
                             ui.separator();
                             if ui
-                                .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_MINUS))
-                                .on_hover_text("Zoom out")
+                                .add_enabled(
+                                    !self.zoom_lock,
+                                    egui::Button::new(icon_text(
+                                        ui,
+                                        "",
+                                        icons::MAGNIFYING_GLASS_MINUS,
+                                    )),
+                                )
+                                .on_hover_text("Zoom out (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(1.0 / 1.25);
                             }
                             ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
                             if ui
-                                .button(icon_text(ui, "", icons::MAGNIFYING_GLASS_PLUS))
-                                .on_hover_text("Zoom in")
+                                .add_enabled(
+                                    !self.zoom_lock,
+                                    egui::Button::new(icon_text(
+                                        ui,
+                                        "",
+                                        icons::MAGNIFYING_GLASS_PLUS,
+                                    )),
+                                )
+                                .on_hover_text("Zoom in (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(1.25);
                             }
+                            // 줌 잠금 토글 — 실수로 줌이 바뀌는 것을 방지합니다.
+                            let lock_icon = if self.zoom_lock {
+                                icons::LOCK_SIMPLE
+                            } else {
+                                icons::LOCK_SIMPLE_OPEN
+                            };
+                            if ui
+                                .selectable_label(
+                                    self.zoom_lock,
+                                    icon_text(ui, "", lock_icon),
+                                )
+                                .on_hover_text(
+                                    if self.zoom_lock {
+                                        "Zoom locked — click to unlock (Ctrl+L)"
+                                    } else {
+                                        "Lock zoom in/out (Ctrl+L)"
+                                    },
+                                )
+                                .clicked()
+                            {
+                                self.zoom_lock = !self.zoom_lock;
+                                if self.zoom_lock {
+                                    if let Some(t) = self.zoom_target {
+                                        self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
+                                        self.render_dirty = true;
+                                    }
+                                    self.zoom_target = None;
+                                    self.zoom_anchor_page = None;
+                                    self.zoom_anchor_ui = None;
+                                }
+                                self.save_default_session();
+                                self.save_session();
+                            }
                             ui.separator();
                             if ui
-                                .button(icon_text(ui, "Fit Width", icons::ARROWS_HORIZONTAL))
+                                .add_enabled(
+                                    !self.zoom_lock,
+                                    egui::Button::new(icon_text(
+                                        ui,
+                                        "Fit Width",
+                                        icons::ARROWS_HORIZONTAL,
+                                    )),
+                                )
                                 .on_hover_text("Fit width")
                                 .clicked()
                             {
                                 self.fit_width();
                             }
                             if ui
-                                .button(icon_text(ui, "Fit Height", icons::ARROWS_VERTICAL))
+                                .add_enabled(
+                                    !self.zoom_lock,
+                                    egui::Button::new(icon_text(
+                                        ui,
+                                        "Fit Height",
+                                        icons::ARROWS_VERTICAL,
+                                    )),
+                                )
                                 .on_hover_text("Fit height")
                                 .clicked()
                             {
@@ -615,9 +727,17 @@ impl FreeDfApp {
                             self.tool = ToolType::Pen;
                             self.save_session();
                         }
+                        let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
                         if ui
-                            .add(egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false))
-                            .on_hover_text("Add current color to favorites")
+                            .add_enabled(
+                                !full,
+                                egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false),
+                            )
+                            .on_hover_text(if full {
+                                "Palette is full (3 colors) — right-click a swatch to remove one first"
+                            } else {
+                                "Add current color to favorites"
+                            })
                             .clicked()
                         {
                             to_add = true;
@@ -649,7 +769,7 @@ impl FreeDfApp {
 
         if to_add {
             let c = self.pen_color;
-            if !self.favorite_colors.contains(&c) && self.favorite_colors.len() < 16 {
+            if !self.favorite_colors.contains(&c) && self.favorite_colors.len() < MAX_FAVORITE_COLORS {
                 self.favorite_colors.push(c);
                 self.save_default_session();
             }
@@ -740,6 +860,9 @@ impl FreeDfApp {
         let ctrl_down = ctx.input(|i| i.modifiers.ctrl);
         let dt = ctx.input(|i| i.stable_dt).max(1e-4);
         let pointer_any_down = ctx.input(|i| i.pointer.any_down());
+
+        // 줌 잠금이면 모든 줌 입력(핀치/Ctrl+휠/트랙패드)을 무시합니다.
+        if !self.zoom_lock {
 
         // If egui already folded a pinch / Ctrl+scroll into zoom_delta, use it.
         // Otherwise synthesize zoom from Ctrl + wheel: discrete +1% per notch
@@ -854,6 +977,7 @@ impl FreeDfApp {
                 ctx.request_repaint();
             }
         }
+        } // end !zoom_lock (줌 잠금)
 
         // ── Animated scroll (mouse wheel / trackpad) ─────────────────────
         // Wheel/trackpad deltas are not applied in one jump. They accumulate
@@ -927,6 +1051,13 @@ impl FreeDfApp {
                         let pressure = self.sample_pressure(ctx);
                         if self.active_stroke.is_none() {
                             if inside {
+                                // 새 스트로크 시작: 스무딩 필터를 리셋해
+                                // 이전 획과 섞이지 않게 합니다.
+                                let sm = OneEuroFilter::from_smoothing(self.smoothing);
+                                self.smooth_x = sm;
+                                self.smooth_y = sm;
+                                self.smooth_p = sm;
+                                self.smooth_active = true;
                                 let (color, width) = self.current_drawing_style();
                                 self.active_stroke = Some(ActiveStroke {
                                     tool: self.tool,
@@ -938,7 +1069,17 @@ impl FreeDfApp {
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
                             if inside {
-                                st.push(page, pressure);
+                                // 1€ 필터로 손떨림을 줄이되 빠른 움직임은
+                                // 그대로 따라갑니다 (smoothing 0이면 원본).
+                                if self.smoothing > 0.001 && self.smooth_active {
+                                    let t = ctx.input(|i| i.time);
+                                    let sx = self.smooth_x.filter(page[0], t);
+                                    let sy = self.smooth_y.filter(page[1], t);
+                                    let sp = self.smooth_p.filter(pressure, t);
+                                    st.push([sx, sy], sp.clamp(0.0, 1.0));
+                                } else {
+                                    st.push(page, pressure);
+                                }
                             }
                         }
                     }
@@ -1046,29 +1187,68 @@ impl FreeDfApp {
         if pts.len() == 1 {
             let v = self.view.page_to_view([pts[0].x, pts[0].y]);
             let center = origin + Vec2::new(v[0], v[1]);
-            let r = (self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure)
-                * base_width_factor(stroke.tool)
-                * 0.5)
-                .max(0.75);
-            painter.circle_filled(center, r, color);
+            let w = if uses_own_profile(stroke.tool) {
+                // 볼펜/만년필: 전역 곡선 대신 자체 닙 프로파일 (속도 0).
+                stroke.width * zoom * base_width_factor(stroke.tool)
+                    * ink_modifier(stroke.tool, pts[0].pressure, 0.0)
+            } else {
+                self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure)
+                    * base_width_factor(stroke.tool)
+            };
+            painter.circle_filled(center, (w * 0.5).max(0.75), color);
             return;
         }
         let wfactor = base_width_factor(stroke.tool);
-        for w in pts.windows(2) {
-            let a = self.view.page_to_view([w[0].x, w[0].y]);
-            let b = self.view.page_to_view([w[1].x, w[1].y]);
-            let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-            let wpx = if uses_own_profile(stroke.tool) {
-                // 볼펜/만년필: 전역 곡선 대신 자체 닙 프로파일 사용.
-                let speed = ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt();
-                (stroke.width * zoom * wfactor * ink_modifier(stroke.tool, pressure, speed))
-                    .max(0.5)
+        // 펜/만년필은 획 양끝이 실제 펜처럼 얇아집니다 (테이퍼). 볼펜은 일정.
+        let tapers: Vec<f32> = if uses_taper(stroke.tool) {
+            taper_factors(pts, TAPER_LEN_PTS)
+        } else {
+            vec![1.0; pts.len()]
+        };
+        // 점별 화면 두께(px): 필압 곡선(펜) 또는 닙 프로파일(볼펜/만년필) × 테이퍼.
+        let n = pts.len();
+        let mut widths: Vec<f32> = Vec::with_capacity(n);
+        for (i, p) in pts.iter().enumerate() {
+            let speed = if i + 1 < n {
+                let q = &pts[i + 1];
+                ((q.x - p.x).powi(2) + (q.y - p.y).powi(2)).sqrt()
+            } else if i > 0 {
+                let q = &pts[i - 1];
+                ((q.x - p.x).powi(2) + (q.y - p.y).powi(2)).sqrt()
             } else {
-                (self.pressure_curve.apply(stroke.width * zoom, pressure) * wfactor).max(0.5)
+                0.0
             };
-            let pa = origin + Vec2::new(a[0], a[1]);
-            let pb = origin + Vec2::new(b[0], b[1]);
-            painter.line_segment([pa, pb], Stroke::new(wpx, color));
+            let w = if uses_own_profile(stroke.tool) {
+                stroke.width * zoom * wfactor * ink_modifier(stroke.tool, p.pressure, speed)
+            } else {
+                self.pressure_curve.apply(stroke.width * zoom, p.pressure) * wfactor
+            } * tapers[i];
+            widths.push(w.max(0.4));
+        }
+        // 만년필: 닙이 종이에 닿는 순간 잉크가 번지는 시작 방울.
+        if stroke.tool == ToolType::Fountain {
+            let blob = stroke.width * zoom * wfactor
+                * ink_modifier(ToolType::Fountain, 1.0, 0.0)
+                * 0.5;
+            let p0 = self.view.page_to_view([pts[0].x, pts[0].y]);
+            painter.circle_filled(
+                origin + Vec2::new(p0[0], p0[1]),
+                blob.clamp(0.75, 14.0),
+                color,
+            );
+        }
+        let pts_view: Vec<Pos2> = pts
+            .iter()
+            .map(|p| {
+                let v = self.view.page_to_view([p.x, p.y]);
+                origin + Vec2::new(v[0], v[1])
+            })
+            .collect();
+        let halves: Vec<f32> = widths.iter().map(|w| w * 0.5).collect();
+        // 세그먼트별 quad로 한 번씩 채움 — 원을 겹쳐 찍던 방식의 울퉁불퉁한
+        // 비딩(beading)이 사라지고 부드러운 가변 두께 선이 됩니다.
+        for quad in stroke_ribbon_quads(&pts_view, &halves) {
+            painter.add(egui::Shape::convex_polygon(quad.to_vec(), color, Stroke::NONE));
         }
     }
 
