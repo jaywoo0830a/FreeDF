@@ -48,7 +48,7 @@ pub(crate) use freedf_core::pen::{
     base_width_factor, ink_modifier, ink_profile_hint, uses_own_profile, ColorFamily, Palette,
     PressureCurve,
 };
-pub(crate) use freedf_core::search::{find_matches, text_line_highlights, TextMatch, TextRun};
+pub(crate) use freedf_core::search::{char_line_highlights, find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
@@ -1036,14 +1036,15 @@ impl FreeDfApp {
         let typing = ctx.egui_wants_keyboard_input();
         if !typing {
             if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
-                // 세로 전환 애니메이션 (세로로 늘어선 페이지처럼 위/아래로).
+                // 브라우저식: 한 뷰포트만 아래로, 끝나면 다음 페이지.
+                // (실제 페이지 전환이면 세로 애니메이션)
                 self.transition_vertical = true;
-                self.next_page_auto();
-                self.transition_vertical = false; // (이동이 없었으면 누수 방지)
+                self.page_key(true);
+                self.transition_vertical = false; // (스크롤만 했다면 누수 방지)
             }
             if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
                 self.transition_vertical = true;
-                self.prev_page();
+                self.page_key(false);
                 self.transition_vertical = false;
             }
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {

@@ -170,6 +170,65 @@ impl ViewTransform {
     }
 }
 
+/// 브라우저식 PgUp/PgDn 한 단계의 결과.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PageStep {
+    /// 페이지 안에서 세로 스크롤 — 새 `pan_y`로 갱신하면 됩니다.
+    ScrollTo { pan_y: f32 },
+    /// 아래로 더 스크롤할 수 없음 → 다음 페이지로 이동.
+    NextPage,
+    /// 위로 더 스크롤할 수 없음 → 이전 페이지로 이동.
+    PrevPage,
+}
+
+/// 브라우저처럼 PgDn/PgUp 한 번을 계산합니다 (순수 수학 — 테스트로 정의).
+///
+/// 규칙:
+/// - 페이지가 캔버스 세로보다 **작으면**(스크롤 불가) → PgDn은 `NextPage`,
+///   PgUp은 `PrevPage`.
+/// - 페이지가 **더 크면** 한 뷰포트(캔버스 높이)만큼 이동합니다.
+///   `pan_y`(페이지 위쪽의 캔버스 y)는 `top = margin`에서
+///   `bottom = canvas_h - view_h - margin` 사이입니다.
+///   - PgDn: 이미 바닥(bottom)이면 `NextPage`, 아니면 `pan_y - canvas_h`로
+///     (바닥을 넘지 않게 clamp).
+///   - PgUp: 이미 상단(top)이면 `PrevPage`, 아니면 `pan_y + canvas_h`로
+///     (상단을 넘지 않게 clamp).
+pub fn browser_page_step(
+    page_h_pts: f32,
+    zoom: f32,
+    canvas_h: f32,
+    margin: f32,
+    pan_y: f32,
+    down: bool,
+) -> PageStep {
+    let view_h = page_h_pts * zoom;
+    let top = margin;
+    let bottom = canvas_h - view_h - margin;
+    if view_h <= canvas_h {
+        return if down {
+            PageStep::NextPage
+        } else {
+            PageStep::PrevPage
+        };
+    }
+    const EPS: f32 = 0.5;
+    if down {
+        if (pan_y - bottom).abs() <= EPS {
+            return PageStep::NextPage;
+        }
+        PageStep::ScrollTo {
+            pan_y: (pan_y - canvas_h).max(bottom),
+        }
+    } else {
+        if (pan_y - top).abs() <= EPS {
+            return PageStep::PrevPage;
+        }
+        PageStep::ScrollTo {
+            pan_y: (pan_y + canvas_h).min(top),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +416,101 @@ mod tests {
         // 페이지가 가로 중앙 + 상단 여백에 배치됨
         assert!((view[0] - (1400.0 - 595.0 * 2.0) / 2.0).abs() < 1e-3);
         assert!((view[1] - 24.0).abs() < 1e-3);
+    }
+
+    // ── 브라우저식 PgUp/PgDn (browser_page_step) ─────────────────────────
+    // 상수: page_h_pts=1400, zoom=1.0 → view_h=1400. canvas_h=600, margin=16.
+    // top=16, bottom=600-1400-16=-816. 한 단계=600(캔버스 높이).
+
+    #[test]
+    fn pgdn_on_fitting_page_goes_next() {
+        // 페이지가 캔버스에 다 들어가면(스크롤 불가) 무조건 다음 페이지.
+        assert_eq!(
+            browser_page_step(500.0, 1.0, 600.0, 16.0, 16.0, true),
+            PageStep::NextPage
+        );
+    }
+
+    #[test]
+    fn pgup_on_fitting_page_goes_prev() {
+        assert_eq!(
+            browser_page_step(500.0, 1.0, 600.0, 16.0, 16.0, false),
+            PageStep::PrevPage
+        );
+    }
+
+    #[test]
+    fn pgdn_scrolls_down_one_viewport_before_advancing() {
+        // 상단(pan_y=16)에서 PgDn → 페이지를 건너뛰지 않고 한 뷰포트만 아래로.
+        let step = browser_page_step(1400.0, 1.0, 600.0, 16.0, 16.0, true);
+        assert!(matches!(step, PageStep::ScrollTo { .. }));
+        if let PageStep::ScrollTo { pan_y } = step {
+            assert!((pan_y - (16.0 - 600.0)).abs() < 1e-3, "한 뷰포트만 이동: {pan_y}");
+        }
+    }
+
+    #[test]
+    fn pgdn_at_bottom_advances_to_next_page() {
+        // 이미 바닥(pan_y=-816)이면 PgDn → 다음 페이지.
+        assert_eq!(
+            browser_page_step(1400.0, 1.0, 600.0, 16.0, -816.0, true),
+            PageStep::NextPage
+        );
+    }
+
+    #[test]
+    fn pgup_at_top_goes_prev_page() {
+        assert_eq!(
+            browser_page_step(1400.0, 1.0, 600.0, 16.0, 16.0, false),
+            PageStep::PrevPage
+        );
+    }
+
+    #[test]
+    fn pgdn_sequence_clamps_at_bottom_then_advances() {
+        let m = 16.0_f32;
+        // ① 상단 → -584, ② -584 → -816(바닥), ③ 바닥 → 다음 페이지.
+        let s1 = browser_page_step(1400.0, 1.0, 600.0, m, m, true);
+        let pan1 = match s1 {
+            PageStep::ScrollTo { pan_y } => pan_y,
+            _ => panic!("첫 PgDn은 스크롤이어야 함: {s1:?}"),
+        };
+        assert!((pan1 + 584.0).abs() < 1e-3);
+        let s2 = browser_page_step(1400.0, 1.0, 600.0, m, pan1, true);
+        let pan2 = match s2 {
+            PageStep::ScrollTo { pan_y } => pan_y,
+            _ => panic!("둘째 PgDn은 스크롤이어야 함: {s2:?}"),
+        };
+        assert!((pan2 + 816.0).abs() < 1e-3, "바닥으로 클램프");
+        assert_eq!(browser_page_step(1400.0, 1.0, 600.0, m, pan2, true), PageStep::NextPage);
+    }
+
+    #[test]
+    fn pgup_from_bottom_scrolls_back_to_top_then_prev() {
+        let m = 16.0_f32;
+        // 바닥(-816) → -216 → 16(상단) → 이전 페이지.
+        let s1 = browser_page_step(1400.0, 1.0, 600.0, m, -816.0, false);
+        let pan1 = match s1 {
+            PageStep::ScrollTo { pan_y } => pan_y,
+            _ => panic!("첫 PgUp은 스크롤이어야 함: {s1:?}"),
+        };
+        assert!((pan1 + 216.0).abs() < 1e-3);
+        let s2 = browser_page_step(1400.0, 1.0, 600.0, m, pan1, false);
+        let pan2 = match s2 {
+            PageStep::ScrollTo { pan_y } => pan_y,
+            _ => panic!("둘째 PgUp은 스크롤이어야 함: {s2:?}"),
+        };
+        assert!((pan2 - 16.0).abs() < 1e-3, "상단으로 클램프");
+        assert_eq!(browser_page_step(1400.0, 1.0, 600.0, m, pan2, false), PageStep::PrevPage);
+    }
+
+    #[test]
+    fn pgdn_when_slightly_scrolled_uses_remaining_room() {
+        // 바닥 근처(-800)에서 PgDn → 남은 여유만큼만(-816) 이동, 페이지는 안 넘어감.
+        let step = browser_page_step(1400.0, 1.0, 600.0, 16.0, -800.0, true);
+        match step {
+            PageStep::ScrollTo { pan_y } => assert!((pan_y + 816.0).abs() < 1e-3),
+            other => panic!("아직 여유가 있으면 스크롤이어야 함: {other:?}"),
+        }
     }
 }

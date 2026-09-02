@@ -56,9 +56,10 @@ native file dialogs, Windows Ink pressure).
 - 🔖 **Highlighter (default: plain marker)** — the Highlighter draws a clean,
   even, semi-transparent marker line along your stroke by default (drawn as one
   smooth path, no pressure wobble). Optionally enable **“Snap to text”** in the
-  tool settings to make it follow the document's real text instead — this also
-  works on **rotated pages**, and if the page has no selectable text it falls
-  back to the plain marker stroke
+  tool settings to make it follow the document's real text instead — snapping
+  uses PDFium's **per-character** boxes (`tight_bounds`), merges each touched
+  line into one clean band, ignores pressure, and works on **rotated pages**;
+  if the page has no selectable text it falls back to the plain marker stroke
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
@@ -102,9 +103,13 @@ native file dialogs, Windows Ink pressure).
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
   level is preserved when moving between pages. **PgUp / PgDn flip vertically**
   (like pages stacked in a long column), everything else slides horizontally
-- 🔁 **PgDn / PgUp = next / previous page** (not vertical scrolling). On a FreeDF
-  note, pressing **PgDn on the last page automatically appends a fresh page**
-  (same size & paper) so you can keep writing without breaking flow
+- 🔁 **PgDn / PgUp = browser-style paging** — if the page is taller than the
+  canvas it scrolls **one viewport at a time** inside the page (just like a web
+  browser); only when there is no more room does it move to the next / previous
+  page (flip is vertical). On a FreeDF note, reaching the **last page** with
+  PgDn automatically appends a fresh page (same size & paper) so you can keep
+  writing. The step logic is defined by unit tests
+  (`transform::browser_page_step`)
 - 🧭 **Floating canvas controls** — a semi-transparent bar at the bottom-center
   of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
   Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
@@ -210,7 +215,9 @@ freedf --open /path/to/document.pdf
 | `Ctrl+E` | Export current page as PNG |
 | `Ctrl+Shift+M` | Toggle **focus mode**: hide all toolbars (any window size);
   canvas + palette remain, `☰ Show UI` (top-right) or the shortcut restores them |
-| `PgDn` / `PgUp` | Next / previous page (on a note, PgDn adds a new page at the end) |
+| `PgDn` / `PgUp` | Browser-style paging: scroll one viewport inside the page;
+  at the page edge move to next / previous page (vertical flip; on a note,
+  PgDn past the last page appends a fresh page) |
 | `←` / `→` | Previous / next page |
 | `+` / `-` | Zoom in / out |
 | `P` / `H` / `E` / `V` | Pen / Highlighter / Eraser / Pan |

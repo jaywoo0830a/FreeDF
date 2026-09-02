@@ -162,6 +162,57 @@ pub fn text_line_highlights(runs: &[TextRun], bbox: [f32; 4], margin: f32) -> Ve
     lines
 }
 
+/// 드래그 영역(`bbox`, 표시/페이지 좌표)에 닿은 **글자별** 사각형들을 줄 단위로
+/// 묶어, 각 줄마다 **하나의 연속 밴드**로 반환합니다.
+///
+/// - `char_rects`: pdfium `tight_bounds()`에서 얻은 글자 경계 `[x0,y0,x1,y1]`
+///   (표시 공간 — 세로 뒤집기/회전은 호출부가 미리 적용).
+/// - 같은 줄(세로로 겹침)에 닿은 글자는 x 범위를 합쳐 한 밴드로 만듭니다
+///   (글자 사이 공백 포함). 서로 다른 줄은 절대 합치지 않습니다.
+/// - **필압은 관여하지 않습니다** — 칠할 두께는 항상 그 줄의 높이와 같습니다.
+///
+/// 순수 데이터 연산이라 GUI 없이 단위 테스트로 검증합니다.
+pub fn char_line_highlights(
+    char_rects: &[[f32; 4]],
+    bbox: [f32; 4],
+    margin: f32,
+) -> Vec<[f32; 4]> {
+    let (bx0, by0, bx1, by1) = (
+        bbox[0] - margin,
+        bbox[1] - margin,
+        bbox[2] + margin,
+        bbox[3] + margin,
+    );
+    // 1) 드래그에 닿은 글자만 남깁니다.
+    let mut touched: Vec<[f32; 4]> = char_rects
+        .iter()
+        .filter(|r| r[2] >= bx0 && r[0] <= bx1 && r[3] >= by0 && r[1] <= by1)
+        .copied()
+        .collect();
+    if touched.is_empty() {
+        return Vec::new();
+    }
+    // 2) 읽기 순서(y, x)로 정렬 후, 세로로 겹치는 글자끼리 한 줄로 합칩니다.
+    //    (인접 줄은 줄 간격 때문에 y가 겹치지 않으므로 섞이지 않음)
+    touched.sort_by(|a, b| a[1].total_cmp(&b[1]).then(a[0].total_cmp(&b[0])));
+    let mut lines: Vec<[f32; 4]> = Vec::new();
+    for r in touched {
+        let mut placed = false;
+        for line in lines.iter_mut() {
+            if r[1] <= line[3] && r[3] >= line[1] {
+                *line = union(*line, r);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            lines.push(r);
+        }
+    }
+    lines.sort_by(|a, b| a[1].total_cmp(&b[1]).then(a[0].total_cmp(&b[0])));
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +334,67 @@ mod tests {
         let runs = vec![TextRun::new("Hello", [10.0, 10.0, 60.0, 26.0], vec![])];
         // 텍스트와 멀리 떨어진 스트로크.
         assert!(text_line_highlights(&runs, [200.0, 200.0, 300.0, 260.0], 2.0).is_empty());
+    }
+
+    // ── char_line_highlights (글자 단위 하이라이트 판정) ─────────────────
+
+    /// 두 줄의 글자 사각형: 1행 y 10..26, 2행 y 60..76. 표시 공간 좌표.
+    fn two_line_chars() -> Vec<[f32; 4]> {
+        let mut v = Vec::new();
+        // 1행: 서로 떨어진 3개 덩어리
+        for (a, b) in [(20.0, 60.0), (80.0, 120.0), (160.0, 300.0)] {
+            v.push([a, 10.0, b, 26.0]);
+        }
+        // 2행
+        for (a, b) in [(30.0, 70.0), (90.0, 200.0)] {
+            v.push([a, 60.0, b, 76.0]);
+        }
+        v
+    }
+
+    #[test]
+    fn char_highlights_merge_same_line_into_one_band() {
+        let chars = two_line_chars();
+        // 1행 전체를 덮는 드래그 → 밴드 1개, 2행 미포함.
+        let rects = char_line_highlights(&chars, [0.0, 0.0, 500.0, 30.0], 3.0);
+        assert_eq!(rects.len(), 1, "1행만 닿음 → 밴드 1개");
+        let r = rects[0];
+        assert!((r[0] - 20.0).abs() < 1e-3, "시작은 첫 글자 왼쪽");
+        assert!((r[2] - 300.0).abs() < 1e-3, "끝은 마지막 글자 오른쪽(공백 포함)");
+        assert!((r[1] - 10.0).abs() < 1e-3 && (r[3] - 26.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn char_highlights_keep_lines_separate() {
+        let chars = two_line_chars();
+        // 두 줄 모두 덮는 드래그 → 줄마다 밴드 (절대 합치지 않음).
+        let rects = char_line_highlights(&chars, [0.0, 0.0, 500.0, 90.0], 3.0);
+        assert_eq!(rects.len(), 2, "줄이 다르면 밴드도 분리");
+        assert!(rects[0][1] < rects[1][1], "위쪽 줄 먼저");
+    }
+
+    #[test]
+    fn char_highlights_partial_drag_hits_only_touched_chars() {
+        let chars = two_line_chars();
+        // 1행의 첫 덩어리(x 20..60)만 겹치게 1행 높이 안에서 드래그.
+        let rects = char_line_highlights(&chars, [30.0, 5.0, 50.0, 25.0], 3.0);
+        assert_eq!(rects.len(), 1);
+        let r = rects[0];
+        assert!((r[0] - 20.0).abs() < 1e-3);
+        assert!((r[2] - 60.0).abs() < 1e-3, "닿은 글자까지만");
+    }
+
+    #[test]
+    fn char_highlights_margin_touches_adjacent() {
+        let chars = two_line_chars();
+        // 텍스트 바로 위(살짝 떨어진) 선을 그어도 margin 덕에 닿음.
+        let rects = char_line_highlights(&chars, [0.0, 3.0, 500.0, 8.0], 3.0);
+        assert!(!rects.is_empty(), "margin으로 1행과 접촉");
+    }
+
+    #[test]
+    fn char_highlights_empty_area_is_empty() {
+        let chars = two_line_chars();
+        assert!(char_line_highlights(&chars, [400.0, 300.0, 450.0, 330.0], 3.0).is_empty());
     }
 }

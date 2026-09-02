@@ -72,7 +72,10 @@ impl FreeDfApp {
         }
     }
 
-    /// 스트로크가 닿은 텍스트 줄 위로 하이라이트 사각형 스트로크를 추가합니다.
+    /// 스트로크가 닿은 **글자**들을 줄 단위로 묶어 밴드 하이라이트를 만듭니다.
+    ///
+    /// pdfium `tight_bounds()`(글자별 박스)로 정밀 판정하며, 각 줄은 그 줄의
+    /// 높이만큼의 반투명 밴드 하나로 칠합니다. **필압은 전혀 쓰지 않습니다.**
     /// 성공(텍스트 하이라이트를 만든 경우)하면 `true`를 반환합니다.
     pub(crate) fn add_text_highlights(&mut self, active: &ActiveStroke) -> bool {
         let Some(doc) = &self.document else {
@@ -89,35 +92,34 @@ impl FreeDfApp {
         if x1 < x0 || y1 < y0 {
             return false;
         }
-        // 항상 현재 페이지의 텍스트 런을 새로 읽습니다 (이전 페이지/검색의
-        // 캐시 `search_runs`를 쓰면 페이지를 넘긴 뒤 좌표가 어긋날 수 있음).
-        let runs = doc.page_text_runs(self.current_page).unwrap_or_default();
-        if runs.is_empty() {
-            // 페이지에 선택 가능한 텍스트가 전혀 없음(스캔/이미지 PDF 등).
+        // 항상 현재 페이지의 글자 좌표를 새로 읽습니다 (캐시 없음 → 정확).
+        let char_rects = doc.page_char_rects(self.current_page).unwrap_or_default();
+        if char_rects.is_empty() {
+            // 페이지에 선택 가능한 텍스트가 없음(스캔/이미지 PDF 등).
             self.status = Some(
                 "No selectable text on this page — drew a free-form highlight."
                     .to_string(),
             );
             return false;
         }
-        let rects = text_line_highlights(&runs, [x0, y0, x1, y1], 6.0);
+        // 닿은 글자를 줄 단위로 합쳐 연속 밴드로 만듭니다.
+        let rects = char_line_highlights(&char_rects, [x0, y0, x1, y1], 4.0);
         if rects.is_empty() {
             return false;
         }
         let mut strokes = Vec::new();
         for r in rects {
+            // 밴드 높이 = 그 줄의 글자 높이(포인트). 필압은 1.0(무시).
             let line_h = (r[3] - r[1]).max(2.0);
             let yc = (r[1] + r[3]) * 0.5;
-            // 두께가 정확히 줄 높이가 되도록(비율 1.0) 필압 역산.
-            let pressure = self.pressure_curve.pressure_of(line_h, line_h);
             let id = self.store.add_stroke(
                 self.current_page,
                 ToolType::Highlighter,
                 active.color,
                 line_h,
                 vec![
-                    StrokePoint::new(r[0], yc, pressure),
-                    StrokePoint::new(r[2], yc, pressure),
+                    StrokePoint::new(r[0], yc, 1.0),
+                    StrokePoint::new(r[2], yc, 1.0),
                 ],
             );
             if let Some(st) = self.store.stroke(self.current_page, id).cloned() {

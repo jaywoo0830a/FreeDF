@@ -342,6 +342,34 @@ impl FreeDfApp {
         }
     }
 
+    /// 브라우저식 PgUp/PgDn 동작 (핵심 판정은 core의 `browser_page_step`).
+    ///
+    /// - 페이지가 캔버스보다 길면(세로 스크롤 여지) **한 뷰포트만** 이동하고,
+    ///   페이지를 넘기지 않습니다.
+    /// - 더 스크롤할 수 없을 때만 다음/이전 페이지로 넘어갑니다
+    ///   (노트는 `next_page_auto`라서 마지막 페이지면 새 페이지가 자동 추가됨).
+    pub(crate) fn page_key(&mut self, down: bool) {
+        if self.document.is_none() {
+            return;
+        }
+        let canvas_h = self.last_canvas[1].max(1.0);
+        let step = freedf_core::transform::browser_page_step(
+            self.page_size_pts[1],
+            self.view.zoom,
+            canvas_h,
+            CANVAS_MARGIN,
+            self.view.pan_y,
+            down,
+        );
+        match step {
+            freedf_core::transform::PageStep::ScrollTo { pan_y } => {
+                self.view.pan_y = pan_y;
+            }
+            freedf_core::transform::PageStep::NextPage => self.next_page_auto(),
+            freedf_core::transform::PageStep::PrevPage => self.prev_page(),
+        }
+    }
+
     pub(crate) fn goto_page(&mut self, index: PageIndex) {
         if let Some(doc) = &self.document {
             if index < doc.page_count() {

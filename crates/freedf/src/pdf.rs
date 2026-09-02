@@ -275,24 +275,35 @@ impl DocumentView {
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
             let txt = seg.text();
-            let b = seg.bounds();
-            // 콘텐츠 공간(좌하단 원점, y 위) 사각형: [left, bottom, right, top]
-            let (x0, y0, x1, y1) = (
-                b.left().value,
-                b.bottom().value,
-                b.right().value,
-                b.top().value,
-            );
-            // 표시 공간(좌상단 원점, y 아래)으로 변환. (픽셀 렌더로 검증됨)
-            let rect = match rot {
-                PdfPageRenderRotation::None => [x0, h - y1, x1, h - y0],
-                PdfPageRenderRotation::Degrees90 => [y0, x0, y1, x1],
-                PdfPageRenderRotation::Degrees180 => [w - x1, y0, w - x0, y1],
-                PdfPageRenderRotation::Degrees270 => [h - y1, w - x1, h - y0, w - x0],
-            };
+            let rect = content_rect_to_display(seg.bounds(), w, h, rot);
             runs.push(TextRun::new(txt, rect, Vec::new()));
         }
         Ok(runs)
+    }
+
+    /// 페이지의 **글자별** 경계 사각형(표시 공간) 목록을 반환합니다.
+    ///
+    /// pdfium-render 0.9.3의 정밀 텍스트 좌표는 `PdfPageTextChar::tight_bounds()`
+    /// (FPDFText_GetCharBox)입니다. 하이라이트는 세그먼트 단위가 아니라 이
+    /// 글자 단위로 판정해야 글이 딱 맞는 밴드로 칠해집니다.
+    pub fn page_char_rects(&self, index: usize) -> Result<Vec<[f32; 4]>, String> {
+        let page = self
+            .document
+            .pages()
+            .get(index as i32)
+            .map_err(|e| format!("Could not read page: {e}"))?;
+        let w = page.width().value;
+        let h = page.height().value;
+        let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
+        let mut out = Vec::with_capacity(text.len().max(0) as usize);
+        for ch in text.chars().iter() {
+            // 오류가 나는 글자는 건너뜁니다.
+            if let Ok(b) = ch.tight_bounds() {
+                out.push(content_rect_to_display(b, w, h, rot));
+            }
+        }
+        Ok(out)
     }
 
     /// 지정한 인덱스에 빈 페이지를 삽입합니다.
@@ -418,5 +429,28 @@ fn rotate_rotation(current: PdfPageRenderRotation, clockwise: bool) -> PdfPageRe
         (Degrees90, false) => None,
         (Degrees180, false) => Degrees90,
         (Degrees270, false) => Degrees180,
+    }
+}
+
+/// 콘텐츠 공간(좌하단 원점, y 위, `/Rotate` 미적용)의 `PdfRect`를
+/// **표시 공간**(좌상단 원점, y 아래) 사각형 `[x0, y0, x1, y1]`으로 변환합니다.
+/// (픽셀 렌더로 검증됨 — 세그먼트·글자 양쪽에 공용)
+fn content_rect_to_display(
+    r: PdfRect,
+    w: f32,
+    h: f32,
+    rot: PdfPageRenderRotation,
+) -> [f32; 4] {
+    let (x0, y0, x1, y1) = (
+        r.left().value,
+        r.bottom().value,
+        r.right().value,
+        r.top().value,
+    );
+    match rot {
+        PdfPageRenderRotation::None => [x0, h - y1, x1, h - y0],
+        PdfPageRenderRotation::Degrees90 => [y0, x0, y1, x1],
+        PdfPageRenderRotation::Degrees180 => [w - x1, y0, w - x0, y1],
+        PdfPageRenderRotation::Degrees270 => [h - y1, w - x1, h - y0, w - x0],
     }
 }
