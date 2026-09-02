@@ -612,6 +612,24 @@ pub struct FreeDfApp {
     ink_next_settle_ms: u64,
     /// 스토어 교체(문서 열기/탭 전환)마다 증가 — 캐시 키 충돌 방지.
     store_generation: u64,
+    /// 진행 중 획의 캐시된 렌더 메시 (본체+후광 합본) — **100ms 스로틀**로
+    /// 재구성하고, 그 사이엔 이 메시를 그대로 다시 그립니다.
+    /// (빌드 시각 ms, 점 수, 뷰/설정 키, 메시)
+    active_mesh: Option<(
+        u64,
+        usize,
+        (
+            f32,
+            f32,
+            f32,
+            f32,
+            f32,
+            InkBleed,
+            BallPenProfile,
+            FountainProfile,
+        ),
+        std::sync::Arc<egui::Mesh>,
+    )>,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -937,6 +955,7 @@ impl FreeDfApp {
             ink_built_at: 0,
             ink_next_settle_ms: u64::MAX,
             store_generation: 0,
+            active_mesh: None,
             paper_style,
             paper_color,
             paper_size,

@@ -25,6 +25,10 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
     (y.atan2(x), cos_pitch)
 }
 
+/// 진행 중 획/번지는 후광의 지오메트리 재구성 스로틀 (ms).
+/// 사람이 못 느끼는 100ms — 최대 10Hz로만 다시 짓습니다.
+const ACTIVE_STROKE_GEOM_MS: u64 = 100;
+
 // ── 획별 지오메트리 캐시 (LRU, pt 공간 — 줌과 무관) ─────────────────────────
 
 /// 잉크 설정 스냅샷 — 캐시된 지오메트리가 어떤 모델 파라미터로 만들어졌는지.
@@ -494,7 +498,7 @@ impl FreeDfApp {
                     ui.label(format!("tip speed: {speed:.0} pt/s"));
                     ui.label(format!("tip width: {tip_w:.2} pt"));
                     ui.label(format!("active points: {pts_n}"));
-                    ui.label("render: ribbon ≈ O(n)  (완성 획: 정확+캐시)");
+                    ui.label("render: ribbon ≈ O(n) · 100ms 스로틀  (완성 획: 정확+캐시)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -509,6 +513,8 @@ impl FreeDfApp {
     }
 
     pub(crate) fn finish_stroke(&mut self) {
+        // 스로틀 캐시 무효화 — 완성된 획은 병합 메시(정확 지오메트리)로 넘어갑니다.
+        self.active_mesh = None;
         if let Some(mut active) = self.active_stroke.take() {
             self.smooth_active = false;
             if active.points.is_empty() {
@@ -1803,16 +1809,54 @@ impl FreeDfApp {
             (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
         };
         let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
+        // ── 100ms 스로틀: 지오메트리 재구성은 최대 10Hz — 그 사이엔 캐시된
+        // 메시를 그대로 다시 그립니다 (갱신 지연은 사람이 못 느낍니다).
+        let now = now_ms();
+        let view_key = (
+            self.view.zoom,
+            self.view.pan_x,
+            self.view.pan_y,
+            origin.x,
+            origin.y,
+            self.ink_bleed,
+            self.pen_profile,
+            self.fountain_profile,
+        );
+        let key_eq = |a: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile),
+                      b: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile)| {
+            a.0 == b.0
+                && a.1 == b.1
+                && a.2 == b.2
+                && a.3 == b.3
+                && a.4 == b.4
+                && a.5 == b.5
+                && a.6 == b.6
+                && a.7 == b.7
+        };
+        if let Some((built_ms, n0, k0, mesh)) = &self.active_mesh {
+            if *n0 == n && key_eq(k0, &view_key) {
+                // 동일 입력·동일 뷰 — 캐시 그대로 (후광도 스로틀 단위로 갱신).
+                painter.add(egui::Shape::mesh(mesh.clone()));
+                return;
+            }
+            let view_changed = k0.0 != view_key.0
+                || k0.1 != view_key.1
+                || k0.2 != view_key.2
+                || k0.3 != view_key.3
+                || k0.4 != view_key.4;
+            if !view_changed && now.saturating_sub(*built_ms) < ACTIVE_STROKE_GEOM_MS {
+                // 새 점이 왔지만 스로틀 안 — 이번 프레임은 기존 메시 그대로.
+                painter.add(egui::Shape::mesh(mesh.clone()));
+                return;
+            }
+        }
+        // ── 재구성 (리본 O(n) 단일 스캔 — 귀 자르기 없음).
         let to_view = |p: [f32; 2]| -> Pos2 {
             let v = self.view.page_to_view(p);
             egui::pos2(origin.x + v[0], origin.y + v[1])
         };
-        // 진행 중 획은 점이 매 프레임 늘어 **매 프레임 재구성**됩니다. 여기서
-        // 귀 자르기 삼각분할(O(n²))·경계 해시맵을 돌리면 빠르게 쓸 때 버벅이므로,
-        // **리본 근사(O(n) 단일 스캔)** 로 그립니다 — 마이터/베벨 규칙은 정확
-        // 경로와 동일하고, AA는 "바깥 페더 링 + 알파 1→0 램프"로 근사합니다.
-        // (완성 획은 build_ink_mesh에서 캐시된 정확 지오메트리를 씁니다)
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
+        let mut mesh = egui::Mesh::default();
         if bleed_active {
             let radii = bleed_radii(&pts_pt, age_sec, self.ink_bleed);
             for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
@@ -1820,25 +1864,24 @@ impl FreeDfApp {
                 let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
                 let halo_color =
                     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-                let mut mesh = egui::Mesh::default();
                 append_ribbon(
                     &mut mesh,
                     &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
                     &to_view,
                     halo_color,
                 );
-                painter.add(egui::Shape::mesh(mesh));
             }
         }
         // 본체 — 리본 + 내장 페더(알파 램프).
-        let mut body = egui::Mesh::default();
         append_ribbon(
-            &mut body,
+            &mut mesh,
             &freedf_core::pen::stroke_ribbon(&pts_pt, &halves_pt, feather_pt, round_caps),
             &to_view,
             color,
         );
-        painter.add(egui::Shape::mesh(body));
+        let mesh = std::sync::Arc::new(mesh);
+        painter.add(egui::Shape::mesh(mesh.clone()));
+        self.active_mesh = Some((now, n, view_key, mesh));
     }
 
     /// 페이지의 **모든 완성 획**을 병합 잉크 메시 하나로 만듭니다.
@@ -1980,9 +2023,15 @@ impl FreeDfApp {
             return true;
         }
         if self.ink_next_settle_ms != u64::MAX {
-            // 아직 번지고 있는 획이 있으면 매 프레임, 방금 정착된 획이 있으면
-            // 이번 프레임에 한 번 더 재구성합니다.
-            if now < self.ink_next_settle_ms || self.ink_built_at < self.ink_next_settle_ms {
+            // 방금 정착된 획이 있으면 이번 프레임에 한 번 더 재구성합니다.
+            if self.ink_built_at < self.ink_next_settle_ms {
+                return true;
+            }
+            // 아직 번지고 있으면 **100ms 스로틀**로만 재구성 (후광은 느리게
+            // 자라므로 10Hz 갱신으로도 충분 — 사람은 못 느낍니다).
+            if now < self.ink_next_settle_ms
+                && now.saturating_sub(self.ink_built_at) >= ACTIVE_STROKE_GEOM_MS
+            {
                 return true;
             }
         }
@@ -2056,32 +2105,37 @@ impl FreeDfApp {
                         painter.circle_filled(pos, 1.2, Color32::from_white_alpha(200));
                     }
                 }
-                // ── 틸트 추적: 펜 기울기의 방위각으로 회전하는 배럴 투영 타원 +
-                // 닙 방향 지시선 — 필압/틸트 소스(OTD/evdev)가 있을 때만.
+                // ── 틸트 추적 커서 (오른손잡이 관례): 닙은 **실제 좌표에 고정**,
+                // 배럴이 기울기 방향(방위각)으로 뻗어 그 지점을 가리킵니다 —
+                // 좌표를 중심으로 회전하는 게 아니라 펜 자체가 좌표를 찍습니다.
                 if self.pen_monitor.is_some() {
                     let (az, cos_pitch) = tilt_azimuth(&self.pen_tilt);
                     if cos_pitch < 0.98 {
                         let pitch = cos_pitch.acos();
-                        // 장축은 기울기 방향으로 늘어나고(펜 그림자), 단축은
-                        // 기울기에 비례해 찌그러집니다(원의 원근 단축).
-                        let major = 8.0 + 16.0 * pitch.sin();
-                        let minor = (8.0 * cos_pitch).max(1.2);
-                        let (ct, st) = (az.cos(), az.sin());
-                        let mut pts = Vec::with_capacity(20);
-                        for k in 0..20 {
-                            let t = std::f32::consts::TAU * (k as f32 / 20.0);
-                            let (ex, ey) = (major * t.cos(), minor * t.sin());
-                            pts.push(pos + egui::vec2(ex * ct - ey * st, ex * st + ey * ct));
-                        }
-                        painter.add(egui::Shape::convex_polygon(
-                            pts,
-                            Color32::from_black_alpha(28),
-                            Stroke::NONE,
-                        ));
-                        painter.line_segment(
-                            [pos, pos + egui::vec2(major * ct, major * st)],
-                            Stroke::new(1.5, Color32::from_white_alpha(160)),
+                        // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
+                        let len = 6.0 + 20.0 * pitch.sin();
+                        let w = (3.5 * cos_pitch).max(1.0);
+                        let dir = egui::vec2(az.cos(), az.sin());
+                        let perp = egui::vec2(-dir.y, dir.x);
+                        let tail = pos + dir * len;
+                        let nib_l = pos + perp * 0.8;
+                        let nib_r = pos - perp * 0.8;
+                        let tail_l = tail + perp * w;
+                        let tail_r = tail - perp * w;
+                        let ink = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            60,
                         );
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![nib_l, nib_r, tail_r, tail_l],
+                            ink,
+                            Stroke::new(1.0, Color32::from_white_alpha(140)),
+                        ));
+                        painter.circle_filled(tail, w, ink);
+                        // 닙 끝(정확 좌표) 강조.
+                        painter.circle_filled(pos, 1.4, Color32::from_white_alpha(210));
                     }
                 }
             }
