@@ -596,6 +596,9 @@ pub struct FreeDfApp {
     pen_verdict: Option<String>,
     /// LIVE-FLAT 경고 로그 스로틀 (ms).
     pen_flat_log_ms: u64,
+    /// 방금 끝난 획의 id — 병합 메시에서 그 획의 정착 렌더 폭을 대조 로그로
+    /// 남기기 위한 표식 (진단용).
+    last_finished_id: Option<u64>,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
@@ -948,6 +951,7 @@ impl FreeDfApp {
             last_pen_state_ms: None,
             pen_verdict: None,
             pen_flat_log_ms: 0,
+            last_finished_id: None,
             ink_mesh: None,
             ink_fallback: Vec::new(),
             ink_key: (

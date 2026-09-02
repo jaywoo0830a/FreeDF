@@ -558,6 +558,14 @@ impl FreeDfApp {
             if active.points.is_empty() {
                 return;
             }
+            // ── 펜업 전환 진단: 표시되던 마지막 점들의 (필압, 폭) vs 펜 뗀 뒤.
+            let before_penup: Vec<(f32, f32)> = active
+                .points
+                .iter()
+                .rev()
+                .take(4)
+                .map(|p| (p.pressure, p.width))
+                .collect();
             // 마지막 점의 폭을 확정합니다 (인과적 — 이후 절대 변하지 않음).
             if let Some(mut locker) = self.width_locker.take() {
                 if let Some(final_pt) = locker.finish() {
@@ -565,6 +573,24 @@ impl FreeDfApp {
                         *last = final_pt;
                     }
                 }
+            }
+            let after_penup: Vec<(f32, f32)> = active
+                .points
+                .iter()
+                .rev()
+                .take(4)
+                .map(|p| (p.pressure, p.width))
+                .collect();
+            if before_penup != after_penup {
+                pen_trace(&format!(
+                    "PENUP-CHANGED: 표시={before_penup:?} 확정={after_penup:?} live_pressure={:?} ← 펜 떼는 순간 폭 데이터가 바뀜!",
+                    self.live_pressure
+                ));
+            } else {
+                pen_trace(&format!(
+                    "penup tail (pressure,width): {after_penup:?} live_pressure={:?}",
+                    self.live_pressure
+                ));
             }
             // ── 펜 진단: 획이 끝나면 필압/**렌더 폭** 변화량을 로그로 남깁니다.
             if active.tool != ToolType::Highlighter {
@@ -661,6 +687,7 @@ impl FreeDfApp {
                     id
                 }
             };
+            self.last_finished_id = Some(id);
             if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
                 self.push_history(Edit::AddStrokes {
                     page: self.current_page,
@@ -1972,6 +1999,19 @@ impl FreeDfApp {
             }
         }
         // ── 재구성 (리본 O(n) 단일 스캔 — 귀 자르기 없음).
+        {
+            // 진단: 진행 중 렌더(리본)가 실제로 쓰는 폭 — 펜업 후 정착 렌더와 대조.
+            let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
+            for h in &halves_pt {
+                hmn = hmn.min(*h);
+                hmx = hmx.max(*h);
+            }
+            pen_trace(&format!(
+                "ACTIVE-RENDER: n={n} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
+                pts[0].width,
+                pts[n - 1].width
+            ));
+        }
         let to_view = |p: [f32; 2]| -> Pos2 {
             let v = self.view.page_to_view(p);
             egui::pos2(origin.x + v[0], origin.y + v[1])
@@ -2069,6 +2109,23 @@ impl FreeDfApp {
             let pts_pt: Vec<[f32; 2]> = s.points.iter().map(|p| [p.x, p.y]).collect();
             let halves = stroke_halves(s, &ball, &fountain, tilt);
             let round_caps = matches!(s.tool, ToolType::Pen | ToolType::Fountain);
+            if Some(s.id) == self.last_finished_id {
+                // 진단: 방금 끝난 획의 **정착 렌더**(정확 지오메트리) 폭 —
+                // ACTIVE-RENDER 로그와 대조해서 펜업 순간 뭐가 바뀌는지 확인.
+                let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
+                for h in &halves {
+                    hmn = hmn.min(*h);
+                    hmx = hmx.max(*h);
+                }
+                pen_trace(&format!(
+                    "SETTLED-RENDER: id={} n={} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
+                    s.id,
+                    s.points.len(),
+                    s.points[0].width,
+                    s.points[s.points.len() - 1].width
+                ));
+                self.last_finished_id = None;
+            }
             let bleed_on = s.tool == ToolType::Pen && bleed.enabled;
             let age_sec = if s.created_ms == 0 {
                 settle
