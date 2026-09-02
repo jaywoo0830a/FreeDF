@@ -2020,8 +2020,8 @@ impl FreeDfApp {
 
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the
-    /// current tool's shape and color (Pen = 벡터풍 펜 닙 (틸트 방향 추적),
-    /// Highlighter = colored rectangle, Eraser = white translucent circle).
+    /// current tool's shape and color (Pen = 은색, Fountain = 금색 금속 닙 +
+    /// 입체 그림자, Highlighter = colored rectangle, Eraser = white circle).
     /// 마우스 + 잉크 도구(mouse_draws 꺼짐)면 팬 십자선으로 표시합니다.
     pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, _time: f32) {
         // 실제로 쓰일 도구: 마우스는 기본적으로 팬처럼 동작.
@@ -2038,10 +2038,23 @@ impl FreeDfApp {
         };
         match tool {
             ToolType::Pen | ToolType::Fountain => {
-                // ── 벡터풍 펜 닙 커서 (원형 미리보기 제거 — 사용자 요청).
-                // 닙 끝이 **실제 좌표**에 고정되고, 배럴이 펜 기울기 방향
-                // (방위각)을 가리킵니다. 틸트 소스가 없으면 오른손잡이 기본
-                // 각도(위-오른쪽)로 섭니다.
+                // ── 벡터풍 금속 펜 닙 커서 — 만년필=반짝이는 금+뾰족 닙,
+                // 볼펜=반짝이는 은+볼 닙. 닙 끝(볼펜은 볼 중심)이 **실제
+                // 좌표**에 고정되고, 배럴이 펜 기울기 방향(방위각)을 가리킵니다.
+                let is_fountain = tool == ToolType::Fountain;
+                let (base, dark, bright) = if is_fountain {
+                    (
+                        Color32::from_rgb(0xE6, 0xB4, 0x22), // 금
+                        Color32::from_rgb(0x8A, 0x64, 0x06), // 어두운 금 (윤곽)
+                        Color32::from_rgb(0xFF, 0xF0, 0xA0), // 밝은 금 (반짝임)
+                    )
+                } else {
+                    (
+                        Color32::from_rgb(0xC9, 0xCD, 0xD3), // 은
+                        Color32::from_rgb(0x76, 0x7B, 0x82), // 어두운 은 (윤곽)
+                        Color32::from_rgb(0xFF, 0xFF, 0xFF), // 흰 하이라이트
+                    )
+                };
                 let (az, cos_pitch) = if self.pen_monitor.is_some() {
                     tilt_azimuth(&self.pen_tilt)
                 } else {
@@ -2049,33 +2062,81 @@ impl FreeDfApp {
                 };
                 let pitch = cos_pitch.acos();
                 // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
-                let len = 18.0 + 26.0 * pitch.sin();
-                let w = (4.5 * cos_pitch).max(1.5);
+                let len = 24.0 + 30.0 * pitch.sin();
+                let w = (5.5 * cos_pitch).max(1.8);
                 let dir = egui::vec2(az.cos(), az.sin());
                 let perp = egui::vec2(-dir.y, dir.x);
+                // 볼펜은 볼 반지름만큼 뒤에서 배럴이 시작 (볼이 좌표에 놓임).
+                let ball_r = if is_fountain { 0.0 } else { 3.2 };
+                let tip = pos - dir * ball_r;
                 let tail = pos + dir * len;
                 let tail_l = tail + perp * w;
                 let tail_r = tail - perp * w;
-                let ink = Color32::from_rgba_unmultiplied(
-                    self.pen_color[0],
-                    self.pen_color[1],
-                    self.pen_color[2],
-                    (self.pen_color[3] as f32 * 0.75).max(90.0) as u8,
-                );
-                // 닙: 좌표에 꼭짓점이 닿는 삼각형 + 둥근 꼬리 캡.
+
+                // 1) 입체 그림자 — 오른쪽 아래로 살짝 밀린 어두운 실루엣.
+                let sh = egui::vec2(3.0, 4.0);
+                let shadow = Color32::from_black_alpha(40);
                 painter.add(egui::Shape::convex_polygon(
-                    vec![pos, tail_r, tail_l],
-                    ink,
-                    Stroke::new(1.2, Color32::from_white_alpha(190)),
+                    vec![tip + sh, tail_r + sh, tail_l + sh],
+                    shadow,
+                    Stroke::NONE,
                 ));
-                painter.circle_filled(tail, w, ink);
-                painter.circle_stroke(
-                    tail,
-                    w,
-                    Stroke::new(1.2, Color32::from_white_alpha(190)),
-                );
-                // 닙 끝(정확 좌표) 강조.
-                painter.circle_filled(pos, 1.6, Color32::from_white_alpha(220));
+                painter.circle_filled(tail + sh, w, shadow);
+                if ball_r > 0.0 {
+                    painter.circle_filled(pos + sh, ball_r, shadow);
+                }
+
+                // 2) 본체 — 금속색 테이퍼 배럴 + 어두운 금속 윤곽.
+                painter.add(egui::Shape::convex_polygon(
+                    vec![tip, tail_r, tail_l],
+                    base,
+                    Stroke::new(1.4, dark),
+                ));
+                painter.circle_filled(tail, w, base);
+                painter.circle_stroke(tail, w, Stroke::new(1.4, dark));
+
+                // 3) 반짝임 — 배럴 한쪽을 따라 흐르는 밝은 스트릭.
+                let s0 = tip + dir * 5.0;
+                let s1 = tail;
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        s0 + perp * (w * 0.55),
+                        s0 + perp * (w * 0.15),
+                        s1 + perp * (w * 0.15),
+                        s1 + perp * (w * 0.55),
+                    ],
+                    bright.gamma_multiply(0.8),
+                    Stroke::NONE,
+                ));
+
+                // 4) 닙 끝 — 만년필: 뾰족한 금속 팁, 볼펜: 좌표 위의 볼.
+                if is_fountain {
+                    let t_len = 8.0;
+                    let t1 = pos + dir * t_len + perp * 2.4;
+                    let t2 = pos + dir * t_len - perp * 2.4;
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![pos, t2, t1],
+                        bright,
+                        Stroke::new(1.0, dark),
+                    ));
+                    // 닙 숨구멍(원형 홀) — 만년필 특유의 디테일.
+                    painter.circle_stroke(
+                        pos + dir * 5.0,
+                        1.1,
+                        Stroke::new(1.0, dark.gamma_multiply(0.9)),
+                    );
+                    // 정확 좌표 = 뾰족 끝의 흰 반짝임.
+                    painter.circle_filled(pos + egui::vec2(-0.6, -0.6), 0.9, Color32::WHITE);
+                } else {
+                    // 볼 — 좌표 중심에 놓인 은색 구 + 하이라이트.
+                    painter.circle_filled(pos, ball_r, bright);
+                    painter.circle_stroke(pos, ball_r, Stroke::new(1.2, dark));
+                    painter.circle_filled(
+                        pos + egui::vec2(-ball_r * 0.35, -ball_r * 0.35),
+                        ball_r * 0.35,
+                        Color32::WHITE,
+                    );
+                }
             }
             ToolType::Highlighter => {
                 // 정밀한 마커 닙 커서: **작고 반듯한 사각형** — 두께는 실제
