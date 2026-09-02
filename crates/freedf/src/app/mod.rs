@@ -46,8 +46,7 @@ pub(crate) use freedf_core::paper::{
     PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    taper_factors, uses_taper, ColorFamily, InkBleed, OneEuroFilter, Palette, PressureCurve,
-    TAPER_LEN_PTS,
+    BallPenProfile, ColorFamily, FountainProfile, InkBleed, OneEuroFilter, Palette,
 };
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::text::char_line_highlights;
@@ -115,14 +114,16 @@ pub(crate) struct ActiveStroke {
 }
 
 impl ActiveStroke {
-    fn push(&mut self, point: [f32; 2], pressure: f32) {
-        self.points.push(StrokePoint::new(point[0], point[1], pressure));
+    fn push(&mut self, point: [f32; 2], pressure: f32, t_ms: u64) {
+        self.points
+            .push(StrokePoint::with_time(point[0], point[1], pressure, t_ms));
     }
 }
 
 fn tool_label(tool: ToolType) -> &'static str {
     match tool {
         ToolType::Pen => "Pen",
+        ToolType::Fountain => "Fountain",
         ToolType::Highlighter => "Highlighter",
         ToolType::Eraser => "Eraser",
         ToolType::Pan => "Pan",
@@ -132,6 +133,7 @@ fn tool_label(tool: ToolType) -> &'static str {
 fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
     match tool {
         ToolType::Pen => icons::PEN,
+        ToolType::Fountain => icons::PEN_NIB,
         ToolType::Highlighter => icons::MARKER_CIRCLE,
         ToolType::Eraser => icons::ERASER,
         ToolType::Pan => icons::HAND,
@@ -438,7 +440,8 @@ pub struct TabEntry {
     hi_width: f32,
     eraser_radius: f32,
     pressure_enabled: bool,
-    pressure_curve: PressureCurve,
+    /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
+    pen_profile: BallPenProfile,
     paper_style: PaperStyle,
     paper_color: [u8; 4],
     paper_size: PaperSize,
@@ -455,6 +458,8 @@ pub struct TabEntry {
     smoothing_enabled: bool,
     /// 잉크 번짐 설정
     ink_bleed: InkBleed,
+    /// 만년필 물리 모델 프로파일
+    fountain_profile: FountainProfile,
     /// 줌 잠금 (휠/핀치/단축키 줌 무시)
     zoom_lock: bool,
 }
@@ -536,7 +541,8 @@ pub struct FreeDfApp {
     hi_width: f32,
     eraser_radius: f32,
     pressure_enabled: bool,
-    pressure_curve: PressureCurve,
+    /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
+    pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
     pen_cursor_style: PenCursorStyle,
     /// 도구 선택기 순서 (드래그 앤 드롭 재정렬)
@@ -555,6 +561,11 @@ pub struct FreeDfApp {
     smoothing_enabled: bool,
     /// 잉크 번짐(블리드) 설정 — 선택 기능, 구간별 속도 커스텀 가능.
     ink_bleed: InkBleed,
+    /// 만년필 물리 모델 프로파일 (필압 × 속도 × 기울기).
+    fountain_profile: FountainProfile,
+    /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
+    /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
+    pen_tilt: [f32; 2],
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -715,10 +726,10 @@ impl FreeDfApp {
         let hi_width = if has { s.hi_width } else { 16.0 };
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
         let pressure_enabled = if has { s.pressure_enabled } else { true };
-        let pressure_curve = if has {
-            s.pressure_curve
+        let pen_profile = if has {
+            s.pen_profile
         } else {
-            PressureCurve::default()
+            BallPenProfile::default()
         };
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
@@ -754,6 +765,11 @@ impl FreeDfApp {
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let smoothing_enabled = if has { s.smoothing_enabled } else { false };
         let ink_bleed = if has { s.ink_bleed } else { InkBleed::default() };
+        let fountain_profile = if has {
+            s.fountain_profile
+        } else {
+            FountainProfile::default()
+        };
         let mouse_draws = if has { s.mouse_draws } else { false };
         let dictionary_enabled = if has { s.dictionary_enabled } else { false };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
@@ -766,6 +782,13 @@ impl FreeDfApp {
         } else {
             ToolType::default_order()
         };
+        // 저장된 순서에 새로 추가된 도구(예: 만년필)가 없으면 기본 위치에 보충.
+        let mut tool_order = tool_order;
+        for t in ToolType::default_order() {
+            if !tool_order.contains(&t) {
+                tool_order.push(t);
+            }
+        }
         let library_filter = String::new();
 
         // 노트 캐시 + 최근 목록 캐시 → DB에서 로드.
@@ -827,7 +850,7 @@ impl FreeDfApp {
             hi_width,
             eraser_radius,
             pressure_enabled,
-            pressure_curve,
+            pen_profile,
             pen_cursor_style: PenCursorStyle::Round,
             tool_order,
             tool_drag: None,
@@ -837,6 +860,8 @@ impl FreeDfApp {
             mouse_draws,
             smoothing_enabled,
             ink_bleed,
+            fountain_profile,
+            pen_tilt: [0.0, 0.0],
             paper_style,
             paper_color,
             paper_size,
@@ -901,6 +926,15 @@ impl FreeDfApp {
         }
     }
 
+    /// 플랫폼 훅: 펜 기울기 벡터를 주입합니다 (도, 각 축 ±90).
+    /// egui/winit은 기울기를 노출하지 않으므로 기본 [0,0]입니다 —
+    /// WM_POINTER(POINTER_PEN_INFO.tiltX/tiltY) 또는 HID(X/Y Tilt usage)에서
+    /// 읽은 값을 여기로 넣으면 만년필 모델이 기울기를 반영합니다.
+    #[allow(dead_code)] // HID/WM_POINTER 훅이 붙을 때까지 미사용.
+    pub(crate) fn set_pen_tilt(&mut self, tilt_x: f32, tilt_y: f32) {
+        self.pen_tilt = [tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)];
+    }
+
     /// 전역 기본 세션(마지막 펜 색/용지/도구 등)을 저장해 다음 시작 시 복원합니다.
     fn save_default_session(&self) {
         let state = crate::settings::SessionState {
@@ -913,7 +947,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            pressure_curve: self.pressure_curve,
+            pen_profile: self.pen_profile,
             zoom: 1.0,
             pan_x: 0.0,
             pan_y: 0.0,
@@ -936,6 +970,7 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            fountain_profile: self.fountain_profile,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
             dictionary_enabled: self.dictionary.enabled,
@@ -1008,7 +1043,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            pressure_curve: self.pressure_curve,
+            pen_profile: self.pen_profile,
             zoom: self.view.zoom,
             pan_x: self.view.pan_x,
             pan_y: self.view.pan_y,
@@ -1031,6 +1066,7 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            fountain_profile: self.fountain_profile,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
             dictionary_enabled: self.dictionary.enabled,
@@ -1078,7 +1114,7 @@ impl FreeDfApp {
         self.hi_width = s.hi_width.clamp(4.0, 40.0);
         self.eraser_radius = s.eraser_radius.clamp(4.0, 60.0);
         self.pressure_enabled = s.pressure_enabled;
-        self.pressure_curve = s.pressure_curve;
+        self.pen_profile = s.pen_profile;
         self.page_align = s.page_align;
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
@@ -1090,6 +1126,7 @@ impl FreeDfApp {
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;
         self.ink_bleed = s.ink_bleed;
+        self.fountain_profile = s.fountain_profile;
         self.mouse_draws = s.mouse_draws;
         self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {

@@ -7,19 +7,22 @@ use freedf_core::model::{Stroke, StrokePoint, ToolType};
 use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
 };
-use freedf_core::pen::{taper_factors, uses_taper, InkBleed, PressureCurve, TAPER_LEN_PTS};
+use freedf_core::pen::{BallPenProfile, FountainProfile, InkBleed};
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
-/// `bleed`는 화면과 동일한 잉크 번짐 설정입니다.
+/// `bleed`는 화면과 동일한 잉크 번짐 설정, `fountain`은 만년필,
+/// `pen`은 일반 펜(볼펜) 모델입니다.
 pub fn draw_strokes_on_image(
     img: &mut RgbaImage,
     strokes: &[Stroke],
     scale: f32,
     bleed: InkBleed,
+    fountain: FountainProfile,
+    pen: BallPenProfile,
 ) {
     for stroke in strokes {
-        draw_one_stroke(img, stroke, scale, bleed);
+        draw_one_stroke(img, stroke, scale, bleed, fountain, pen);
     }
 }
 
@@ -71,9 +74,15 @@ pub fn draw_paper(
     }
 }
 
-fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32, bleed: InkBleed) {
+fn draw_one_stroke(
+    img: &mut RgbaImage,
+    stroke: &Stroke,
+    scale: f32,
+    bleed: InkBleed,
+    fountain: FountainProfile,
+    pen: BallPenProfile,
+) {
     let color = stroke.color;
-    let curve = PressureCurve::default();
     let pts = &stroke.points;
     if pts.is_empty() {
         return;
@@ -82,18 +91,22 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32, bleed: InkB
     // 픽셀 공간 점 + 점별 절반 두께 (화면과 동일한 규칙).
     let pts_xy: Vec<[f32; 2]> = pts.iter().map(|p| scale_point(p, scale)).collect();
     let mut halves: Vec<f32> = Vec::with_capacity(n);
+    let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
     if stroke.tool == ToolType::Highlighter {
         // 마커: 필압/테이퍼 없이 일정한 두께.
         halves.resize(n, (stroke.width * scale * 0.5).max(0.5));
+    } else if stroke.tool == ToolType::Fountain {
+        // 만년필: 필압 × 속도 × 기울기 모델 (기울기는 내보내기에서 0 —
+        // 저장된 스트로크에는 기울기 센서 값이 없으므로).
+        let widths = fountain.widths(stroke.width, pts, 0.0);
+        for w in widths {
+            halves.push((w * scale * 0.5).max(0.5));
+        }
     } else {
-        let tapers: Vec<f32> = if uses_taper(stroke.tool) {
-            taper_factors(pts, TAPER_LEN_PTS)
-        } else {
-            vec![1.0; n]
-        };
-        for (i, p) in pts.iter().enumerate() {
-            let w = curve.apply(stroke.width, p.pressure) * scale * tapers[i];
-            halves.push((w * 0.5).max(0.5));
+        // 일반 펜: 필압·속도 영향이 작은 물리 모델.
+        let widths = pen.widths(stroke.width, pts, 0.0);
+        for w in widths {
+            halves.push((w * scale * 0.5).max(0.5));
         }
     }
     let is_pen = stroke.tool == ToolType::Pen;
@@ -132,8 +145,8 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32, bleed: InkB
             fill_stroke_outline(img, &pts_xy, &hb, true, halo);
         }
     }
-    // 본체: 펜은 둥근 캡, 마커는 직선(butt) 끝.
-    fill_stroke_outline(img, &pts_xy, &halves, is_pen, color);
+    // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝.
+    fill_stroke_outline(img, &pts_xy, &halves, round_caps, color);
 }
 
 /// 화면과 **동일한** 외곽선→삼각분할로 스트로크를 래스터라이즈합니다.
@@ -336,6 +349,92 @@ fn blend_pixel(img: &mut RgbaImage, x: u32, y: u32, color: [u8; 4]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 직선 펜 스트로크가 "빛살(starburst)처럼 퍼지는" 깨짐 없이
+    /// 자기 영역 안에만 그려지는지 검증합니다 (회귀 테스트).
+    #[test]
+    fn straight_pen_stroke_stays_inside_its_bounds() {
+        let mut img = RgbaImage::from_pixel(240, 160, Rgba([255, 255, 255, 255]));
+        let pts: Vec<StrokePoint> = (0..24)
+            .map(|i| StrokePoint::new(20.0 + i as f32 * 8.0, 80.0, 0.5))
+            .collect();
+        let stroke = Stroke {
+            id: 1,
+            tool: ToolType::Pen,
+            color: [200, 0, 0, 255],
+            width: 3.0,
+            points: pts,
+            created_ms: 0,
+        };
+        draw_strokes_on_image(
+            &mut img,
+            &[stroke],
+            1.0,
+            InkBleed::default(),
+            FountainProfile::default(),
+            BallPenProfile::default(),
+        );
+        // 스트로크 영역: x 20..204, y 80±1.5(캡 포함) → 여유 8px.
+        for y in 0..160u32 {
+            for x in 0..240u32 {
+                let inside = x >= 12 && x <= 212 && y >= 70 && y <= 90;
+                let px = img.get_pixel(x, y);
+                if !inside {
+                    assert_eq!(
+                        *px,
+                        Rgba([255, 255, 255, 255]),
+                        "스트로크 바깥 픽셀 오염: ({x},{y}) = {px:?}"
+                    );
+                }
+            }
+        }
+        // 본체는 실제로 그려져야 함.
+        assert_ne!(
+            *img.get_pixel(100, 80),
+            Rgba([255, 255, 255, 255]),
+            "스트로크 본체가 그려져야 함"
+        );
+    }
+
+    /// 하이라이터 직선 밴드도 같은 검증 (반투명 색 포함).
+    #[test]
+    fn straight_highlighter_stroke_stays_inside_its_bounds() {
+        let mut img = RgbaImage::from_pixel(240, 160, Rgba([255, 255, 255, 255]));
+        let stroke = Stroke {
+            id: 2,
+            tool: ToolType::Highlighter,
+            color: [250, 200, 0, 90],
+            width: 14.0,
+            points: vec![StrokePoint::new(20.0, 80.0, 1.0), StrokePoint::new(200.0, 80.0, 1.0)],
+            created_ms: 0,
+        };
+        draw_strokes_on_image(
+            &mut img,
+            &[stroke],
+            1.0,
+            InkBleed::default(),
+            FountainProfile::default(),
+            BallPenProfile::default(),
+        );
+        for y in 0..160u32 {
+            for x in 0..240u32 {
+                let inside = x >= 10 && x <= 210 && y >= 68 && y <= 92;
+                let px = img.get_pixel(x, y);
+                if !inside {
+                    assert_eq!(
+                        *px,
+                        Rgba([255, 255, 255, 255]),
+                        "밴드 바깥 픽셀 오염: ({x},{y}) = {px:?}"
+                    );
+                }
+            }
+        }
+        assert_ne!(
+            *img.get_pixel(100, 80),
+            Rgba([255, 255, 255, 255]),
+            "밴드 본체가 그려져야 함"
+        );
+    }
 
     /// 최소 PDF 래퍼의 구조 검증: xref 오프셋이 실제 객체 위치와 일치해야 합니다.
     #[test]

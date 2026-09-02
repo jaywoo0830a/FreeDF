@@ -6,45 +6,93 @@
 
 use super::*;
 
-/// 펜의 **실제 잉크 수식**(필압 곡선)을 그대로 보여주는 미니 스트로크 미리보기.
-/// 화면 렌더링과 같은 함수로 가상의 곡선을 그려 필압에 따른 두께 변화를
-/// 한눈에 확인할 수 있습니다.
+/// 일반 펜(볼펜) 물리 모델의 실제 결과를 보여주는 미니 스트로크 미리보기.
 fn pen_profile_preview(
     ui: &mut egui::Ui,
     color: Color32,
     width: f32,
-    curve: &PressureCurve,
+    profile: &BallPenProfile,
 ) {
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
-    let n = 64;
+    let n = 48;
     let x0 = rect.left() + 3.0;
     let x1 = rect.right() - 3.0;
     let cy = rect.center().y;
     let amp = rect.height() * 0.30;
-    let mut pts: Vec<egui::Pos2> = Vec::with_capacity(n);
-    let mut widths: Vec<f32> = Vec::with_capacity(n);
-    let mut max_w: f32 = 0.5;
+    // 필압 물결 + 속도 변화(느림→빠름)를 재현한 가상 스트로크.
+    let mut pts: Vec<StrokePoint> = Vec::with_capacity(n);
+    let step = (x1 - x0) / (n - 1) as f32;
+    let mut t_ms = 0u64;
     for i in 0..n {
         let t = i as f32 / (n - 1) as f32;
         let x = x0 + (x1 - x0) * t;
         let y = cy + (t * 2.0 * std::f32::consts::PI).sin() * amp;
-        // 필압이 물결처럼 오르내림 → 두께가 그대로 따라감.
-        let pressure = 0.25 + 0.75 * (t * 3.0 * std::f32::consts::PI).sin().abs();
-        let w = width * curve.apply(1.0, pressure);
-        pts.push(egui::pos2(x, y));
-        widths.push(w);
-        max_w = max_w.max(w);
+        let speed = 60.0 + 340.0 * (std::f32::consts::PI * t).sin().powi(2);
+        if i > 0 {
+            t_ms += (step / speed.max(1.0) * 1000.0) as u64;
+        }
+        let pressure = 0.3 + 0.7 * (t * 4.0 * std::f32::consts::PI).sin().abs();
+        pts.push(StrokePoint::with_time(x, y, pressure, t_ms));
     }
+    let widths = profile.widths(width, &pts, 0.0);
+    let max_w = widths.iter().cloned().fold(0.5f32, f32::max);
     let scale = (rect.height() * 0.40 / max_w).clamp(0.3, 1.6);
     for i in 0..n - 1 {
         let wpx = (widths[i] + widths[i + 1]) * 0.5 * scale;
-        painter.line_segment([pts[i], pts[i + 1]], Stroke::new(wpx, color));
+        let a = egui::pos2(pts[i].x, pts[i].y);
+        let b = egui::pos2(pts[i + 1].x, pts[i + 1].y);
+        painter.line_segment([a, b], Stroke::new(wpx, color));
     }
     let _ = resp.on_hover_text(
-        "Live preview of the current pressure curve:\nwidth = f(pen pressure)",
+        "Live preview of the ballpen model:\nwidth = f(pressure, speed) — gentle, narrow range",
+    );
+}
+
+/// 만년필 물리 모델의 실제 결과를 보여주는 미니 스트로크 미리보기.
+/// 느린 시작(굵게) → 빠른 중간(가늘게) → 정지(잉크 고임)를 재현합니다.
+fn fountain_profile_preview(
+    ui: &mut egui::Ui,
+    color: Color32,
+    max_width: f32,
+    profile: &FountainProfile,
+) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
+    let n = 48;
+    let x0 = rect.left() + 3.0;
+    let x1 = rect.right() - 3.0;
+    let cy = rect.center().y;
+    let amp = rect.height() * 0.30;
+    // 가상 스트로크: 양끝 느림(굵게)·중간 빠름(가늘게), 필압 물결.
+    let mut pts: Vec<StrokePoint> = Vec::with_capacity(n);
+    let step = (x1 - x0) / (n - 1) as f32;
+    let mut t_ms = 0u64;
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let x = x0 + (x1 - x0) * t;
+        let y = cy + (t * 2.0 * std::f32::consts::PI).sin() * amp;
+        // 속도 프로파일: 양끝 20, 중앙 400 (px/초) → dt = step/speed.
+        let speed = 20.0 + 380.0 * (std::f32::consts::PI * t).sin().powi(2);
+        if i > 0 {
+            t_ms += (step / speed.max(1.0) * 1000.0) as u64;
+        }
+        let pressure = 0.3 + 0.7 * (t * 4.0 * std::f32::consts::PI).sin().abs();
+        pts.push(StrokePoint::with_time(x, y, pressure, t_ms));
+    }
+    let widths = profile.widths(max_width, &pts, 0.0);
+    let max_w = widths.iter().cloned().fold(0.5f32, f32::max);
+    let scale = (rect.height() * 0.40 / max_w).clamp(0.3, 1.6);
+    for i in 0..n - 1 {
+        let wpx = (widths[i] + widths[i + 1]) * 0.5 * scale;
+        let a = egui::pos2(pts[i].x, pts[i].y);
+        let b = egui::pos2(pts[i + 1].x, pts[i + 1].y);
+        painter.line_segment([a, b], Stroke::new(wpx, color));
+    }
+    let _ = resp.on_hover_text(
+        "Live preview of the fountain model:\nwidth = f(pressure × speed × tilt) + dwell blob",
     );
 }
 
@@ -596,20 +644,20 @@ impl FreeDfApp {
                         let width_resp = ui
                             .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
                             .on_hover_text(
-                                "Stroke width. The line thickness follows the \
-                                 pressure curve (see the preview below).",
+                                "Base line width (pt). The ballpen model varies it only \
+                                 a little (±30%) by pressure & speed.",
                             );
                         if width_resp.changed() {
                             self.save_session();
                         }
-                        // 미니 스트로크 미리보기: 실제 필압 수식으로 그립니다.
+                        // 미니 스트로크 미리보기: 실제 볼펜 모델 수식으로 그립니다.
                         let preview_color = Color32::from_rgba_unmultiplied(
                             self.pen_color[0],
                             self.pen_color[1],
                             self.pen_color[2],
                             self.pen_color[3],
                         );
-                        pen_profile_preview(ui, preview_color, self.pen_width, &self.pressure_curve);
+                        pen_profile_preview(ui, preview_color, self.pen_width, &self.pen_profile);
                         egui::ComboBox::from_id_salt("pen_cursor_style")
                             .selected_text(self.pen_cursor_style.label())
                             .show_ui(ui, |ui| {
@@ -644,37 +692,74 @@ impl FreeDfApp {
                             self.save_default_session();
                             self.save_session();
                         }
-                        if self.pressure_enabled {
+                        // ── 일반 펜(볼펜) 물리 모델 파라미터 ──
+                        let any_changed = ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.pen_profile.pressure_k,
+                                    0.0..=0.5,
+                                )
+                                .text("Press k"),
+                            )
+                            .on_hover_text(
+                                "Pressure influence (small for ballpens, 0.1~0.3).\n\
+                                 0 = constant width.",
+                            )
+                            .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(&mut self.pen_profile.speed_k, 0.0..=0.3)
+                                        .text("Speed k"),
+                                )
+                                .on_hover_text(
+                                    "Speed influence (small, 0.05~0.15).\n\
+                                     Fast strokes thin slightly.",
+                                )
+                                .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.pen_profile.starve_v,
+                                        200.0..=3000.0,
+                                    )
+                                    .text("Starve v"),
+                                )
+                                .on_hover_text(
+                                    "Speed (pt/s) where ink starvation starts — above this \
+                                     the line thins and breaks like a real ballpen.",
+                                )
+                                .changed();
+                        if ui
+                            .checkbox(&mut self.pen_profile.tilt_cut_enabled, "Tilt cut")
+                            .on_hover_text(
+                                "Ballpen cut-off: laying the pen too flat stops the ink.\n\
+                                 Needs a tilt sensor (HID/WM_POINTER hook) to have effect.",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if any_changed {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if self.pen_profile.tilt_cut_enabled {
                             if ui
                                 .add(
                                     egui::Slider::new(
-                                        &mut self.pressure_curve.min_ratio,
-                                        0.1..=1.0,
+                                        &mut self.pen_profile.tilt_cut_deg,
+                                        10.0..=80.0,
                                     )
-                                    .text("Min"),
+                                    .text("Cut angle"),
                                 )
                                 .on_hover_text(
-                                    "Min: thickness multiplier at the lightest touch.\n\
-                                     e.g. Min=0.4 → the thinnest line is 40% of the Width.",
+                                    "Elevation angle (deg) where the ink starts to cut out \
+                                     (90 = vertical).",
                                 )
                                 .changed()
                             {
-                                self.save_session();
-                            }
-                            if ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.pressure_curve.max_ratio,
-                                        1.0..=3.0,
-                                    )
-                                    .text("Max"),
-                                )
-                                .on_hover_text(
-                                    "Max: thickness multiplier at full pressure.\n\
-                                     e.g. Max=1.4 → the boldest line is 140% of the Width.",
-                                )
-                                .changed()
-                            {
+                                self.save_default_session();
                                 self.save_session();
                             }
                         }
@@ -781,6 +866,185 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
+                    }
+                    ToolType::Fountain => {
+                        // 만년필: 색상은 펜과 공유하고, 선폭은 필압×속도×기울기
+                        // 물리 모델이 결정합니다 (아래 파라미터로 커스텀).
+                        let swatches = Palette::swatches(self.color_family);
+                        for (i, swatch) in swatches.iter().enumerate() {
+                            let color = Color32::from_rgba_unmultiplied(
+                                swatch[0],
+                                swatch[1],
+                                swatch[2],
+                                swatch[3],
+                            );
+                            let selected = *swatch == self.pen_color;
+                            if color_circle_swatch(ui, ("fountain_swatch", i), color, selected)
+                                .on_hover_text("Ink color")
+                                .clicked()
+                            {
+                                self.pen_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                        let mut pen_color = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            self.pen_color[3],
+                        );
+                        if ui
+                            .color_edit_button_srgba(&mut pen_color)
+                            .on_hover_text("Custom ink color")
+                            .changed()
+                        {
+                            self.pen_color = pen_color.to_array();
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        let nib_resp = ui
+                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Nib"))
+                            .on_hover_text(
+                                "Nib width = maximum line width (pt).\n\
+                                 The model varies it by pressure, speed and tilt.",
+                            );
+                        if nib_resp.changed() {
+                            self.save_session();
+                        }
+                        // 모델 파라미터는 `self.fountain_profile`을 직접 수정합니다
+                        // (장시간 borrow를 피해 저장 호출과 충돌하지 않게).
+                        let any_changed = ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.fountain_profile.min_width_pt,
+                                    0.1..=2.0,
+                                )
+                                .text("Min"),
+                            )
+                            .on_hover_text(
+                                "Thinnest line width (pt) when writing fast and light.",
+                            )
+                            .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.fountain_profile.pressure_alpha,
+                                        0.3..=2.0,
+                                    )
+                                    .text("Press α"),
+                                )
+                                .on_hover_text(
+                                    "Pressure sensitivity: how strongly pressure widens \
+                                     the line (0.7~1.2 typical).",
+                                )
+                                .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.fountain_profile.speed_beta,
+                                        0.3..=3.0,
+                                    )
+                                    .text("Speed β"),
+                                )
+                                .on_hover_text(
+                                    "Speed sensitivity: how strongly fast strokes thin \
+                                     the line (1.0~1.5 typical).",
+                                )
+                                .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.fountain_profile.speed_ref,
+                                        10.0..=200.0,
+                                    )
+                                    .text("Speed ref"),
+                                )
+                                .on_hover_text(
+                                    "Reference speed (pt/s) — at this speed the speed \
+                                     factor is 0.5. Lower = thinner when writing normally.",
+                                )
+                                .changed()
+                            | ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.fountain_profile.tilt_k,
+                                        0.0..=1.0,
+                                    )
+                                    .text("Tilt"),
+                                )
+                                .on_hover_text(
+                                    "Tilt influence: laying the pen down widens the line.\n\
+                                     Note: egui/winit don't expose pen tilt yet, so this \
+                                     is 0 until a HID/WM_POINTER hook feeds set_pen_tilt.",
+                                )
+                                .changed();
+                        if ui
+                            .checkbox(&mut self.fountain_profile.italic, "Italic nib")
+                            .on_hover_text(
+                                "Stub/italic nib effect: strokes along the nib axis are \
+                                 wide, across it are thin — no azimuth sensor needed, \
+                                 the nib angle is fixed.",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        let any_changed2 = if self.fountain_profile.italic {
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut self.fountain_profile.nib_angle_deg,
+                                    0.0..=180.0,
+                                )
+                                .text("Nib angle"),
+                            )
+                            .on_hover_text("Nib axis direction (degrees).")
+                            .changed()
+                                | ui
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.fountain_profile.italic_k,
+                                            0.0..=0.6,
+                                        )
+                                        .text("Contrast"),
+                                    )
+                                    .on_hover_text(
+                                        "Italic direction contrast (0.2~0.5 looks stub-like).",
+                                    )
+                                    .changed()
+                        } else {
+                            false
+                        };
+                        let dwell_changed = ui
+                            .add(
+                                egui::Slider::new(
+                                    &mut self.fountain_profile.dwell_k,
+                                    0.0..=0.5,
+                                )
+                                .text("Dwell"),
+                            )
+                            .on_hover_text(
+                                "Ink pooling when the pen nearly stops — the classic \
+                                 fountain-pen blob at the end of a stroke.",
+                            )
+                            .changed();
+                        if any_changed || any_changed2 || dwell_changed {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        let preview_color = Color32::from_rgba_unmultiplied(
+                            self.pen_color[0],
+                            self.pen_color[1],
+                            self.pen_color[2],
+                            self.pen_color[3],
+                        );
+                        fountain_profile_preview(
+                            ui,
+                            preview_color,
+                            self.pen_width,
+                            &self.fountain_profile,
+                        );
                     }
                     ToolType::Highlighter => {
                         let mut color = Color32::from_rgba_unmultiplied(

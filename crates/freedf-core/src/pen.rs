@@ -1,57 +1,15 @@
-//! 펜 설정: 색상 팔레트(빨강/파랑/검정 계열), 필압 → 두께 곡선, 스무딩/테이퍼.
+//! 펜 도구 모델과 색상 팔레트.
 //!
-//! FreeDF v3: 필기구는 펜 하나로 단순화했습니다 (볼펜/만년필 제거).
+//! - [`BallPenProfile`]: 일반 펜(볼펜/젤펜) — 필압·속도 영향이 작고 선폭 변동폭이
+//!   좁은 물리 모델 (기울기 끊김·과속 잉크 부족 포함).
+//! - [`FountainProfile`]: 만년필 — 필압 × 속도 × 기울기 모델.
+//! - [`InkBleed`]: 잉크 번짐(블리드) — 구간별 속도 커스텀.
+//! - [`OneEuroFilter`]: 손떨림 안정화(선택 기능).
+//! - [`Palette`] / [`ColorFamily`]: 색상.
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{StrokePoint, ToolType};
-
-/// 시작/끝을 뾰족하게(테이퍼) 만드는 도구인지 — 실제 펜처럼 획 양끝이 얇아집니다.
-/// 펜만 해당하고, 하이라이터/지우개는 해당 없습니다.
-pub fn uses_taper(tool: ToolType) -> bool {
-    matches!(tool, ToolType::Pen)
-}
-
-/// 획 양끝 테이퍼 길이 (페이지 포인트). 이 거리 안에서 두께가 0에서 서서히 커집니다.
-pub const TAPER_LEN_PTS: f32 = 14.0;
-
-/// 스트로크의 점별 **테이퍼 배율**(0..=1)을 계산합니다.
-///
-/// 실제 펜은 종이에 닿는 순간/떼는 순간 잉크가 얇게 시작/끝납니다. 점 i의 배율은
-/// 시작점·끝점까지의 거리를 `taper_len`으로 나눈 값에 smoothstep을 씌운 것으로,
-/// 양끝에서 0으로 시작해 중앙에서 1에 도달합니다. 점이 1개(점 찍기)면 1.0입니다.
-///
-/// 렌더/내보내기 양쪽에서 같은 함수를 써야 화면과 PNG가 일치합니다.
-pub fn taper_factors(points: &[StrokePoint], taper_len: f32) -> Vec<f32> {
-    let n = points.len();
-    if n <= 1 {
-        return vec![1.0; n];
-    }
-    // 획 총 길이 (세그먼트 거리 합).
-    let total: f32 = points
-        .windows(2)
-        .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt())
-        .sum();
-    // 테이퍼 길이 = 요청값과 총 길이의 40% 중 작은 쪽 — 짧은 획도
-    // 중앙은 완전한 두께에 도달하고 양끝만 뾰족해집니다.
-    let len = if taper_len.is_finite() && taper_len > 0.0 {
-        taper_len.min(total * 0.4).max(0.5)
-    } else {
-        TAPER_LEN_PTS.min(total * 0.4).max(0.5)
-    };
-    let first = points[0];
-    let last = points[n - 1];
-    points
-        .iter()
-        .map(|p| {
-            let d0 = ((p.x - first.x).powi(2) + (p.y - first.y).powi(2)).sqrt();
-            let d1 = ((p.x - last.x).powi(2) + (p.y - last.y).powi(2)).sqrt();
-            let t = (d0.min(d1) / len).clamp(0.0, 1.0);
-            // smoothstep: 자연스러운 붓 시작/끝 느낌
-            t * t * (3.0 - 2.0 * t)
-        })
-        .collect()
-}
+use crate::model::StrokePoint;
 
 // ── 스트로크 외곽선 + 삼각분할 (관례적 렌더링 지오메트리) ─────────────────────
 
@@ -156,7 +114,13 @@ pub fn triangulate_polygon(poly: &[[f32; 2]]) -> Vec<[u32; 3]> {
         let c = idx[(i + 2) % m];
         let (pa, pb, pc) = (poly[a as usize], poly[b as usize], poly[c as usize]);
         let cross = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
-        let convex = if ccw { cross > 1e-6 } else { cross < -1e-6 };
+        if cross.abs() <= 1e-6 {
+            // 일직선(collinear) 정점 — 면적 기여가 없으므로 제거만 합니다.
+            // (일정 두께의 직선 획처럼 외곽선이 완전 직선인 경우 필수)
+            idx.remove((i + 1) % m);
+            continue;
+        }
+        let convex = if ccw { cross > 0.0 } else { cross < 0.0 };
         let mut is_ear = convex;
         if is_ear {
             for &v in &idx {
@@ -262,6 +226,142 @@ impl InkBleed {
             .max(self.end_rate)
             .max(1e-3);
         self.max_spread_pt.max(0.0) / slowest
+    }
+}
+
+// ── 만년필 물리 모델 (필압 × 속도 × 기울기) ─────────────────────────────────
+
+/// 만년필 프로파일 — 스타일러스의 **필압·속도·기울기**로 실제 만년필의
+/// 물리적 특성을 흉내 내는 가변 선폭 모델의 파라미터입니다.
+///
+/// 핵심 공식 (점 i에서):
+/// ```text
+/// P_eff = pressure · (1 + k_tilt · T)          // 기울기 → 유효 필압 (곱 구조)
+/// v     = EMA(거리/dt)                          // 저역 통과 속도
+/// w = w_min + (w_max − w_min) · P_eff^α · 1/(1 + (v/v_ref)^β)
+/// if italic: w *= 1 + k_italic · cos(2(δ − φ)) // 스텁 닙 방향 대비
+/// if v < v_dwell: w += k_dwell · (v_dwell − v) // 정지 시 잉크 고임
+/// w = clamp(w, w_min, w_max)
+/// ```
+/// 순수 계산이라 GUI 없이 단위 테스트로 검증합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FountainProfile {
+    /// 가장 가는 선폭 (pt)
+    pub min_width_pt: f32,
+    /// 필압 민감도 α (0.3 ~ 2.0)
+    pub pressure_alpha: f32,
+    /// 속도 민감도 β (0.3 ~ 3.0)
+    pub speed_beta: f32,
+    /// 기준 속도 (pt/초) — 이 속도에서 속도 계수가 0.5가 됨
+    pub speed_ref: f32,
+    /// 기울기 영향 계수 k_tilt (0이면 기울기 무시)
+    pub tilt_k: f32,
+    /// 속도 저역 통과(EMA) 계수 α_smooth (0.05 ~ 1.0)
+    pub speed_smooth: f32,
+    /// 정지 판정 속도 (pt/초) — 이보다 느리면 잉크가 고임
+    pub v_dwell: f32,
+    /// 정지 시 잉크 고임 계수 (pt 단위 가산량 배율)
+    pub dwell_k: f32,
+    /// 이탤릭/스텁 닙 효과 사용 여부
+    pub italic: bool,
+    /// 닙 축 각도 (도) — 진행 방향과의 차이로 굵기가 달라짐
+    pub nib_angle_deg: f32,
+    /// 이탤릭 방향 대비 강도 (0이면 무시)
+    pub italic_k: f32,
+}
+
+impl Default for FountainProfile {
+    fn default() -> Self {
+        Self {
+            min_width_pt: 0.3,
+            pressure_alpha: 0.8,
+            speed_beta: 1.2,
+            speed_ref: 60.0,
+            tilt_k: 0.4,
+            speed_smooth: 0.3,
+            v_dwell: 5.0,
+            dwell_k: 0.05,
+            italic: false,
+            nib_angle_deg: 45.0,
+            italic_k: 0.3,
+        }
+    }
+}
+
+impl FountainProfile {
+    /// 기울기가 반영된 유효 필압. 곱 구조라 필압 0이면 기울기만으로는
+    /// 선이 생기지 않습니다.
+    pub fn effective_pressure(&self, pressure: f32, tilt_mag: f32) -> f32 {
+        (pressure.clamp(0.0, 1.0) * (1.0 + self.tilt_k.max(0.0) * tilt_mag.clamp(0.0, 1.0)))
+            .clamp(0.0, 2.0)
+    }
+
+    /// 속도 계수: 정지=1, `speed_ref`=0.5, 빠를수록 0에 수렴.
+    pub fn speed_factor(&self, v: f32) -> f32 {
+        let v = v.max(0.0);
+        let ratio = (v / self.speed_ref.max(1e-3)).powf(self.speed_beta.max(0.0));
+        1.0 / (1.0 + ratio)
+    }
+
+    /// 이탤릭/스텁 닙 계수: 획 진행 방향(δ)이 닙 축(φ)과 일치하면 굵고,
+    /// 수직이면 가늘어집니다.
+    pub fn italic_factor(&self, dx: f32, dy: f32) -> f32 {
+        if !self.italic {
+            return 1.0;
+        }
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            return 1.0;
+        }
+        let delta = dy.atan2(dx);
+        let phi = self.nib_angle_deg.to_radians();
+        1.0 + self.italic_k.max(0.0) * (2.0 * (delta - phi)).cos()
+    }
+
+    /// 정지(느린 속도)에서의 잉크 고임 가산량 (pt).
+    pub fn dwell_extra(&self, v: f32) -> f32 {
+        self.dwell_k.max(0.0) * (self.v_dwell - v.max(0.0)).max(0.0)
+    }
+
+    /// 점 하나의 최종 선폭(pt). `max_width_pt`는 툴바 Width(펜촉 최대 폭),
+    /// `tilt_mag`은 0..1 기울기 크기, `v`는 스무딩된 속도(pt/초).
+    pub fn width_at(&self, max_width_pt: f32, pressure: f32, tilt_mag: f32, v: f32) -> f32 {
+        let w_min = self.min_width_pt.max(0.05).min(max_width_pt.max(0.05));
+        let w_max = max_width_pt.max(w_min);
+        let p = self.effective_pressure(pressure, tilt_mag);
+        let mut w = w_min + (w_max - w_min) * p.powf(self.pressure_alpha.max(0.1)) * self.speed_factor(v);
+        w += self.dwell_extra(v);
+        w.clamp(w_min, w_max)
+    }
+
+    /// 획 전체의 점별 **스무딩된 속도**(pt/초). 공용 EMA 계산 사용.
+    pub fn speeds(&self, pts: &[StrokePoint]) -> Vec<f32> {
+        ema_speeds(pts, self.speed_smooth)
+    }
+
+    /// 획 전체의 점별 **최종 선폭(pt)** (스무딩 속도 → 공식 → 클램프).
+    /// `tilt_mag`는 획 전체에 일정한 기울기 크기(0..1)입니다.
+    pub fn widths(&self, max_width_pt: f32, pts: &[StrokePoint], tilt_mag: f32) -> Vec<f32> {
+        let vs = self.speeds(pts);
+        pts.iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let w = self.width_at(max_width_pt, p.pressure, tilt_mag, vs[i]);
+                // 이탤릭 방향 계수 (다음 세그먼트 방향 기준, 마지막은 이전 세그먼트).
+                let (dx, dy) = if i + 1 < pts.len() {
+                    (pts[i + 1].x - p.x, pts[i + 1].y - p.y)
+                } else if i > 0 {
+                    (p.x - pts[i - 1].x, p.y - pts[i - 1].y)
+                } else {
+                    (1.0, 0.0)
+                };
+                let w = w * self.italic_factor(dx, dy);
+                w.clamp(
+                    self.min_width_pt.max(0.05).min(max_width_pt.max(0.05)),
+                    max_width_pt.max(0.05),
+                )
+            })
+            .collect()
     }
 }
 
@@ -501,55 +601,148 @@ impl Palette {
     }
 }
 
-/// 필압 → 두께 곡선.
-/// `width = base * (min_ratio + (max_ratio - min_ratio) * pressure)`
+/// 일반 펜(볼펜/젤펜) 물리 모델.
+///
+/// 일반 펜은 닙이 벌어지지 않고 볼이 회전하며 잉크를 전달하므로,
+/// **필압·속도의 영향을 작게** 하고 **선폭을 좁은 범위**로 제한하는 것이 핵심입니다.
+///
+/// ```text
+/// speed_norm = clamp(v / v_max, 0, 1)
+/// w = w_base · (1 + k_p·(p − 0.5)) · (1 − k_v · speed_norm)
+/// 기울기 끊김(볼펜): elevation < cut이면 w·α에 clamp((elev−cut)/falloff) 곱
+/// 과속 잉크 부족: v > v_starve이면 w·α에 1 − clamp((v−v_starve)/falloff) 곱
+/// w = clamp(w, base·min_ratio, base·max_ratio)
+/// ```
+/// 순수 계산이라 GUI 없이 단위 테스트로 검증합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct PressureCurve {
-    /// 가장 가벼운 필압(0)일 때의 두께 비율
+pub struct BallPenProfile {
+    /// 필압 계수 k_p — 작을수록 필압 영향이 적음 (0.1~0.3 권장).
+    pub pressure_k: f32,
+    /// 속도 계수 k_v — 작을수록 속도 영향이 적음 (0.05~0.15 권장).
+    pub speed_k: f32,
+    /// 속도 정규화 상수 v_max (pt/초) — 이 속도 이상이면 속도항이 1.
+    pub speed_max: f32,
+    /// 속도 저역 통과(EMA) 계수.
+    pub speed_smooth: f32,
+    /// 최소 선폭 비율 (base 대비).
     pub min_ratio: f32,
-    /// 가장 센 필압(1)일 때의 두께 비율
+    /// 최대 선폭 비율 (base 대비).
     pub max_ratio: f32,
+    /// 기울기 끊김(볼펜 눕힘) 사용 여부 — 기울기 센서가 없으면 꺼둠.
+    pub tilt_cut_enabled: bool,
+    /// 끊김이 시작되는 고도각(도). 90=수직, 0=수평.
+    pub tilt_cut_deg: f32,
+    /// 끊김 전환 폭(도).
+    pub tilt_falloff_deg: f32,
+    /// 잉크 부족 시작 속도 (pt/초).
+    pub starve_v: f32,
+    /// 완전히 끊기는 속도 범위 (pt/초).
+    pub starve_falloff: f32,
 }
 
-impl Default for PressureCurve {
+impl Default for BallPenProfile {
     fn default() -> Self {
         Self {
-            min_ratio: 0.4,
-            max_ratio: 1.4,
+            pressure_k: 0.15,
+            speed_k: 0.08,
+            speed_max: 600.0,
+            speed_smooth: 0.3,
+            min_ratio: 0.65,
+            max_ratio: 1.35,
+            tilt_cut_enabled: false,
+            tilt_cut_deg: 30.0,
+            tilt_falloff_deg: 15.0,
+            starve_v: 900.0,
+            starve_falloff: 300.0,
         }
     }
 }
 
-impl PressureCurve {
-    pub fn new(min_ratio: f32, max_ratio: f32) -> Self {
-        Self {
-            min_ratio: min_ratio.clamp(0.05, 1.0),
-            max_ratio: max_ratio.clamp(1.0, 4.0).max(min_ratio),
+impl BallPenProfile {
+    /// 기울기 끊김 계수 (0..1): 펜을 너무 눕히면(고도각이 낮아지면) 0으로 수렴.
+    /// `tilt_mag`는 0(수직)..1(완전 수평) 기울기 크기.
+    pub fn tilt_cut_factor(&self, tilt_mag: f32) -> f32 {
+        if !self.tilt_cut_enabled {
+            return 1.0;
         }
+        let elev_deg = 90.0 * (1.0 - tilt_mag.clamp(0.0, 1.0));
+        ((elev_deg - self.tilt_cut_deg) / self.tilt_falloff_deg.max(1.0)).clamp(0.0, 1.0)
     }
 
-    /// 필압(0..1)을 두께(포인트)로 변환합니다. 범위 밖/NaN은 안전하게 처리합니다.
-    pub fn apply(&self, base_width: f32, pressure: f32) -> f32 {
-        let p = if pressure.is_nan() {
+    /// 과속 잉크 부족 계수 (0..1): `starve_v`를 넘으면 서서히 끊김.
+    pub fn starve_factor(&self, v: f32) -> f32 {
+        if v <= self.starve_v {
             1.0
         } else {
-            pressure.clamp(0.0, 1.0)
-        };
-        let ratio = self.min_ratio + (self.max_ratio - self.min_ratio) * p;
-        (base_width * ratio).max(0.1)
+            (1.0 - ((v - self.starve_v) / self.starve_falloff.max(1.0)).min(1.0)).max(0.0)
+        }
     }
 
-    /// 두께에서 필압 역산(UI 표시용).
-    pub fn pressure_of(&self, base_width: f32, width: f32) -> f32 {
-        if base_width <= 0.0 {
-            return 0.0;
-        }
-        let ratio = (width / base_width).clamp(self.min_ratio, self.max_ratio);
-        if (self.max_ratio - self.min_ratio).abs() < 1e-6 {
-            return 0.0;
-        }
-        ((ratio - self.min_ratio) / (self.max_ratio - self.min_ratio)).clamp(0.0, 1.0)
+    /// 점 하나의 선폭(pt). `base_pt`는 툴바 Width(기본 선폭), `tilt_mag`는 0..1.
+    pub fn width_at(&self, base_pt: f32, pressure: f32, tilt_mag: f32, v: f32) -> f32 {
+        let speed_norm = (v.max(0.0) / self.speed_max.max(1.0)).clamp(0.0, 1.0);
+        let mut w = base_pt.max(0.05)
+            * (1.0 + self.pressure_k * (pressure.clamp(0.0, 1.0) - 0.5))
+            * (1.0 - self.speed_k.max(0.0) * speed_norm);
+        w *= self.tilt_cut_factor(tilt_mag) * self.starve_factor(v);
+        let lo = base_pt.max(0.05) * self.min_ratio.min(self.max_ratio);
+        let hi = base_pt.max(0.05) * self.max_ratio;
+        w.clamp(lo.min(hi), hi.max(lo))
     }
+
+    /// 획 전체의 점별 스무딩 속도 (공용 EMA).
+    pub fn speeds(&self, pts: &[StrokePoint]) -> Vec<f32> {
+        ema_speeds(pts, self.speed_smooth)
+    }
+
+    /// 획 전체의 점별 최종 선폭(pt).
+    pub fn widths(&self, base_pt: f32, pts: &[StrokePoint], tilt_mag: f32) -> Vec<f32> {
+        let vs = self.speeds(pts);
+        pts.iter()
+            .enumerate()
+            .map(|(i, p)| self.width_at(base_pt, p.pressure, tilt_mag, vs[i]))
+            .collect()
+    }
+}
+
+/// 점별 **스무딩된 속도**(pt/초) — 공용 저역 통과(EMA) 계산.
+/// 시각이 0(미기록)이거나 dt ≤ 0이면 속도 0으로 처리하고,
+/// 첫 점은 다음 세그먼트의 속도를 사용합니다.
+pub(crate) fn ema_speeds(pts: &[StrokePoint], smooth: f32) -> Vec<f32> {
+    let n = pts.len();
+    let mut out = Vec::with_capacity(n);
+    if n == 0 {
+        return out;
+    }
+    let alpha = smooth.clamp(0.0, 1.0);
+    let mut prev_v = 0.0f32;
+    for i in 0..n {
+        let (j, k) = if i == 0 {
+            if n > 1 {
+                (0, 1)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (i - 1, i)
+        };
+        let v = if j == k || pts[k].t_ms == 0 || pts[j].t_ms == 0 {
+            0.0
+        } else {
+            let dt = (pts[k].t_ms.saturating_sub(pts[j].t_ms)) as f32 / 1000.0;
+            if dt <= 1e-4 {
+                0.0
+            } else {
+                let dx = pts[k].x - pts[j].x;
+                let dy = pts[k].y - pts[j].y;
+                (dx * dx + dy * dy).sqrt() / dt
+            }
+        };
+        let v_smooth = alpha * v + (1.0 - alpha) * prev_v;
+        out.push(v_smooth);
+        prev_v = v_smooth;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -580,107 +773,6 @@ mod tests {
         for c in Palette::swatches(ColorFamily::Black) {
             assert!(c[0] < 130 && c[1] < 130 && c[2] < 130, "검정 계열은 어두워야 함");
         }
-    }
-
-    #[test]
-    fn pressure_curve_is_monotonic() {
-        let curve = PressureCurve::default();
-        let w0 = curve.apply(2.0, 0.0);
-        let w1 = curve.apply(2.0, 0.5);
-        let w2 = curve.apply(2.0, 1.0);
-        assert!(w0 < w1 && w1 < w2);
-        assert!((w0 - 2.0 * curve.min_ratio).abs() < 1e-4);
-        assert!((w2 - 2.0 * curve.max_ratio).abs() < 1e-4);
-    }
-
-    #[test]
-    fn pressure_clamps_out_of_range_and_nan() {
-        let curve = PressureCurve::default();
-        assert_eq!(curve.apply(2.0, -5.0), curve.apply(2.0, 0.0));
-        assert_eq!(curve.apply(2.0, 99.0), curve.apply(2.0, 1.0));
-        assert_eq!(curve.apply(2.0, f32::NAN), curve.apply(2.0, 1.0));
-    }
-
-    #[test]
-    fn pressure_curve_never_zero() {
-        let curve = PressureCurve { min_ratio: 0.05, max_ratio: 1.0 };
-        let w = curve.apply(1.0, 0.0);
-        assert!(w >= 0.1);
-    }
-
-    #[test]
-    fn pressure_of_inverts_apply() {
-        let curve = PressureCurve::default();
-        for p in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
-            let w = curve.apply(2.0, p);
-            let back = curve.pressure_of(2.0, w);
-            assert!((back - p).abs() < 1e-3, "역산: {p} vs {back}");
-        }
-    }
-
-    #[test]
-    fn curve_new_sanitizes_ratios() {
-        let c = PressureCurve::new(-1.0, 100.0);
-        assert!(c.min_ratio >= 0.05 && c.max_ratio <= 4.0 && c.max_ratio >= c.min_ratio);
-    }
-
-    // ---------- taper_factors ----------
-
-    fn line_points(n: usize) -> Vec<StrokePoint> {
-        (0..n)
-            .map(|i| StrokePoint::new(i as f32 * 5.0, 0.0, 0.5))
-            .collect()
-    }
-
-    #[test]
-    fn taper_single_point_is_full_width() {
-        let pts = vec![StrokePoint::new(10.0, 10.0, 0.5)];
-        assert_eq!(taper_factors(&pts, TAPER_LEN_PTS), vec![1.0]);
-    }
-
-    #[test]
-    fn taper_starts_and_ends_thin_middle_full() {
-        let pts = line_points(40); // 40점, 5pt 간격 → 총 195pt 길이
-        let f = taper_factors(&pts, TAPER_LEN_PTS);
-        assert!(f[0] < 0.05, "시작점은 거의 0: {}", f[0]);
-        assert!(f[39] < 0.05, "끝점도 거의 0: {}", f[39]);
-        assert!((f[20] - 1.0).abs() < 1e-4, "중앙은 완전 두께: {}", f[20]);
-        // 시작→중앙으로 단조 증가 (부드럽게 붓이 열림)
-        for w in f[..20].windows(2) {
-            assert!(w[0] <= w[1]);
-        }
-    }
-
-    #[test]
-    fn taper_scales_with_length() {
-        // 같은 테이퍼 길이에서 짧은 획일수록 더 얇아진다 (퀵 플릭 느낌).
-        let short = line_points(2); // 총 5pt
-        let f = taper_factors(&short, TAPER_LEN_PTS);
-        assert!(f.iter().all(|&v| v < 0.5), "{f:?}");
-        let long = line_points(100);
-        let g = taper_factors(&long, TAPER_LEN_PTS);
-        assert!(g[50] > 0.99);
-    }
-
-    #[test]
-    fn short_slow_strokes_keep_full_middle() {
-        // 천천히 쓰는 짧은 획(6점, 총 5pt)도 중앙은 완전한 두께에 도달하고
-        // 양끝만 얇아야 실제 펜 느낌이 납니다.
-        let pts = (0..6)
-            .map(|i| StrokePoint::new(i as f32 * 1.0, 0.0, 0.5))
-            .collect::<Vec<_>>(); // 총 5pt
-        let f = taper_factors(&pts, TAPER_LEN_PTS);
-        assert!(f[0] < 0.1 && f[5] < 0.1, "양끝 얇게: {f:?}");
-        assert!(f[2] > 0.9 || f[3] > 0.9, "중앙은 두껍게: {f:?}");
-    }
-
-    #[test]
-    fn only_pen_tapers() {
-        use crate::model::ToolType;
-        assert!(uses_taper(ToolType::Pen));
-        assert!(!uses_taper(ToolType::Highlighter));
-        assert!(!uses_taper(ToolType::Eraser));
-        assert!(!uses_taper(ToolType::Pan));
     }
 
     // ---------- OneEuroFilter ----------
@@ -749,6 +841,67 @@ mod tests {
         assert!((y - 10.0).abs() < 1e-4, "reset 후 첫 값은 원본 그대로: {y}");
     }
 
+    // ---------- BallPenProfile (일반 펜 물리 모델) ----------
+
+    #[test]
+    fn ballpen_width_variation_is_small_and_bounded() {
+        let p = BallPenProfile::default(); // base 1.0, ratio 0.65..1.35
+        for (pr, v) in [(0.0f32, 0.0f32), (1.0, 0.0), (0.5, 600.0), (1.0, 6000.0)] {
+            let w = p.width_at(1.0, pr, 0.0, v);
+            assert!(w >= 0.65 - 1e-4 && w <= 1.35 + 1e-4, "좁은 범위: {w}");
+        }
+    }
+
+    #[test]
+    fn ballpen_pressure_and_speed_effects_are_gentle() {
+        let p = BallPenProfile::default();
+        let light = p.width_at(1.0, 0.0, 0.0, 300.0);
+        let full = p.width_at(1.0, 1.0, 0.0, 300.0);
+        let slow = p.width_at(1.0, 1.0, 0.0, 0.0);
+        let fast = p.width_at(1.0, 1.0, 0.0, 600.0);
+        // 영향은 존재하되 작음 (±20% 안팎).
+        assert!(full > light, "필압↑ → 약간 굵어짐");
+        assert!(slow > fast, "속도↑ → 약간 가늘어짐");
+        assert!((full - light) < 0.25, "필압 영향이 너무 큼: {} vs {}", light, full);
+        assert!((slow - fast) < 0.25, "속도 영향이 너무 큼: {} vs {}", fast, slow);
+    }
+
+    #[test]
+    fn ballpen_tilt_cut_skips_ink_when_laid_down() {
+        let mut p = BallPenProfile::default();
+        p.tilt_cut_enabled = true;
+        p.tilt_cut_deg = 30.0;
+        p.tilt_falloff_deg = 15.0;
+        assert!((p.tilt_cut_factor(0.0) - 1.0).abs() < 1e-5, "수직 = 끊김 없음");
+        assert!((p.tilt_cut_factor(0.5) - 1.0).abs() < 1e-5, "45° 고도 = 아직 끊김 없음");
+        assert!(p.tilt_cut_factor(0.75) < 1e-5, "낮게 누움 = 완전 끊김");
+        assert!(p.tilt_cut_factor(1.0) < 1e-5, "완전 수평 = 끊김");
+        // 끄면 항상 1.
+        p.tilt_cut_enabled = false;
+        assert!((p.tilt_cut_factor(1.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn ballpen_starve_thins_at_extreme_speed() {
+        let p = BallPenProfile::default(); // starve_v=900, falloff=300
+        assert!((p.starve_factor(500.0) - 1.0).abs() < 1e-5);
+        assert!((p.starve_factor(1050.0) - 0.5).abs() < 1e-5);
+        assert!(p.starve_factor(2000.0) < 1e-5, "완전 끊김");
+        // 끊기면 폭이 base 아래로 내려감.
+        assert!(p.width_at(1.0, 1.0, 0.0, 2000.0) < 0.8);
+    }
+
+    #[test]
+    fn ballpen_widths_are_finite_and_smooth() {
+        let p = BallPenProfile::default();
+        let pts: Vec<StrokePoint> = (0..20)
+            .map(|i| StrokePoint::with_time(i as f32, 0.0, 0.7, i * 10))
+            .collect();
+        let ws = p.widths(1.0, &pts, 0.0);
+        assert!(ws.iter().all(|w| w.is_finite()));
+        assert!(ws[0] > 0.6 && ws[19] > 0.6);
+    }
+
     // ---------- stroke_outline / triangulate_polygon ----------
 
     #[test]
@@ -770,6 +923,22 @@ mod tests {
             assert!((p[1].abs() - 2.0).abs() < 1e-6);
             assert!(p[0] >= -1e-6 && p[0] <= 10.0 + 1e-6);
         }
+    }
+
+    #[test]
+    fn triangulate_straight_lens_is_complete() {
+        // 일정 두께의 직선 획 — 외곽선이 완전 직선 렌즈(많은 collinear 정점)여도
+        // 삼각분할이 중간을 빠뜨리지 않아야 합니다 (회귀: 스트로크 본체 미렌더).
+        let pts: Vec<[f32; 2]> = (0..24).map(|i| [20.0 + i as f32 * 8.0, 80.0]).collect();
+        let halves = vec![1.5; 24];
+        let poly = stroke_outline(&pts, &halves, true);
+        let tris = triangulate_polygon(&poly);
+        // collinear 정점은 면적 없이 제거되므로 개수 대신 **면적 일치**로
+        // 완전 커버를 검증합니다 (직사각형 184×3 + 반원 캡 2개).
+        let area: f32 = tris.iter().map(|t| triangle_area(t, &poly)).sum();
+        let expected = 184.0 * 3.0 + std::f32::consts::PI * 1.5 * 1.5;
+        assert!((area - expected).abs() < 1.0, "면적 일치: {area} vs {expected}");
+        assert!(area > 500.0, "본체가 채워져야 함: {area}");
     }
 
     #[test]
@@ -912,6 +1081,116 @@ mod tests {
         };
         assert_eq!(b.radius(0.0, 10.0, 10.0, 10.0), 0.0, "시작 구간 속도 0");
         assert!(b.radius(5.0, 5.0, 10.0, 10.0) > 0.0, "중간은 번짐");
+    }
+
+    // ---------- FountainProfile (만년필 물리 모델) ----------
+
+    #[test]
+    fn fountain_effective_pressure_multiplies_tilt() {
+        let f = FountainProfile::default(); // tilt_k = 0.4
+        assert!((f.effective_pressure(1.0, 0.0) - 1.0).abs() < 1e-5);
+        assert!((f.effective_pressure(1.0, 1.0) - 1.4).abs() < 1e-5);
+        // 필압 0이면 기울기만으로는 선이 생기지 않음 (곱 구조).
+        assert!(f.effective_pressure(0.0, 1.0) < 1e-5);
+    }
+
+    #[test]
+    fn fountain_speed_factor_halves_at_ref() {
+        let f = FountainProfile::default(); // v_ref=60, beta=1.2
+        assert!((f.speed_factor(0.0) - 1.0).abs() < 1e-5, "정지 = 최대");
+        assert!((f.speed_factor(60.0) - 0.5).abs() < 1e-5, "v_ref = 0.5");
+        assert!(f.speed_factor(600.0) < 0.1, "빠르면 얇아짐");
+    }
+
+    #[test]
+    fn fountain_width_grows_with_pressure_and_tilt() {
+        let mut f = FountainProfile::default();
+        f.italic = false;
+        f.v_dwell = 0.0; // 정지 보정 제외
+        let v = f.speed_ref; // 속도 계수 0.5 고정
+        let w_weak = f.width_at(2.5, 0.2, 0.0, v);
+        let w_full = f.width_at(2.5, 1.0, 0.0, v);
+        assert!(w_full > w_weak, "필압↑ → 굵어짐");
+        // 기울기↑ → 같은 필압에서 굵어짐.
+        let w_tilt = f.width_at(2.5, 1.0, 1.0, v);
+        assert!(w_tilt > w_full, "기울기↑ → 굵어짐");
+    }
+
+    #[test]
+    fn fountain_width_decreases_with_speed() {
+        let mut f = FountainProfile::default();
+        f.v_dwell = 0.0;
+        let slow = f.width_at(2.5, 1.0, 0.0, 10.0);
+        let fast = f.width_at(2.5, 1.0, 0.0, 600.0);
+        assert!(fast < slow, "속도↑ → 가늘어짐");
+    }
+
+    #[test]
+    fn fountain_width_clamped_to_min_max() {
+        let mut f = FountainProfile::default();
+        f.min_width_pt = 0.5;
+        f.v_dwell = 0.0;
+        for (p, v) in [(0.0f32, 1e9f32), (1.0, 0.0), (0.5, 60.0)] {
+            let w = f.width_at(2.5, p, 0.0, v);
+            assert!(w >= 0.5 - 1e-4 && w <= 2.5 + 1e-4, "클램프: {w}");
+        }
+    }
+
+    #[test]
+    fn fountain_dwell_blobs_when_stopped() {
+        let mut f = FountainProfile::default(); // v_dwell=5, dwell_k=0.05
+        f.italic = false;
+        let moving = f.width_at(2.5, 1.0, 0.0, 60.0);
+        let stopped = f.width_at(2.5, 1.0, 0.0, 0.0);
+        assert!(stopped > moving, "정지 → 잉크 고임으로 굵어짐");
+        // 가산량 함수 = k_dwell × (v_dwell − v), 임계에서 0.
+        assert!((f.dwell_extra(0.0) - 0.25).abs() < 1e-5);
+        assert!(f.dwell_extra(f.v_dwell) < 1e-5);
+    }
+
+    #[test]
+    fn fountain_italic_direction_contrast() {
+        let mut f = FountainProfile::default();
+        f.italic = true;
+        f.nib_angle_deg = 0.0;
+        f.italic_k = 0.3;
+        // 닙 축(0°)과 나란한 방향 → 최대, 수직 → 최소.
+        assert!((f.italic_factor(10.0, 0.0) - 1.3).abs() < 1e-5);
+        assert!((f.italic_factor(0.0, 10.0) - 0.7).abs() < 1e-5);
+        // 끄면 1.0.
+        f.italic = false;
+        assert!((f.italic_factor(10.0, 0.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn fountain_speeds_smoothed_and_missing_time_is_zero() {
+        let f = FountainProfile::default(); // smooth α = 0.3
+        // 일정 속도 100pt/s (매 10ms에 1pt 이동).
+        let pts: Vec<StrokePoint> = (0..20)
+            .map(|i| StrokePoint::with_time(i as f32, 0.0, 0.5, i * 10))
+            .collect();
+        let vs = f.speeds(&pts);
+        // EMA가 일정 입력에 수렴.
+        assert!(vs[19] > 95.0 && vs[19] <= 100.0, "EMA 수렴: {}", vs[19]);
+        // 시각이 없는 점 → 속도 0.
+        let no_time = vec![
+            StrokePoint::new(0.0, 0.0, 0.5),
+            StrokePoint::new(10.0, 0.0, 0.5),
+        ];
+        assert_eq!(f.speeds(&no_time), vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn fountain_widths_follow_speed_profile() {
+        let mut f = FountainProfile::default();
+        f.italic = false;
+        // 느리게(굵게) 쓰다가 빠르게(가늘게) 쓰는 획.
+        let pts: Vec<StrokePoint> = (0..20)
+            .map(|i| StrokePoint::with_time(i as f32, 0.0, 0.9, i * 10)) // 100pt/s
+            .chain((0..20).map(|i| StrokePoint::with_time(20.0 + i as f32, 0.0, 0.9, 200 + i))) // 1000pt/s
+            .collect();
+        let ws = f.widths(2.5, &pts, 0.0);
+        assert!(ws[5] > ws[35], "느린 구간이 빠른 구간보다 굵어야 함");
     }
 
     // ---------- 헬퍼 ----------

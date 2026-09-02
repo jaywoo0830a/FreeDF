@@ -106,7 +106,7 @@ impl FreeDfApp {
         tab.hi_width = self.hi_width;
         tab.eraser_radius = self.eraser_radius;
         tab.pressure_enabled = self.pressure_enabled;
-        tab.pressure_curve = self.pressure_curve;
+        tab.pen_profile = self.pen_profile;
         tab.paper_style = self.paper_style;
         tab.paper_color = self.paper_color;
         tab.paper_size = self.paper_size;
@@ -117,6 +117,7 @@ impl FreeDfApp {
         tab.smoothing = self.smoothing;
         tab.smoothing_enabled = self.smoothing_enabled;
         tab.ink_bleed = self.ink_bleed;
+        tab.fountain_profile = self.fountain_profile;
         tab.zoom_lock = self.zoom_lock;
     }
 
@@ -151,7 +152,7 @@ impl FreeDfApp {
             hi_width,
             eraser_radius,
             pressure_enabled,
-            pressure_curve,
+            pen_profile,
             paper_style,
             paper_color,
             paper_size,
@@ -162,6 +163,7 @@ impl FreeDfApp {
             smoothing,
             smoothing_enabled,
             ink_bleed,
+            fountain_profile,
             zoom_lock,
         ) = {
             let tab = self.tabs.get_mut(idx).expect("tab index in range");
@@ -194,7 +196,7 @@ impl FreeDfApp {
                 tab.hi_width,
                 tab.eraser_radius,
                 tab.pressure_enabled,
-                tab.pressure_curve,
+                tab.pen_profile,
                 tab.paper_style,
                 tab.paper_color,
                 tab.paper_size,
@@ -205,6 +207,7 @@ impl FreeDfApp {
                 tab.smoothing,
                 tab.smoothing_enabled,
                 tab.ink_bleed,
+                tab.fountain_profile,
                 tab.zoom_lock,
             )
         };
@@ -250,7 +253,7 @@ impl FreeDfApp {
         self.hi_width = hi_width;
         self.eraser_radius = eraser_radius;
         self.pressure_enabled = pressure_enabled;
-        self.pressure_curve = pressure_curve;
+        self.pen_profile = pen_profile;
         self.paper_style = paper_style;
         self.paper_color = paper_color;
         self.paper_size = paper_size;
@@ -261,6 +264,7 @@ impl FreeDfApp {
         self.smoothing = smoothing;
         self.smoothing_enabled = smoothing_enabled;
         self.ink_bleed = ink_bleed;
+        self.fountain_profile = fountain_profile;
         self.zoom_lock = zoom_lock;
         self.search_runs = Vec::new();
         self.status = None;
@@ -334,7 +338,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            pressure_curve: self.pressure_curve,
+            pen_profile: self.pen_profile,
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
@@ -345,6 +349,7 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            fountain_profile: self.fountain_profile,
             zoom_lock: self.zoom_lock,
         };
         self.tabs.push(tab);

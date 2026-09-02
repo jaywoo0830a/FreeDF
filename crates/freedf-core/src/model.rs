@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub enum ToolType {
     /// 펜 — 불투명한 필기선 (필압 곡선 적용)
     Pen,
+    /// 만년필 — 필압 × 속도 × 기울기 물리 모델의 가변 선폭 (잉크 고임/이탤릭 닙 포함)
+    Fountain,
     /// 형광펜 — 투명한 두꺼운 강조선
     Highlighter,
     /// 지우개 — 스트로크 벡터 삭제
@@ -23,6 +25,7 @@ impl ToolType {
     pub fn label(self) -> &'static str {
         match self {
             ToolType::Pen => "Pen",
+            ToolType::Fountain => "Fountain",
             ToolType::Highlighter => "Highlighter",
             ToolType::Eraser => "Eraser",
             ToolType::Pan => "Pan",
@@ -31,22 +34,31 @@ impl ToolType {
 
     /// 라벨에서 도구 복원 (DB 저장 값 역변환). 알 수 없으면 Pen.
     pub fn from_label(label: &str) -> ToolType {
-        match label {
-            "Highlighter" => ToolType::Highlighter,
-            "Eraser" => ToolType::Eraser,
-            "Pan" => ToolType::Pan,
+        match label.to_lowercase().as_str() {
+            "highlighter" => ToolType::Highlighter,
+            "eraser" => ToolType::Eraser,
+            "pan" => ToolType::Pan,
+            "fountain" | "fountain pen" | "fountainpen" | "fountain_pen" => {
+                ToolType::Fountain
+            }
             _ => ToolType::Pen,
         }
     }
 
     /// 잉크를 남기는 필기 도구인지 (지우개/팬 아님).
     pub fn is_ink(self) -> bool {
-        matches!(self, ToolType::Pen | ToolType::Highlighter)
+        matches!(self, ToolType::Pen | ToolType::Fountain | ToolType::Highlighter)
     }
 
     /// 도구 선택기에 표시되는 기본 순서 (사용자가 드래그로 재정렬 가능).
     pub fn default_order() -> Vec<ToolType> {
-        vec![ToolType::Pen, ToolType::Highlighter, ToolType::Eraser, ToolType::Pan]
+        vec![
+            ToolType::Pen,
+            ToolType::Fountain,
+            ToolType::Highlighter,
+            ToolType::Eraser,
+            ToolType::Pan,
+        ]
     }
 }
 
@@ -59,6 +71,10 @@ pub struct StrokePoint {
     pub y: f32,
     /// 태블릿 펜 압력 0.0 ~ 1.0. 압력 미지원 입력 장치는 보통 0.5.
     pub pressure: f32,
+    /// 시각 (유닉스 epoch ms) — 만년필 모델의 속도 계산용.
+    /// 이전 형식 데이터에는 없음(0이면 속도 0으로 처리).
+    #[serde(default)]
+    pub t_ms: u64,
 }
 
 impl StrokePoint {
@@ -67,6 +83,17 @@ impl StrokePoint {
             x,
             y,
             pressure: pressure.clamp(0.0, 1.0),
+            t_ms: 0,
+        }
+    }
+
+    /// 시각이 포함된 점 (만년필 모델 입력).
+    pub fn with_time(x: f32, y: f32, pressure: f32, t_ms: u64) -> Self {
+        Self {
+            x,
+            y,
+            pressure: pressure.clamp(0.0, 1.0),
+            t_ms,
         }
     }
 

@@ -5,7 +5,7 @@ use freedf_core::logging::{AppEvent, LogEntry, Logger};
 use freedf_core::model::{StrokePoint, ToolType};
 use freedf_core::notes::{NoteMeta, NotesManager};
 use freedf_core::outline::{find_by_title, flatten, OutlineNode};
-use freedf_core::pen::{ColorFamily, Palette, PressureCurve};
+use freedf_core::pen::{BallPenProfile, ColorFamily, Palette};
 use freedf_core::search::{find_matches, TextRun};
 use freedf_core::store::AnnotationStore;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -118,15 +118,15 @@ fn page_word_search_with_highlights() {
     }
 }
 
-/// 펜: 빨강/파랑/검정 계열 + 필압 곡선.
+/// 펜: 색상 팔레트 + 일반 펜(볼펜) 물리 모델.
 #[test]
 fn pen_palette_and_pressure() {
     for family in [ColorFamily::Red, ColorFamily::Blue, ColorFamily::Black] {
         assert!(Palette::swatches(family).len() >= 3);
     }
-    let curve = PressureCurve::default();
-    let light = curve.apply(3.0, 0.1);
-    let hard = curve.apply(3.0, 0.9);
+    let pen = BallPenProfile::default();
+    let light = pen.width_at(1.0, 0.1, 0.0, 200.0);
+    let hard = pen.width_at(1.0, 0.9, 0.0, 200.0);
     assert!(light < hard);
     assert!(light > 0.0);
 }

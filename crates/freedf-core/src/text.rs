@@ -491,7 +491,7 @@ mod tests {
     fn word_at_scrambled_order_still_finds_word() {
         // 글자 입력 순서가 공간 순서와 다르더라도(내용 스트림 순서) 줄 클러스터링과
         // x 정렬 덕에 같은 단어를 찾습니다.
-        let mut chars = vec![
+        let chars = vec![
             TextChar::new("l", [130.0, 50.0, 138.0, 68.0]),
             TextChar::new("H", [100.0, 50.0, 108.0, 68.0]),
             TextChar::new("o", [140.0, 50.0, 148.0, 68.0]),

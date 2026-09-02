@@ -456,7 +456,7 @@ mod tests {
     /// (표시 크기는 매 단계 너비/높이가 뒤집힘)
     #[test]
     fn rotation_composes_across_multiple_steps() {
-        let rotate_cw = |p: (f32, f32), w: f32, h: f32| (h - p.1, p.0);
+        let rotate_cw = |p: (f32, f32), _w: f32, h: f32| (h - p.1, p.0);
         let rotate_ccw = |p: (f32, f32), w: f32, _h: f32| (p.1, w - p.0);
 
         let start = (100.0f32, 50.0f32);

@@ -6,10 +6,86 @@
 
 use super::*;
 
+/// 펜 기울기 벡터(도, ±90) → 모델용 0..1 크기.
+fn tilt_magnitude(tilt: &[f32; 2]) -> f32 {
+    let m = (tilt[0] * tilt[0] + tilt[1] * tilt[1]).sqrt();
+    (m / 90.0).min(1.0).max(0.0)
+}
+
+/// 삼각분할 결과를 egui 메시 2개로 직접 구성합니다:
+/// - `fill`: 겹침 없는 본체 채움 삼각형.
+/// - `aa`: **경계 가장자리에만** 붙는 페더링(AA) 스트립 — 내부 공유 가장자리는
+///   제외해 반투명 잉크의 이음새 얼룩을 막습니다.
+///
+/// egui의 `convex_polygon`을 쓰지 않는 이유: epaint의 페더링 테셀레이터가
+/// 슬리버(가늘고 긴) 삼각형에서 점 법선을 폭발시켜 정점이 수천 픽셀 밖으로
+/// 튀는 "빛살(starburst)" 깨짐이 생기기 때문입니다. 우리 법선은 세그먼트
+/// 단위라 어떤 입력에도 유한합니다.
+fn build_stroke_meshes(
+    poly: &[[f32; 2]],
+    tris: &[[u32; 3]],
+    color: Color32,
+    feather: f32,
+) -> (egui::Mesh, egui::Mesh) {
+    let mut fill = egui::Mesh::default();
+    for p in poly {
+        fill.vertices
+            .push(egui::epaint::Vertex::untextured(egui::pos2(p[0], p[1]), color));
+    }
+    for t in tris {
+        fill.indices.extend_from_slice(&[t[0], t[1], t[2]]);
+    }
+
+    let mut aa = egui::Mesh::default();
+    if feather > 0.0 {
+        use std::collections::HashMap;
+        // 가장자리 공유 횟수 — 1이면 경계(외곽선) 가장자리.
+        let mut counts: HashMap<(u32, u32), u32> = HashMap::new();
+        for t in tris {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                *counts.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        for t in tris {
+            for (ia, ib) in [(0usize, 1usize), (1, 2), (2, 0)] {
+                let (a, b) = (t[ia], t[ib]);
+                if counts.get(&(a.min(b), a.max(b))) != Some(&1) {
+                    continue; // 내부 공유 가장자리 — 페더링 없음.
+                }
+                let ic = 3 - ia - ib; // 삼각형의 남은 정점 = 안쪽.
+                let pa = egui::pos2(poly[a as usize][0], poly[a as usize][1]);
+                let pb = egui::pos2(poly[b as usize][0], poly[b as usize][1]);
+                let pc = egui::pos2(poly[t[ic] as usize][0], poly[t[ic] as usize][1]);
+                let d = pb - pa;
+                let len = d.length();
+                if len < 1e-4 {
+                    continue;
+                }
+                let perp = Vec2::new(-d.y, d.x) / len;
+                // 안쪽 정점(pc)의 반대 방향이 바깥.
+                let nrm = if (pc - pa).dot(perp) < 0.0 { perp } else { -perp };
+                let (oa, ob) = (pa + nrm * feather, pb + nrm * feather);
+                let base = aa.vertices.len() as u32;
+                aa.vertices
+                    .push(egui::epaint::Vertex::untextured(pa, color));
+                aa.vertices
+                    .push(egui::epaint::Vertex::untextured(pb, color));
+                aa.vertices
+                    .push(egui::epaint::Vertex::untextured(oa, Color32::TRANSPARENT));
+                aa.vertices
+                    .push(egui::epaint::Vertex::untextured(ob, Color32::TRANSPARENT));
+                aa.indices
+                    .extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+            }
+        }
+    }
+    (fill, aa)
+}
+
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
-            ToolType::Pen => (self.pen_color, self.pen_width),
+            ToolType::Pen | ToolType::Fountain => (self.pen_color, self.pen_width),
             ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
@@ -183,7 +259,7 @@ impl FreeDfApp {
             tool: self.tool,
             color,
             width,
-            points: vec![StrokePoint::new(point[0], point[1], pressure)],
+            points: vec![StrokePoint::with_time(point[0], point[1], pressure, now_ms())],
         });
         self.finish_stroke();
     }
@@ -1043,7 +1119,7 @@ impl FreeDfApp {
                 && self.input_device == InputDevice::Mouse
                 && matches!(
                     self.tool,
-                    ToolType::Pen | ToolType::Highlighter | ToolType::Eraser
+                    ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser
                 ));
 
         if panning {
@@ -1063,7 +1139,7 @@ impl FreeDfApp {
         }
 
         match self.tool {
-            ToolType::Pen | ToolType::Highlighter => {
+            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter => {
                 let page_w = self.page_size_pts[0];
                 let page_h = self.page_size_pts[1];
                 if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
@@ -1098,6 +1174,8 @@ impl FreeDfApp {
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
                             if inside {
+                                // 만년필 모델은 점별 시각으로 속도를 계산합니다.
+                                let t_ms = now_ms();
                                 // 1€ 필터(선택적) — OTD 같은 드라이버가 이미
                                 // 안정화하는 환경에서는 꺼둘 수 있습니다.
                                 if self.smoothing_enabled
@@ -1108,9 +1186,9 @@ impl FreeDfApp {
                                     let sx = self.smooth_x.filter(page[0], t);
                                     let sy = self.smooth_y.filter(page[1], t);
                                     let sp = self.smooth_p.filter(pressure, t);
-                                    st.push([sx, sy], sp.clamp(0.0, 1.0));
+                                    st.push([sx, sy], sp.clamp(0.0, 1.0), t_ms);
                                 } else {
-                                    st.push(page, pressure);
+                                    st.push(page, pressure, t_ms);
                                 }
                             }
                         }
@@ -1203,19 +1281,25 @@ impl FreeDfApp {
         // 점별 절반 두께 (화면 px).
         let n = pts.len();
         let mut halves: Vec<f32> = Vec::with_capacity(n);
+        let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
         if stroke.tool == ToolType::Highlighter {
             // 마커: 필압/테이퍼 없이 일정한 두께.
             let h = (stroke.width * zoom * 0.5).max(0.5);
             halves.resize(n, h);
+        } else if stroke.tool == ToolType::Fountain {
+            // 만년필: 필압 × 속도 × 기울기 물리 모델. 점별 폭(pt)을
+            // 모델로 계산해 화면 px로 환산합니다.
+            let tilt = tilt_magnitude(&self.pen_tilt);
+            let widths = self.fountain_profile.widths(stroke.width, pts, tilt);
+            for w in widths {
+                halves.push((w * zoom * 0.5).max(0.3));
+            }
         } else {
-            let tapers: Vec<f32> = if uses_taper(stroke.tool) {
-                taper_factors(pts, TAPER_LEN_PTS)
-            } else {
-                vec![1.0; n]
-            };
-            for (i, p) in pts.iter().enumerate() {
-                let w = self.pressure_curve.apply(stroke.width * zoom, p.pressure) * tapers[i];
-                halves.push((w * 0.5).max(0.4));
+            // 일반 펜: 필압·속도 영향이 작은 물리 모델 (선폭 변동폭이 좁음).
+            let tilt = tilt_magnitude(&self.pen_tilt);
+            let widths = self.pen_profile.widths(stroke.width, pts, tilt);
+            for w in widths {
+                halves.push((w * zoom * 0.5).max(0.3));
             }
         }
         let is_pen = stroke.tool == ToolType::Pen;
@@ -1258,13 +1342,18 @@ impl FreeDfApp {
                 self.paint_filled_stroke(painter, &pts_view, &hb, true, halo);
             }
         }
-        // 본체: 펜은 둥근 캡, 마커는 직선(butt) 끝 — 관례적 구분.
-        self.paint_filled_stroke(painter, &pts_view, &halves, is_pen, color);
+        // 본체: 펜/만년필은 둥근 캡, 마커는 직선(butt) 끝 — 관례적 구분.
+        self.paint_filled_stroke(painter, &pts_view, &halves, round_caps, color);
     }
 
     /// 외곽선 → 삼각분할 → 채움. 모든 삼각형이 겹치지 않아 반투명 색도
-    /// 균일하게 칠해집니다 (이전 `convex_polygon(리본)`은 오목 다각형을
-    /// 부채꼴로 그려 화면 전체를 뒤덮는 깨짐이 있었습니다).
+    /// 균일하게 칠해집니다.
+    ///
+    /// 주의: egui의 `Shape::convex_polygon`은 **페더링 테셀레이터가 슬리버
+    /// (가늘고 긴) 삼각형에서 점 법선을 폭발**시켜 정점이 화면 밖으로 튀는
+    /// "빛살(starburst)" 깨짐이 있었습니다. 그래서 여기서는 삼각분할 결과를
+    /// **Mesh로 직접 구성**하고, AA 페더링도 경계 가장자리에만 우리가 직접
+    /// 만듭니다 (내부 공유 가장자리는 제외 → 반투명 잉크의 이음새 얼룩 없음).
     fn paint_filled_stroke(
         &self,
         painter: &egui::Painter,
@@ -1274,15 +1363,14 @@ impl FreeDfApp {
         color: Color32,
     ) {
         let poly = freedf_core::pen::stroke_outline(pts_view, half_widths, round_caps);
-        for tri in freedf_core::pen::triangulate_polygon(&poly) {
-            let pts: Vec<Pos2> = tri
-                .iter()
-                .map(|&i| {
-                    let p = poly[i as usize];
-                    Pos2::new(p[0], p[1])
-                })
-                .collect();
-            painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
+        let tris = freedf_core::pen::triangulate_polygon(&poly);
+        if tris.is_empty() {
+            return;
+        }
+        let (fill, aa) = build_stroke_meshes(&poly, &tris, color, 1.0);
+        painter.add(egui::Shape::mesh(fill));
+        if !aa.is_empty() {
+            painter.add(egui::Shape::mesh(aa));
         }
     }
 
@@ -1296,7 +1384,7 @@ impl FreeDfApp {
             && self.input_device == InputDevice::Mouse
             && matches!(
                 self.tool,
-                ToolType::Pen | ToolType::Highlighter | ToolType::Eraser
+                ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser
             );
         let tool = if mouse_panning {
             ToolType::Pan
@@ -1304,7 +1392,7 @@ impl FreeDfApp {
             self.tool
         };
         match tool {
-            ToolType::Pen => {
+            ToolType::Pen | ToolType::Fountain => {
                 match self.pen_cursor_style {
                     PenCursorStyle::Dot => {
                         // 작은 점.
@@ -1406,5 +1494,87 @@ impl FreeDfApp {
                 painter.circle_filled(pos, 2.0, c);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 외곽선 → 삼각분할 → 메시 구성 전체를 돌려, 모든 정점이 유한하고
+    /// 스트로크 근처에 머무는지 확인합니다 ("빛살/starburst" 깨짐 회귀 테스트).
+    fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32], round: bool) -> egui::Rect {
+        let poly = freedf_core::pen::stroke_outline(pts, halves, round);
+        let tris = freedf_core::pen::triangulate_polygon(&poly);
+        let (fill, aa) = build_stroke_meshes(&poly, &tris, Color32::RED, 1.0);
+        let mut bounds = egui::Rect::NOTHING;
+        for mesh in [&fill, &aa] {
+            for v in &mesh.vertices {
+                assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN 정점: {:?}", v.pos);
+                bounds.extend_with(v.pos);
+            }
+            assert!(!mesh.indices.is_empty(), "빈 메시");
+        }
+        bounds
+    }
+
+    #[test]
+    fn straight_stroke_mesh_stays_bounded() {
+        let pts: Vec<[f32; 2]> = (0..24).map(|i| [20.0 + i as f32 * 8.0, 80.0]).collect();
+        let halves: Vec<f32> = vec![1.5; 24];
+        // 직선 렌즈도 본체가 빠지지 않아야 함 (면적 기준 완전 커버).
+        let poly = freedf_core::pen::stroke_outline(&pts, &halves, true);
+        let tris = freedf_core::pen::triangulate_polygon(&poly);
+        let area: f32 = tris.iter().fold(0.0, |acc, t| {
+            let (a, b, c) = (
+                poly[t[0] as usize],
+                poly[t[1] as usize],
+                poly[t[2] as usize],
+            );
+            acc + ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() * 0.5
+        });
+        let expected = 184.0 * 3.0 + std::f32::consts::PI * 1.5 * 1.5;
+        assert!((area - expected).abs() < 1.0, "직선 렌즈 면적: {area} vs {expected}");
+        let b = mesh_bounds(&pts, &halves, true);
+        assert!(b.min.x > 10.0 && b.max.x < 210.0, "x 경계: {b:?}");
+        assert!(b.min.y > 70.0 && b.max.y < 90.0, "y 경계: {b:?}");
+    }
+
+    #[test]
+    fn scribble_cluster_mesh_stays_bounded() {
+        // 스크린샷과 같은 밀집 클러스터 + 급격한 루프 입력.
+        let mut pts: Vec<[f32; 2]> = Vec::new();
+        let mut t = 0.0f32;
+        while t < std::f32::consts::TAU * 3.0 {
+            let r = 20.0 + 8.0 * (t * 3.0).sin();
+            pts.push([100.0 + r * t.cos(), 100.0 + r * t.sin() * 0.7]);
+            t += 0.08;
+        }
+        let halves: Vec<f32> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, _)| 0.4 + 2.0 * (i as f32 / pts.len() as f32))
+            .collect();
+        let b = mesh_bounds(&pts, &halves, true);
+        assert!(b.min.x > 50.0 && b.max.x < 150.0, "x 경계: {b:?}");
+        assert!(b.min.y > 50.0 && b.max.y < 150.0, "y 경계: {b:?}");
+    }
+
+    #[test]
+    fn duplicate_points_mesh_stays_bounded() {
+        // 펜을 누른 채 정지(중복 점) → 필압 램프.
+        let mut pts: Vec<[f32; 2]> = Vec::new();
+        for _ in 0..6 {
+            pts.push([50.0, 50.0]);
+        }
+        for i in 0..16 {
+            pts.push([50.0 + i as f32 * 6.0, 50.0]);
+        }
+        let halves: Vec<f32> = (0..pts.len())
+            .map(|i| 0.4 + 2.0 * (i as f32 / pts.len() as f32))
+            .collect();
+        let b = mesh_bounds(&pts, &halves, true);
+        assert!(b.min.x > 30.0 && b.max.x < 160.0, "x 경계: {b:?}");
+        assert!(b.min.y > 30.0 && b.max.y < 70.0, "y 경계: {b:?}");
     }
 }
