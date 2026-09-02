@@ -1170,10 +1170,19 @@ impl eframe::App for FreeDfApp {
         }
         self.handle_shortcuts(&ctx);
 
-        // 좁은 창(Windows 스플릿 뷰)에서는 캔버스 + 팔레트만 남기고 나머지는
-        // 자동으로 숨깁니다. 우상단의 작은 조종 버튼(compact_pill)으로 전체
-        // 크롬(탭/툴바)을 잠시 다시 켤 수 있습니다.
-        let narrow = ctx.viewport_rect().width() < COMPACT_MIN_WIDTH;
+        // 좁은 창에서는 캔버스 + 팔레트만 남기고 나머지는 자동으로 숨깁니다.
+        // 판정 기준: (1) 창 폭이 모니터(뷰포트) 폭의 **절반 이하**일 때
+        // (Windows 스플릿 뷰 = 정확히 절반) 또는 (2) 절대 폭이 너무 작을 때.
+        // 우상단의 작은 조종 버튼(compact_pill)으로 전체 크롬을 다시 켭니다.
+        let window_w = ctx.viewport_rect().width();
+        let monitor_w = ctx.input(|i| i.viewport().monitor_size.map(|m| m.x));
+        let narrow = match monitor_w {
+            Some(mw) => {
+                // 모니터 폭의 절반, 또는 최소 절대 폭 중 큰 쪽 이하.
+                window_w <= (mw * 0.5).max(COMPACT_MIN_WIDTH) + 1.0
+            }
+            None => window_w < COMPACT_MIN_WIDTH,
+        };
         if !narrow {
             self.narrow_chrome_expanded = false;
         }

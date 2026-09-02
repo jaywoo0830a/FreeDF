@@ -108,6 +108,10 @@ native file dialogs, Windows Ink pressure).
   of the canvas shows `Prev [page]/[total] Next`, zoom in/out, and
   Fit Width / Fit Height (page navigation, zoom and fit live here, not in the
   toolbar)
+- 🪟 **Split-view focus mode** — when the window is **half or narrower than the
+  monitor** (Windows snap / split view), FreeDF auto-collapses to just the
+  canvas + palette; a small top-right control (`☰ Show UI`) brings the tabs and
+  toolbar back on demand for multitasking, and `✕ Hide UI` hides them again
 - 🪟 **Split-view focus mode** — when the window gets narrow (e.g. Windows split
   view), FreeDF auto-collapses to **canvas + writing palette** only; a small
   floating control (top-right “☰ Show UI”) restores the tabs/toolbar on demand,
