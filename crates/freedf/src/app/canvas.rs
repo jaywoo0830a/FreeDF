@@ -47,223 +47,11 @@ fn pen_trace(msg: &str) {
     }
 }
 
-// ── 획별 지오메트리 캐시 (LRU, pt 공간 — 줌과 무관) ─────────────────────────
-
-/// 잉크 설정 스냅샷 — 캐시된 지오메트리가 어떤 모델 파라미터로 만들어졌는지.
-/// 설정이 바뀌면(슬라이더 등) 캐시를 재구성합니다.
-type InkSettingsKey = (InkBleed, BallPenProfile, FountainProfile);
-
-/// 한 획의 렌더 지오메트리 (전부 pt 공간 — 균일 줌에서 스케일 불변).
-pub(crate) struct StrokeGeom {
-    /// 완전 삼각분할 결과 (본체).
-    pub(crate) main: freedf_core::pen::StrokeTris,
-    /// 완전 분할 불가(자기 교차 등) 시의 세그먼트 quad 폴백.
-    pub(crate) fallback: Option<freedf_core::pen::FallbackGeometry>,
-    /// 정착된 블리드 후광 (0.5r, 1.0r — 정착 반경 기준).
-    pub(crate) halo: Option<(freedf_core::pen::StrokeTris, freedf_core::pen::StrokeTris)>,
-}
-
-/// 획별 지오메트리 캐시 — 해시 불일치 시에만 O(n²) 삼각분할을 다시 하고,
-/// 바이트 예산을 넘으면 LRU로 방출합니다.
-pub(crate) struct GeometryCache {
-    entries: std::collections::HashMap<u64, CacheEntry>,
-    bytes_total: usize,
-    tick: u64,
-    max_bytes: usize,
-}
-
-struct CacheEntry {
-    hash: u64,
-    settings: InkSettingsKey,
-    geom: StrokeGeom,
-    bytes: usize,
-    last_used: u64,
-}
-
-/// 한 획의 캐시 예산 (pt 공간 데이터라 작습니다 — 64MB면 수천 획).
-const GEOM_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
-
-impl GeometryCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            entries: std::collections::HashMap::new(),
-            bytes_total: 0,
-            tick: 0,
-            max_bytes: GEOM_CACHE_MAX_BYTES,
-        }
-    }
-
-    /// 캐시에서 꺼내거나, 해시/설정이 바뀌었으면 `build`로 다시 만듭니다.
-    pub(crate) fn get_or_build(
-        &mut self,
-        id: u64,
-        hash: u64,
-        settings: InkSettingsKey,
-        build: impl FnOnce() -> StrokeGeom,
-    ) -> &StrokeGeom {
-        let hit = match self.entries.get(&id) {
-            Some(e) if e.hash == hash && e.settings == settings => true,
-            _ => false,
-        };
-        if hit {
-            self.tick = self.tick.wrapping_add(1);
-            let e = self.entries.get_mut(&id).expect("hit이면 존재");
-            e.last_used = self.tick;
-            return &e.geom;
-        }
-        let geom = build();
-        let bytes = stroke_geom_bytes(&geom);
-        self.tick = self.tick.wrapping_add(1);
-        self.entries.insert(
-            id,
-            CacheEntry {
-                hash,
-                settings,
-                geom,
-                bytes,
-                last_used: self.tick,
-            },
-        );
-        self.bytes_total += bytes;
-        // 방금 넣은 항목은 지우지 않으면서 예산까지 LRU 방출.
-        while self.bytes_total > self.max_bytes && self.entries.len() > 1 {
-            if let Some(oldest) = self
-                .entries
-                .iter()
-                .filter(|(k, _)| **k != id)
-                .min_by_key(|(_, e)| e.last_used)
-                .map(|(k, _)| *k)
-            {
-                if let Some(e) = self.entries.remove(&oldest) {
-                    self.bytes_total = self.bytes_total.saturating_sub(e.bytes);
-                }
-            } else {
-                break;
-            }
-        }
-        &self.entries.get(&id).expect("방금 삽입").geom
-    }
-}
-
-fn stroke_geom_bytes(g: &StrokeGeom) -> usize {
-    let main = g.main.poly.len() * 8 + g.main.tris.len() * 12 + g.main.aa_edges.len() * 24;
-    let fallback = g
-        .fallback
-        .as_ref()
-        .map(|fb| fb.quads.len() * 32 + fb.circles.len() * 12)
-        .unwrap_or(0);
-    let halo = g
-        .halo
-        .as_ref()
-        .map(|(a, b)| {
-            a.poly.len() * 8
-                + a.tris.len() * 12
-                + a.aa_edges.len() * 24
-                + b.poly.len() * 8
-                + b.tris.len() * 12
-                + b.aa_edges.len() * 24
-        })
-        .unwrap_or(0);
-    main + fallback + halo
-}
-
-/// 캐시용 지오메트리를 만듭니다 (본체 + 정착 후광).
-/// `age_sec >= settle`이면 후광을 캐시에 넣습니다 (젊은 후광은 매 프레임).
-fn build_stroke_geom(
-    pts_pt: &[[f32; 2]],
-    halves: &[f32],
-    round_caps: bool,
-    bleed: InkBleed,
-    settle: f32,
-    age_sec: f32,
-    bleed_on: bool,
-) -> StrokeGeom {
-    let main = match freedf_core::pen::stroke_geometry(pts_pt, halves, round_caps) {
-        freedf_core::pen::StrokeFill::Tris(t) => StrokeGeom {
-            main: t,
-            fallback: None,
-            halo: None,
-        },
-        freedf_core::pen::StrokeFill::Fallback(fb) => StrokeGeom {
-            main: freedf_core::pen::StrokeTris {
-                poly: Vec::new(),
-                tris: Vec::new(),
-                aa_edges: Vec::new(),
-                bbox: [f32::MAX; 4],
-            },
-            fallback: Some(fb),
-            halo: None,
-        },
-    };
-    let mut geom = main;
-    // 정착 후광: 점별 최종 반경 = phase_rate × settle (속도 0 구간은 0 —
-    // 젊은 후광과 정착 후광이 정확히 이어집니다).
-    if bleed_on && bleed.enabled && age_sec >= settle {
-        let radii = bleed_radii(pts_pt, settle, bleed);
-        let mk = |extra: f32| -> Option<freedf_core::pen::StrokeTris> {
-            let hb: Vec<f32> = (0..halves.len()).map(|i| halves[i] + radii[i] * extra).collect();
-            match freedf_core::pen::stroke_geometry(pts_pt, &hb, true) {
-                freedf_core::pen::StrokeFill::Tris(t) => Some(t),
-                freedf_core::pen::StrokeFill::Fallback(_) => None,
-            }
-        };
-        match (mk(0.5), mk(1.0)) {
-            (Some(mid), Some(outer)) => geom.halo = Some((mid, outer)),
-            _ => {}
-        }
-    }
-    geom
-}
-
-/// 캐시된 외곽선 → egui 메시 2개 (본체 채움 + 경계 AA 페더링).
-/// `to_view`는 pt 공간 좌표를 화면 좌표로 변환합니다.
-fn append_outline(
-    mesh: &mut egui::Mesh,
-    outline: &freedf_core::pen::StrokeTris,
-    to_view: &impl Fn([f32; 2]) -> Pos2,
-    color: Color32,
-    _feather: f32,
-) {
-    let base = mesh.vertices.len() as u32;
-    for p in &outline.poly {
-        mesh.vertices
-            .push(egui::epaint::Vertex::untextured(to_view(*p), color));
-    }
-    for t in &outline.tris {
-        mesh.indices
-            .extend_from_slice(&[base + t[0], base + t[1], base + t[2]]);
-    }
-}
-
-/// 경계 AA 페더 스트립을 메시에 덧붙입니다 (법선은 세그먼트 단위 — 유한).
-fn append_aa(
-    mesh: &mut egui::Mesh,
-    outline: &freedf_core::pen::StrokeTris,
-    to_view: &impl Fn([f32; 2]) -> Pos2,
-    color: Color32,
-    feather: f32,
-) {
-    if feather <= 0.0 {
-        return;
-    }
-    for (a, b, dir) in &outline.aa_edges {
-        let pa = to_view(outline.poly[*a as usize]);
-        let pb = to_view(outline.poly[*b as usize]);
-        let nrm = egui::vec2(dir[0], dir[1]) * feather;
-        let (oa, ob) = (pa + nrm, pb + nrm);
-        let base = mesh.vertices.len() as u32;
-        mesh.vertices
-            .push(egui::epaint::Vertex::untextured(pa, color));
-        mesh.vertices
-            .push(egui::epaint::Vertex::untextured(pb, color));
-        mesh.vertices
-            .push(egui::epaint::Vertex::untextured(oa, Color32::TRANSPARENT));
-        mesh.vertices
-            .push(egui::epaint::Vertex::untextured(ob, Color32::TRANSPARENT));
-        mesh.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
-    }
-}
+// ── 캔버스 렌더 = 리본 단일 경로 ──────────────────────────────────────────────
+// 진행 중 획과 완성 획이 **같은 지오메트리 생성기(stroke_ribbon)** 를 씁니다.
+// 과거 완성 획은 귀 자르기 삼각분할(정확 경로)을 썼는데, 곡선 필기는 분할이
+// 실패해 폴백(딱딱한 quad, AA 없음)으로 바뀌며 진행 중과 시각 차이가 났음.
+// 정확 경로는 내보내기(export.rs) 전용으로 남습니다.
 
 /// 리본(근사) 지오메트리를 메시에 덧붙입니다 — 버텍스별 알파 램프
 /// (1 = 본체, 0 = 페더 바깥 가장자리)를 베이스 색에 곱해 칠합니다.
@@ -282,30 +70,6 @@ fn append_ribbon(
     for t in &ribbon.tris {
         mesh.indices
             .extend_from_slice(&[base + t[0], base + t[1], base + t[2]]);
-    }
-}
-
-/// 폴백 지오메트리(quad + 조인/캡 원)를 메시에 덧붙입니다. 원은 메시에
-/// 못 넣으므로 별도 목록(`fallbacks`)에 담아 호출자가 원형으로 그립니다.
-fn append_fallback(
-    mesh: &mut egui::Mesh,
-    fb: &freedf_core::pen::FallbackGeometry,
-    to_view: &impl Fn([f32; 2]) -> Pos2,
-    zoom: f32,
-    color: Color32,
-    fallbacks: &mut Vec<(Pos2, f32, Color32)>,
-) {
-    for q in &fb.quads {
-        let base = mesh.vertices.len() as u32;
-        for p in q {
-            mesh.vertices
-                .push(egui::epaint::Vertex::untextured(to_view(*p), color));
-        }
-        mesh.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-    for (c, r) in &fb.circles {
-        fallbacks.push((to_view(*c), (r * zoom).max(0.5), color));
     }
 }
 
@@ -373,28 +137,6 @@ fn bleed_radii(pts_pt: &[[f32; 2]], age_sec: f32, bleed: InkBleed) -> Vec<f32> {
         .iter()
         .map(|(d0, d1)| bleed.radius(*d0, *d1, len, age_sec))
         .collect()
-}
-
-/// 스트로크 지오메트리 해시 — 점(위치/압력/시각/잠금폭)/두께/도구가 바뀌면
-/// 캐시를 재구성합니다.
-fn stroke_geom_hash(stroke: &freedf_core::model::Stroke) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut mix = |bytes: &[u8]| {
-        for &b in bytes {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    };
-    for p in &stroke.points {
-        mix(&p.x.to_bits().to_le_bytes());
-        mix(&p.y.to_bits().to_le_bytes());
-        mix(&p.pressure.to_bits().to_le_bytes());
-        mix(&p.t_ms.to_le_bytes());
-        mix(&p.width.to_bits().to_le_bytes());
-    }
-    mix(&stroke.width.to_bits().to_le_bytes());
-    mix(&[stroke.tool as u8]);
-    h
 }
 
 
@@ -1027,11 +769,9 @@ impl FreeDfApp {
         let now = now_ms();
         if self.ink_needs_rebuild(now) {
             let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
-            if let Some((mesh, fallbacks)) =
-                self.build_ink_mesh(&strokes, draw_origin, painter.clip_rect(), now)
+            if let Some(mesh) = self.build_ink_mesh(&strokes, draw_origin, painter.clip_rect(), now)
             {
                 self.ink_mesh = Some(mesh);
-                self.ink_fallback = fallbacks;
                 self.ink_key = (
                     self.current_page,
                     self.store.rev(),
@@ -1048,9 +788,6 @@ impl FreeDfApp {
         }
         if let Some(mesh) = &self.ink_mesh {
             painter.add(egui::Shape::mesh(mesh.clone()));
-        }
-        for (c, r, col) in &self.ink_fallback {
-            painter.circle_filled(*c, *r, *col);
         }
         if let Some(active) = self.active_stroke.clone() {
             self.paint_active(&painter, &active, draw_origin);
@@ -2075,15 +1812,15 @@ impl FreeDfApp {
     }
 
     /// 페이지의 **모든 완성 획**을 병합 잉크 메시 하나로 만듭니다.
-    /// 지오메트리는 캐시에서(pt 공간), 정점 변환은 이 함수에서(O(n)) —
-    /// 드로우 콜은 페이지당 1개로 줄어듭니다.
+    /// 진행 중 획과 **같은 리본 지오메트리**를 쓰므로 시각 차이가 없고,
+    /// 드로우 콜은 페이지당 1개입니다.
     pub(crate) fn build_ink_mesh(
         &mut self,
         strokes: &[freedf_core::model::Stroke],
         origin: Pos2,
         clip: Rect,
         now: u64,
-    ) -> Option<(std::sync::Arc<egui::Mesh>, Vec<(Pos2, f32, Color32)>)> {
+    ) -> Option<std::sync::Arc<egui::Mesh>> {
         let view = self.view;
         let to_view = |p: [f32; 2]| -> Pos2 {
             let v = view.page_to_view(p);
@@ -2094,8 +1831,7 @@ impl FreeDfApp {
         let ball = self.pen_profile;
         let fountain = self.fountain_profile;
         let tilt = tilt_magnitude(&self.pen_tilt);
-        let settings = (bleed, ball, fountain);
-        let zoom = view.zoom;
+        let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
         // 1차 패스: 다음 정착 시각 (젊은 후광이 매 프레임 재구성을 요구하는
         // 동안만 병합 메시를 다시 만듭니다).
@@ -2111,7 +1847,6 @@ impl FreeDfApp {
         self.ink_next_settle_ms = next_settle;
 
         let mut mesh = egui::Mesh::default();
-        let mut fallbacks: Vec<(Pos2, f32, Color32)> = Vec::new();
         for s in strokes {
             if s.points.is_empty() {
                 continue;
@@ -2139,8 +1874,8 @@ impl FreeDfApp {
             let halves = stroke_halves(s, &ball, &fountain, tilt);
             let round_caps = matches!(s.tool, ToolType::Pen | ToolType::Fountain);
             if Some(s.id) == self.last_finished_id {
-                // 진단: 방금 끝난 획의 **정착 렌더**(정확 지오메트리) 폭 —
-                // ACTIVE-RENDER 로그와 대조해서 펜업 순간 뭐가 바뀌는지 확인.
+                // 진단: 방금 끝난 획의 **정착 렌더** 폭 — ACTIVE-RENDER 로그와
+                // 대조해서 펜업 순간 뭐가 바뀌는지 확인.
                 let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
                 for h in &halves {
                     hmn = hmn.min(*h);
@@ -2161,15 +1896,13 @@ impl FreeDfApp {
             } else {
                 (now.saturating_sub(s.created_ms)) as f32 / 1000.0
             };
-            let hash = stroke_geom_hash(s);
-            let geom = self.stroke_geom_cache.get_or_build(s.id, hash, settings, || {
-                build_stroke_geom(&pts_pt, &halves, round_caps, bleed, settle, age_sec, bleed_on)
-            });
-            // 젊은 블리드: 후광을 매 프레임 반영 (소수의 최근 획뿐).
+            // 젊은 블리드: 후광을 매 프레임 반영 (소수의 최근 획뿐) — 리본.
             if bleed_on && age_sec < settle && age_sec > 0.05 {
                 let radii = bleed_radii(&pts_pt, age_sec, bleed);
                 for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
-                    let hb: Vec<f32> = (0..halves.len()).map(|i| halves[i] + radii[i] * extra).collect();
+                    let hb: Vec<f32> = (0..halves.len())
+                        .map(|i| halves[i] + radii[i] * extra)
+                        .collect();
                     let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
                     let halo_color = Color32::from_rgba_unmultiplied(
                         color.r(),
@@ -2185,27 +1918,37 @@ impl FreeDfApp {
                     );
                 }
             }
-            // 본체.
-            if let Some(fb) = &geom.fallback {
-                append_fallback(&mut mesh, fb, &to_view, zoom, color, &mut fallbacks);
-            } else {
-                append_outline(&mut mesh, &geom.main, &to_view, color, 0.0);
-                append_aa(&mut mesh, &geom.main, &to_view, color, 1.0);
-            }
-            // 정착 블리드 후광.
+            // 본체 — 진행 중 획과 동일한 리본 (시각 차이 없음).
+            append_ribbon(
+                &mut mesh,
+                &freedf_core::pen::stroke_ribbon(&pts_pt, &halves, feather_pt, round_caps),
+                &to_view,
+                color,
+            );
+            // 정착 블리드 후광 — 리본.
             if bleed_on && age_sec >= settle {
-                if let Some((mid, outer)) = &geom.halo {
-                    let a1 = (color.a() as f32 * 0.35).clamp(0.0, 255.0) as u8;
-                    let a2 = (color.a() as f32 * 0.12).clamp(0.0, 255.0) as u8;
-                    let c1 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a1);
-                    let c2 = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), a2);
-                    for (outline, c) in [(mid, c1), (outer, c2)] {
-                        append_outline(&mut mesh, outline, &to_view, c, 0.0);
-                    }
+                let radii = bleed_radii(&pts_pt, settle, bleed);
+                for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
+                    let hb: Vec<f32> = (0..halves.len())
+                        .map(|i| halves[i] + radii[i] * extra)
+                        .collect();
+                    let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
+                    let halo_color = Color32::from_rgba_unmultiplied(
+                        color.r(),
+                        color.g(),
+                        color.b(),
+                        alpha,
+                    );
+                    append_ribbon(
+                        &mut mesh,
+                        &freedf_core::pen::stroke_ribbon(&pts_pt, &hb, 0.0, true),
+                        &to_view,
+                        halo_color,
+                    );
                 }
             }
         }
-        Some((std::sync::Arc::new(mesh), fallbacks))
+        Some(std::sync::Arc::new(mesh))
     }
 
     /// 병합 잉크 메시를 다시 만들어야 하는지 — 뷰/페이지/스트로크/설정이
@@ -2364,40 +2107,18 @@ impl FreeDfApp {
 mod tests {
     use super::*;
 
-    /// 실제 렌더 경로(통합 `stroke_geometry` → 메시 or 폴백)를 돌려,
-    /// 모든 정점이 유한하고 스트로크 근처에 머무는지 확인합니다.
-    fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32], round: bool) -> egui::Rect {
+    /// 실제 렌더 경로(리본 → 메시)를 돌려, 모든 정점이 유한하고
+    /// 스트로크 근처에 머무는지 확인합니다.
+    fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32]) -> egui::Rect {
         let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
+        let rb = freedf_core::pen::stroke_ribbon(pts, halves, 0.5, true);
+        let mut mesh = egui::Mesh::default();
+        append_ribbon(&mut mesh, &rb, &ident, Color32::RED);
+        assert!(!mesh.indices.is_empty(), "빈 메시");
         let mut bounds = egui::Rect::NOTHING;
-        match freedf_core::pen::stroke_geometry(pts, halves, round) {
-            freedf_core::pen::StrokeFill::Tris(t) => {
-                let mut fill = egui::Mesh::default();
-                append_outline(&mut fill, &t, &ident, Color32::RED, 0.0);
-                let mut aa = egui::Mesh::default();
-                append_aa(&mut aa, &t, &ident, Color32::RED, 1.0);
-                for mesh in [&fill, &aa] {
-                    for v in &mesh.vertices {
-                        assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
-                        bounds.extend_with(v.pos);
-                    }
-                    assert!(!mesh.indices.is_empty(), "빈 메시");
-                }
-            }
-            freedf_core::pen::StrokeFill::Fallback(fb) => {
-                // 불완전 분할 → 폴백(세그먼트 quad + 원)으로 렌더해야 함.
-                assert!(!fb.quads.is_empty(), "폴백 quad 존재");
-                let mut mesh = egui::Mesh::default();
-                let mut fallbacks = Vec::new();
-                append_fallback(&mut mesh, &fb, &ident, 1.0, Color32::RED, &mut fallbacks);
-                for v in &mesh.vertices {
-                    assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
-                    bounds.extend_with(v.pos);
-                }
-                for (c, r, _) in &fallbacks {
-                    bounds.extend_with(egui::pos2(c.x - r, c.y - r));
-                    bounds.extend_with(egui::pos2(c.x + r, c.y + r));
-                }
-            }
+        for v in &mesh.vertices {
+            assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
+            bounds.extend_with(v.pos);
         }
         bounds
     }
@@ -2425,15 +2146,15 @@ mod tests {
                 panic!("직선 렌즈는 완전 분할이어야 함")
             }
         }
-        let b = mesh_bounds(&pts, &halves, true);
+        let b = mesh_bounds(&pts, &halves);
         assert!(b.min.x > 10.0 && b.max.x < 210.0, "x 경계: {b:?}");
         assert!(b.min.y > 70.0 && b.max.y < 90.0, "y 경계: {b:?}");
     }
 
     #[test]
     fn scribble_cluster_mesh_stays_bounded() {
-        // 스크린샷과 같은 밀집 클러스터 + 급격한 루프 입력 — 완전 분할이
-        // 안 되면 폴백이 유한한 경계 안에서 커버해야 합니다.
+        // 스크린샷과 같은 밀집 클러스터 + 급격한 루프 입력 — 리본이 유한한
+        // 경계 안에서 커버해야 합니다.
         let mut pts: Vec<[f32; 2]> = Vec::new();
         let mut t = 0.0f32;
         while t < std::f32::consts::TAU * 3.0 {
@@ -2446,7 +2167,7 @@ mod tests {
             .enumerate()
             .map(|(i, _)| 0.4 + 2.0 * (i as f32 / pts.len() as f32))
             .collect();
-        let b = mesh_bounds(&pts, &halves, true);
+        let b = mesh_bounds(&pts, &halves);
         assert!(b.min.x > 50.0 && b.max.x < 150.0, "x 경계: {b:?}");
         assert!(b.min.y > 50.0 && b.max.y < 150.0, "y 경계: {b:?}");
     }
@@ -2464,7 +2185,7 @@ mod tests {
         let halves: Vec<f32> = (0..pts.len())
             .map(|i| 0.4 + 2.0 * (i as f32 / pts.len() as f32))
             .collect();
-        let b = mesh_bounds(&pts, &halves, true);
+        let b = mesh_bounds(&pts, &halves);
         assert!(b.min.x > 30.0 && b.max.x < 160.0, "x 경계: {b:?}");
         assert!(b.min.y > 30.0 && b.max.y < 70.0, "y 경계: {b:?}");
     }

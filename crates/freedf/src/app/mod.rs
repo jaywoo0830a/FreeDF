@@ -580,8 +580,6 @@ pub struct FreeDfApp {
     /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
     /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
     pen_tilt: [f32; 2],
-    /// 획별 렌더 지오메트리 캐시 (LRU, pt 공간 — 매 프레임 삼각분할 재계산 방지).
-    stroke_geom_cache: canvas::GeometryCache,
     /// 진행 중 스트로크의 선폭 확정기 — 점이 입력되는 즉시 폭을 잠급니다
     /// (펜을 뗀 뒤 폭이 변하지 않음).
     width_locker: Option<freedf_core::pen::WidthLocker>,
@@ -603,8 +601,6 @@ pub struct FreeDfApp {
     lift_cut_logged: bool,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
-    /// 병합 메시에 못 넣은 폴백 원 (화면 좌표, 반지름, 색).
-    ink_fallback: Vec<(egui::Pos2, f32, egui::Color32)>,
     /// 병합 메시가 만들어진 시점의 (페이지, 스토어 버전, 세대, 뷰, 잉크 설정).
     ink_key: (
         usize,
@@ -946,7 +942,6 @@ impl FreeDfApp {
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
-            stroke_geom_cache: canvas::GeometryCache::new(),
             width_locker: None,
             pen_monitor,
             live_pressure: None,
@@ -956,7 +951,6 @@ impl FreeDfApp {
             last_finished_id: None,
             lift_cut_logged: false,
             ink_mesh: None,
-            ink_fallback: Vec::new(),
             ink_key: (
                 0,
                 0,
