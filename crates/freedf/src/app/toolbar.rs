@@ -678,18 +678,108 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
-                        // 필기 스무딩(안정화): 손떨림을 줄여 선을 매끄럽게.
+                        // 필기 스무딩(안정화): 선택 기능. OTD(OpenTabletDriver) 등
+                        // 드라이버가 이미 안정화하는 환경에서는 꺼두면 됩니다.
                         if ui
-                            .add(egui::Slider::new(&mut self.smoothing, 0.0..=1.0).text("Smoothing"))
+                            .checkbox(&mut self.smoothing_enabled, "Stabilize")
                             .on_hover_text(
-                                "Stabilizer: filters hand tremor while keeping fast strokes \
-                                 responsive. 0 = raw input, 1 = silky smooth.",
+                                "Optional tremor filtering (1€ filter).\n\
+                                 Turn off if your tablet driver (e.g. OpenTabletDriver) \
+                                 already smooths the input.",
                             )
                             .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if self.smoothing_enabled
+                            && ui
+                                .add(
+                                    egui::Slider::new(&mut self.smoothing, 0.0..=1.0)
+                                        .text("Strength"),
+                                )
+                                .on_hover_text(
+                                    "Filter strength while Stabilize is on.\n\
+                                     0 = raw input, 1 = silky smooth.",
+                                )
+                                .changed()
                         {
                             self.smoothing = self.smoothing.clamp(0.0, 1.0);
                             self.save_default_session();
                             self.save_session();
+                        }
+                        // 잉크 번짐(블리드): 선택 기능. 그어진 뒤 잉크가 종이로
+                        // 퍼져나가는 효과이며, 시작/중간/끝 구간별 속도(pt/초)를
+                        // 따로 커스텀할 수 있습니다.
+                        if ui
+                            .checkbox(&mut self.ink_bleed.enabled, "Ink bleed")
+                            .on_hover_text(
+                                "Creative ink bleed: ink slowly spreads into the paper \
+                                 after you write. Start/mid/end speeds are customizable.",
+                            )
+                            .changed()
+                        {
+                            self.save_default_session();
+                            self.save_session();
+                        }
+                        if self.ink_bleed.enabled {
+                            let any_changed = ui
+                                .add(
+                                    egui::Slider::new(
+                                        &mut self.ink_bleed.start_rate,
+                                        0.0..=3.0,
+                                    )
+                                    .text("Start speed"),
+                                )
+                                .on_hover_text(
+                                    "How fast ink bleeds at the beginning of a stroke \
+                                     (pt per second). 0 = no bleed there.",
+                                )
+                                .changed()
+                                | ui
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.ink_bleed.mid_rate,
+                                            0.0..=3.0,
+                                        )
+                                        .text("Mid speed"),
+                                    )
+                                    .on_hover_text(
+                                        "How fast ink bleeds in the middle of a stroke \
+                                         (pt per second).",
+                                    )
+                                    .changed()
+                                | ui
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.ink_bleed.end_rate,
+                                            0.0..=3.0,
+                                        )
+                                        .text("End speed"),
+                                    )
+                                    .on_hover_text(
+                                        "How fast ink bleeds at the end of a stroke \
+                                         (pt per second).",
+                                    )
+                                    .changed()
+                                | ui
+                                    .add(
+                                        egui::Slider::new(
+                                            &mut self.ink_bleed.max_spread_pt,
+                                            1.0..=12.0,
+                                        )
+                                        .text("Max spread"),
+                                    )
+                                    .on_hover_text(
+                                        "Upper limit of the bleed radius (pt).\n\
+                                         Fresh ink spreads quickly at first and then \
+                                         slows down until it reaches this size.",
+                                    )
+                                    .changed();
+                            if any_changed {
+                                self.save_default_session();
+                                self.save_session();
+                            }
                         }
                     }
                     ToolType::Highlighter => {

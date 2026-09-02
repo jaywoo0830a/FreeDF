@@ -114,6 +114,7 @@ mod tests {
 
     fn stroke(id: u64) -> Stroke {
         Stroke {
+            created_ms: 0,
             id,
             tool: crate::model::ToolType::Pen,
             color: [0, 0, 0, 255],

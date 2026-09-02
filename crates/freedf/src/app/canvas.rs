@@ -6,73 +6,6 @@
 
 use super::*;
 
-/// 두 점 사이 방향 단위 벡터 (길이가 0이면 기본값).
-fn unit_dir(v: Vec2) -> Vec2 {
-    let l = v.length();
-    if l < 1e-6 {
-        Vec2::X
-    } else {
-        v / l
-    }
-}
-
-/// 폴리라인을 두께 `width`의 **직사각형 끝(butt)** 리본 모양의 채워진 폴리곤으로
-/// 만듭니다.
-///
-/// - 세그먼트마다 겹쳐 그리지 않고 **한 번만 채워** 반투명 하이라이터가 겹침
-///   얼룩 없이 균일하게 나옵니다.
-/// - 시작/끝이 선 방향에 수직으로 딱 끊겨 **정밀한 사각형** 끝을 가집니다.
-///   (원형 캡이 툭 튀어나와 위치가 어긋나 보이던 문제 제거)
-fn stroke_ribbon(points: &[Pos2], width: f32) -> Vec<Pos2> {
-    let n = points.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    if n == 1 {
-        // 점 하나 → 작은 정사각형.
-        let h = width * 0.5;
-        let p = points[0];
-        return vec![
-            p + Vec2::new(-h, -h),
-            p + Vec2::new(h, -h),
-            p + Vec2::new(h, h),
-            p + Vec2::new(-h, h),
-        ];
-    }
-    // 거의 180°로 되접히면(합이 0에 가까움) 법선이 무한대로 커져
-    // 스파이크가 튀므로, 합이 작을 땐 **한쪽 세그먼트 방향(베벨)** 으로
-    // 폴백합니다 (관례적 마이터 리밋).
-    let miter_at = |i: usize| -> Vec2 {
-        let a = if i > 0 {
-            points[i] - points[i - 1]
-        } else {
-            points[1] - points[0]
-        };
-        let b = if i + 1 < n {
-            points[i + 1] - points[i]
-        } else {
-            points[n - 1] - points[n - 2]
-        };
-        let d = unit_dir(a) + unit_dir(b);
-        if d.length() < 0.35 {
-            unit_dir(a)
-        } else {
-            unit_dir(d)
-        }
-    };
-    let half = width * 0.5;
-    let mut poly: Vec<Pos2> = Vec::with_capacity(n * 2);
-    for i in 0..n {
-        let perp = Vec2::new(-miter_at(i).y, miter_at(i).x);
-        poly.push(points[i] + perp * half);
-    }
-    for i in (0..n).rev() {
-        let perp = Vec2::new(-miter_at(i).y, miter_at(i).x);
-        poly.push(points[i] - perp * half);
-    }
-    poly
-}
-
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
         match self.tool {
@@ -115,6 +48,7 @@ impl FreeDfApp {
             {
                 return;
             }
+            let created_ms = now_ms();
             // DB 시퀀스에서 id를 미리 할당받아 스토어/히스토리/DB 행이 같은
             // id를 공유하게 합니다 (undo/redo가 정확히 같은 행을 복원).
             let db_id = self.db.alloc_stroke_ids(1).first().copied();
@@ -128,6 +62,8 @@ impl FreeDfApp {
                         active.width,
                         active.points,
                     );
+                    self.store
+                        .set_stroke_created_ms(self.current_page, sid as u64, created_ms);
                     let strokes: Vec<_> = self
                         .store
                         .strokes_on(self.current_page)
@@ -139,13 +75,18 @@ impl FreeDfApp {
                         .insert_strokes(doc_id, self.current_page as i32, &strokes);
                     sid as u64
                 }
-                _ => self.store.add_stroke(
-                    self.current_page,
-                    active.tool,
-                    active.color,
-                    active.width,
-                    active.points,
-                ),
+                _ => {
+                    let id = self.store.add_stroke(
+                        self.current_page,
+                        active.tool,
+                        active.color,
+                        active.width,
+                        active.points,
+                    );
+                    self.store
+                        .set_stroke_created_ms(self.current_page, id, created_ms);
+                    id
+                }
             };
             if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
                 self.push_history(Edit::AddStrokes {
@@ -199,6 +140,7 @@ impl FreeDfApp {
         }
         // DB 시퀀스에서 밴드 수만큼 id를 미리 할당합니다.
         let ids = self.db.alloc_stroke_ids(rects.len());
+        let created_ms = now_ms();
         let mut strokes = Vec::new();
         for (k, r) in rects.iter().enumerate() {
             // 밴드 높이 = 그 줄의 글자 높이(포인트). 필압은 1.0(무시).
@@ -214,6 +156,7 @@ impl FreeDfApp {
                     StrokePoint::new(r[0], yc, 1.0),
                     StrokePoint::new(r[2], yc, 1.0),
                 ],
+                created_ms,
             });
         }
         self.store.add_strokes(self.current_page, strokes.clone());
@@ -1055,10 +998,14 @@ impl FreeDfApp {
 
         let primary_down = ctx.input(|i| i.pointer.primary_down());
 
-        // ── 입력 장치 판별 ──────────────────────────────────────────────
+        // ── 입력 장치 판별 (래치 + 유예 시간) ─────────────────────────────
         // egui 0.36 이벤트에는 장치 필드가 없어, Windows Ink 펜의 `Event::Touch`
-        // 유무로 펜/마우스를 구분합니다. 펜을 제외한 입력(마우스/트랙패드)은
-        // 기본적으로 팬(페이지 이동)으로 동작합니다.
+        // 유무로 펜/마우스를 구분합니다. 펜 입력 중 일부 프레임에는 Touch
+        // 이벤트가 아예 없을 수 있는데, 그때마다 Mouse로 뒤집히면 **필기 중
+        // 팬(페이지 이동)으로 전환되어 페이지가 갑자기 확 이동**합니다
+        // (펜을 떼는 순간 장치 변환이 감지되던 버그의 원인).
+        // → 마지막 터치 후 1초간은 Pen으로 유지하고, 스트로크 진행 중에는
+        //   절대 Mouse로 뒤집지 않습니다.
         let has_touch = ctx
             .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })));
         let any_pointer = ctx.input(|i| {
@@ -1066,8 +1013,13 @@ impl FreeDfApp {
         });
         if has_touch {
             self.input_device = InputDevice::Pen;
-        } else if any_pointer {
-            self.input_device = InputDevice::Mouse;
+            self.last_touch_time = Some(ctx.input(|i| i.time));
+        } else if any_pointer && self.active_stroke.is_none() {
+            let now = ctx.input(|i| i.time);
+            let stale = self.last_touch_time.map_or(true, |t| now - t > 1.0);
+            if stale {
+                self.input_device = InputDevice::Mouse;
+            }
         }
 
         // ── 사전 오버레이: 단어 탭 조회 (다른 동작보다 우선) ─────────────
@@ -1146,9 +1098,12 @@ impl FreeDfApp {
                         }
                         if let Some(st) = self.active_stroke.as_mut() {
                             if inside {
-                                // 1€ 필터로 손떨림을 줄이되 빠른 움직임은
-                                // 그대로 따라갑니다 (smoothing 0이면 원본).
-                                if self.smoothing > 0.001 && self.smooth_active {
+                                // 1€ 필터(선택적) — OTD 같은 드라이버가 이미
+                                // 안정화하는 환경에서는 꺼둘 수 있습니다.
+                                if self.smoothing_enabled
+                                    && self.smoothing > 0.001
+                                    && self.smooth_active
+                                {
                                     let t = ctx.input(|i| i.time);
                                     let sx = self.smooth_x.filter(page[0], t);
                                     let sy = self.smooth_y.filter(page[1], t);
@@ -1220,6 +1175,7 @@ impl FreeDfApp {
             color: active.color,
             width: active.width,
             points: active.points.clone(),
+            created_ms: now_ms(),
         };
         self.paint_stroke(painter, &stroke, origin);
     }
@@ -1236,46 +1192,7 @@ impl FreeDfApp {
         if pts.is_empty() {
             return;
         }
-        // 하이라이터(마커)는 "기본" 동작: 일정한 두께의 반투명 선.
-        // 세그먼트마다 따로 그리면 겹친 부분이 진해져 얼룩처럼 보이므로
-        // 전체를 **하나의 폴리라인 경로**로 그려 균일하게 칠합니다.
-        if stroke.tool == ToolType::Highlighter {
-            let wpx = (stroke.width * zoom).max(1.0);
-            let pts_view: Vec<Pos2> = pts
-                .iter()
-                .map(|p| {
-                    let v = self.view.page_to_view([p.x, p.y]);
-                    origin + Vec2::new(v[0], v[1])
-                })
-                .collect();
-            // 리본(직사각형 끝)으로 한 번에 채워 정밀한 마커처럼 그립니다.
-            let poly = stroke_ribbon(&pts_view, wpx);
-            painter.add(egui::Shape::convex_polygon(poly, color, Stroke::NONE));
-            return;
-        }
-        if pts.len() == 1 {
-            let v = self.view.page_to_view([pts[0].x, pts[0].y]);
-            let center = origin + Vec2::new(v[0], v[1]);
-            let w = self.pressure_curve.apply(stroke.width * zoom, pts[0].pressure);
-            painter.circle_filled(center, (w * 0.5).max(0.75), color);
-            return;
-        }
-        // 펜은 획 양끝이 실제 펜처럼 얇아집니다 (테이퍼).
-        let tapers: Vec<f32> = if uses_taper(stroke.tool) {
-            taper_factors(pts, TAPER_LEN_PTS)
-        } else {
-            vec![1.0; pts.len()]
-        };
-        // 점별 페이지 공간 절반 두께: 필압 곡선 × 테이퍼.
-        let n = pts.len();
-        let mut halves: Vec<f32> = Vec::with_capacity(n);
-        for (i, p) in pts.iter().enumerate() {
-            let w = self.pressure_curve.apply(stroke.width * zoom, p.pressure) * tapers[i];
-            halves.push((w * 0.5).max(0.4));
-        }
-        // 관례적 라운드 캡/조인 지오메트리 (core, 내보내기와 동일 함수):
-        // 세그먼트 법선 quad + 꺾인 곳의 조인 원 — 마이터 스파이크 없음.
-        // 화면(뷰) 공간에서 계산해 줌이 두 번 적용되지 않게 합니다.
+        // 점별 화면(뷰) 좌표 — 줌이 두 번 적용되지 않도록 뷰 공간에서 계산.
         let pts_view: Vec<[f32; 2]> = pts
             .iter()
             .map(|p| {
@@ -1283,16 +1200,89 @@ impl FreeDfApp {
                 [origin.x + v[0], origin.y + v[1]]
             })
             .collect();
-        let shape = freedf_core::pen::stroke_shape(&pts_view, &halves);
-        for quad in &shape.quads {
-            let quad: Vec<Pos2> = quad
-                .iter()
-                .map(|p| Pos2::new(p[0], p[1]))
-                .collect();
-            painter.add(egui::Shape::convex_polygon(quad, color, Stroke::NONE));
+        // 점별 절반 두께 (화면 px).
+        let n = pts.len();
+        let mut halves: Vec<f32> = Vec::with_capacity(n);
+        if stroke.tool == ToolType::Highlighter {
+            // 마커: 필압/테이퍼 없이 일정한 두께.
+            let h = (stroke.width * zoom * 0.5).max(0.5);
+            halves.resize(n, h);
+        } else {
+            let tapers: Vec<f32> = if uses_taper(stroke.tool) {
+                taper_factors(pts, TAPER_LEN_PTS)
+            } else {
+                vec![1.0; n]
+            };
+            for (i, p) in pts.iter().enumerate() {
+                let w = self.pressure_curve.apply(stroke.width * zoom, p.pressure) * tapers[i];
+                halves.push((w * 0.5).max(0.4));
+            }
         }
-        for (c, r) in &shape.circles {
-            painter.circle_filled(Pos2::new(c[0], c[1]), r.max(0.5), color);
+        let is_pen = stroke.tool == ToolType::Pen;
+        // 잉크 번짐(블리드) 후광: 잉크 아래에 반투명 레이어 2겹을 깔아
+        // 종이로 잉크가 퍼진 것처럼 보이게 합니다. 각 레이어는 겹침 없는
+        // 삼각분할이라 얼룩이 없습니다.
+        if is_pen && self.ink_bleed.enabled {
+            let age_sec = if stroke.created_ms == 0 {
+                0.0
+            } else {
+                (now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
+            };
+            // 획 길이 + 점별 시작/끝 거리.
+            let len: f32 = pts
+                .windows(2)
+                .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt())
+                .sum();
+            let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n); // (d0, d1)
+            let mut acc = 0.0f32;
+            for i in 0..n {
+                if i > 0 {
+                    let a = &pts[i - 1];
+                    let b = &pts[i];
+                    acc += ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+                }
+                dists.push((acc, len - acc));
+            }
+            let radii: Vec<f32> = dists
+                .iter()
+                .map(|(d0, d1)| self.ink_bleed.radius(*d0, *d1, len, age_sec))
+                .collect();
+            // (추가 반경 비율, 알파 배율): 안쪽이 진하고 바깥이 옅은 2단.
+            for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
+                let mut hb: Vec<f32> = Vec::with_capacity(n);
+                for i in 0..n {
+                    hb.push(halves[i] + radii[i] * extra);
+                }
+                let alpha = (color.a() as f32 * alpha_k).clamp(0.0, 255.0) as u8;
+                let halo = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+                self.paint_filled_stroke(painter, &pts_view, &hb, true, halo);
+            }
+        }
+        // 본체: 펜은 둥근 캡, 마커는 직선(butt) 끝 — 관례적 구분.
+        self.paint_filled_stroke(painter, &pts_view, &halves, is_pen, color);
+    }
+
+    /// 외곽선 → 삼각분할 → 채움. 모든 삼각형이 겹치지 않아 반투명 색도
+    /// 균일하게 칠해집니다 (이전 `convex_polygon(리본)`은 오목 다각형을
+    /// 부채꼴로 그려 화면 전체를 뒤덮는 깨짐이 있었습니다).
+    fn paint_filled_stroke(
+        &self,
+        painter: &egui::Painter,
+        pts_view: &[[f32; 2]],
+        half_widths: &[f32],
+        round_caps: bool,
+        color: Color32,
+    ) {
+        let poly = freedf_core::pen::stroke_outline(pts_view, half_widths, round_caps);
+        for tri in freedf_core::pen::triangulate_polygon(&poly) {
+            let pts: Vec<Pos2> = tri
+                .iter()
+                .map(|&i| {
+                    let p = poly[i as usize];
+                    Pos2::new(p[0], p[1])
+                })
+                .collect();
+            painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
         }
     }
 

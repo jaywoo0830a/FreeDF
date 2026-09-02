@@ -115,6 +115,8 @@ impl FreeDfApp {
         tab.paper_line_width = self.paper_line_width;
         tab.custom_paper_size = self.custom_paper_size;
         tab.smoothing = self.smoothing;
+        tab.smoothing_enabled = self.smoothing_enabled;
+        tab.ink_bleed = self.ink_bleed;
         tab.zoom_lock = self.zoom_lock;
     }
 
@@ -158,6 +160,8 @@ impl FreeDfApp {
             paper_line_width,
             custom_paper_size,
             smoothing,
+            smoothing_enabled,
+            ink_bleed,
             zoom_lock,
         ) = {
             let tab = self.tabs.get_mut(idx).expect("tab index in range");
@@ -199,6 +203,8 @@ impl FreeDfApp {
                 tab.paper_line_width,
                 tab.custom_paper_size,
                 tab.smoothing,
+                tab.smoothing_enabled,
+                tab.ink_bleed,
                 tab.zoom_lock,
             )
         };
@@ -253,6 +259,8 @@ impl FreeDfApp {
         self.paper_line_width = paper_line_width;
         self.custom_paper_size = custom_paper_size;
         self.smoothing = smoothing;
+        self.smoothing_enabled = smoothing_enabled;
+        self.ink_bleed = ink_bleed;
         self.zoom_lock = zoom_lock;
         self.search_runs = Vec::new();
         self.status = None;
@@ -335,6 +343,8 @@ impl FreeDfApp {
             paper_line_width: self.paper_line_width,
             custom_paper_size: self.custom_paper_size,
             smoothing: self.smoothing,
+            smoothing_enabled: self.smoothing_enabled,
+            ink_bleed: self.ink_bleed,
             zoom_lock: self.zoom_lock,
         };
         self.tabs.push(tab);

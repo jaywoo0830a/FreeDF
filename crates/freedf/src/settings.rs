@@ -8,7 +8,7 @@
 
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
-use freedf_core::pen::{ColorFamily, PressureCurve};
+use freedf_core::pen::{ColorFamily, InkBleed, PressureCurve};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,12 @@ pub struct SessionState {
     /// 펜 입력 스무딩(안정화) 강도 0..1 — 0이면 원본 그대로
     #[serde(default = "default_smoothing")]
     pub smoothing: f32,
+    /// 스무딩 사용 여부 (기본 off — OTD 등 외부 드라이버 안정화와 충돌 방지)
+    #[serde(default = "default_false")]
+    pub smoothing_enabled: bool,
+    /// 잉크 번짐(블리드) 설정 (기본 off, 구간별 속도 커스텀 가능)
+    #[serde(default)]
+    pub ink_bleed: InkBleed,
     /// 사용자 정의 용지 크기 [가로, 세로] (포인트). `PaperSize::Custom`일 때 사용.
     #[serde(default)]
     pub custom_paper_size: Option<[f32; 2]>,
@@ -175,6 +181,8 @@ impl Default for SessionState {
             tool_order: ToolType::default_order(),
             zoom_lock: false,
             smoothing: 0.4,
+            smoothing_enabled: false,
+            ink_bleed: InkBleed::default(),
             custom_paper_size: None,
             mouse_draws: false,
             dictionary_enabled: false,

@@ -370,6 +370,7 @@ impl Db {
         for s in strokes {
             let points: Value = serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
             let tool = s.tool.label();
+            let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
             let _ = c.execute(
                 "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -382,7 +383,7 @@ impl Db {
                     &color_to_i32(s.color),
                     &s.width,
                     &points,
-                    &now,
+                    &created,
                 ],
             );
         }
@@ -417,6 +418,7 @@ impl Db {
             for s in &page.strokes {
                 let points: Value =
                     serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
+                let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
                 let _ = tx.execute(
                     "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at)
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -428,7 +430,7 @@ impl Db {
                         &color_to_i32(s.color),
                         &s.width,
                         &points,
-                        &now,
+                        &created,
                     ],
                 );
             }
@@ -443,7 +445,7 @@ impl Db {
         {
             let mut c = conn_guard(&self.conn);
             if let Ok(rows) = c.query(
-                "SELECT page_index, id, tool, color, width, points FROM strokes
+                "SELECT page_index, id, tool, color, width, points, created_at FROM strokes
                  WHERE doc_id = $1 ORDER BY id",
                 &[&doc_id],
             ) {
@@ -462,6 +464,7 @@ impl Db {
                         color: color_from_i32(&color),
                         width,
                         points,
+                        created_ms: r.get::<_, i64>(6).max(0) as u64,
                     };
                     grouped.entry(page_index).or_default().push(stroke);
                 }
@@ -665,6 +668,7 @@ mod tests {
                     StrokePoint::new(1.0, 2.0, 0.5),
                     StrokePoint::new(3.0, 4.0, 0.9),
                 ],
+                created_ms: 1234,
             },
             Stroke {
                 id: ids[1] as u64,
@@ -672,6 +676,7 @@ mod tests {
                 color: [200, 40, 40, 255],
                 width: 3.0,
                 points: vec![StrokePoint::new(0.0, 0.0, 1.0)],
+                created_ms: 0,
             },
         ];
         db.insert_strokes(doc_id, 0, &strokes);
@@ -680,6 +685,7 @@ mod tests {
         assert_eq!(store.strokes_on(0)[0].id, ids[0] as u64);
         assert_eq!(store.strokes_on(0)[0].tool, ToolType::Pen);
         assert_eq!(store.strokes_on(0)[0].points.len(), 2);
+        assert_eq!(store.strokes_on(0)[0].created_ms, 1234, "created_at 왕복");
 
         // ── pages (용지/북마크) ──
         let paper = PagePaper {

@@ -7,13 +7,19 @@ use freedf_core::model::{Stroke, StrokePoint, ToolType};
 use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
 };
-use freedf_core::pen::{taper_factors, uses_taper, PressureCurve, TAPER_LEN_PTS};
+use freedf_core::pen::{taper_factors, uses_taper, InkBleed, PressureCurve, TAPER_LEN_PTS};
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
-pub fn draw_strokes_on_image(img: &mut RgbaImage, strokes: &[Stroke], scale: f32) {
+/// `bleed`는 화면과 동일한 잉크 번짐 설정입니다.
+pub fn draw_strokes_on_image(
+    img: &mut RgbaImage,
+    strokes: &[Stroke],
+    scale: f32,
+    bleed: InkBleed,
+) {
     for stroke in strokes {
-        draw_one_stroke(img, stroke, scale);
+        draw_one_stroke(img, stroke, scale, bleed);
     }
 }
 
@@ -65,62 +71,87 @@ pub fn draw_paper(
     }
 }
 
-fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
+fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32, bleed: InkBleed) {
     let color = stroke.color;
     let curve = PressureCurve::default();
     let pts = &stroke.points;
     if pts.is_empty() {
         return;
     }
-    if pts.len() == 1 {
-        let p = scale_point(&pts[0], scale);
-        let r = if stroke.tool == ToolType::Highlighter {
-            // 마커: 일정한 두께.
-            stroke.width * scale / 2.0
-        } else {
-            curve.apply(stroke.width, pts[0].pressure) * scale / 2.0
-        };
-        draw_disk(img, p, r, color);
-        return;
-    }
-    // 화면과 동일: 펜은 양끝 테이퍼 (마커는 일정).
-    let tapers: Vec<f32> = if uses_taper(stroke.tool) {
-        taper_factors(pts, TAPER_LEN_PTS)
-    } else {
-        vec![1.0; pts.len()]
-    };
-    if stroke.tool == ToolType::Highlighter {
-        // 마커: 기본 동작 — 필압 없이 일정한 두께의 연결선.
-        for (i, w) in pts.windows(2).enumerate() {
-            let a = scale_point(&w[0], scale);
-            let b = scale_point(&w[1], scale);
-            let width = stroke.width * scale * 0.5 * (tapers[i] + tapers[i + 1]);
-            draw_segment(img, a, b, width, color);
-        }
-        return;
-    }
-    // 펜: 화면과 **동일한 관례적 지오메트리**(라운드 캡/조인) —
-    // 세그먼트 법선 quad + 꺾인 곳 조인 원. 마이터 스파이크 없이
-    // 화면/PNG/JPG/PDF가 같은 모양으로 나옵니다.
+    let n = pts.len();
+    // 픽셀 공간 점 + 점별 절반 두께 (화면과 동일한 규칙).
     let pts_xy: Vec<[f32; 2]> = pts.iter().map(|p| scale_point(p, scale)).collect();
-    let mut halves: Vec<f32> = Vec::with_capacity(pts.len());
-    for (i, p) in pts.iter().enumerate() {
-        let w = curve.apply(stroke.width, p.pressure) * scale * tapers[i];
-        halves.push((w * 0.5).max(0.5));
+    let mut halves: Vec<f32> = Vec::with_capacity(n);
+    if stroke.tool == ToolType::Highlighter {
+        // 마커: 필압/테이퍼 없이 일정한 두께.
+        halves.resize(n, (stroke.width * scale * 0.5).max(0.5));
+    } else {
+        let tapers: Vec<f32> = if uses_taper(stroke.tool) {
+            taper_factors(pts, TAPER_LEN_PTS)
+        } else {
+            vec![1.0; n]
+        };
+        for (i, p) in pts.iter().enumerate() {
+            let w = curve.apply(stroke.width, p.pressure) * scale * tapers[i];
+            halves.push((w * 0.5).max(0.5));
+        }
     }
-    let shape = freedf_core::pen::stroke_shape(&pts_xy, &halves);
-    for quad in &shape.quads {
-        fill_quad(img, *quad, color);
+    let is_pen = stroke.tool == ToolType::Pen;
+    // 잉크 번짐 후광 (펜 전용, 화면과 동일한 2단 레이어).
+    if is_pen && bleed.enabled {
+        let age_sec = if stroke.created_ms == 0 {
+            0.0
+        } else {
+            (crate::app::now_ms().saturating_sub(stroke.created_ms)) as f32 / 1000.0
+        };
+        let len: f32 = pts
+            .windows(2)
+            .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt())
+            .sum();
+        let mut dists: Vec<(f32, f32)> = Vec::with_capacity(n);
+        let mut acc = 0.0f32;
+        for i in 0..n {
+            if i > 0 {
+                let a = &pts[i - 1];
+                let b = &pts[i];
+                acc += ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
+            }
+            dists.push((acc, len - acc));
+        }
+        let radii: Vec<f32> = dists
+            .iter()
+            .map(|(d0, d1)| bleed.radius(*d0, *d1, len, age_sec))
+            .collect();
+        for (extra, alpha_k) in [(0.5f32, 0.35f32), (1.0, 0.12)] {
+            let mut hb: Vec<f32> = Vec::with_capacity(n);
+            for i in 0..n {
+                hb.push(halves[i] + radii[i] * extra);
+            }
+            let mut halo = color;
+            halo[3] = (color[3] as f32 * alpha_k).clamp(0.0, 255.0) as u8;
+            fill_stroke_outline(img, &pts_xy, &hb, true, halo);
+        }
     }
-    for (c, r) in &shape.circles {
-        draw_disk(img, *c, r.max(0.5), color);
-    }
+    // 본체: 펜은 둥근 캡, 마커는 직선(butt) 끝.
+    fill_stroke_outline(img, &pts_xy, &halves, is_pen, color);
 }
 
-/// 볼록 사각형(quad)을 삼각형 2개로 나눠 채웁니다.
-fn fill_quad(img: &mut RgbaImage, q: [[f32; 2]; 4], color: [u8; 4]) {
-    fill_triangle(img, q[0], q[1], q[2], color);
-    fill_triangle(img, q[0], q[2], q[3], color);
+/// 화면과 **동일한** 외곽선→삼각분할로 스트로크를 래스터라이즈합니다.
+/// (겹침 없는 삼각형들이라 반투명 색도 균일)
+fn fill_stroke_outline(
+    img: &mut RgbaImage,
+    pts_xy: &[[f32; 2]],
+    half_widths: &[f32],
+    round_caps: bool,
+    color: [u8; 4],
+) {
+    let poly = freedf_core::pen::stroke_outline(pts_xy, half_widths, round_caps);
+    for tri in freedf_core::pen::triangulate_polygon(&poly) {
+        let a = poly[tri[0] as usize];
+        let b = poly[tri[1] as usize];
+        let c = poly[tri[2] as usize];
+        fill_triangle(img, a, b, c, color);
+    }
 }
 
 /// 삼각형을 무게중심 좌표 테스트로 채웁니다 (경계 포함, 알파 블렌드).

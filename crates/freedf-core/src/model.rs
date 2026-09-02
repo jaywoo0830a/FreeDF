@@ -87,6 +87,10 @@ pub struct Stroke {
     pub width: f32,
     /// 스트로크를 구성하는 점들 (2개 이상일 때 선, 1개일 때 점)
     pub points: Vec<StrokePoint>,
+    /// 스트로크가 그어진 시각 (유닉스 epoch ms). 잉크 번짐(블리드)의
+    /// 나이 계산에 사용합니다. 이전 형식 데이터에는 없음(0).
+    #[serde(default)]
+    pub created_ms: u64,
 }
 
 impl Stroke {

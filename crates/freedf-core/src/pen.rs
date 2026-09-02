@@ -53,96 +53,301 @@ pub fn taper_factors(points: &[StrokePoint], taper_len: f32) -> Vec<f32> {
         .collect()
 }
 
-/// 가변폭 폴리라인의 채움 지오메트리 — 벡터 드로잉의 관례적인
-/// **라운드 캡/조인** 방식으로 분해한 결과입니다.
-///
-/// 이전 구현은 점별 **마이터(이등분) 법선**으로 세그먼트 quad를 만들어
-/// 급격히 방향이 꺾이는 곳(거의 180°로 되접힐 때)에서 법선이 무한대로
-/// 커져 **번개 모양 스파이크**가 튀었습니다. 이 방식은:
-/// - quad는 **세그먼트 자체의 법선**만 사용 → 어떤 입력에도 스파이크가 생기지 않음.
-/// - 방향이 일정 각도(약 15°) 이상 꺾이는 내부 점에는 **조인 원**을,
-///   양끝에는 **캡 원**을 얹어 이음새/끝을 매끄럽게 이어줍니다.
-///
-/// 좌표는 입력과 같은 공간이며, 화면(egui)과 내보내기(래스터)가
-/// **같은 함수**를 써서 동일하게 그려집니다.
-#[derive(Debug, Clone, PartialEq)]
-pub struct StrokeShape {
-    /// 세그먼트별 사각형 (점 i → i+1, 세그먼트 법선 사용).
-    pub quads: Vec<[[f32; 2]; 4]>,
-    /// (중심, 반지름) 원 목록 — 양끝 캡 + 방향이 꺾인 내부 조인.
-    pub circles: Vec<([f32; 2], f32)>,
-}
+// ── 스트로크 외곽선 + 삼각분할 (관례적 렌더링 지오메트리) ─────────────────────
 
-/// 두 인접 세그먼트 방향의 코사인 유사도가 이 값보다 작으면(약 15° 이상
-/// 꺾이면) 조인 원을 얹습니다. 완만한 곡선은 quad만으로 이음새가 안 보이므로
-/// 원(오버드로)을 줄여 반투명 잉크의 얼룩을 막습니다.
-const MIN_JOIN_COS: f32 = 0.966;
+/// 마이터 조인의 최소 방향 합 길이. 이보다 작으면(거의 180° 되접힘) 마이터
+/// 법선이 무한대로 커져 스파이크가 튀므로 **베벨(한쪽 세그먼트 방향)** 으로
+/// 폴백합니다 — SVG `stroke-linejoin: miter`의 miter-limit에 해당하는 관례.
+const MITER_LIMIT_DIR_LEN: f32 = 0.35;
 
-/// 가변폭 폴리라인 지오메트리를 계산합니다.
+/// 가변폭 폴리라인의 **외곽선 다각형**을 만듭니다.
 ///
-/// `points`와 `half_widths`의 길이는 같아야 합니다 (짧은 쪽 기준).
-/// 점이 1개면 원 하나(점 찍기)를 반환합니다.
-pub fn stroke_shape(points: &[[f32; 2]], half_widths: &[f32]) -> StrokeShape {
+/// - 각 점의 오프셋 법선 = 인접 두 세그먼트 방향의 평균(마이터), 되접힘 시 베벨 폴백.
+/// - `round_caps=true`면 양끝에 반원 캡(펜 관례), false면 직선(butt) 끝(마커 관례).
+/// - 좌표는 입력과 같은 공간이며, 화면(egui)과 내보내기(래스터)가
+///   **같은 함수**를 써서 동일하게 그려집니다.
+///
+/// 반환 다각형은 단순 다각형(구멍 없음)이므로, `triangulate_polygon`으로
+/// **겹침 없는 삼각형들**로 나눌 수 있습니다 — 반투명 잉크도 얼룩 없이
+/// 균일하게 칠해집니다.
+pub fn stroke_outline(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    round_caps: bool,
+) -> Vec<[f32; 2]> {
     let n = points.len().min(half_widths.len());
     if n == 0 {
-        return StrokeShape {
-            quads: Vec::new(),
-            circles: Vec::new(),
-        };
+        return Vec::new();
     }
     if n == 1 {
-        return StrokeShape {
-            quads: Vec::new(),
-            circles: vec![(points[0], half_widths[0].max(0.0))],
+        return circle_polygon(points[0], half_widths[0].max(0.0), 12);
+    }
+    // 점별 오프셋 법선 (마이터 + 베벨 폴백).
+    let mut norms: Vec<[f32; 2]> = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = if i > 0 {
+            sub(points[i], points[i - 1])
+        } else {
+            sub(points[1], points[0])
         };
+        let b = if i + 1 < n {
+            sub(points[i + 1], points[i])
+        } else {
+            sub(points[n - 1], points[n - 2])
+        };
+        let ua = unit2(a);
+        let ub = unit2(b);
+        let d = [ua[0] + ub[0], ua[1] + ub[1]];
+        let miter_dir = if d[0] * d[0] + d[1] * d[1] < MITER_LIMIT_DIR_LEN * MITER_LIMIT_DIR_LEN {
+            ua // 베벨 폴백
+        } else {
+            unit2(d)
+        };
+        // 오프셋 방향 = 마이터 방향에 수직.
+        norms.push([-miter_dir[1], miter_dir[0]]);
     }
-    let mut shape = StrokeShape {
-        quads: Vec::with_capacity(n - 1),
-        circles: Vec::with_capacity(2 + n),
+    let mut poly: Vec<[f32; 2]> = Vec::with_capacity(n * 2 + 26);
+    let t_start = unit2(sub(points[1], points[0]));
+    let t_end = unit2(sub(points[n - 1], points[n - 2]));
+    // 바깥 체인 (p0+n·h → p_last+n·h).
+    for i in 0..n {
+        poly.push(add_mul(points[i], norms[i], half_widths[i]));
+    }
+    // 끝 캡 (반원): +n_last → −n_last, 바깥쪽(+t_end)으로.
+    if round_caps {
+        push_cap(&mut poly, points[n - 1], norms[n - 1], half_widths[n - 1], t_end);
+    }
+    // 안쪽 체인 (역순).
+    for i in (0..n).rev() {
+        poly.push(sub_mul(points[i], norms[i], half_widths[i]));
+    }
+    // 시작 캡 (반원): −n0 → +n0, 바깥쪽(−t_start)으로 (첫 정점으로 닫힘).
+    if round_caps {
+        push_cap(&mut poly, points[0], neg(norms[0]), half_widths[0], neg(t_start));
+    }
+    poly
+}
+
+/// 단순 다각형을 **겹침 없는 삼각형들**로 분할합니다 (귀 자르기/ear clipping).
+///
+/// - 입력은 `stroke_outline`처럼 자기 자신을 교차하지 않는 단순 다각형이어야 합니다.
+/// - 반환 삼각형들은 다각형을 정확히 한 번씩 덮습니다 → 반투명 색으로 각각
+///   칠해도 겹침으로 인한 진해짐(얼룩)이 없습니다.
+/// - 퇴화(면적 0/볼록 귀 없음)는 빈 결과 또는 부분 결과로 안전하게 처리됩니다.
+pub fn triangulate_polygon(poly: &[[f32; 2]]) -> Vec<[u32; 3]> {
+    let n = poly.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let area2 = signed_area2(poly);
+    if area2.abs() < 1e-6 {
+        return Vec::new();
+    }
+    let ccw = area2 > 0.0;
+    let mut idx: Vec<u32> = (0..n as u32).collect();
+    let mut out: Vec<[u32; 3]> = Vec::with_capacity(n.saturating_sub(2));
+    let mut guard = 0usize;
+    let mut i = 0usize;
+    while idx.len() > 3 && guard <= n * n + 16 {
+        guard += 1;
+        let m = idx.len();
+        let a = idx[i % m];
+        let b = idx[(i + 1) % m];
+        let c = idx[(i + 2) % m];
+        let (pa, pb, pc) = (poly[a as usize], poly[b as usize], poly[c as usize]);
+        let cross = (pb[0] - pa[0]) * (pc[1] - pa[1]) - (pb[1] - pa[1]) * (pc[0] - pa[0]);
+        let convex = if ccw { cross > 1e-6 } else { cross < -1e-6 };
+        let mut is_ear = convex;
+        if is_ear {
+            for &v in &idx {
+                if v == a || v == b || v == c {
+                    continue;
+                }
+                if point_in_triangle(poly[v as usize], pa, pb, pc, ccw) {
+                    is_ear = false;
+                    break;
+                }
+            }
+        }
+        if is_ear {
+            out.push([a, b, c]);
+            idx.remove((i + 1) % m);
+        } else {
+            i += 1;
+        }
+    }
+    if idx.len() == 3 {
+        out.push([idx[0], idx[1], idx[2]]);
+    }
+    out
+}
+
+// ── 잉크 번짐(블리드) ────────────────────────────────────────────────────────
+
+/// 잉크 번짐(블리드) 모델 — 그어진 지 얼마나 지났는지(나이)와 획 위 위치에
+/// 따라 잉크가 종이로 퍼지는 **번짐 반경(pt)**을 계산합니다.
+///
+/// 실제 잉크처럼: 갓 그은 잉크는 빨리 번지고, 시간이 지날수록 느려지며,
+/// 어느 시점에 수렴합니다. 번짐 속도는 획의 **시작/중간/끝 구간**별로
+/// 다르게 지정할 수 있습니다 (`*_rate`, pt/초 — 0이면 그 구간은 안 번짐).
+///
+/// 순수 계산이라 GUI 없이 단위 테스트로 검증합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct InkBleed {
+    pub enabled: bool,
+    /// 번짐 반경 상한 (pt) — 아무리 오래돼도 이보다 퍼지지 않습니다.
+    pub max_spread_pt: f32,
+    /// 시작 구간(획 앞 30%) 번짐 속도 (pt/초).
+    pub start_rate: f32,
+    /// 중간 구간(30~70%) 번짐 속도 (pt/초).
+    pub mid_rate: f32,
+    /// 끝 구간(뒤 30%) 번짐 속도 (pt/초).
+    pub end_rate: f32,
+}
+
+impl Default for InkBleed {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_spread_pt: 5.0,
+            start_rate: 0.6,
+            mid_rate: 0.25,
+            end_rate: 0.45,
+        }
+    }
+}
+
+impl InkBleed {
+    /// 획 위 한 점의 번짐 반경(pt): `phase_rate × 나이`, 상한 클램프.
+    ///
+    /// `d0`/`d1` = 시작점·끝점까지의 획 길이(pt), `len` = 획 총 길이,
+    /// `age_sec` = 그어진 뒤 경과 시간(초).
+    pub fn radius(&self, d0: f32, d1: f32, len: f32, age_sec: f32) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        let rate = self.phase_rate(d0, d1, len);
+        let spread = rate * age_sec.max(0.0);
+        spread.min(self.max_spread_pt.max(0.0))
+    }
+
+    /// 획 위 위치(시작 0 → 끝 1)에서의 번짐 속도(pt/초).
+    ///
+    /// 시작 구간(앞 30%)은 `start_rate`, 중간(30~70%)은 `mid_rate`,
+    /// 끝 구간(뒤 30%)은 `end_rate`이며, 구간 경계는 smoothstep으로
+    /// 자연스럽게 보간됩니다.
+    pub fn phase_rate(&self, d0: f32, d1: f32, len: f32) -> f32 {
+        if len <= 1e-6 {
+            return self.start_rate.max(0.0);
+        }
+        let t = (d0 / len).clamp(0.0, 1.0);
+        let s = (d0 / (0.3 * len)).min(1.0); // 시작 구간 진행도
+        let e = (d1 / (0.3 * len)).min(1.0); // 끝 구간 진행도
+        let ss = |x: f32| x * x * (3.0 - 2.0 * x);
+        let rate = if t < 0.3 {
+            self.start_rate + (self.mid_rate - self.start_rate) * ss(s)
+        } else if t > 0.7 {
+            self.end_rate + (self.mid_rate - self.end_rate) * ss(e)
+        } else {
+            self.mid_rate
+        };
+        rate.max(0.0)
+    }
+
+    /// 번짐이 최대(`max_spread_pt`)에 도달하는 시간(초) — 가장 느린 구간 기준.
+    pub fn settle_sec(&self) -> f32 {
+        let slowest = self
+            .start_rate
+            .max(self.mid_rate)
+            .max(self.end_rate)
+            .max(1e-3);
+        self.max_spread_pt.max(0.0) / slowest
+    }
+}
+
+// ── 2차원 헬퍼 ───────────────────────────────────────────────────────────────
+
+fn sub(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
+    [a[0] - b[0], a[1] - b[1]]
+}
+
+fn add_mul(p: [f32; 2], n: [f32; 2], k: f32) -> [f32; 2] {
+    [p[0] + n[0] * k, p[1] + n[1] * k]
+}
+
+fn sub_mul(p: [f32; 2], n: [f32; 2], k: f32) -> [f32; 2] {
+    [p[0] - n[0] * k, p[1] - n[1] * k]
+}
+
+fn neg(v: [f32; 2]) -> [f32; 2] {
+    [-v[0], -v[1]]
+}
+
+fn unit2(v: [f32; 2]) -> [f32; 2] {
+    let l = (v[0] * v[0] + v[1] * v[1]).sqrt();
+    if l < 1e-6 {
+        [1.0, 0.0]
+    } else {
+        [v[0] / l, v[1] / l]
+    }
+}
+
+/// 중심/반지름의 정다각형 (점 찍기·캡 근사용).
+fn circle_polygon(center: [f32; 2], r: f32, steps: usize) -> Vec<[f32; 2]> {
+    let mut out = Vec::with_capacity(steps);
+    for k in 0..steps {
+        let a = std::f32::consts::TAU * (k as f32 / steps as f32);
+        out.push([center[0] + r * a.cos(), center[1] + r * a.sin()]);
+    }
+    out
+}
+
+/// 반원 캡: 법선 `n` 쪽(+n)에서 시작해 바깥쪽(`away`)을 지나 −n으로 이어지는 호.
+fn push_cap(
+    out: &mut Vec<[f32; 2]>,
+    center: [f32; 2],
+    n: [f32; 2],
+    half: f32,
+    away: [f32; 2],
+) {
+    let steps = 10usize;
+    let base = n[1].atan2(n[0]);
+    let mid = base + std::f32::consts::FRAC_PI_2;
+    let mid_dir = [mid.cos(), mid.sin()];
+    let dir = if mid_dir[0] * away[0] + mid_dir[1] * away[1] > 0.0 {
+        1.0
+    } else {
+        -1.0
     };
-    // 1) 세그먼트 quad — 법선은 세그먼트 자체에 수직 (마이터 없음 → 스파이크 없음).
-    for i in 0..n - 1 {
-        let (a, b) = (points[i], points[i + 1]);
-        let dx = b[0] - a[0];
-        let dy = b[1] - a[1];
-        let len = (dx * dx + dy * dy).sqrt();
-        if len < 1e-6 {
-            continue;
-        }
-        let (nx, ny) = (-dy / len, dx / len);
-        let h0 = half_widths[i];
-        let h1 = half_widths[i + 1];
-        shape.quads.push([
-            [a[0] + nx * h0, a[1] + ny * h0],
-            [a[0] - nx * h0, a[1] - ny * h0],
-            [b[0] - nx * h1, b[1] - ny * h1],
-            [b[0] + nx * h1, b[1] + ny * h1],
-        ]);
+    for k in 0..=steps {
+        let a = base + dir * std::f32::consts::PI * (k as f32 / steps as f32);
+        out.push([center[0] + half * a.cos(), center[1] + half * a.sin()]);
     }
-    // 2) 양끝 캡 (라운드 캡이 관례).
-    shape.circles.push((points[0], half_widths[0].max(0.0)));
-    shape.circles.push((points[n - 1], half_widths[n - 1].max(0.0)));
-    // 3) 방향이 꺾이는 내부 점에 조인 원 (이웃 quad 사이 쐐기 틈을 메움).
-    for i in 1..n - 1 {
-        let (dx0, dy0) = (points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
-        let (dx1, dy1) = (
-            points[i + 1][0] - points[i][0],
-            points[i + 1][1] - points[i][1],
-        );
-        let l0 = (dx0 * dx0 + dy0 * dy0).sqrt();
-        let l1 = (dx1 * dx1 + dy1 * dy1).sqrt();
-        if l0 < 1e-6 || l1 < 1e-6 {
-            continue;
-        }
-        let dot = (dx0 * dx1 + dy0 * dy1) / (l0 * l1);
-        if dot < MIN_JOIN_COS {
-            let r = half_widths[i]
-                .max(half_widths[i - 1])
-                .max(half_widths[i + 1]);
-            shape.circles.push((points[i], r));
-        }
+}
+
+/// 다각형 부호 면적의 2배 (CCW 양수).
+fn signed_area2(poly: &[[f32; 2]]) -> f32 {
+    let n = poly.len();
+    let mut s = 0.0f32;
+    for i in 0..n {
+        let a = poly[i];
+        let b = poly[(i + 1) % n];
+        s += a[0] * b[1] - b[0] * a[1];
     }
-    shape
+    s
+}
+
+/// 점 `p`가 삼각형 (a,b,c) **내부**에 있는지 (경계는 외부로 취급 — 겹침 방지).
+fn point_in_triangle(p: [f32; 2], a: [f32; 2], b: [f32; 2], c: [f32; 2], ccw: bool) -> bool {
+    let cross = |u: [f32; 2], v: [f32; 2], w: [f32; 2]| {
+        (v[0] - u[0]) * (w[1] - u[1]) - (v[1] - u[1]) * (w[0] - u[0])
+    };
+    let (c1, c2, c3) = (cross(a, b, p), cross(b, c, p), cross(c, a, p));
+    if ccw {
+        c1 > 1e-6 && c2 > 1e-6 && c3 > 1e-6
+    } else {
+        c1 < -1e-6 && c2 < -1e-6 && c3 < -1e-6
+    }
 }
 
 /// OneEuroFilter (1€ 저역 통과 필터) — 손떨림은 제거하고 빠른 움직임은 그대로 따라갑니다
@@ -544,75 +749,172 @@ mod tests {
         assert!((y - 10.0).abs() < 1e-4, "reset 후 첫 값은 원본 그대로: {y}");
     }
 
-    // ---------- stroke_shape (관례적 라운드 조인/캡) ----------
+    // ---------- stroke_outline / triangulate_polygon ----------
 
     #[test]
-    fn stroke_shape_single_point_is_one_circle() {
-        let s = stroke_shape(&[[5.0, 6.0]], &[2.0]);
-        assert!(s.quads.is_empty());
-        assert_eq!(s.circles, vec![([5.0, 6.0], 2.0)]);
+    fn outline_single_point_is_a_circle() {
+        let poly = stroke_outline(&[[5.0, 6.0]], &[2.0], true);
+        assert_eq!(poly.len(), 12);
+        for p in &poly {
+            let d = ((p[0] - 5.0).powi(2) + (p[1] - 6.0).powi(2)).sqrt();
+            assert!((d - 2.0).abs() < 1e-4, "원 반지름: {p:?} → {d}");
+        }
     }
 
     #[test]
-    fn stroke_shape_straight_line_has_one_quad_and_two_caps() {
-        let s = stroke_shape(&[[0.0, 0.0], [10.0, 0.0]], &[2.0, 2.0]);
-        assert_eq!(s.quads.len(), 1);
-        // quad는 선에서 정확히 ±half 떨어져 있음.
-        let q = s.quads[0];
-        for p in q {
-            assert!((p[1].abs() - 2.0).abs() < 1e-6, "수직 오프셋: {p:?}");
+    fn outline_straight_line_butt_caps() {
+        let poly = stroke_outline(&[[0.0, 0.0], [10.0, 0.0]], &[2.0, 2.0], false);
+        // butt: 바깥 체인 2점 + 안쪽 체인 2점 = 4점 사각형.
+        assert_eq!(poly.len(), 4);
+        for p in &poly {
+            assert!((p[1].abs() - 2.0).abs() < 1e-6);
             assert!(p[0] >= -1e-6 && p[0] <= 10.0 + 1e-6);
         }
-        // 캡 2개, 조인 없음 (방향 변화 없음).
-        assert_eq!(s.circles.len(), 2);
-        assert_eq!(s.circles[0], ([0.0, 0.0], 2.0));
-        assert_eq!(s.circles[1], ([10.0, 0.0], 2.0));
     }
 
     #[test]
-    fn stroke_shape_no_spikes_on_sharp_reversal() {
+    fn triangulate_square_covers_area_exactly() {
+        let square = [[0.0f32, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let tris = triangulate_polygon(&square);
+        assert_eq!(tris.len(), 2, "사각형 → 삼각형 2개");
+        let area: f32 = tris.iter().map(|t| triangle_area(t, &square)).sum();
+        assert!((area - 100.0).abs() < 1e-3, "넓이 합 = 사각형 넓이");
+    }
+
+    #[test]
+    fn triangulate_concave_polygon_no_overlap() {
+        // L자(오목) 다각형 — 볼록 팬이면 밖으로 삐져나가는 모양.
+        let l = [
+            [0.0f32, 0.0],
+            [10.0, 0.0],
+            [10.0, 4.0],
+            [4.0, 4.0],
+            [4.0, 10.0],
+            [0.0, 10.0],
+        ];
+        let poly_area = polygon_area(&l);
+        let tris = triangulate_polygon(&l);
+        assert_eq!(tris.len(), 4, "6각형 → 삼각형 4개");
+        let area: f32 = tris.iter().map(|t| triangle_area(t, &l)).sum();
+        assert!((area - poly_area).abs() < 1e-3, "겹침 없이 정확히 한 번 덮음");
+        assert!(poly_area > 60.0, "L자 면적 확인");
+    }
+
+    #[test]
+    fn outline_no_spikes_on_sharp_reversal() {
         // 180° 되접힘 — 마이터 법선이면 무한대 스파이크가 튀는 입력.
         let pts = [[0.0f32, 0.0], [10.0, 0.0], [0.0, 0.0]];
-        let s = stroke_shape(&pts, &[2.0, 2.0, 2.0]);
-        // 모든 quad 정점이 폴리라인에서 max_half(+여유) 이내에 있어야 함.
-        for p in s.quads.iter().flatten() {
+        let poly = stroke_outline(&pts, &[2.0, 2.0, 2.0], false);
+        for p in &poly {
             let d = min_dist_to_polyline(*p, &pts);
-            assert!(d <= 2.0 + 1e-3, "스파이크: {p:?} 거리 {d}");
+            assert!(d <= 2.1, "스파이크: {p:?} 거리 {d}");
         }
-        // 되접힘 점에 조인 원.
-        assert!(s.circles.iter().any(|(c, r)| *c == [10.0, 0.0] && *r >= 2.0));
+        // 삼각분할도 가능해야 함 (단순 다각형).
+        assert!(!triangulate_polygon(&poly).is_empty());
     }
 
     #[test]
-    fn stroke_shape_jagged_input_stays_bounded() {
-        // 번개 지그재그 — 모든 quad가 폴리라인에서 half 이내.
+    fn outline_jagged_input_stays_bounded() {
         let mut pts = vec![[0.0f32, 0.0]];
         let mut x = 0.0f32;
-        let mut y = 0.0f32;
-        for i in 1..40 {
+        for i in 1..30 {
             x += 8.0;
-            y = if i % 2 == 0 { -4.0 } else { 4.0 };
-            pts.push([x, y]);
+            pts.push([x, if i % 2 == 0 { -4.0 } else { 4.0 }]);
         }
-        let halves: Vec<f32> = (0..40).map(|i| 1.0 + 0.05 * i as f32).collect();
-        let s = stroke_shape(&pts, &halves);
+        let halves: Vec<f32> = (0..30).map(|i| 1.0 + 0.04 * i as f32).collect();
+        let poly = stroke_outline(&pts, &halves, true);
         let max_h = halves.iter().cloned().fold(0.0f32, f32::max);
-        for p in s.quads.iter().flatten() {
+        for p in &poly {
             let d = min_dist_to_polyline(*p, &pts);
-            assert!(d <= max_h + 1e-3, "스파이크: {p:?} 거리 {d} (max {max_h})");
+            assert!(d <= max_h + 1e-2, "경계 초과: {p:?} 거리 {d} (max {max_h})");
         }
-        // 캡 2 + 꺾인 내부 점마다 조인.
-        assert_eq!(s.circles.len(), 2 + 38);
+        assert!(!triangulate_polygon(&poly).is_empty());
     }
 
     #[test]
-    fn stroke_shape_variable_width_quads_follow_half_widths() {
-        let s = stroke_shape(&[[0.0, 0.0], [10.0, 0.0]], &[1.0, 4.0]);
-        let q = s.quads[0];
-        // 시작점은 ±1, 끝점은 ±4 오프셋.
-        assert!((q[0][1] - 1.0).abs() < 1e-6 && (q[1][1] + 1.0).abs() < 1e-6);
-        assert!((q[2][1] + 4.0).abs() < 1e-6 && (q[3][1] - 4.0).abs() < 1e-6);
+    fn outline_round_caps_add_cap_area() {
+        // 둥근 캡: 직사각형(2h×L) + 양쪽 반원(π h²)만큼 넓어짐.
+        let pts = [[0.0f32, 0.0], [10.0, 0.0]];
+        let h = 2.0f32;
+        let poly = stroke_outline(&pts, &[h, h], true);
+        let expected = 10.0 * 4.0 + std::f32::consts::PI * h * h; // ≈ 40 + 12.57
+        let area = polygon_area(&poly);
+        assert!(
+            (area - expected).abs() < 0.5,
+            "캡 면적 포함: {area} vs {expected} (10각 근사)"
+        );
     }
+
+    // ---------- InkBleed ----------
+
+    #[test]
+    fn bleed_disabled_returns_zero() {
+        let mut b = InkBleed::default();
+        b.enabled = false;
+        assert_eq!(b.radius(0.0, 10.0, 10.0, 5.0), 0.0);
+    }
+
+    #[test]
+    fn bleed_zero_age_returns_zero() {
+        let b = InkBleed {
+            enabled: true,
+            ..InkBleed::default()
+        };
+        assert_eq!(b.radius(5.0, 5.0, 10.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn bleed_grows_with_age_and_clamps() {
+        let b = InkBleed {
+            enabled: true,
+            max_spread_pt: 5.0,
+            start_rate: 1.0,
+            mid_rate: 1.0,
+            end_rate: 1.0,
+        };
+        let mid = b.radius(5.0, 5.0, 10.0, 2.0);
+        assert!((mid - 2.0).abs() < 1e-4, "속도 1 → 2초에 2pt");
+        assert_eq!(b.radius(5.0, 5.0, 10.0, 99.0), 5.0, "상한 클램프");
+        // 나이에 단조 증가.
+        assert!(b.radius(5.0, 5.0, 10.0, 0.5) < b.radius(5.0, 5.0, 10.0, 1.5));
+    }
+
+    #[test]
+    fn bleed_phase_rates_follow_stroke_position() {
+        let b = InkBleed {
+            enabled: true,
+            max_spread_pt: 50.0,
+            start_rate: 3.0,
+            mid_rate: 1.0,
+            end_rate: 2.0,
+        };
+        let len = 100.0;
+        assert!((b.phase_rate(0.0, len, len) - 3.0).abs() < 1e-4, "시작 = start_rate");
+        assert!((b.phase_rate(50.0, 50.0, len) - 1.0).abs() < 1e-4, "중간 = mid_rate");
+        assert!((b.phase_rate(len, 0.0, len) - 2.0).abs() < 1e-4, "끝 = end_rate");
+        // 구간 경계는 단조 보간 (start 3 → mid 1로 감소).
+        let r1 = b.phase_rate(10.0, 90.0, len);
+        let r2 = b.phase_rate(20.0, 80.0, len);
+        let r3 = b.phase_rate(30.0, 70.0, len);
+        assert!(r1 >= r2, "시작→중간으로 감소: {r1} vs {r2}");
+        assert!(r2 >= r3, "중간 수렴: {r2} vs {r3}");
+        assert!((r3 - 1.0).abs() < 1e-4, "경계 끝 = mid_rate");
+    }
+
+    #[test]
+    fn bleed_zero_rate_phase_never_spreads() {
+        let b = InkBleed {
+            enabled: true,
+            max_spread_pt: 5.0,
+            start_rate: 0.0,
+            mid_rate: 0.4,
+            end_rate: 0.0,
+        };
+        assert_eq!(b.radius(0.0, 10.0, 10.0, 10.0), 0.0, "시작 구간 속도 0");
+        assert!(b.radius(5.0, 5.0, 10.0, 10.0) > 0.0, "중간은 번짐");
+    }
+
+    // ---------- 헬퍼 ----------
 
     fn min_dist_to_polyline(p: [f32; 2], poly: &[[f32; 2]]) -> f32 {
         let mut best = f32::MAX;
@@ -621,5 +923,14 @@ mod tests {
             best = best.min(d);
         }
         best
+    }
+
+    fn triangle_area(t: &[u32; 3], poly: &[[f32; 2]]) -> f32 {
+        let (a, b, c) = (poly[t[0] as usize], poly[t[1] as usize], poly[t[2] as usize]);
+        ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() * 0.5
+    }
+
+    fn polygon_area(poly: &[[f32; 2]]) -> f32 {
+        signed_area2(poly).abs() * 0.5
     }
 }

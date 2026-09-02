@@ -25,25 +25,7 @@ pub(crate) trait DictionaryProvider: Send + Sync {
     fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String>;
 }
 
-/// dictionaryapi.dev (Free Dictionary API).
-struct DictionaryApiDevProvider;
-
-impl DictionaryProvider for DictionaryApiDevProvider {
-    fn name(&self) -> &'static str {
-        "dictionaryapi.dev"
-    }
-
-    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
-        let url = format!("https://api.dictionaryapi.dev/api/v2/entries/en/{word}");
-        let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
-        let value: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| format!("bad response: {e}"))?;
-        Ok(freedf_core::dictionary::parse_dictionaryapi_dev(&value))
-    }
-}
-
-/// Wiktionary REST API (키 불필요).
+/// Wiktionary REST API (키 불필요, HTML 정의 포함).
 struct WiktionaryProvider;
 
 impl DictionaryProvider for WiktionaryProvider {
@@ -58,31 +40,6 @@ impl DictionaryProvider for WiktionaryProvider {
             .into_json()
             .map_err(|e| format!("bad response: {e}"))?;
         let mut entry = freedf_core::dictionary::parse_wiktionary(&value);
-        if entry.word.is_empty() {
-            entry.word = word.to_string();
-        }
-        if entry.definitions.is_empty() {
-            return Err("no definitions".to_string());
-        }
-        Ok(entry)
-    }
-}
-
-/// Datamuse API (키 불필요, 간단 정의 폴백).
-struct DatamuseProvider;
-
-impl DictionaryProvider for DatamuseProvider {
-    fn name(&self) -> &'static str {
-        "Datamuse"
-    }
-
-    fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
-        let url = format!("https://api.datamuse.com/words?sp={word}&md=d&max=1");
-        let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
-        let value: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| format!("bad response: {e}"))?;
-        let mut entry = freedf_core::dictionary::parse_datamuse(&value);
         if entry.word.is_empty() {
             entry.word = word.to_string();
         }
@@ -110,11 +67,7 @@ impl DictionaryService {
             .build();
         Self {
             agent,
-            providers: std::sync::Arc::new(vec![
-                Box::new(DictionaryApiDevProvider),
-                Box::new(WiktionaryProvider),
-                Box::new(DatamuseProvider),
-            ]),
+            providers: std::sync::Arc::new(vec![Box::new(WiktionaryProvider)]),
         }
     }
 

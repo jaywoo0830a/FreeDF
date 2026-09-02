@@ -46,10 +46,19 @@ pub(crate) use freedf_core::paper::{
     PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    taper_factors, uses_taper, ColorFamily, OneEuroFilter, Palette, PressureCurve, TAPER_LEN_PTS,
+    taper_factors, uses_taper, ColorFamily, InkBleed, OneEuroFilter, Palette, PressureCurve,
+    TAPER_LEN_PTS,
 };
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::text::char_line_highlights;
+
+/// 현재 시각 (유닉스 epoch ms) — 잉크 번짐 나이 계산용.
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
@@ -442,6 +451,10 @@ pub struct TabEntry {
     custom_paper_size: [f32; 2],
     /// 펜 입력 스무딩 강도 0..1
     smoothing: f32,
+    /// 스무딩 사용 여부 (기본 off)
+    smoothing_enabled: bool,
+    /// 잉크 번짐 설정
+    ink_bleed: InkBleed,
     /// 줌 잠금 (휠/핀치/단축키 줌 무시)
     zoom_lock: bool,
 }
@@ -533,8 +546,15 @@ pub struct FreeDfApp {
     tool_drop: Option<usize>,
     /// 마지막으로 감지된 입력 장치 (펜/마우스)
     input_device: InputDevice,
+    /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
+    last_touch_time: Option<f64>,
     /// 마우스/트랙패드로도 잉크를 그릴지 (기본 off — 펜 전용 필기)
     mouse_draws: bool,
+    /// 펜 입력 스무딩(안정화) 사용 여부 (기본 off — OTD 등 드라이버로
+    /// 안정화하는 환경에서 꺼둠)
+    smoothing_enabled: bool,
+    /// 잉크 번짐(블리드) 설정 — 선택 기능, 구간별 속도 커스텀 가능.
+    ink_bleed: InkBleed,
 
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
@@ -732,6 +752,8 @@ impl FreeDfApp {
         let text_highlight_snap = if has { s.text_highlight_snap } else { false };
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
+        let smoothing_enabled = if has { s.smoothing_enabled } else { false };
+        let ink_bleed = if has { s.ink_bleed } else { InkBleed::default() };
         let mouse_draws = if has { s.mouse_draws } else { false };
         let dictionary_enabled = if has { s.dictionary_enabled } else { false };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
@@ -811,7 +833,10 @@ impl FreeDfApp {
             tool_drag: None,
             tool_drop: None,
             input_device: InputDevice::Mouse,
+            last_touch_time: None,
             mouse_draws,
+            smoothing_enabled,
+            ink_bleed,
             paper_style,
             paper_color,
             paper_size,
@@ -909,6 +934,8 @@ impl FreeDfApp {
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
+            smoothing_enabled: self.smoothing_enabled,
+            ink_bleed: self.ink_bleed,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
             dictionary_enabled: self.dictionary.enabled,
@@ -1002,6 +1029,8 @@ impl FreeDfApp {
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
+            smoothing_enabled: self.smoothing_enabled,
+            ink_bleed: self.ink_bleed,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
             dictionary_enabled: self.dictionary.enabled,
@@ -1059,6 +1088,8 @@ impl FreeDfApp {
         self.paper_line_width = clamp_line_width(s.paper_line_width);
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
+        self.smoothing_enabled = s.smoothing_enabled;
+        self.ink_bleed = s.ink_bleed;
         self.mouse_draws = s.mouse_draws;
         self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {

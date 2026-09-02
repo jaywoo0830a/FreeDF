@@ -943,7 +943,7 @@ impl FreeDfApp {
                     );
                 }
                 let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
-                draw_strokes_on_image(&mut img, &strokes, scale);
+                draw_strokes_on_image(&mut img, &strokes, scale, self.ink_bleed);
                 let result = match fmt {
                     ExportFormat::Png => img
                         .save(path)

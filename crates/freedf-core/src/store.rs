@@ -124,6 +124,7 @@ impl AnnotationStore {
             color,
             width,
             points,
+            created_ms: 0,
         };
         self.ensure_page(page_index).strokes.push(stroke);
         id
@@ -155,6 +156,7 @@ impl AnnotationStore {
             color,
             width,
             points,
+            created_ms: 0,
         });
     }
 
@@ -171,6 +173,18 @@ impl AnnotationStore {
             }
         }
         self.next_stroke_id = self.next_stroke_id.max(to + 1);
+    }
+
+    /// 스트로크의 생성 시각(epoch ms)을 기록합니다 — 잉크 번짐(블리드)의
+    /// 나이 계산에 사용됩니다.
+    pub fn set_stroke_created_ms(&mut self, page_index: PageIndex, id: u64, ms: u64) -> bool {
+        if let Some(page) = self.pages.get_mut(&page_index) {
+            if let Some(s) = page.strokes.iter_mut().find(|s| s.id == id) {
+                s.created_ms = ms;
+                return true;
+            }
+        }
+        false
     }
 
     /// 페이지별 용지 설정 전체를 순회합니다 (DB pages 테이블 동기화용).
@@ -443,7 +457,7 @@ mod tests {
     #[test]
     fn rotation_composes_across_multiple_steps() {
         let rotate_cw = |p: (f32, f32), w: f32, h: f32| (h - p.1, p.0);
-        let rotate_ccw = |p: (f32, f32), w: f32, h: f32| (p.1, w - p.0);
+        let rotate_ccw = |p: (f32, f32), w: f32, _h: f32| (p.1, w - p.0);
 
         let start = (100.0f32, 50.0f32);
         let (w0, h0) = (595.0f32, 842.0f32);
