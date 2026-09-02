@@ -3,7 +3,7 @@
 //! 화면 렌더링(egui)과 별개로, 실제 픽셀 이미지에 선을 그려
 //! "메모한 페이지 내보내기" 기능을 제공합니다.
 
-use freedf_core::model::{Stroke, StrokePoint};
+use freedf_core::model::{Stroke, StrokePoint, ToolType};
 use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
 };
@@ -74,7 +74,15 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
     }
     if pts.len() == 1 {
         let p = scale_point(&pts[0], scale);
-        let r = curve.apply(stroke.width, pts[0].pressure) * base_width_factor(stroke.tool) * scale / 2.0;
+        let r = if stroke.tool == ToolType::Highlighter {
+            // 마커: 일정한 두께
+            stroke.width * scale / 2.0
+        } else {
+            curve.apply(stroke.width, pts[0].pressure)
+                * base_width_factor(stroke.tool)
+                * scale
+                / 2.0
+        };
         draw_disk(img, p, r, color);
         return;
     }
@@ -83,7 +91,10 @@ fn draw_one_stroke(img: &mut RgbaImage, stroke: &Stroke, scale: f32) {
         let a = scale_point(&w[0], scale);
         let b = scale_point(&w[1], scale);
         let pressure = (w[0].pressure + w[1].pressure) * 0.5;
-        let width = if uses_own_profile(stroke.tool) {
+        let width = if stroke.tool == ToolType::Highlighter {
+            // 마커: 기본 동작 — 필압 없이 일정한 두께.
+            stroke.width * scale
+        } else if uses_own_profile(stroke.tool) {
             let speed = ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt();
             stroke.width * wfactor * ink_modifier(stroke.tool, pressure, speed) * scale
         } else {

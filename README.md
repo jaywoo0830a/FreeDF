@@ -53,12 +53,12 @@ native file dialogs, Windows Ink pressure).
   they never drift under zoom/pan
 - ✏️ **Highlighter / Eraser / Pan** — text-aware Highlighter, round Eraser and
   hand Pan tool complete the toolkit
-- 🔖 **Text-aware highlighter** — by default the Highlighter recognizes the
-  document's actual text and snaps to it: swipe across a paragraph and you get
-  clean highlights exactly over the words (turn off with “Snap to text”). Works on
-  **rotated pages** too (text coordinates are mapped into the page's display
-  space), and if the page has **no selectable text** (scanned/image PDF) a status
-  message tells you instead of silently drawing a freehand stroke
+- 🔖 **Highlighter (default: plain marker)** — the Highlighter draws a clean,
+  even, semi-transparent marker line along your stroke by default (drawn as one
+  smooth path, no pressure wobble). Optionally enable **“Snap to text”** in the
+  tool settings to make it follow the document's real text instead — this also
+  works on **rotated pages**, and if the page has no selectable text it falls
+  back to the plain marker stroke
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - 🎨 **Favorite-color palette** — a GoodNotes-style floating vertical sidebar on
@@ -100,7 +100,8 @@ native file dialogs, Windows Ink pressure).
   zoom **glide** to their target over a few frames (eased), so panning and
   zooming feel fluid instead of stepping/jumping
 - 🎞️ **Page transitions** — smooth slide animation when flipping pages; the zoom
-  level is preserved when moving between pages
+  level is preserved when moving between pages. **PgUp / PgDn flip vertically**
+  (like pages stacked in a long column), everything else slides horizontally
 - 🔁 **PgDn / PgUp = next / previous page** (not vertical scrolling). On a FreeDF
   note, pressing **PgDn on the last page automatically appends a fresh page**
   (same size & paper) so you can keep writing without breaking flow

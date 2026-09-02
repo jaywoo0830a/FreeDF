@@ -64,7 +64,8 @@ pub struct SessionState {
     #[serde(default = "default_favorite_colors")]
     pub favorite_colors: Vec<[u8; 4]>,
     /// 하이라이터가 문서 텍스트를 인식해 깔끔하게 칠하는 모드 (전역 기본값)
-    #[serde(default = "default_true")]
+    /// 기본은 꺼짐 — 일반(자유선) 하이라이트가 기본 동작입니다.
+    #[serde(default = "default_false")]
     pub text_highlight_snap: bool,
     /// 도구 선택기 순서 (드래그 앤 드롭 재정렬, 전역 기본값)
     #[serde(default = "default_tool_order")]
@@ -76,8 +77,8 @@ fn default_show_palette() -> bool {
     true
 }
 
-fn default_true() -> bool {
-    true
+fn default_false() -> bool {
+    false
 }
 
 fn default_tool_order() -> Vec<ToolType> {
@@ -156,7 +157,7 @@ impl Default for SessionState {
                 [232, 120, 30, 255], // Orange
                 [128, 80, 200, 255], // Purple
             ],
-            text_highlight_snap: true,
+            text_highlight_snap: false,
             tool_order: ToolType::default_order(),
         }
     }

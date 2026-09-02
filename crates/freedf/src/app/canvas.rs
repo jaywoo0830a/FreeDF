@@ -265,38 +265,56 @@ impl FreeDfApp {
         );
 
         // During a transition, draw the outgoing + incoming pages sliding.
+        // PgUp/PgDn 키 전환은 세로(위/아래)로, 그 외(내비게이션/휠/화살표)는
+        // 기존처럼 가로로 슬라이드합니다.
         let mut anim_dx = 0.0_f32;
+        let mut anim_dy = 0.0_f32;
         if let (Some(anim), Some(prev)) = (&self.page_anim, &self.prev_texture) {
-            let w = page_rect.width();
             let dir = anim.direction;
             let p = anim.progress;
-            let old_off = -p * dir * w;
-            let new_off = (1.0 - p) * dir * w;
-            anim_dx = new_off;
+            let span = if anim.vertical {
+                page_rect.height()
+            } else {
+                page_rect.width()
+            };
+            let old_off = -p * dir * span;
+            let new_off = (1.0 - p) * dir * span;
+            let old_vec = if anim.vertical {
+                Vec2::new(0.0, old_off)
+            } else {
+                Vec2::new(old_off, 0.0)
+            };
+            let new_vec = if anim.vertical {
+                Vec2::new(0.0, new_off)
+            } else {
+                Vec2::new(new_off, 0.0)
+            };
+            anim_dx = new_vec.x;
+            anim_dy = new_vec.y;
 
             let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             // Outgoing page (old texture)
             painter.rect_filled(
-                page_rect.translate(Vec2::new(old_off, 0.0)).expand(6.0),
+                page_rect.translate(old_vec).expand(6.0),
                 egui::CornerRadius::same(4),
                 Color32::from_black_alpha(70),
             );
             painter.image(
                 prev.id(),
-                page_rect.translate(Vec2::new(old_off, 0.0)),
+                page_rect.translate(old_vec),
                 uv,
                 paper_tint,
             );
             // Incoming page (new texture)
             painter.rect_filled(
-                page_rect.translate(Vec2::new(new_off, 0.0)).expand(6.0),
+                page_rect.translate(new_vec).expand(6.0),
                 egui::CornerRadius::same(4),
                 Color32::from_black_alpha(70),
             );
             if let Some(tex) = &self.texture {
                 painter.image(
                     tex.id(),
-                    page_rect.translate(Vec2::new(new_off, 0.0)),
+                    page_rect.translate(new_vec),
                     uv,
                     paper_tint,
                 );
@@ -304,8 +322,8 @@ impl FreeDfApp {
         }
 
         // Current-page rect/origin (shifted during a transition so border & ink follow)
-        let draw_rect = page_rect.translate(Vec2::new(anim_dx, 0.0));
-        let draw_origin = origin + Vec2::new(anim_dx, 0.0);
+        let draw_rect = page_rect.translate(Vec2::new(anim_dx, anim_dy));
+        let draw_origin = origin + Vec2::new(anim_dx, anim_dy);
 
         // Page shadow, image and border (single page when not mid-transition)
         if self.page_anim.is_none() {
@@ -937,6 +955,25 @@ impl FreeDfApp {
         let zoom = self.view.zoom;
         let pts = &stroke.points;
         if pts.is_empty() {
+            return;
+        }
+        // 하이라이터(마커)는 "기본" 동작: 일정한 두께의 반투명 선.
+        // 세그먼트마다 따로 그리면 겹친 부분이 진해져 얼룩처럼 보이므로
+        // 전체를 **하나의 폴리라인 경로**로 그려 균일하게 칠합니다.
+        if stroke.tool == ToolType::Highlighter {
+            let wpx = (stroke.width * zoom).max(1.0);
+            let pts_view: Vec<Pos2> = pts
+                .iter()
+                .map(|p| {
+                    let v = self.view.page_to_view([p.x, p.y]);
+                    origin + Vec2::new(v[0], v[1])
+                })
+                .collect();
+            if pts_view.len() == 1 {
+                painter.circle_filled(pts_view[0], (wpx * 0.5).max(0.75), color);
+                return;
+            }
+            painter.add(egui::Shape::line(pts_view, Stroke::new(wpx, color)));
             return;
         }
         if pts.len() == 1 {

@@ -379,6 +379,10 @@ impl FreeDfApp {
     }
 
     /// Captures the outgoing page texture and starts a slide transition.
+    ///
+    /// PgUp/PgDn 키는 `transition_vertical`을 세팅해 **세로**(위/아래로 넘기는
+    /// 긴 페이지 목록처럼) 애니메이션을 만들고, 그 외(내비게이션 바/휠/화살표)는
+    /// 가로 슬라이드를 유지합니다.
     pub(crate) fn start_page_anim(&mut self, from: usize, to: usize) {
         if from == to {
             return;
@@ -388,11 +392,13 @@ impl FreeDfApp {
         }
         // The current texture still holds the old page; keep it for the outgoing
         // frame and force a fresh render for the new page.
+        let vertical = std::mem::take(&mut self.transition_vertical);
         self.prev_texture = self.texture.take();
         self.render_dirty = true;
         self.page_anim = Some(PageAnim {
             progress: 0.0,
             direction: if to > from { 1.0 } else { -1.0 },
+            vertical,
         });
     }
 

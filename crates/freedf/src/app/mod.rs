@@ -88,6 +88,8 @@ pub(crate) struct PageAnim {
     progress: f32,
     /// +1.0 = next page (slides in from the right), -1.0 = previous (from the left)
     direction: f32,
+    /// 세로(위/아래) 전환 여부 — PgUp/PgDn 키 전용. false면 기존 가로 슬라이드.
+    vertical: bool,
 }
 
 /// A stroke currently being drawn
@@ -521,6 +523,8 @@ pub struct FreeDfApp {
     zoom_anchor_ui: Option<[f32; 2]>,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
+    /// 다음 페이지 전환을 세로로 할지 (PgUp/PgDn 키가 세팅) — 시작 시 소비
+    transition_vertical: bool,
     /// Texture of the outgoing page during a transition
     prev_texture: Option<egui::TextureHandle>,
     /// Page index before the latest page change (drives the animation direction)
@@ -659,7 +663,7 @@ impl FreeDfApp {
         } else {
             crate::settings::SessionState::default().favorite_colors
         };
-        let text_highlight_snap = if has { s.text_highlight_snap } else { true };
+        let text_highlight_snap = if has { s.text_highlight_snap } else { false };
         let tool_order = if has {
             s.tool_order.clone()
         } else {
@@ -725,6 +729,7 @@ impl FreeDfApp {
             zoom_anchor_page: None,
             zoom_anchor_ui: None,
             page_anim: None,
+            transition_vertical: false,
             prev_texture: None,
             transition_last_page: 0,
             narrow_chrome_expanded: false,
@@ -1031,10 +1036,15 @@ impl FreeDfApp {
         let typing = ctx.egui_wants_keyboard_input();
         if !typing {
             if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+                // 세로 전환 애니메이션 (세로로 늘어선 페이지처럼 위/아래로).
+                self.transition_vertical = true;
                 self.next_page_auto();
+                self.transition_vertical = false; // (이동이 없었으면 누수 방지)
             }
             if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+                self.transition_vertical = true;
                 self.prev_page();
+                self.transition_vertical = false;
             }
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 self.next_page();
