@@ -389,12 +389,12 @@ mod windows_raw {
 
     use windows::core::PCWSTR;
     use windows::Win32::Devices::HumanInterfaceDevice::HID_USAGE_PAGE_DIGITIZER;
-    use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::Graphics::Gdi::HBRUSH;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::{
-        GetRawInputData, GetRawInputDeviceInfoW, RegisterRawInputDevices, HRAWINPUT,
-        RAWINPUTDEVICE, RAWINPUTHEADER, RIDEV_INPUTSINK, RIDI_DEVICENAME, RID_INPUT, RIM_TYPEHID,
+        GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
+        RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEHID,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, HCURSOR, HICON,
@@ -538,7 +538,6 @@ mod windows_raw {
         let header_size = std::mem::size_of::<RAWINPUTHEADER>() as u32;
         let mut size: u32 = 0;
         let r1 = unsafe { GetRawInputData(hraw, RID_INPUT, None, &mut size, header_size) };
-        eprintln!("[pen_input] read_hid: r1={r1} size={size}");
         if r1 == u32::MAX || size < header_size + 8 || size > 64 * 1024 {
             return None;
         }
@@ -560,13 +559,9 @@ mod windows_raw {
         // 헤더는 unaligned read로 **값 복사** (짧은 버퍼에 참조를 만들지 않음).
         let header: RAWINPUTHEADER =
             unsafe { std::ptr::read_unaligned(buf.as_ptr() as *const RAWINPUTHEADER) };
-        eprintln!("[pen_input] read_hid: dwType={}", header.dwType);
         if header.dwType != RIM_TYPEHID.0 {
             return None;
         }
-        eprintln!("[pen_input] read_hid: device_name 조회");
-        let device = device_name(header.hDevice);
-        eprintln!("[pen_input] read_hid: device={device}");
         // RAWHID 레이아웃: dwSizeHid(4) + dwCount(4) + bRawData[dwCount].
         let base = header_size as usize;
         if base + 8 > buf.len() {
@@ -580,36 +575,9 @@ mod windows_raw {
             return None;
         }
         Some(RawReport {
-            device,
+            device: String::new(), // 장치 경로 조회 생략 (원인 미상 힙 손상 방지)
             bytes: buf[data_off..end].to_vec(),
         })
-    }
-
-    /// hDevice의 장치 경로(`\\?\HID#...`)를 조회합니다.
-    fn device_name(handle: HANDLE) -> String {
-        let mut size: u32 = 0;
-        let r1 = unsafe { GetRawInputDeviceInfoW(Some(handle), RIDI_DEVICENAME, None, &mut size) };
-        eprintln!("[pen_input] device_name: r1={r1} size={size}");
-        if r1 == u32::MAX || size == 0 || size == u32::MAX || size > 8192 {
-            return String::new();
-        }
-        // 여유분(+8 워드) — 종료 널 등 오프바이원 쓰기를 전부 흡수합니다.
-        let words = (size / 2) as usize + 8;
-        let mut buf: Vec<u16> = vec![0; words];
-        let mut cap_bytes = (words * 2) as u32;
-        let r2 = unsafe {
-            GetRawInputDeviceInfoW(
-                Some(handle),
-                RIDI_DEVICENAME,
-                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
-                &mut cap_bytes,
-            )
-        };
-        if r2 == u32::MAX {
-            return String::new();
-        }
-        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        String::from_utf16_lossy(&buf[..len])
     }
 }
 

@@ -38,7 +38,7 @@ fn main() {
             let mut repeat: u32 = 0;
             let mut last_dev = String::new();
             while let Ok(rep) = rx.recv() {
-                if rep.device != last_dev {
+                if !rep.device.is_empty() && rep.device != last_dev {
                     println!("[device] {}", rep.device);
                     last_dev = rep.device;
                 }
