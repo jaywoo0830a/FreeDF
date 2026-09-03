@@ -22,19 +22,20 @@ fn load_document_bundle(
     let pdf_bytes = db.load_pdf(doc_id).ok_or_else(|| {
         format!("{} has no PDF content in the database.", row.title)
     })?;
-    let _ = tx.send(LoaderMsg::Stage("Loading: annotations…".into()));
-    let store = db.load_store(doc_id);
-    let _ = tx.send(LoaderMsg::Stage("Loading: history & session…".into()));
-    let edits = db.load_edits(doc_id);
-    let session = db.load_session(doc_id);
+    // 주석(획 전체)·페이지·편집 저널·세션을 한 번의 왕복으로 로드
+    // (migration 0007 — 서버가 JSONB로 집계, 클라이언트는 단일 패스 파싱).
+    let _ = tx.send(LoaderMsg::Stage(format!(
+        "Loading: annotations, history & session…"
+    )));
+    let bundle = db.load_bundle(doc_id);
     Ok(LoaderBundle {
         doc_id,
         is_note,
         row,
         pdf_bytes,
-        store,
-        edits,
-        session,
+        store: bundle.store,
+        edits: bundle.edits,
+        session: bundle.session,
     })
 }
 
@@ -984,8 +985,9 @@ impl FreeDfApp {
         // DB에 저장된 최신 상태로 재로드 (메모리 변경 폐기).
         // 로컬 캐시가 있으면 먼저 무효화해 강제로 원격에서 다시 읽습니다.
         self.db.invalidate_document(doc_id);
-        self.set_store(self.db.load_store(doc_id));
-        self.restore_history_from_db();
+        let bundle = self.db.load_bundle(doc_id);
+        self.set_store(bundle.store);
+        self.restore_history_from_edits(&bundle.edits);
         self.render_dirty = true;
         self.status = Some("Annotations reloaded from database.".to_string());
     }

@@ -53,6 +53,35 @@ pub struct RecentRow {
     pub origin_path: Option<String>,
 }
 
+/// 문서 전체 상태 로드 번들 (migration 0007 — 왕복 1회 + 단일 패스 파싱).
+#[derive(Debug, Default)]
+pub struct LoadedBundle {
+    pub store: AnnotationStore,
+    pub edits: Vec<freedf_core::history::Edit>,
+    pub session: Option<Value>,
+}
+
+/// document_load 함수가 집계해 반환하는 획 행 (서버 JSONB → 단일 패스 serde).
+#[derive(serde::Deserialize)]
+struct StrokeRowSerde {
+    id: u64,
+    page_index: usize,
+    tool: String,
+    color: Vec<i32>,
+    width: f32,
+    points: Vec<StrokePoint>,
+    created_at: i64,
+}
+
+/// document_load 함수가 집계해 반환하는 페이지 행.
+#[derive(serde::Deserialize)]
+struct PageRowSerde {
+    page_index: usize,
+    style: String,
+    color: Vec<i32>,
+    bookmarked: bool,
+}
+
 /// DB 핸들. 단일 연결을 `Mutex`로 감싸 UI 스레드 어디서든 동기 호출합니다.
 #[derive(Clone)]
 pub struct Db {
@@ -138,6 +167,22 @@ impl Db {
             return Err(
                 "FreeDF schema is outdated — run server/db/up.sh on the database host \
                  (migration 0006_document_sync is missing)"
+                    .to_string(),
+            );
+        }
+        // 로드 함수(migration 0007)도 필수 — 주석/저널/세션을 한 번에 로드합니다.
+        let has_load: Option<String> = client
+            .query_opt(
+                "SELECT to_regprocedure('public.document_load(bigint)')::text",
+                &[],
+            )
+            .ok()
+            .flatten()
+            .map(|r| r.get(0));
+        if has_load.is_none() {
+            return Err(
+                "FreeDF schema is outdated — run server/db/up.sh on the database host \
+                 (migration 0007_document_load is missing)"
                     .to_string(),
             );
         }
@@ -245,28 +290,6 @@ impl Db {
     }
 
     // ---------- pages (paper + bookmarks) ----------
-
-    pub fn load_pages(&self, doc_id: i64) -> Vec<(i32, PagePaper, bool)> {
-        let mut c = conn_guard(&self.conn);
-        c.query(
-            "SELECT page_index, style, color, bookmarked
-             FROM pages WHERE doc_id = $1 ORDER BY page_index",
-            &[&doc_id],
-        )
-        .map(|rows| {
-            rows.iter()
-                .map(|r| {
-                    let color: Vec<i32> = r.get(2);
-                    let paper = PagePaper {
-                        style: style_from(r.get(1)),
-                        color: color_from_i32(&color),
-                    };
-                    (r.get(0), paper, r.get(3))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-    }
 
     /// 페이지 하나의 용지/북마크 상태를 저장합니다.
     pub fn upsert_page(
@@ -432,59 +455,63 @@ impl Db {
         .map_err(|e| format!("document_sync failed: {e}"))
     }
 
-    /// 문서의 전체 주석/용지/북마크를 메모리 스토어로 로드합니다.
-    pub fn load_store(&self, doc_id: i64) -> AnnotationStore {
+    /// 문서의 전체 주석/용지/북마크/저널/세션을 **한 번의 왕복**으로 로드
+    /// (migration 0007 함수) — 서버가 JSONB 배열로 집계해 주므로 클라이언트는
+    /// 단일 패스 serde 파싱으로 끝납니다 (획마다 개별 파싱 없음).
+    pub fn load_bundle(&self, doc_id: i64) -> LoadedBundle {
+        let mut c = conn_guard(&self.conn);
+        let row = match c.query_opt(
+            "SELECT strokes, pages, edits, session FROM public.document_load($1)",
+            &[&doc_id],
+        ) {
+            Ok(Some(r)) => r,
+            _ => return LoadedBundle::default(),
+        };
+        let strokes_val: Value = row.get(0);
+        let pages_val: Value = row.get(1);
+        let edits_val: Value = row.get(2);
+        let session: Option<Value> = row.get(3);
         let mut store = AnnotationStore::new();
-        // 스트로크 (가드를 블록 안에서 해제 — 아래 load_pages가 다시 잠급니다)
-        {
-            let mut c = conn_guard(&self.conn);
-            if let Ok(rows) = c.query(
-                "SELECT page_index, id, tool, color, width, points, created_at FROM strokes
-                 WHERE doc_id = $1 ORDER BY id",
-                &[&doc_id],
-            ) {
-                let mut grouped: BTreeMap<i32, Vec<Stroke>> = BTreeMap::new();
-                for r in &rows {
-                    let page_index: i32 = r.get(0);
-                    let width: f32 = r.get(4);
-                    let points_value: Value = r.get(5);
-                    let points: Vec<StrokePoint> =
-                        serde_json::from_value(points_value).unwrap_or_default();
-                    let tool = freedf_core::model::ToolType::from_label(r.get(2));
-                    let color: Vec<i32> = r.get(3);
-                    let stroke = Stroke {
-                        id: r.get::<_, i64>(1) as u64,
-                        tool,
-                        color: color_from_i32(&color),
-                        width,
-                        points,
-                        created_ms: r.get::<_, i64>(6).max(0) as u64,
-                    };
-                    grouped.entry(page_index).or_default().push(stroke);
-                }
-                for (page, strokes) in grouped {
-                    store.add_strokes(page as usize, strokes);
+        if let Ok(rows) = serde_json::from_value::<Vec<StrokeRowSerde>>(strokes_val) {
+            let mut grouped: BTreeMap<usize, Vec<Stroke>> = BTreeMap::new();
+            for s in rows {
+                grouped.entry(s.page_index).or_default().push(Stroke {
+                    id: s.id,
+                    tool: freedf_core::model::ToolType::from_label(&s.tool),
+                    color: color_from_i32(&s.color),
+                    width: s.width,
+                    points: s.points,
+                    created_ms: s.created_at.max(0) as u64,
+                });
+            }
+            for (page, strokes) in grouped {
+                store.add_strokes(page, strokes);
+            }
+        }
+        if let Ok(pages) = serde_json::from_value::<Vec<PageRowSerde>>(pages_val) {
+            for p in pages {
+                store.set_paper(
+                    p.page_index,
+                    PagePaper {
+                        style: style_from(&p.style),
+                        color: color_from_i32(&p.color),
+                    },
+                );
+                if p.bookmarked {
+                    store.toggle_bookmark(p.page_index);
                 }
             }
         }
-        // 용지 + 북마크
-        for (idx, paper, bookmarked) in self.load_pages(doc_id) {
-            store.set_paper(idx as usize, paper);
-            if bookmarked {
-                store.toggle_bookmark(idx as usize);
-            }
+        let edits = serde_json::from_value::<Vec<freedf_core::history::Edit>>(edits_val)
+            .unwrap_or_default();
+        LoadedBundle {
+            store,
+            edits,
+            session,
         }
-        store
     }
 
     // ---------- sessions ----------
-
-    pub fn load_session(&self, doc_id: i64) -> Option<Value> {
-        let mut c = conn_guard(&self.conn);
-        c.query_opt("SELECT state FROM sessions WHERE doc_id = $1", &[&doc_id])
-            .ok()?
-            .map(|r| r.get(0))
-    }
 
     pub fn upsert_session(&self, doc_id: i64, state: &Value) {
         let mut c = conn_guard(&self.conn);
@@ -588,24 +615,6 @@ impl Db {
     /// 편집 하나를 저널에 기록 (배치 경로의 단일 편집 케이스).
     pub fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
         self.log_edits(doc_id, std::slice::from_ref(edit));
-    }
-
-    /// 편집 저널을 시간 순으로 로드합니다 (재시작 후 undo 스택 복원용).
-    pub fn load_edits(&self, doc_id: i64) -> Vec<freedf_core::history::Edit> {
-        let mut c = conn_guard(&self.conn);
-        c.query(
-            "SELECT edit FROM doc_edits WHERE doc_id = $1 ORDER BY id ASC",
-            &[&doc_id],
-        )
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|r| {
-                    let v: Value = r.get(0);
-                    serde_json::from_value(v).ok()
-                })
-                .collect()
-        })
-        .unwrap_or_default()
     }
 
     /// 문서의 편집 저널 전체 삭제 (페이지 회전처럼 좌표계가 바뀌는 구조 연산 시).
@@ -734,13 +743,10 @@ impl StorageBackend for Db {
     ) -> Result<(), String> {
         Db::sync_document(self, doc_id, page_count, store, entries, pdf)
     }
-    fn load_store(&self, doc_id: i64) -> AnnotationStore {
-        Db::load_store(self, doc_id)
+    fn load_bundle(&self, doc_id: i64) -> LoadedBundle {
+        Db::load_bundle(self, doc_id)
     }
 
-    fn load_session(&self, doc_id: i64) -> Option<Value> {
-        Db::load_session(self, doc_id)
-    }
     fn upsert_session(&self, doc_id: i64, state: &Value) {
         Db::upsert_session(self, doc_id, state)
     }
@@ -764,9 +770,6 @@ impl StorageBackend for Db {
     }
     fn log_edits(&self, doc_id: i64, edits: &[freedf_core::history::Edit]) {
         Db::log_edits(self, doc_id, edits)
-    }
-    fn load_edits(&self, doc_id: i64) -> Vec<freedf_core::history::Edit> {
-        Db::load_edits(self, doc_id)
     }
     fn clear_edits(&self, doc_id: i64) {
         Db::clear_edits(self, doc_id)
@@ -822,7 +825,7 @@ mod tests {
         assert!(row.is_note());
         assert_eq!(row.page_count, 1);
 
-        // ── strokes (시퀀스 id → load_store 일치) ──
+        // ── strokes (시퀀스 id → load_bundle 스토어 일치) ──
         let ids = db.alloc_stroke_ids(2);
         assert_eq!(ids.len(), 2);
         let strokes = vec![
@@ -847,7 +850,7 @@ mod tests {
             },
         ];
         db.insert_strokes(doc_id, 0, &strokes);
-        let store = db.load_store(doc_id);
+        let store = db.load_bundle(doc_id).store;
         assert_eq!(store.total_stroke_count(), 2);
         assert_eq!(store.strokes_on(0)[0].id, ids[0] as u64);
         assert_eq!(store.strokes_on(0)[0].tool, ToolType::Pen);
@@ -860,16 +863,21 @@ mod tests {
             color: [255, 255, 255, 255],
         };
         db.upsert_page(doc_id, 0, &paper, true);
-        let pages = db.load_pages(doc_id);
-        assert_eq!(pages.len(), 1);
-        assert!(pages[0].2, "bookmarked");
-        assert_eq!(pages[0].1.style, PaperStyle::Grid);
-        assert_eq!(pages[0].1.color, [255, 255, 255, 255]);
+        let pages_bundle = db.load_bundle(doc_id);
+        assert!(pages_bundle.store.is_bookmarked(0), "bookmarked");
+        assert_eq!(
+            pages_bundle.store.paper_on(0).map(|p| p.style),
+            Some(PaperStyle::Grid)
+        );
+        assert_eq!(
+            pages_bundle.store.paper_on(0).map(|p| p.color),
+            Some([255, 255, 255, 255])
+        );
 
         // ── sessions ──
         let state = serde_json::json!({"page": 2, "zoom": 1.5});
         db.upsert_session(doc_id, &state);
-        assert_eq!(db.load_session(doc_id).unwrap(), state);
+        assert_eq!(db.load_bundle(doc_id).session.unwrap(), state);
 
         // ── app_state ──
         db.set_app_state("smoke-key", &serde_json::json!({"a": 1}));
@@ -882,7 +890,7 @@ mod tests {
 
         // ── document_sync 함수 (migration 0006) — 한 번의 왕복 원자 동기화 ──
         {
-            let mut store2 = db.load_store(doc_id);
+            let mut store2 = db.load_bundle(doc_id).store;
             let sid = db.alloc_stroke_ids(1)[0];
             store2.add_strokes(
                 0,
@@ -903,10 +911,13 @@ mod tests {
             ];
             db.sync_document(doc_id, 3, &store2, &entries2, Some(b"%PDF-1.4 synced"))
                 .expect("sync_document");
-            assert_eq!(db.load_store(doc_id).total_stroke_count(), 3);
-            let pages = db.load_pages(doc_id);
-            assert_eq!(pages.len(), 3);
-            assert!(pages[1].2);
+            let synced = db.load_bundle(doc_id);
+            assert_eq!(synced.store.total_stroke_count(), 3);
+            for i in 0..3 {
+                assert!(synced.store.paper_on(i).is_some(), "page {i} paper");
+            }
+            assert!(synced.store.is_bookmarked(1));
+            assert!(!synced.store.is_bookmarked(2));
             assert_eq!(db.get_document(doc_id).unwrap().page_count, 3);
             assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
 
@@ -914,8 +925,10 @@ mod tests {
             let entries3 = vec![(0i32, paper, false)];
             db.sync_document(doc_id, 1, &store2, &entries3, None)
                 .expect("sync shrink");
-            assert_eq!(db.load_pages(doc_id).len(), 1);
-            assert_eq!(db.load_store(doc_id).total_stroke_count(), 3);
+            let shrunk = db.load_bundle(doc_id);
+            assert!(shrunk.store.paper_on(1).is_none(), "page 1 removed");
+            assert!(shrunk.store.paper_on(2).is_none(), "page 2 removed");
+            assert_eq!(shrunk.store.total_stroke_count(), 3);
             assert_eq!(db.get_document(doc_id).unwrap().page_count, 1);
             // PDF는 NULL이면 유지.
             assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
@@ -965,7 +978,7 @@ mod tests {
                 strokes: strokes.clone(),
             },
         );
-        let edits = db.load_edits(doc_id);
+        let edits = db.load_bundle(doc_id).edits;
         assert_eq!(edits.len(), 2);
         assert!(matches!(edits[0], Edit::AddStrokes { .. }));
         assert!(matches!(edits[1], Edit::RemoveStrokes { .. }));
@@ -1002,10 +1015,11 @@ mod tests {
         // ── delete + cascade ──
         db.delete_document(doc_id).expect("delete");
         assert!(db.get_document(doc_id).is_none());
-        assert_eq!(db.load_store(doc_id).total_stroke_count(), 0);
-        assert!(db.load_session(doc_id).is_none());
+        let after = db.load_bundle(doc_id);
+        assert_eq!(after.store.total_stroke_count(), 0);
+        assert!(after.session.is_none());
         assert!(db.load_recents().iter().all(|r| r.doc_id != doc_id));
-        assert!(db.load_edits(doc_id).is_empty());
+        assert!(after.edits.is_empty());
     }
 
     /// 왕복 수 스트레스 검증 (기본 제외) — 대량 획 삽입과 전체 동기화 측정.
@@ -1057,14 +1071,19 @@ mod tests {
             .expect("sync_document");
         let sync_ms = t1.elapsed().as_millis();
 
-        assert_eq!(db.load_store(doc_id).total_stroke_count(), N);
+        let t2 = std::time::Instant::now();
+        let loaded = db.load_bundle(doc_id);
+        let load_ms = t2.elapsed().as_millis();
+
+        assert_eq!(loaded.store.total_stroke_count(), N);
         println!(
-            "batch perf: insert {N} strokes = {insert_ms}ms, document_sync = {sync_ms}ms"
+            "batch perf: insert {N} strokes = {insert_ms}ms, document_sync = {sync_ms}ms, document_load = {load_ms}ms"
         );
 
         // 관대한 상한 — 행별 왕복이었다면 수 분 걸리는 시나리오입니다.
         assert!(insert_ms < 30_000, "insert too slow: {insert_ms}ms");
         assert!(sync_ms < 30_000, "sync too slow: {sync_ms}ms");
+        assert!(load_ms < 30_000, "load too slow: {load_ms}ms");
 
         db.delete_document(doc_id).expect("delete");
     }

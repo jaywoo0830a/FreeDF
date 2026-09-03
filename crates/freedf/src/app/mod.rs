@@ -1666,15 +1666,6 @@ impl FreeDfApp {
         }
     }
 
-    /// DB 편집 저널을 재생해 undo 스택을 복원합니다 (문서 열기/재로드 시).
-    pub(crate) fn restore_history_from_db(&mut self) {
-        self.history = History::new(256);
-        if let Some(doc_id) = self.doc_id {
-            let edits = self.db.load_edits(doc_id);
-            self.restore_history_from_edits(&edits);
-        }
-    }
-
     /// 백그라운드에서 이미 가져온 편집 저널로 undo 스택을 복원합니다.
     pub(crate) fn restore_history_from_edits(&mut self, edits: &[Edit]) {
         self.history = History::new(256);

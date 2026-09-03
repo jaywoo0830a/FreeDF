@@ -13,7 +13,7 @@
 //! (기본 `postgres`). 미디어(녹음) 파일 스트리밍은 이 트레이트와 별개로
 //! `server.rs`(HTTP API)가 담당합니다 — 리소스 API와 DB 인터페이스 분리.
 
-pub use crate::db::{DocRow, RecentRow};
+pub use crate::db::{DocRow, LoadedBundle, RecentRow};
 
 use crate::cache::{apply_op_to_store, CacheInner, LocalCache, PendingOp};
 use freedf_core::history::Edit;
@@ -50,7 +50,9 @@ pub trait StorageBackend: Send + Sync {
     fn alloc_stroke_ids(&self, n: usize) -> Vec<i64>;
     fn insert_strokes(&self, doc_id: i64, page_index: i32, strokes: &[Stroke]);
     fn delete_strokes(&self, doc_id: i64, ids: &[i64]);
-    fn load_store(&self, doc_id: i64) -> AnnotationStore;
+
+    /// 문서의 주석/페이지/저널/세션을 **한 번의 왕복**으로 로드 (스키마 0007 함수).
+    fn load_bundle(&self, doc_id: i64) -> LoadedBundle;
 
     /// 문서 전체 저장을 **한 번의 왕복**으로 원자 반영 (스키마 0006 저장 함수).
     fn sync_document(
@@ -63,7 +65,6 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<(), String>;
 
     // ---------- sessions ----------
-    fn load_session(&self, doc_id: i64) -> Option<Value>;
     fn upsert_session(&self, doc_id: i64, state: &Value);
 
     // ---------- 전역 앱 상태 ----------
@@ -82,7 +83,6 @@ pub trait StorageBackend: Send + Sync {
             self.log_edit(doc_id, e);
         }
     }
-    fn load_edits(&self, doc_id: i64) -> Vec<Edit>;
     fn clear_edits(&self, doc_id: i64);
 
     // ---------- 사전 캐시 ----------
@@ -213,8 +213,8 @@ impl StorageBackend for DisconnectedStorage {
     }
     fn insert_strokes(&self, _doc_id: i64, _page_index: i32, _strokes: &[Stroke]) {}
     fn delete_strokes(&self, _doc_id: i64, _ids: &[i64]) {}
-    fn load_store(&self, _doc_id: i64) -> AnnotationStore {
-        AnnotationStore::new()
+    fn load_bundle(&self, _doc_id: i64) -> LoadedBundle {
+        LoadedBundle::default()
     }
     fn sync_document(
         &self,
@@ -226,9 +226,6 @@ impl StorageBackend for DisconnectedStorage {
     ) -> Result<(), String> {
         Err("Not connected to the database yet.".into())
     }
-    fn load_session(&self, _doc_id: i64) -> Option<Value> {
-        None
-    }
     fn upsert_session(&self, _doc_id: i64, _state: &Value) {}
     fn get_app_state(&self, _key: &str) -> Option<Value> {
         None
@@ -239,9 +236,6 @@ impl StorageBackend for DisconnectedStorage {
     }
     fn touch_recent(&self, _kind: &str, _doc_id: i64, _title: &str) {}
     fn log_edit(&self, _doc_id: i64, _edit: &Edit) {}
-    fn load_edits(&self, _doc_id: i64) -> Vec<Edit> {
-        Vec::new()
-    }
     fn clear_edits(&self, _doc_id: i64) {}
     fn get_word_cache(&self, _word: &str) -> Option<Value> {
         None
@@ -593,20 +587,36 @@ impl StorageBackend for CachingBackend {
         Ok(())
     }
 
-    fn load_store(&self, doc_id: i64) -> AnnotationStore {
+    fn load_bundle(&self, doc_id: i64) -> LoadedBundle {
         {
             let mut g = self.inner.lock().expect("cache mutex poisoned");
-            if let Some(store) = g.stores.get(&doc_id) {
-                // 메모리 병합 상태 — 쓰기 시 동기 갱신.
-                return store.clone();
-            }
-            if let Some(store) = g.cache.get_store(doc_id) {
-                g.stores.insert(doc_id, store.clone());
-                return store;
+            let has_pending = g.pending.iter().any(|o| o.doc_id() == Some(doc_id));
+            if !has_pending {
+                // 캐시 히트 — 대기열 없으면 메모리/디스크 스냅샷이 곧 최신 상태.
+                let store = g
+                    .stores
+                    .get(&doc_id)
+                    .cloned()
+                    .or_else(|| g.cache.get_store(doc_id));
+                let edits = g
+                    .edits
+                    .get(&doc_id)
+                    .cloned()
+                    .or_else(|| g.cache.get_edits(doc_id));
+                if let (Some(store), Some(edits)) = (store, edits) {
+                    g.stores.insert(doc_id, store.clone());
+                    g.edits.insert(doc_id, edits.clone());
+                    return LoadedBundle {
+                        store,
+                        edits,
+                        session: g.cache.get_session(doc_id),
+                    };
+                }
             }
         }
-        let mut store = self.remote.load_store(doc_id);
-        let pending_for_doc: Vec<PendingOp> = {
+        // 캐시 미스 — 원격 1왕복 + 대기열 병합.
+        let mut bundle = self.remote.load_bundle(doc_id);
+        let pending: Vec<PendingOp> = {
             let g = self.inner.lock().expect("cache mutex poisoned");
             g.pending
                 .iter()
@@ -614,33 +624,31 @@ impl StorageBackend for CachingBackend {
                 .cloned()
                 .collect()
         };
-        if pending_for_doc.is_empty() {
+        if pending.is_empty() {
             let mut g = self.inner.lock().expect("cache mutex poisoned");
-            g.stores.insert(doc_id, store.clone());
+            g.stores.insert(doc_id, bundle.store.clone());
             g.dirty_stores.insert(doc_id);
+            g.edits.insert(doc_id, bundle.edits.clone());
+            g.dirty_edits.insert(doc_id);
+            if let Some(s) = &bundle.session {
+                g.cache.put_session(doc_id, s);
+            }
         } else {
-            // 대기열이 남아 있으면 캐시하지 않음 (다음 로드의 이중 적용 방지).
-            for op in &pending_for_doc {
-                apply_op_to_store(&mut store, op);
+            for op in &pending {
+                apply_op_to_store(&mut bundle.store, op);
+                match op {
+                    PendingOp::LogEdit { edit, .. } => bundle.edits.push(edit.clone()),
+                    PendingOp::LogEdits { edits, .. } => {
+                        bundle.edits.extend(edits.iter().cloned())
+                    }
+                    PendingOp::UpsertSession { state, .. } => {
+                        bundle.session = Some(state.clone())
+                    }
+                    _ => {}
+                }
             }
         }
-        store
-    }
-
-    fn load_session(&self, doc_id: i64) -> Option<Value> {
-        {
-            let g = self.inner.lock().expect("cache mutex poisoned");
-            if let Some(state) = g.cache.get_session(doc_id) {
-                return Some(state);
-            }
-        }
-        let state = self.remote.load_session(doc_id)?;
-        self.inner
-            .lock()
-            .expect("cache mutex poisoned")
-            .cache
-            .put_session(doc_id, &state);
-        Some(state)
+        bundle
     }
 
     fn upsert_session(&self, doc_id: i64, state: &Value) {
@@ -703,24 +711,6 @@ impl StorageBackend for CachingBackend {
 
     fn log_edits(&self, doc_id: i64, edits: &[Edit]) {
         self.remote.log_edits(doc_id, edits);
-    }
-
-    fn load_edits(&self, doc_id: i64) -> Vec<Edit> {
-        {
-            let mut g = self.inner.lock().expect("cache mutex poisoned");
-            if let Some(edits) = g.edits.get(&doc_id) {
-                return edits.clone();
-            }
-            if let Some(edits) = g.cache.get_edits(doc_id) {
-                g.edits.insert(doc_id, edits.clone());
-                return edits;
-            }
-        }
-        let edits = self.remote.load_edits(doc_id);
-        let mut g = self.inner.lock().expect("cache mutex poisoned");
-        g.edits.insert(doc_id, edits.clone());
-        g.dirty_edits.insert(doc_id);
-        edits
     }
 
     fn clear_edits(&self, doc_id: i64) {
@@ -944,7 +934,7 @@ mod tests {
             .expect("insert");
 
         // 1) 원격 로드 → 캐시에 저장.
-        let s1 = cached.load_store(doc_id);
+        let s1 = cached.load_bundle(doc_id).store;
         assert_eq!(s1.stroke_count_on(0), 0);
         // 2) write-behind: 캐시엔 즉시 병합, 원격엔 아직 없음.
         let id = db.alloc_stroke_ids(1)[0];
@@ -957,18 +947,18 @@ mod tests {
             created_ms: 0,
         };
         cached.insert_strokes(doc_id, 0, &[stroke.clone()]);
-        assert_eq!(cached.load_store(doc_id).stroke_count_on(0), 1);
-        assert_eq!(db.load_store(doc_id).stroke_count_on(0), 0);
+        assert_eq!(cached.load_bundle(doc_id).store.stroke_count_on(0), 1);
+        assert_eq!(db.load_bundle(doc_id).store.stroke_count_on(0), 0);
         // 디스크 직렬화는 아직 백그라운드 몫 — 플러시 전엔 파일에 없음.
         let disk = LocalCache::new(dir.clone());
         assert_ne!(disk.get_store(doc_id).map(|s| s.stroke_count_on(0)), Some(1));
         // 3) 동기 플러시 → 원격 반영 + 디스크 캐시 직렬화.
         assert!(cached.flush_pending());
-        assert_eq!(db.load_store(doc_id).stroke_count_on(0), 1);
+        assert_eq!(db.load_bundle(doc_id).store.stroke_count_on(0), 1);
         assert_eq!(disk.get_store(doc_id).map(|s| s.stroke_count_on(0)), Some(1));
         // 4) 무효화 → 원격(병합 상태)에서 다시 로드.
         cached.invalidate_document(doc_id);
-        assert_eq!(cached.load_store(doc_id).stroke_count_on(0), 1);
+        assert_eq!(cached.load_bundle(doc_id).store.stroke_count_on(0), 1);
 
         db.delete_document(doc_id).expect("cleanup");
         let _ = std::fs::remove_dir_all(&dir);
