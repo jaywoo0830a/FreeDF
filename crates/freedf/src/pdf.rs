@@ -241,24 +241,21 @@ impl DocumentView {
 
         let [w_pts, h_pts] = self.page_size_pts(index);
         let w = (target_width.round().clamp(1.0, 65_000.0)) as Pixels;
-        // 회전된 페이지의 표시 종횡비(너비/높이)에 맞는 높이를 명시해야 합니다.
-        // target_width만 주면 pdfium-render가 회전 전(미디어박스) 종횡비로
-        // 비트맵을 만들어 회전 페이지가 찌그러집니다.
+        // 표시 종횡비(너비/높이)에 맞는 높이를 명시해야 합니다. target_width만
+        // 주면 pdfium-render가 어긋난 비트맵을 만들어 회전 페이지가 찌그러집니다.
         let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, 65_000.0)) as Pixels;
         let m = (max_dimension.round().clamp(1.0, 65_000.0)) as Pixels;
-        // ── 회전 렌더링 (중요) ── pdfium의 FPDF_RenderPageBitmap은 페이지의
-        // 내장 /Rotate를 **자동으로 적용하지 않습니다** — 호출자가 rotate 플래그를
-        // 넘겨야 합니다. pdfium-render에서 그 플래그는 config의 `.rotate()`로만
-        // 정해지므로, 페이지에 저장된 회전을 읽어 명시적으로 지정합니다.
-        // 이걸 빼먹으면 Rotate CW/CCW 후에도 내용이 회전되지 않고 그대로 보입니다.
-        let rotation = page.rotation().unwrap_or(PdfPageRenderRotation::None);
+        // ── 회전 렌더링 (중요) ── pdfium은 페이지의 내장 /Rotate를 **렌더 시
+        // 자동 적용**합니다 (CPDF_Page::UpdateDimensions가 page_matrix_에 회전을
+        // 굽고 GetDisplayMatrix가 항상 곱함). 따라서 config에 rotate 플래그를
+        // **다시 넘기면 이중 회전(90+90=180°)이 됩니다** — 넘기지 말 것.
+        // FPDF_RenderPageBitmap의 rotate 인자는 0으로 유지해야 합니다.
 
         let config = PdfRenderConfig::new()
             .set_target_width(w)
             .set_target_height(h)
             .set_maximum_width(m)
             .set_maximum_height(m)
-            .rotate(rotation, true)
             .render_annotations(true)
             .use_lcd_text_rendering(true);
 
@@ -475,16 +472,13 @@ impl DocumentView {
     }
 }
 
-/// 페이지의 표시(회전 반영) 크기(포인트). 회전 90/270이면 너비/높이를 맞바꿉니다.
+/// 페이지의 표시 크기(포인트). **pdfium이 이미 /Rotate를 반영**합니다 —
+/// FPDF_GetPageWidthF/HeightF는 회전 90/270일 때 이미 가로/세로가 뒤바뀐 값을
+/// 돌려주므로(CPDF_Page::UpdateDimensions) 여기서 다시 바꾸면 **이중 교체**가
+/// 되어 회전해도 캔버스 크기가 원래대로 남는 버그가 됩니다.
 fn display_size_of(document: &PdfDocument<'static>, index: usize) -> Option<[f32; 2]> {
     let page = document.pages().get(index as i32).ok()?;
-    let w = page.width().value;
-    let h = page.height().value;
-    let rot = page.rotation().unwrap_or(PdfPageRenderRotation::None);
-    Some(match rot {
-        PdfPageRenderRotation::None | PdfPageRenderRotation::Degrees180 => [w, h],
-        PdfPageRenderRotation::Degrees90 | PdfPageRenderRotation::Degrees270 => [h, w],
-    })
+    Some([page.width().value, page.height().value])
 }
 
 /// 현재 회전 상태에서 시계/반시계 90° 회전한 다음 상태.
