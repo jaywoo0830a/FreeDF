@@ -141,6 +141,350 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
 }
 
 impl FreeDfApp {
+    /// 볼펜(일반 펜) 세부 설정 — 전용 플로팅 창 내용 (툴바 Settings 버튼으로 열림).
+    /// 툴바에는 색/두께/필수 토글만 남기고 나머지는 여기서 지정합니다.
+    fn pen_settings_ui(&mut self, ui: &mut egui::Ui) {
+        // 미리보기: 실제 볼펜 모델 수식으로 그립니다.
+        let preview_color = Color32::from_rgba_unmultiplied(
+            self.pen_color[0],
+            self.pen_color[1],
+            self.pen_color[2],
+            self.pen_color[3],
+        );
+        pen_profile_preview(ui, preview_color, self.pen_width, &self.pen_profile);
+        ui.separator();
+        egui::CollapsingHeader::new("Physics model")
+            .id_salt("pen_win_model")
+            .default_open(true)
+            .show(ui, |ui| {
+                let any_changed = ui
+                    .add(
+                        egui::Slider::new(&mut self.pen_profile.pressure_k, 0.0..=0.5)
+                            .text("Press k"),
+                    )
+                    .on_hover_text(
+                        "Pressure influence (small for ballpens, 0.1~0.3).\n\
+                         0 = constant width.",
+                    )
+                    .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.pen_profile.speed_k, 0.0..=0.3)
+                                .text("Speed k"),
+                        )
+                        .on_hover_text(
+                            "Speed influence (small, 0.05~0.15).\n\
+                             Fast strokes thin slightly.",
+                        )
+                        .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.pen_profile.starve_v, 200.0..=3000.0)
+                                .text("Starve v"),
+                        )
+                        .on_hover_text(
+                            "Speed (pt/s) where ink starvation starts — above this \
+                             the line thins and breaks like a real ballpen.",
+                        )
+                        .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.pen_profile.tilt_k, 0.0..=1.0)
+                                .text("Tilt"),
+                        )
+                        .on_hover_text(
+                            "Tilt influence (continuous, no threshold): laying the pen \
+                             down widens the line up to (1 + tilt_k) times.\n\
+                             egui/winit don't expose pen tilt — needs the HID/WM_POINTER \
+                             hook (`set_pen_tilt`) to feed values.",
+                        )
+                        .changed();
+                if any_changed {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+        egui::CollapsingHeader::new("Ink soak")
+            .id_salt("pen_win_soak")
+            .default_open(true)
+            .show(ui, |ui| {
+                if ui
+                    .checkbox(&mut self.pen_soak.enabled, "Ink soak")
+                    .on_hover_text(
+                        "Ballpen ink soak: after you write, the ink darkens \
+                         slightly as it soaks into the paper (subtler than \
+                         fountain ink). Thickness never changes.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if self.pen_soak.enabled {
+                    let changed = ui
+                        .add(
+                            egui::Slider::new(&mut self.pen_soak.saturate_sec, 0.5..=5.0)
+                                .text("Soak time"),
+                        )
+                        .on_hover_text(
+                            "How long (seconds) fresh ballpen ink takes to \
+                             reach its full color.",
+                        )
+                        .changed()
+                        | ui
+                            .add(
+                                egui::Slider::new(&mut self.pen_soak.initial, 0.1..=0.9)
+                                    .text("Initial"),
+                            )
+                            .on_hover_text(
+                                "How light the ink is the moment it touches \
+                                 paper (lower = starts paler).",
+                            )
+                            .changed();
+                    if changed {
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
+            });
+        egui::CollapsingHeader::new("Ink grain")
+            .id_salt("pen_win_grain")
+            .default_open(false)
+            .show(ui, |ui| {
+                if ink_grain_controls(ui, &mut self.pen_grain) {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+        egui::CollapsingHeader::new("Input & cursor")
+            .id_salt("pen_win_input")
+            .default_open(false)
+            .show(ui, |ui| {
+                egui::ComboBox::from_id_salt("pen_cursor_style_win")
+                    .selected_text(self.pen_cursor_style.label())
+                    .show_ui(ui, |ui| {
+                        for style in PenCursorStyle::all() {
+                            ui.selectable_value(&mut self.pen_cursor_style, style, style.label());
+                        }
+                    })
+                    .response
+                    .on_hover_text("Pen cursor shape");
+                if ui
+                    .checkbox(&mut self.smoothing_enabled, "Stabilize")
+                    .on_hover_text(
+                        "Optional tremor filtering (1€ filter).\n\
+                         Turn off if your tablet driver (e.g. OpenTabletDriver) \
+                         already smooths the input.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if self.smoothing_enabled
+                    && ui
+                        .add(egui::Slider::new(&mut self.smoothing, 0.0..=1.0).text("Strength"))
+                        .on_hover_text(
+                            "Filter strength while Stabilize is on.\n\
+                             0 = raw input, 1 = silky smooth.",
+                        )
+                        .changed()
+                {
+                    self.smoothing = self.smoothing.clamp(0.0, 1.0);
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if ui
+                    .checkbox(&mut self.mouse_draws, "Mouse ink")
+                    .on_hover_text(
+                        "Draw ink with the mouse/trackpad too.\n\
+                         Off (default): mouse & trackpad pan the page — \
+                         only a pen writes, like real note-taking apps.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if ui
+                    .checkbox(&mut self.debug_hud, "Debug HUD")
+                    .on_hover_text(
+                        "Live input overlay: pressure, tilt, tip speed, tip width.\n\
+                         Use it to check what your device actually reports.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+    }
+
+    /// 만년필 세부 설정 — 전용 플로팅 창 내용.
+    fn fountain_settings_ui(&mut self, ui: &mut egui::Ui) {
+        let preview_color = Color32::from_rgba_unmultiplied(
+            self.fountain_color[0],
+            self.fountain_color[1],
+            self.fountain_color[2],
+            self.fountain_color[3],
+        );
+        fountain_profile_preview(
+            ui,
+            preview_color,
+            self.fountain_width,
+            &self.fountain_profile,
+        );
+        ui.separator();
+        egui::CollapsingHeader::new("Physics model")
+            .id_salt("fountain_win_model")
+            .default_open(true)
+            .show(ui, |ui| {
+                let any_changed = ui
+                    .add(
+                        egui::Slider::new(&mut self.fountain_profile.min_width_pt, 0.1..=2.0)
+                            .text("Min"),
+                    )
+                    .on_hover_text("Thinnest line width (pt) when writing fast and light.")
+                    .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.fountain_profile.pressure_alpha, 0.3..=2.0)
+                                .text("Press α"),
+                        )
+                        .on_hover_text(
+                            "Pressure sensitivity: how strongly pressure widens \
+                             the line (0.7~1.2 typical).",
+                        )
+                        .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.fountain_profile.speed_beta, 0.3..=3.0)
+                                .text("Speed β"),
+                        )
+                        .on_hover_text(
+                            "Speed sensitivity: how strongly fast strokes thin \
+                             the line (1.0~1.5 typical).",
+                        )
+                        .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.fountain_profile.speed_ref, 10.0..=200.0)
+                                .text("Speed ref"),
+                        )
+                        .on_hover_text(
+                            "Reference speed (pt/s) — at this speed the speed \
+                             factor is 0.5. Lower = thinner when writing normally.",
+                        )
+                        .changed()
+                    | ui
+                        .add(
+                            egui::Slider::new(&mut self.fountain_profile.tilt_k, 0.0..=1.0)
+                                .text("Tilt"),
+                        )
+                        .on_hover_text(
+                            "Tilt influence: laying the pen down widens the line.\n\
+                             Note: egui/winit don't expose pen tilt yet, so this \
+                             is 0 until a HID/WM_POINTER hook feeds set_pen_tilt.",
+                        )
+                        .changed();
+                if ui
+                    .checkbox(&mut self.fountain_profile.italic, "Italic nib")
+                    .on_hover_text(
+                        "Stub/italic nib effect: strokes along the nib axis are \
+                         wide, across it are thin — no azimuth sensor needed, \
+                         the nib angle is fixed.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                let any_changed2 = if self.fountain_profile.italic {
+                    ui.add(
+                        egui::Slider::new(&mut self.fountain_profile.nib_angle_deg, 0.0..=180.0)
+                            .text("Nib angle"),
+                    )
+                    .on_hover_text("Nib axis direction (degrees).")
+                    .changed()
+                        | ui
+                            .add(
+                                egui::Slider::new(&mut self.fountain_profile.italic_k, 0.0..=0.6)
+                                    .text("Contrast"),
+                            )
+                            .on_hover_text("Italic direction contrast (0.2~0.5 looks stub-like).")
+                            .changed()
+                } else {
+                    false
+                };
+                let dwell_changed = ui
+                    .add(
+                        egui::Slider::new(&mut self.fountain_profile.dwell_k, 0.0..=0.5)
+                            .text("Dwell"),
+                    )
+                    .on_hover_text(
+                        "Ink pooling when the pen nearly stops — the classic \
+                         fountain-pen blob at the end of a stroke.",
+                    )
+                    .changed();
+                if any_changed || any_changed2 || dwell_changed {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+        egui::CollapsingHeader::new("Ink soak")
+            .id_salt("fountain_win_soak")
+            .default_open(true)
+            .show(ui, |ui| {
+                if ui
+                    .checkbox(&mut self.fountain_soak.enabled, "Ink soak")
+                    .on_hover_text(
+                        "Fountain ink soak: after you write, the ink gradually \
+                         darkens as it soaks into the paper. Line thickness \
+                         stays exactly as drawn — only the color deepens.",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if self.fountain_soak.enabled {
+                    let changed = ui
+                        .add(
+                            egui::Slider::new(&mut self.fountain_soak.saturate_sec, 0.5..=5.0)
+                                .text("Soak time"),
+                        )
+                        .on_hover_text(
+                            "How long (seconds) fresh ink takes to deepen \
+                             from its light state to the full ink color.",
+                        )
+                        .changed()
+                        | ui
+                            .add(
+                                egui::Slider::new(&mut self.fountain_soak.initial, 0.1..=0.9)
+                                    .text("Initial"),
+                            )
+                            .on_hover_text(
+                                "How light the ink is the moment it touches \
+                                 paper (lower = starts paler).",
+                            )
+                            .changed();
+                    if changed {
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
+            });
+        egui::CollapsingHeader::new("Ink grain")
+            .id_salt("fountain_win_grain")
+            .default_open(false)
+            .show(ui, |ui| {
+                if ink_grain_controls(ui, &mut self.fountain_grain) {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+    }
+
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
             // Compact spacing + padding; uniform control height for tidy rows
@@ -694,27 +1038,17 @@ impl FreeDfApp {
                         if width_resp.changed() {
                             self.save_session();
                         }
-                        // 미니 스트로크 미리보기: 실제 볼펜 모델 수식으로 그립니다.
-                        let preview_color = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            self.pen_color[3],
-                        );
-                        pen_profile_preview(ui, preview_color, self.pen_width, &self.pen_profile);
-                        egui::ComboBox::from_id_salt("pen_cursor_style")
-                            .selected_text(self.pen_cursor_style.label())
-                            .show_ui(ui, |ui| {
-                                for style in PenCursorStyle::all() {
-                                    ui.selectable_value(
-                                        &mut self.pen_cursor_style,
-                                        style,
-                                        style.label(),
-                                    );
-                                }
-                            })
-                            .response
-                            .on_hover_text("Pen cursor shape");
+                        // 세부 설정 전용 창 트리거 — 툴바는 필수만 남깁니다.
+                        if ui
+                            .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
+                            .on_hover_text(
+                                "Open the ballpen settings window:\n\
+                                 physics model, ink soak, ink grain, cursor, smoothing.",
+                            )
+                            .clicked()
+                        {
+                            self.tool_settings_open = true;
+                        }
                         if ui
                             .checkbox(&mut self.pressure_enabled, "Pressure")
                             .on_hover_text(
@@ -732,122 +1066,6 @@ impl FreeDfApp {
                             )
                             .changed()
                         {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        if ui
-                            .checkbox(&mut self.debug_hud, "Debug HUD")
-                            .on_hover_text(
-                                "Live input overlay: pressure, tilt, tip speed, tip width.\n\
-                                 Use it to check what your device actually reports.",
-                            )
-                            .changed()
-                        {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        if ui
-                            .checkbox(&mut self.mouse_draws, "Mouse ink")
-                            .on_hover_text(
-                                "Draw ink with the mouse/trackpad too.\n\
-                                 Off (default): mouse & trackpad pan the page — \
-                                 only a pen writes, like real note-taking apps.",
-                            )
-                            .changed()
-                        {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        // ── 일반 펜(볼펜) 물리 모델 파라미터 ──
-                        let any_changed = ui
-                            .add(
-                                egui::Slider::new(
-                                    &mut self.pen_profile.pressure_k,
-                                    0.0..=0.5,
-                                )
-                                .text("Press k"),
-                            )
-                            .on_hover_text(
-                                "Pressure influence (small for ballpens, 0.1~0.3).\n\
-                                 0 = constant width.",
-                            )
-                            .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(&mut self.pen_profile.speed_k, 0.0..=0.3)
-                                        .text("Speed k"),
-                                )
-                                .on_hover_text(
-                                    "Speed influence (small, 0.05~0.15).\n\
-                                     Fast strokes thin slightly.",
-                                )
-                                .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.pen_profile.starve_v,
-                                        200.0..=3000.0,
-                                    )
-                                    .text("Starve v"),
-                                )
-                                .on_hover_text(
-                                    "Speed (pt/s) where ink starvation starts — above this \
-                                     the line thins and breaks like a real ballpen.",
-                                )
-                                .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(&mut self.pen_profile.tilt_k, 0.0..=1.0)
-                                        .text("Tilt"),
-                                )
-                                .on_hover_text(
-                                    "Tilt influence (continuous, no threshold): laying the pen \
-                                     down widens the line up to (1 + tilt_k) times.\n\
-                                     egui/winit don't expose pen tilt — needs the HID/WM_POINTER \
-                                     hook (`set_pen_tilt`) to feed values.",
-                                )
-                                .changed();
-                        if any_changed {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        // 잉크 질감 — 입체적 불균일 (흐름/위킹/뭉침/레일로드).
-                        egui::CollapsingHeader::new("Ink grain")
-                            .id_salt("pen_ink_grain")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                if ink_grain_controls(ui, &mut self.pen_grain) {
-                                    self.save_default_session();
-                                    self.save_session();
-                                }
-                            });
-                        // 필기 스무딩(안정화): 선택 기능. OTD(OpenTabletDriver) 등
-                        // 드라이버가 이미 안정화하는 환경에서는 꺼두면 됩니다.
-                        if ui
-                            .checkbox(&mut self.smoothing_enabled, "Stabilize")
-                            .on_hover_text(
-                                "Optional tremor filtering (1€ filter).\n\
-                                 Turn off if your tablet driver (e.g. OpenTabletDriver) \
-                                 already smooths the input.",
-                            )
-                            .changed()
-                        {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        if self.smoothing_enabled
-                            && ui
-                                .add(
-                                    egui::Slider::new(&mut self.smoothing, 0.0..=1.0)
-                                        .text("Strength"),
-                                )
-                                .on_hover_text(
-                                    "Filter strength while Stabilize is on.\n\
-                                     0 = raw input, 1 = silky smooth.",
-                                )
-                                .changed()
-                        {
-                            self.smoothing = self.smoothing.clamp(0.0, 1.0);
                             self.save_default_session();
                             self.save_session();
                         }
@@ -899,183 +1117,17 @@ impl FreeDfApp {
                         if nib_resp.changed() {
                             self.save_session();
                         }
-                        // 잉크 스밈: **만년필 전용** 선택 기능 — 잉크가 종이에
-                        // 스며들며 **굵기는 그대로, 색만 점점 진해지는** 효과.
-                        // 진해지는 시간(Soak time)을 커스텀할 수 있고, 기본 활성화.
+                        // 세부 설정 전용 창 트리거 — 툴바는 필수만 남깁니다.
                         if ui
-                            .checkbox(&mut self.ink_bleed.enabled, "Ink soak")
+                            .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
                             .on_hover_text(
-                                "Fountain ink soak: after you write, the ink gradually \
-                                 darkens as it soaks into the paper. Line thickness \
-                                 stays exactly as drawn — only the color deepens.",
+                                "Open the fountain pen settings window:\n\
+                                 physics model, ink soak, ink grain, italic nib, dwell.",
                             )
-                            .changed()
+                            .clicked()
                         {
-                            self.save_default_session();
-                            self.save_session();
+                            self.tool_settings_open = true;
                         }
-                        if self.ink_bleed.enabled {
-                            if ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.ink_bleed.saturate_sec,
-                                        0.5..=5.0,
-                                    )
-                                    .text("Soak time"),
-                                )
-                                .on_hover_text(
-                                    "How long (seconds) fresh ink takes to deepen \
-                                     from its light state to the full ink color.",
-                                )
-                                .changed()
-                            {
-                                self.save_default_session();
-                                self.save_session();
-                            }
-                        }
-                        // 잉크 질감 — 입체적 불균일 (흐름/위킹/고임/레일로드).
-                        egui::CollapsingHeader::new("Ink grain")
-                            .id_salt("fountain_ink_grain")
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                if ink_grain_controls(ui, &mut self.fountain_grain) {
-                                    self.save_default_session();
-                                    self.save_session();
-                                }
-                            });
-                        // 모델 파라미터는 `self.fountain_profile`을 직접 수정합니다
-                        // (장시간 borrow를 피해 저장 호출과 충돌하지 않게).
-                        let any_changed = ui
-                            .add(
-                                egui::Slider::new(
-                                    &mut self.fountain_profile.min_width_pt,
-                                    0.1..=2.0,
-                                )
-                                .text("Min"),
-                            )
-                            .on_hover_text(
-                                "Thinnest line width (pt) when writing fast and light.",
-                            )
-                            .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.fountain_profile.pressure_alpha,
-                                        0.3..=2.0,
-                                    )
-                                    .text("Press α"),
-                                )
-                                .on_hover_text(
-                                    "Pressure sensitivity: how strongly pressure widens \
-                                     the line (0.7~1.2 typical).",
-                                )
-                                .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.fountain_profile.speed_beta,
-                                        0.3..=3.0,
-                                    )
-                                    .text("Speed β"),
-                                )
-                                .on_hover_text(
-                                    "Speed sensitivity: how strongly fast strokes thin \
-                                     the line (1.0~1.5 typical).",
-                                )
-                                .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.fountain_profile.speed_ref,
-                                        10.0..=200.0,
-                                    )
-                                    .text("Speed ref"),
-                                )
-                                .on_hover_text(
-                                    "Reference speed (pt/s) — at this speed the speed \
-                                     factor is 0.5. Lower = thinner when writing normally.",
-                                )
-                                .changed()
-                            | ui
-                                .add(
-                                    egui::Slider::new(
-                                        &mut self.fountain_profile.tilt_k,
-                                        0.0..=1.0,
-                                    )
-                                    .text("Tilt"),
-                                )
-                                .on_hover_text(
-                                    "Tilt influence: laying the pen down widens the line.\n\
-                                     Note: egui/winit don't expose pen tilt yet, so this \
-                                     is 0 until a HID/WM_POINTER hook feeds set_pen_tilt.",
-                                )
-                                .changed();
-                        if ui
-                            .checkbox(&mut self.fountain_profile.italic, "Italic nib")
-                            .on_hover_text(
-                                "Stub/italic nib effect: strokes along the nib axis are \
-                                 wide, across it are thin — no azimuth sensor needed, \
-                                 the nib angle is fixed.",
-                            )
-                            .changed()
-                        {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        let any_changed2 = if self.fountain_profile.italic {
-                            ui.add(
-                                egui::Slider::new(
-                                    &mut self.fountain_profile.nib_angle_deg,
-                                    0.0..=180.0,
-                                )
-                                .text("Nib angle"),
-                            )
-                            .on_hover_text("Nib axis direction (degrees).")
-                            .changed()
-                                | ui
-                                    .add(
-                                        egui::Slider::new(
-                                            &mut self.fountain_profile.italic_k,
-                                            0.0..=0.6,
-                                        )
-                                        .text("Contrast"),
-                                    )
-                                    .on_hover_text(
-                                        "Italic direction contrast (0.2~0.5 looks stub-like).",
-                                    )
-                                    .changed()
-                        } else {
-                            false
-                        };
-                        let dwell_changed = ui
-                            .add(
-                                egui::Slider::new(
-                                    &mut self.fountain_profile.dwell_k,
-                                    0.0..=0.5,
-                                )
-                                .text("Dwell"),
-                            )
-                            .on_hover_text(
-                                "Ink pooling when the pen nearly stops — the classic \
-                                 fountain-pen blob at the end of a stroke.",
-                            )
-                            .changed();
-                        if any_changed || any_changed2 || dwell_changed {
-                            self.save_default_session();
-                            self.save_session();
-                        }
-                        let preview_color = Color32::from_rgba_unmultiplied(
-                            self.pen_color[0],
-                            self.pen_color[1],
-                            self.pen_color[2],
-                            self.pen_color[3],
-                        );
-                        fountain_profile_preview(
-                            ui,
-                            preview_color,
-                            self.pen_width,
-                            &self.fountain_profile,
-                        );
                     }
                     ToolType::Highlighter => {
                         let mut color = Color32::from_rgba_unmultiplied(
@@ -1174,5 +1226,31 @@ impl FreeDfApp {
                 ui.add_space(4.0);
             }
         });
+
+        // ── 도구별 세부 설정 플로팅 창 (툴바의 Settings 버튼으로 열림) ──
+        // Photoshop식: 툴바는 색/두께/필수 토글만 남기고, 세부 파라미터는
+        // 이 전용 창에서 지정합니다. 창은 현재 도구(볼펜/만년필)를 따릅니다.
+        if self.tool_settings_open {
+            let mut open = self.tool_settings_open;
+            let (title, is_fountain) = if self.tool == ToolType::Fountain {
+                ("Fountain pen settings", true)
+            } else {
+                ("Ballpen settings", false)
+            };
+            egui::Window::new(title)
+                .open(&mut open)
+                .resizable(true)
+                .default_width(330.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if is_fountain {
+                            self.fountain_settings_ui(ui);
+                        } else {
+                            self.pen_settings_ui(ui);
+                        }
+                    });
+                });
+            self.tool_settings_open = open;
+        }
     }
 }

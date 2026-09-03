@@ -59,9 +59,6 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
     }
 }
 
-/// 잉크가 종이에 닿은 직후의 포화도 — 시간이 지나며 1.0(원색)까지 진해집니다.
-const INK_SAT_INITIAL: f32 = 0.35;
-
 /// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 사실상 매 프레임
 /// (리본이 O(n)으로 저렴해져 지연 없이 바로 따라갑니다).
 const ACTIVE_STROKE_GEOM_MS: u64 = 10;
@@ -822,7 +819,8 @@ impl FreeDfApp {
                     self.view.pan_x,
                     self.view.pan_y,
                     self.view.zoom,
-                    self.ink_bleed,
+                    self.pen_soak,
+                    self.fountain_soak,
                     self.pen_profile,
                     self.fountain_profile,
                     self.pen_grain,
@@ -1779,11 +1777,17 @@ impl FreeDfApp {
                 ));
             }
         }
-        // 잉크 스밈은 **만년필 전용** — 굵기는 쓴 그대로, 색만 점점 진해짐.
-        let bleed_active = tool == ToolType::Fountain && self.ink_bleed.enabled;
-        let sat_deadline = self.ink_bleed.saturate_sec.max(1e-3);
+        // 잉크 스밈 — **도구별**(볼펜은 은은하게, 만년필은 뚜렷하게).
+        // 굵기는 쓴 그대로, 색만 점점 진해짐.
+        let soak = if tool == ToolType::Fountain {
+            self.fountain_soak
+        } else {
+            self.pen_soak
+        };
+        let soak_active =
+            soak.enabled && matches!(tool, ToolType::Pen | ToolType::Fountain);
         let age_sec = if created_ms == 0 {
-            sat_deadline
+            soak.saturate_sec
         } else {
             (now_ms().saturating_sub(created_ms)) as f32 / 1000.0
         };
@@ -1797,14 +1801,15 @@ impl FreeDfApp {
             self.view.pan_y,
             origin.x,
             origin.y,
-            self.ink_bleed,
+            self.pen_soak,
+            self.fountain_soak,
             self.pen_profile,
             self.fountain_profile,
             self.pen_grain,
             self.fountain_grain,
         );
-        let key_eq = |a: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile, InkGrain, InkGrain),
-                      b: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile, InkGrain, InkGrain)| {
+        let key_eq = |a: &(f32, f32, f32, f32, f32, InkSoak, InkSoak, BallPenProfile, FountainProfile, InkGrain, InkGrain),
+                      b: &(f32, f32, f32, f32, f32, InkSoak, InkSoak, BallPenProfile, FountainProfile, InkGrain, InkGrain)| {
             a.0 == b.0
                 && a.1 == b.1
                 && a.2 == b.2
@@ -1815,6 +1820,7 @@ impl FreeDfApp {
                 && a.7 == b.7
                 && a.8 == b.8
                 && a.9 == b.9
+                && a.10 == b.10
         };
         if let Some((built_ms, n0, k0, mesh)) = &self.active_mesh {
             if *n0 == n && key_eq(k0, &view_key) {
@@ -1853,7 +1859,7 @@ impl FreeDfApp {
         };
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
         let mut mesh = egui::Mesh::default();
-        // 잉크 스밈(만년필, 옅게→진해짐) + 잉크 질감(입체적 불균일) 합성:
+        // 잉크 스밈(도구별) + 잉크 질감(입체적 불균일) 합성:
         // **굵기는 쓴 그대로**, 좌우 정점 알파에 [포화 램프 × 질감 밀도]를 곱합니다.
         // 질감은 획 공간의 결정적 노이즈라 같은 획은 항상 같은 모양입니다.
         let alphas: Option<Vec<[f32; 2]>> =
@@ -1866,19 +1872,17 @@ impl FreeDfApp {
                 let grain = ink_seed(grain, created_ms);
                 let dens = stroke_ink_lr(tool, pts, grain);
                 let now = now_ms();
-                let sat_sec = self.ink_bleed.saturate_sec.max(1e-3);
                 Some(
                     pts.iter()
                         .enumerate()
                         .map(|(i, p)| {
-                            let sat = if bleed_active {
+                            let sat = if soak_active {
                                 let age = if p.t_ms == 0 {
                                     age_sec
                                 } else {
                                     (now.saturating_sub(p.t_ms)) as f32 / 1000.0
                                 };
-                                INK_SAT_INITIAL
-                                    + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
+                                soak.sat_at(age)
                             } else {
                                 1.0
                             };
@@ -1924,8 +1928,8 @@ impl FreeDfApp {
             let v = view.page_to_view(p);
             egui::pos2(origin.x + v[0], origin.y + v[1])
         };
-        let bleed = self.ink_bleed;
-        let sat_deadline = bleed.saturate_sec.max(1e-3);
+        let pen_soak = self.pen_soak;
+        let fountain_soak = self.fountain_soak;
         let ball = self.pen_profile;
         let fountain = self.fountain_profile;
         let pen_grain = self.pen_grain;
@@ -1934,17 +1938,25 @@ impl FreeDfApp {
         let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
         // 1차 패스: 다음 재구성 시각 — **점별** (그 점이 닿은 시각 +
-        // 포화 시간). 전부 진해지면 재구성을 멈춥니다.
+        // 포화 시간). 스밈이 켜진 볼펜/만년필 획 전부 포함.
         let mut next_settle = u64::MAX;
         for s in strokes {
-            if bleed.enabled && s.tool == ToolType::Fountain {
-                for p in &s.points {
-                    if p.t_ms > 0 {
-                        let settle_ms =
-                            p.t_ms.saturating_add((sat_deadline * 1000.0) as u64);
-                        if now < settle_ms {
-                            next_settle = next_settle.min(settle_ms);
-                        }
+            let soak = if s.tool == ToolType::Fountain {
+                fountain_soak
+            } else if s.tool == ToolType::Pen {
+                pen_soak
+            } else {
+                continue;
+            };
+            if !soak.enabled {
+                continue;
+            }
+            let deadline = (soak.saturate_sec.max(1e-3) * 1000.0) as u64;
+            for p in &s.points {
+                if p.t_ms > 0 {
+                    let settle_ms = p.t_ms.saturating_add(deadline);
+                    if now < settle_ms {
+                        next_settle = next_settle.min(settle_ms);
                     }
                 }
             }
@@ -1997,9 +2009,14 @@ impl FreeDfApp {
                     ));
                 }
             }
-            let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
-            // 잉크 스밈(만년필) + 질감 불균일 합성 — 좌우 정점 알파에
+            // 잉크 스밈(도구별) + 질감 불균일 합성 — 좌우 정점 알파에
             // [포화 램프 × 밀도]를 곱합니다. 굵기는 쓴 그대로.
+            let soak = if s.tool == ToolType::Fountain {
+                fountain_soak
+            } else {
+                pen_soak
+            };
+            let soak_on = soak.enabled;
             let alphas: Option<Vec<[f32; 2]>> =
                 if matches!(s.tool, ToolType::Pen | ToolType::Fountain) {
                     let grain = if s.tool == ToolType::Fountain {
@@ -2010,21 +2027,18 @@ impl FreeDfApp {
                     let created = if s.created_ms > 0 { s.created_ms } else { s.id };
                     let grain = ink_seed(grain, created);
                     let dens = stroke_ink_lr(s.tool, &s.points, grain);
-                    let sat_sec = bleed.saturate_sec.max(1e-3);
                     Some(
                         s.points
                             .iter()
                             .enumerate()
                             .map(|(i, p)| {
-                                let sat = if bleed_on {
+                                let sat = if soak_on {
                                     let age = if p.t_ms == 0 {
-                                        sat_deadline
+                                        soak.saturate_sec
                                     } else {
                                         (now.saturating_sub(p.t_ms)) as f32 / 1000.0
                                     };
-                                    INK_SAT_INITIAL
-                                        + (1.0 - INK_SAT_INITIAL)
-                                            * (age / sat_sec).clamp(0.0, 1.0)
+                                    soak.sat_at(age)
                                 } else {
                                     1.0
                                 };
@@ -2068,7 +2082,8 @@ impl FreeDfApp {
             self.view.pan_x,
             self.view.pan_y,
             self.view.zoom,
-            self.ink_bleed,
+            self.pen_soak,
+            self.fountain_soak,
             self.pen_profile,
             self.fountain_profile,
             self.pen_grain,

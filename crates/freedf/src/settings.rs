@@ -9,7 +9,7 @@
 use freedf_core::ink::InkGrain;
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
-use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkBleed};
+use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
 
@@ -98,9 +98,16 @@ pub struct SessionState {
     /// 스무딩 사용 여부 (기본 off — OTD 등 외부 드라이버 안정화와 충돌 방지)
     #[serde(default = "default_false")]
     pub smoothing_enabled: bool,
-    /// 잉크 번짐(블리드) 설정 (기본 off, 구간별 속도 커스텀 가능)
+    /// 잉크 번짐(블리드) 설정 — **레거시** (이전 v2 세션 마이그레이션용).
+    /// 현재 기능은 `pen_soak`/`fountain_soak`이 담당합니다.
     #[serde(default)]
     pub ink_bleed: InkBleed,
+    /// 일반 펜(볼펜) 잉크 스밈 — 은은하게 진해짐
+    #[serde(default)]
+    pub pen_soak: InkSoak,
+    /// 만년필 잉크 스밈 — 옅게 시작해 뚜렷하게 진해짐
+    #[serde(default)]
+    pub fountain_soak: InkSoak,
     /// 일반 펜(볼펜) 잉크 질감 — 입체적 불균일(흐름/위킹/뭉침/레일로드)
     #[serde(default)]
     pub pen_grain: InkGrain,
@@ -214,6 +221,8 @@ impl Default for SessionState {
             smoothing: 0.4,
             smoothing_enabled: false,
             ink_bleed: InkBleed::default(),
+            pen_soak: InkSoak::ballpoint_default(),
+            fountain_soak: InkSoak::fountain_default(),
             pen_grain: InkGrain::default(),
             fountain_grain: InkGrain::default(),
             fountain_profile: FountainProfile::default(),

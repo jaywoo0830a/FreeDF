@@ -947,7 +947,6 @@ impl FreeDfApp {
                     &mut img,
                     &strokes,
                     scale,
-                    self.ink_bleed,
                     self.fountain_profile,
                     self.pen_profile,
                 );

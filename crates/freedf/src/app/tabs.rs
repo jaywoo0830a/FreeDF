@@ -118,7 +118,8 @@ impl FreeDfApp {
         tab.custom_paper_size = self.custom_paper_size;
         tab.smoothing = self.smoothing;
         tab.smoothing_enabled = self.smoothing_enabled;
-        tab.ink_bleed = self.ink_bleed;
+        tab.pen_soak = self.pen_soak;
+        tab.fountain_soak = self.fountain_soak;
         tab.pen_grain = self.pen_grain;
         tab.fountain_grain = self.fountain_grain;
         tab.fountain_profile = self.fountain_profile;
@@ -168,7 +169,8 @@ impl FreeDfApp {
             custom_paper_size,
             smoothing,
             smoothing_enabled,
-            ink_bleed,
+            pen_soak,
+            fountain_soak,
             pen_grain,
             fountain_grain,
             fountain_profile,
@@ -216,7 +218,8 @@ impl FreeDfApp {
                 tab.custom_paper_size,
                 tab.smoothing,
                 tab.smoothing_enabled,
-                tab.ink_bleed,
+                tab.pen_soak,
+                tab.fountain_soak,
                 tab.pen_grain,
                 tab.fountain_grain,
                 tab.fountain_profile,
@@ -277,7 +280,8 @@ impl FreeDfApp {
         self.custom_paper_size = custom_paper_size;
         self.smoothing = smoothing;
         self.smoothing_enabled = smoothing_enabled;
-        self.ink_bleed = ink_bleed;
+        self.pen_soak = pen_soak;
+        self.fountain_soak = fountain_soak;
         self.pen_grain = pen_grain;
         self.fountain_grain = fountain_grain;
         self.fountain_profile = fountain_profile;
@@ -366,7 +370,8 @@ impl FreeDfApp {
             custom_paper_size: self.custom_paper_size,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
-            ink_bleed: self.ink_bleed,
+            pen_soak: self.pen_soak,
+            fountain_soak: self.fountain_soak,
             pen_grain: self.pen_grain,
             fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,

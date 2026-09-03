@@ -46,7 +46,7 @@ pub(crate) use freedf_core::paper::{
     PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    BallPenProfile, ColorFamily, FountainProfile, InkBleed, OneEuroFilter, Palette,
+    BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak, OneEuroFilter, Palette,
 };
 pub(crate) use freedf_core::ink::{combine_saturation, stroke_ink_lr, InkGrain};
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
@@ -471,8 +471,10 @@ pub struct TabEntry {
     smoothing: f32,
     /// 스무딩 사용 여부 (기본 off)
     smoothing_enabled: bool,
-    /// 잉크 번짐 설정
-    ink_bleed: InkBleed,
+    /// 잉크 스밈(진해짐) — 볼펜 (은은하게)
+    pen_soak: InkSoak,
+    /// 잉크 스밈(진해짐) — 만년필
+    fountain_soak: InkSoak,
     /// 일반 펜(볼펜) 잉크 질감
     pen_grain: InkGrain,
     /// 만년필 잉크 질감
@@ -576,6 +578,8 @@ pub struct FreeDfApp {
     /// 드래그 앤 드롭 상태 (임시)
     tool_drag: Option<usize>,
     tool_drop: Option<usize>,
+    /// 도구별 세부 설정 플로팅 창 표시 여부 (툴바 Settings 버튼, 임시)
+    tool_settings_open: bool,
     /// 마지막으로 감지된 입력 장치 (펜/마우스)
     input_device: InputDevice,
     /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
@@ -585,8 +589,10 @@ pub struct FreeDfApp {
     /// 펜 입력 스무딩(안정화) 사용 여부 (기본 off — OTD 등 드라이버로
     /// 안정화하는 환경에서 꺼둠)
     smoothing_enabled: bool,
-    /// 잉크 번짐(블리드) 설정 — 선택 기능, 구간별 속도 커스텀 가능.
-    ink_bleed: InkBleed,
+    /// 잉크 스밈(진해짐) — 볼펜 (은은하게, 기본 활성)
+    pen_soak: InkSoak,
+    /// 잉크 스밈(진해짐) — 만년필 (뚜렷하게, 기본 활성)
+    fountain_soak: InkSoak,
     /// 일반 펜(볼펜) 잉크 질감 (입체적 불균일 — 흐름/위킹/뭉침/레일로드)
     pen_grain: InkGrain,
     /// 만년필 잉크 질감 — 볼펜과 완전히 독립
@@ -625,7 +631,8 @@ pub struct FreeDfApp {
         f32,
         f32,
         f32,
-        InkBleed,
+        InkSoak,
+        InkSoak,
         BallPenProfile,
         FountainProfile,
         InkGrain,
@@ -649,7 +656,8 @@ pub struct FreeDfApp {
             f32,
             f32,
             f32,
-            InkBleed,
+            InkSoak,
+            InkSoak,
             BallPenProfile,
             FountainProfile,
             InkGrain,
@@ -866,12 +874,21 @@ impl FreeDfApp {
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let smoothing_enabled = if has { s.smoothing_enabled } else { false };
-        // 프로파일 v2: 잉크 번짐이 만년필 전용으로 바뀌고 기본 활성화 —
-        // 이전 세션이면 새 기본값 사용.
-        let ink_bleed = if has && s.profile_version >= 2 {
-            s.ink_bleed
+        // 프로파일 v3: 잉크 스밈이 **도구별**(볼펜/만년필)로 분리.
+        // v2 세션은 만년필 스밈 설정을 ink_bleed에 담고 있었으므로 이전합니다.
+        let (pen_soak, fountain_soak) = if has && s.profile_version >= 3 {
+            (s.pen_soak, s.fountain_soak)
+        } else if has && s.profile_version >= 2 {
+            (
+                InkSoak::ballpoint_default(),
+                InkSoak {
+                    enabled: s.ink_bleed.enabled,
+                    saturate_sec: s.ink_bleed.saturate_sec,
+                    ..InkSoak::fountain_default()
+                },
+            )
         } else {
-            InkBleed::default()
+            (InkSoak::ballpoint_default(), InkSoak::fountain_default())
         };
         let pen_grain = if has { s.pen_grain } else { InkGrain::default() };
         let fountain_grain = if has {
@@ -971,11 +988,13 @@ impl FreeDfApp {
             tool_order,
             tool_drag: None,
             tool_drop: None,
+            tool_settings_open: false,
             input_device: InputDevice::Mouse,
             last_touch_time: None,
             mouse_draws,
             smoothing_enabled,
-            ink_bleed,
+            pen_soak,
+            fountain_soak,
             pen_grain,
             fountain_grain,
             fountain_profile,
@@ -998,7 +1017,8 @@ impl FreeDfApp {
                 0.0,
                 0.0,
                 0.0,
-                InkBleed::default(),
+                InkSoak::default(),
+                InkSoak::default(),
                 BallPenProfile::default(),
                 FountainProfile::default(),
                 InkGrain::default(),
@@ -1095,7 +1115,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 2,
+            profile_version: 3,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1120,7 +1140,9 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
-            ink_bleed: self.ink_bleed,
+            ink_bleed: InkBleed::default(),
+            pen_soak: self.pen_soak,
+            fountain_soak: self.fountain_soak,
             pen_grain: self.pen_grain,
             fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,
@@ -1198,7 +1220,7 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 2,
+            profile_version: 3,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1223,7 +1245,9 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
-            ink_bleed: self.ink_bleed,
+            ink_bleed: InkBleed::default(),
+            pen_soak: self.pen_soak,
+            fountain_soak: self.fountain_soak,
             pen_grain: self.pen_grain,
             fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,
@@ -1296,10 +1320,20 @@ impl FreeDfApp {
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;
-        if s.profile_version >= 2 {
-            self.ink_bleed = s.ink_bleed;
+        if s.profile_version >= 3 {
+            self.pen_soak = s.pen_soak;
+            self.fountain_soak = s.fountain_soak;
+        } else if s.profile_version >= 2 {
+            // v2 세션: 만년필 스밈 설정은 ink_bleed에 저장되어 있었음.
+            self.pen_soak = InkSoak::ballpoint_default();
+            self.fountain_soak = InkSoak {
+                enabled: s.ink_bleed.enabled,
+                saturate_sec: s.ink_bleed.saturate_sec,
+                ..InkSoak::fountain_default()
+            };
         } else {
-            self.ink_bleed = InkBleed::default();
+            self.pen_soak = InkSoak::ballpoint_default();
+            self.fountain_soak = InkSoak::fountain_default();
         }
         self.pen_grain = s.pen_grain;
         self.fountain_grain = s.fountain_grain;

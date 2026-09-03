@@ -896,6 +896,56 @@ impl InkBleed {
     }
 }
 
+/// 잉크 스밈(스며들며 진해짐) 설정 — **도구별(볼펜/만년필)로 독립**입니다.
+///
+/// 방금 쓴 잉크는 `initial`(0..1)만큼 옅게 시작해 `saturate_sec`초 동안
+/// 원색(1.0)으로 진해집니다. **선 두께는 변하지 않습니다** (색만).
+/// (번짐 = 선이 퍼지는 것과는 별개 — 이 구조체는 색 포화만 담당합니다)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InkSoak {
+    /// 스밈 효과 활성화.
+    pub enabled: bool,
+    /// 완전히 진해지기까지의 시간(초).
+    pub saturate_sec: f32,
+    /// 종이에 닿은 직후의 초기 포화도 (0..1) — 낮을수록 옅게 시작.
+    pub initial: f32,
+}
+
+impl InkSoak {
+    /// 만년필 기본 — 물기 많은 잉크라 옅게 시작해 뚜렷하게 진해집니다.
+    pub fn fountain_default() -> Self {
+        Self {
+            enabled: true,
+            saturate_sec: 2.0,
+            initial: 0.35,
+        }
+    }
+
+    /// 볼펜 기본 — 유성 잉크라 아주 은은하게만 진해집니다 (사용자: "약간은").
+    pub fn ballpoint_default() -> Self {
+        Self {
+            enabled: true,
+            saturate_sec: 1.5,
+            initial: 0.6,
+        }
+    }
+
+    /// 포화 램프 — 그어진 뒤 `age_sec`초가 지난 점의 정점 알파 (0..1).
+    /// 나이 0 → `initial`, 나이 ≥ `saturate_sec` → 1.0 (원색).
+    pub fn sat_at(&self, age_sec: f32) -> f32 {
+        let initial = self.initial.clamp(0.0, 1.0);
+        let t = (age_sec.max(0.0) / self.saturate_sec.max(1e-3)).clamp(0.0, 1.0);
+        initial + (1.0 - initial) * t
+    }
+}
+
+impl Default for InkSoak {
+    fn default() -> Self {
+        Self::fountain_default()
+    }
+}
+
 // ── 만년필 물리 모델 (필압 × 속도 × 기울기) ─────────────────────────────────
 
 /// 만년필 프로파일 — 스타일러스의 **필압·속도·기울기**로 실제 만년필의
@@ -1808,6 +1858,43 @@ mod tests {
         };
         assert_eq!(b.radius(0.0, 10.0, 10.0, 10.0), 0.0, "시작 구간 속도 0");
         assert!(b.radius(5.0, 5.0, 10.0, 10.0) > 0.0, "중간은 번짐");
+    }
+
+    // ---------- InkSoak (스며들며 진해짐, 도구별) ----------
+
+    #[test]
+    fn ink_soak_ramp_matches_tool_defaults() {
+        let f = InkSoak::fountain_default();
+        assert!((f.sat_at(0.0) - 0.35).abs() < 1e-6, "만년필 시작 = 옅게");
+        assert!((f.sat_at(2.0) - 1.0).abs() < 1e-6, "2초 후 원색");
+        assert!((f.sat_at(1.0) - 0.675).abs() < 1e-5, "선형 중간");
+        assert!((f.sat_at(99.0) - 1.0).abs() < 1e-6, "상한");
+        let b = InkSoak::ballpoint_default();
+        assert!(b.enabled && f.enabled, "둘 다 기본 활성화");
+        assert!(
+            b.initial > f.initial,
+            "볼펜은 더 은은하게(높은 초기값) 시작: {} vs {}",
+            b.initial,
+            f.initial
+        );
+        assert!(b.saturate_sec <= f.saturate_sec, "볼펜이 더 빨리 진해짐");
+        // 볼펜 나이 0 → 0.6 (만년필보다 진한 상태에서 시작).
+        assert!((b.sat_at(0.0) - 0.6).abs() < 1e-6);
+        assert!((b.sat_at(b.saturate_sec) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ink_soak_deserializes_with_defaults() {
+        let s: InkSoak = serde_json::from_str("{}").unwrap();
+        assert_eq!(s, InkSoak::default(), "이전 세션 호환");
+        // initial 클램프 — 0..1 밖 값은 고정.
+        let weird = InkSoak {
+            enabled: true,
+            saturate_sec: 2.0,
+            initial: 1.5,
+        };
+        assert!((weird.sat_at(0.0) - 1.0).abs() < 1e-6, "initial > 1 → 항상 원색");
+        assert!((weird.sat_at(0.0) - weird.sat_at(3.0)).abs() < 1e-6);
     }
 
     // ---------- FountainProfile (만년필 물리 모델) ----------

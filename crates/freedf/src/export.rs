@@ -7,22 +7,21 @@ use freedf_core::model::{Stroke, StrokePoint, ToolType};
 use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PaperStyle,
 };
-use freedf_core::pen::{BallPenProfile, FountainProfile, InkBleed};
+use freedf_core::pen::{BallPenProfile, FountainProfile};
 use image::{Rgba, RgbaImage};
 
 /// 스트로크 목록을 `scale`(픽셀/포인트)로 확대해 이미지에 그립니다.
-/// `bleed`는 화면과 동일한 잉크 번짐 설정, `fountain`은 만년필,
-/// `pen`은 일반 펜(볼펜) 모델입니다.
+/// `fountain`은 만년필, `pen`은 일반 펜(볼펜) 모델입니다.
+/// 내보내기는 **완전히 포화된(진해진) 최종 상태**를 쓴 굵기 그대로 저장합니다.
 pub fn draw_strokes_on_image(
     img: &mut RgbaImage,
     strokes: &[Stroke],
     scale: f32,
-    bleed: InkBleed,
     fountain: FountainProfile,
     pen: BallPenProfile,
 ) {
     for stroke in strokes {
-        draw_one_stroke(img, stroke, scale, bleed, fountain, pen);
+        draw_one_stroke(img, stroke, scale, fountain, pen);
     }
 }
 
@@ -78,7 +77,6 @@ fn draw_one_stroke(
     img: &mut RgbaImage,
     stroke: &Stroke,
     scale: f32,
-    _bleed: InkBleed,
     fountain: FountainProfile,
     pen: BallPenProfile,
 ) {
@@ -354,7 +352,6 @@ mod tests {
             &mut img,
             &[stroke],
             1.0,
-            InkBleed::default(),
             FountainProfile::default(),
             BallPenProfile::default(),
         );
@@ -396,7 +393,6 @@ mod tests {
             &mut img,
             &[stroke],
             1.0,
-            InkBleed::default(),
             FountainProfile::default(),
             BallPenProfile::default(),
         );
