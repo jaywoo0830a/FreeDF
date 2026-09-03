@@ -187,7 +187,6 @@ impl LocalCache {
     pub fn pending_path(&self) -> PathBuf {
         self.path("pending.jsonl")
     }
-
     pub fn append_pending(&self, ops: &[PendingOp]) {
         use std::io::Write;
         self.ensure_dir();
@@ -217,6 +216,42 @@ impl LocalCache {
 
     pub fn clear_pending(&self) {
         let _ = std::fs::remove_file(self.pending_path());
+    }
+
+    // ---------- DB 인스턴스 식별자 ----------
+
+    fn identity_path(&self) -> PathBuf {
+        self.path("identity")
+    }
+
+    pub fn get_identity(&self) -> Option<String> {
+        std::fs::read_to_string(self.identity_path())
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn set_identity(&self, id: &str) {
+        self.ensure_dir();
+        let _ = std::fs::write(self.identity_path(), id);
+    }
+
+    /// 캐시 전체 폐기 — DB가 초기화/교체되어 식별자가 달라졌을 때 호출.
+    /// (문서 id 재사용으로 옛 스토어/대기열/목록이 섞이는 오염 방지)
+    pub fn clear_all(&self) {
+        if let Ok(entries) = std::fs::read_dir(&self.dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let known = name.starts_with("doc_")
+                    || matches!(
+                        name.as_str(),
+                        "notes.json" | "recents.json" | "pending.jsonl" | "identity"
+                    );
+                if known {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
     }
 }
 

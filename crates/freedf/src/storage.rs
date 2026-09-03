@@ -86,6 +86,11 @@ pub trait StorageBackend: Send + Sync {
 
     /// 로컬 캐시 무효화 (강제 새로고침 시 호출). 기본은 no-op.
     fn invalidate_document(&self, _doc_id: i64) {}
+
+    /// DB 인스턴스 식별자 — 캐시 오염 방지용 (기본 None = 검사 생략).
+    fn identity(&self) -> Option<String> {
+        None
+    }
 }
 
 /// 앱 전체가 공유하는 저장소 핸들.
@@ -270,6 +275,25 @@ impl CachingBackend {
     /// 래퍼 생성 + 재시작 후 남아 있던 미처리 대기열 복원.
     /// (플러시 스레드는 `start_flusher`로 명시적으로 시작 — 테스트 제어용)
     pub fn new(remote: Arc<dyn StorageBackend>, cache: LocalCache) -> Self {
+        let identity = remote.identity();
+        Self::new_with_identity(remote, cache, identity)
+    }
+
+    /// DB 식별자를 명시적으로 주입하는 생성자 (테스트 및 new() 공용 경로).
+    pub fn new_with_identity(
+        remote: Arc<dyn StorageBackend>,
+        cache: LocalCache,
+        identity: Option<String>,
+    ) -> Self {
+        // DB가 초기화/교체되어 식별자가 달라지면 캐시 전체 폐기 —
+        // 문서 id 재사용으로 옛 스토어/대기열/목록이 새 문서에 섞이는
+        // 오염을 방지합니다.
+        if let Some(id) = &identity {
+            if cache.get_identity().as_deref() != Some(id.as_str()) {
+                cache.clear_all();
+                cache.set_identity(id);
+            }
+        }
         let pending = cache.load_pending();
         Self {
             remote,
@@ -684,6 +708,10 @@ impl StorageBackend for CachingBackend {
         g.dirty_stores.remove(&doc_id);
         g.cache.invalidate_store(doc_id);
     }
+
+    fn identity(&self) -> Option<String> {
+        self.remote.identity()
+    }
 }
 
 #[cfg(test)]
@@ -733,6 +761,38 @@ mod tests {
         // 쓰기는 크래시 없이 무시됩니다.
         db.insert_strokes(1, 0, &[]);
         db.delete_strokes(1, &[1]);
+    }
+
+    #[test]
+    fn cache_is_purged_when_db_identity_changes() {
+        let dir = std::env::temp_dir().join(format!("freedf-cache-ident-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = LocalCache::new(dir.clone());
+        cache.set_identity("OLD-DB");
+        let mut store = AnnotationStore::new();
+        store.add_strokes(0, Vec::new());
+        cache.put_store(1, &store);
+        cache.append_pending(&[PendingOp::DeleteStrokes {
+            doc_id: 1,
+            ids: vec![1],
+        }]);
+        cache.put_notes(&[]);
+
+        // DB가 초기화되어 식별자가 바뀜 → 캐시 전체 폐기되어야 함.
+        let cb = CachingBackend::new_with_identity(
+            disconnected(),
+            LocalCache::new(dir.clone()),
+            Some("NEW-DB".into()),
+        );
+        let fresh = LocalCache::new(dir.clone());
+        assert_eq!(fresh.get_identity().as_deref(), Some("NEW-DB"));
+        assert_eq!(fresh.get_store(1), None, "옛 스토어가 남아 있으면 안 됨");
+        assert!(
+            fresh.load_pending().is_empty(),
+            "옛 대기열이 남아 있으면 안 됨"
+        );
+        assert!(cb.ping() == false);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 실 DB 왕복 — `FREEDF_TEST_DB=1 cargo test -p freedf caching_backend_against_live_db`

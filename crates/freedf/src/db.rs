@@ -606,6 +606,16 @@ impl Db {
         let mut c = conn_guard(&self.conn);
         c.query_opt("SELECT 1", &[]).map(|r| r.is_some()).unwrap_or(false)
     }
+
+    /// DB 인스턴스 식별자 (migrations/0005_db_identity.sql의 UUID).
+    /// DB를 초기화하면 값이 바뀌므로 클라이언트가 로컬 캐시를 폐기할 수 있습니다.
+    pub fn identity(&self) -> Option<String> {
+        let mut c = conn_guard(&self.conn);
+        c.query_opt("SELECT uuid FROM db_identity LIMIT 1", &[])
+            .ok()
+            .flatten()
+            .map(|r| r.get(0))
+    }
 }
 
 /// `Db`의 메서드 시그니처가 `StorageBackend`와 1:1로 일치합니다 —
@@ -712,6 +722,10 @@ impl StorageBackend for Db {
 
     fn ping(&self) -> bool {
         Db::ping(self)
+    }
+
+    fn identity(&self) -> Option<String> {
+        Db::identity(self)
     }
 }
 
