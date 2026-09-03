@@ -1076,6 +1076,25 @@ impl FreeDfApp {
                 {
                     self.load_annotations();
                 }
+                ui.separator();
+
+                // Show UI / Hide UI 토글 — 항상 툴바에 상주합니다.
+                // 숨기면 캔버스+팔레트만 남고, 복귀는 우상단 플로팅 pill(☰)
+                // 또는 Ctrl+Shift+M.
+                if ui
+                    .button(icon_text(ui, "Hide UI", icons::CORNERS_OUT))
+                    .on_hover_text(
+                        "Hide toolbars & panels — canvas + palette only.\n\
+                         Bring them back with the floating ☰ pill (top-right)\n\
+                         or Ctrl+Shift+M.",
+                    )
+                    .clicked()
+                {
+                    self.manual_minimal = true;
+                    self.narrow_chrome_expanded = false;
+                    self.show_palette = true;
+                    self.save_default_session();
+                }
                 });
             });
 
@@ -1089,6 +1108,12 @@ impl FreeDfApp {
                 ui.label(icon_text(ui, "Page", icons::FILES));
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 ui.menu_button(icon_text(ui, "Insert Page", icons::PLUS_SQUARE), |ui| {
+                    let mut count: usize = 1;
+                    ui.horizontal(|ui| {
+                        ui.label("Count:");
+                        ui.add(egui::DragValue::new(&mut count).range(1..=200));
+                    });
+                    ui.label(egui::RichText::new("Insert blank pages at:").weak().small());
                     let insert = [
                         (InsertTarget::FromCurrent, "From current page (copies size & paper)"),
                         (InsertTarget::AtVeryFront, "At the very front"),
@@ -1102,12 +1127,12 @@ impl FreeDfApp {
                             .clicked()
                         {
                             ui.close();
-                            self.insert_page_action(target);
+                            self.insert_pages_action(target, count);
                         }
                     }
                 })
                 .response
-                .on_hover_text("Insert a blank page");
+                .on_hover_text("Insert blank pages — set the count, then choose where");
                 ui.menu_button(icon_text(ui, "Rotate", icons::REPEAT), |ui| {
                     if ui
                         .add_enabled(page_count > 0, egui::Button::new("Rotate current page CW"))

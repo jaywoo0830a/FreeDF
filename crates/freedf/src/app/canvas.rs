@@ -189,6 +189,29 @@ impl FreeDfApp {
         }
     }
 
+    /// 펜 사이드 버튼 훅 — OTD/evdev 스트림에서 눌림 에지를 감지하면 호출됩니다.
+    ///
+    /// **새 액션을 연결하는 방법**: 이 match에 arm을 추가하면 됩니다.
+    /// (기본 배선: 버튼 1 = 필기구/색상 팔레트 토글, 버튼 2 = 예약)
+    pub(crate) fn on_pen_button(&mut self, button: u8, _pressed: bool) {
+        match button {
+            1 => {
+                // 계획된 기본 동작: 펜 색상 변경 팔레트를 펜 버튼으로 켜고 끕니다.
+                self.show_palette = !self.show_palette;
+                self.save_default_session();
+                self.status = Some(if self.show_palette {
+                    "Palette shown (pen button)".into()
+                } else {
+                    "Palette hidden (pen button)".into()
+                });
+            }
+            2 => {
+                // 예약 — 펜 색 변경 등 추가 액션을 여기에 연결합니다.
+            }
+            _ => {}
+        }
+    }
+
     /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
     /// → (없으면) 풀 필압.
     pub(crate) fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
@@ -304,6 +327,10 @@ impl FreeDfApp {
                         } else {
                             "없음"
                         }
+                    ));
+                    ui.label(format!(
+                        "pen buttons: b1={} b2={}",
+                        self.pen_buttons.button1, self.pen_buttons.button2
                     ));
                     ui.label(format!("tip speed: {speed:.0} pt/s"));
                     ui.label(format!("tip width: {tip_w:.2} pt"));
@@ -694,22 +721,60 @@ impl FreeDfApp {
         self.ensure_texture(&ctx);
 
         // evdev/OTD 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
-        if let Some(mon) = &mut self.pen_monitor {
-            if let Some(st) = mon.poll() {
-                if self.last_pen_state_ms.is_none() {
-                    pen_trace(&format!(
-                        "pen stream 연결됨: tilt=[{:+.0}, {:+.0}] pressure={:?} contact={}",
-                        st.tilt[0], st.tilt[1], st.pressure, st.contact
-                    ));
+        let pen_state = self.pen_monitor.as_mut().and_then(|mon| mon.poll());
+        if let Some(st) = pen_state {
+            if self.last_pen_state_ms.is_none() {
+                pen_trace(&format!(
+                    "pen stream 연결됨: tilt=[{:+.0}, {:+.0}] pressure={:?} contact={} b1={} b2={}",
+                    st.tilt[0], st.tilt[1], st.pressure, st.contact, st.buttons.button1, st.buttons.button2
+                ));
+            }
+            self.last_pen_state_ms = Some(now_ms());
+            // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
+            self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
+            self.live_pressure = st.pressure;
+            // 사이드 버튼 에지(눌림) 감지 → `on_pen_button` 훅으로 라우팅.
+            let prev = self.pen_buttons;
+            self.pen_buttons = st.buttons;
+            if st.buttons.button1 && !prev.button1 {
+                self.on_pen_button(1, true);
+            }
+            if st.buttons.button2 && !prev.button2 {
+                self.on_pen_button(2, true);
+            }
+        }
+
+        // ── 스플릿 뷰 포커스 제스처 ──────────────────────────────────────
+        // 펜(OTD/evdev)이 우리 창 위를 호버 중인데 포커스가 없으면 한 번만
+        // 포커스를 요청합니다 — 빈 노트에 점을 찍어야만 포커스가 잡히던
+        // 불편을 없앱니다. (첫 탭 가드는 handle_canvas_input에 있음)
+        let pen_alive = self
+            .last_pen_state_ms
+            .is_some_and(|t| now_ms().saturating_sub(t) < 1000);
+        let hovered_over_canvas = ctx
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|pos| canvas.contains(pos));
+        if pen_alive && hovered_over_canvas {
+            if ctx.input(|i| i.viewport().focused == Some(false)) {
+                if !self.focus_grabbed {
+                    self.focus_grabbed = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
-                self.last_pen_state_ms = Some(now_ms());
-                // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
-                self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
-                self.live_pressure = st.pressure;
+            } else if ctx.input(|i| i.viewport().focused != Some(false)) {
+                self.focus_grabbed = false;
             }
         }
 
         // ---------- Input ----------
+        // 이번 프레임에 뷰포트 포커스가 false→true로 바뀌었는지 기록. 그 전환이
+        // **포인터 프레스와 동시에** 일어났다면 그 탭이 포커스를 만든 것이므로
+        // 짧은 잉크 유예를 겁니다 (호버 포커스 전환은 프레스가 없어 유예 없음).
+        let focused_now = ctx.input(|i| i.viewport().focused);
+        let pressed_now = ctx.input(|i| i.pointer.any_pressed());
+        if self.prev_viewport_focused == Some(false) && focused_now != Some(false) && pressed_now {
+            self.focus_grace_until_ms = Some(now_ms().saturating_add(400));
+        }
+        self.prev_viewport_focused = focused_now;
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);
         // Keep the page within the canvas (no infinite panning)
         self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
@@ -742,13 +807,18 @@ impl FreeDfApp {
         );
 
         // Paper color tint applied to the page image (colored paper).
+        // **노트에만 적용** — 스탠드얼론 PDF는 원본 배경색을 유지합니다.
         let paper = self.current_page_paper();
-        let paper_tint = Color32::from_rgba_unmultiplied(
-            paper.color[0],
-            paper.color[1],
-            paper.color[2],
-            255,
-        );
+        let paper_tint = if self.current_note.is_some() {
+            Color32::from_rgba_unmultiplied(
+                paper.color[0],
+                paper.color[1],
+                paper.color[2],
+                255,
+            )
+        } else {
+            Color32::WHITE
+        };
 
         // During a transition, draw the outgoing + incoming pages sliding.
         // PgUp/PgDn 키 전환은 세로(위/아래)로, 그 외(내비게이션/휠/화살표)는
@@ -1034,10 +1104,10 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_MINUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom out (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom out 5% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
-                                self.zoom_by(1.0 / 1.25);
+                                self.zoom_by(1.0 / ZOOM_STEP);
                             }
                             ui.label(format!("{:.0}%", self.view.zoom / ZOOM_100_PERCENT * 100.0));
                             if ui
@@ -1049,10 +1119,10 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_PLUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom in (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom in 5% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
-                                self.zoom_by(1.25);
+                                self.zoom_by(ZOOM_STEP);
                             }
                             // 줌 잠금 토글 — 실수로 줌이 바뀌는 것을 방지합니다.
                             let lock_icon = if self.zoom_lock {
@@ -1075,15 +1145,6 @@ impl FreeDfApp {
                                 .clicked()
                             {
                                 self.zoom_lock = !self.zoom_lock;
-                                if self.zoom_lock {
-                                    if let Some(t) = self.zoom_target {
-                                        self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
-                                        self.render_dirty = true;
-                                    }
-                                    self.zoom_target = None;
-                                    self.zoom_anchor_page = None;
-                                    self.zoom_anchor_ui = None;
-                                }
                                 self.save_default_session();
                                 self.save_session();
                             }
@@ -1334,120 +1395,51 @@ impl FreeDfApp {
 
         // 줌 잠금이면 모든 줌 입력(핀치/Ctrl+휠/트랙패드)을 무시합니다.
         if !self.zoom_lock {
-
-        // If egui already folded a pinch / Ctrl+scroll into zoom_delta, use it.
-        // Otherwise synthesize zoom from Ctrl + wheel: discrete +1% per notch
-        // that slowly accelerates (up to +8%) while you keep scrolling.
-        let mut zoom_factor = zoom_delta;
-        let mut scroll_zoom = false;
-        let mut ctrl_wheel_notches = 0.0f32;
-        {
-            // Count raw wheel notches this frame (egui's smooth_scroll_delta is
-            // smoothed, so a single notch can look like a huge jump).
-            let events: Vec<egui::Event> = ctx.input(|i| i.events.iter().cloned().collect());
-            for ev in &events {
-                if let egui::Event::MouseWheel {
-                    unit,
-                    delta,
-                    modifiers,
-                    ..
-                } = ev
-                {
-                    if modifiers.ctrl {
-                        let n = match unit {
-                            egui::MouseWheelUnit::Line => delta.y,
-                            egui::MouseWheelUnit::Point => delta.y / 50.0,
-                            egui::MouseWheelUnit::Page => delta.y,
-                        };
-                        ctrl_wheel_notches += n;
+            // PDF 렌더러 특성상 연속 줌(애니메이션)은 매 프레임 재래스터라
+            // 뭘 해도 렉이 걸립니다. 모든 줌 입력을 **고정 5% 스텝**으로
+            // 양자화해 한 번에 적용합니다 — 스텝당 재렌더 1회만 발생합니다.
+            let mut steps = 0.0f32;
+            // 1) 핀치/트랙패드 핀치 (연속 배율) → ln으로 스텝 수 환산 후 반올림.
+            if (zoom_delta - 1.0).abs() > 1e-4 {
+                steps += (zoom_delta.ln() / ZOOM_STEP.ln()).round();
+            }
+            // 2) Ctrl+휠 노치 → 노치당 1스텝 (±5%).
+            let mut ctrl_notches = 0.0f32;
+            if ctrl_down {
+                // egui의 smooth_scroll_delta는 스무딩돼 노치 1개가 크게
+                // 튈 수 있으므로, 이번 프레임의 원시 휠 이벤트를 셉니다.
+                let events: Vec<egui::Event> =
+                    ctx.input(|i| i.events.iter().cloned().collect());
+                for ev in &events {
+                    if let egui::Event::MouseWheel {
+                        unit,
+                        delta,
+                        modifiers,
+                        ..
+                    } = ev
+                    {
+                        if modifiers.ctrl {
+                            ctrl_notches += match unit {
+                                egui::MouseWheelUnit::Line => delta.y,
+                                egui::MouseWheelUnit::Point => delta.y / 50.0,
+                                egui::MouseWheelUnit::Page => delta.y,
+                            };
+                        }
                     }
                 }
-            }
-        }
-        if ctrl_down && ctrl_wheel_notches.abs() > 1e-4 && (zoom_delta - 1.0).abs() <= 1e-4 {
-            // Restart the ramp if the user paused between notches, then
-            // accelerate from +1% up to +8% per notch while scrolling fast.
-            let now = ctx.input(|i| i.time);
-            if now - self.zoom_accel_last > 0.3 {
-                self.zoom_accel = 0.0;
-            }
-            self.zoom_accel = (self.zoom_accel + 0.01 * ctrl_wheel_notches.abs()).min(0.08);
-            self.zoom_accel_last = now;
-            let dir = ctrl_wheel_notches.signum();
-            zoom_factor = (1.0 + self.zoom_accel * dir).clamp(0.5, 2.0);
-            scroll_zoom = true;
-        } else if ctrl_down && ctx.input(|i| i.time) - self.zoom_accel_last > 0.3 {
-            // Reset the acceleration ramp once scrolling pauses.
-            self.zoom_accel = 0.0;
-        }
-
-        let zooming = (zoom_factor - 1.0).abs() > 1e-4;
-        // Pinch / trackpad pinch already arrive as a *continuous* zoom_delta,
-        // so they are applied immediately (they are smooth by nature). A
-        // discrete Ctrl+wheel notch instead only sets an eased *target*: the
-        // real zoom glides toward it over a few frames instead of jumping.
-        let continuous_zoom = (zoom_delta - 1.0).abs() > 1e-4 && !scroll_zoom;
-        if zooming && (response.hovered() || scroll_zoom) {
-            // Anchor at the pointer when available, otherwise the canvas center.
-            let anchor_ui = pointer_abs
-                .map(|abs| [abs.x - origin.x, abs.y - origin.y])
-                .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-            if continuous_zoom {
-                self.view.zoom_at(anchor_ui, zoom_factor, MIN_ZOOM, MAX_ZOOM);
-                self.render_dirty = true;
-                self.zoom_target = None;
-                self.zoom_anchor_page = None;
-                self.zoom_anchor_ui = None;
-                ctx.request_repaint();
-            } else {
-                // Ctrl+wheel: remember the page point under the cursor, then
-                // animate zoom toward the target (compounds if still gliding).
-                let page = [
-                    (anchor_ui[0] - self.view.pan_x) / self.view.zoom,
-                    (anchor_ui[1] - self.view.pan_y) / self.view.zoom,
-                ];
-                self.zoom_anchor_ui = Some(anchor_ui);
-                self.zoom_anchor_page = Some(page);
-                let base = self.zoom_target.unwrap_or(self.view.zoom);
-                let t = (base * zoom_factor).clamp(MIN_ZOOM, MAX_ZOOM);
-                self.zoom_target = Some(t);
-                ctx.request_repaint();
-            }
-        }
-        // Cancel an in-flight zoom animation as soon as the user starts a
-        // gesture (drawing / panning), snapping to the final zoom cleanly.
-        if pointer_any_down {
-            if let Some(t) = self.zoom_target {
-                self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
-                self.render_dirty = true;
-            }
-            self.zoom_target = None;
-            self.zoom_anchor_page = None;
-            self.zoom_anchor_ui = None;
-        }
-        // Drive the eased zoom toward its target every frame (smooth glide).
-        if let Some(target) = self.zoom_target {
-            let diff = (target - self.view.zoom).abs();
-            if diff < 1e-4 {
-                self.view.zoom = target.clamp(MIN_ZOOM, MAX_ZOOM);
-                self.zoom_target = None;
-                self.zoom_anchor_page = None;
-                self.zoom_anchor_ui = None;
-            } else {
-                let k = 1.0 - (-ZOOM_SMOOTH_RATE * dt).exp();
-                let next = self.view.zoom + (target - self.view.zoom) * k;
-                self.view.zoom = next.clamp(MIN_ZOOM, MAX_ZOOM);
-                // Keep the anchored page point under the cursor during the glide.
-                if let (Some(ui_p), Some(pg)) = (self.zoom_anchor_ui, self.zoom_anchor_page) {
-                    self.view.pan_x = ui_p[0] - pg[0] * self.view.zoom;
-                    self.view.pan_y = ui_p[1] - pg[1] * self.view.zoom;
-                    self.view
-                        .clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+                if ctrl_notches.abs() > 1e-4 {
+                    steps += ctrl_notches.round();
                 }
+            }
+            if steps.abs() >= 0.5 && (response.hovered() || ctrl_notches.abs() > 1e-4) {
+                // 포인터가 있으면 그 아래 페이지 점을 앵커로, 없으면 캔버스 중심.
+                let anchor_ui = pointer_abs
+                    .map(|abs| [abs.x - origin.x, abs.y - origin.y])
+                    .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+                self.view.zoom_at(anchor_ui, ZOOM_STEP.powf(steps), MIN_ZOOM, MAX_ZOOM);
                 self.render_dirty = true;
                 ctx.request_repaint();
             }
-        }
         } // end !zoom_lock (줌 잠금)
 
         // ── Animated scroll (mouse wheel / trackpad) ─────────────────────
@@ -1573,6 +1565,22 @@ impl FreeDfApp {
                 let page_w = self.page_size_pts[0];
                 let page_h = self.page_size_pts[1];
                 if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
+                    // ── 포커스 제스처 (스플릿 뷰) ─────────────────────────
+                    // ① 아직 포커스 없음 → 이 프레스는 잉크 없이 포커스만
+                    //    요청합니다 (한 번만 — 플랫폼이 무시하면 다음부터
+                    //    그대로 그립니다). ② 이 프레스가 방금 포커스를 만든
+                    //    직후(유예 중)라면 역시 삼킵니다.
+                    let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
+                    if unfocused {
+                        if !self.focus_grabbed {
+                            self.focus_grabbed = true;
+                            self.focus_swallow_next_click = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                            return;
+                        }
+                    } else if self.focus_grace_until_ms.is_some_and(|t| now_ms() < t) {
+                        return;
+                    }
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
                         let raw = self.view.view_to_page([p.x, p.y]);
@@ -1697,6 +1705,15 @@ impl FreeDfApp {
                     self.finish_stroke();
                 }
                 if response.clicked() && self.active_stroke.is_none() {
+                    // 포커스용 탭은 점을 찍지 않습니다 (프레스에서 삼킨 표식
+                    // 또는 포커스 획득 직후 유예).
+                    if self.focus_swallow_next_click {
+                        self.focus_swallow_next_click = false;
+                        return;
+                    }
+                    if self.focus_grace_until_ms.is_some_and(|t| now_ms() < t) {
+                        return;
+                    }
                     if let Some(abs) = pointer_abs {
                         let p = abs - origin;
                         let raw = self.view.view_to_page([p.x, p.y]);
@@ -1711,6 +1728,9 @@ impl FreeDfApp {
                             self.commit_dot(page, pressure);
                         }
                     }
+                } else if !primary_down {
+                    // 클릭이 완성되지 않았으면 삼킴 표식을 폐기합니다.
+                    self.focus_swallow_next_click = false;
                 }
             }
             ToolType::Eraser => {

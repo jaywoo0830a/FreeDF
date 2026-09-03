@@ -195,38 +195,41 @@ impl FreeDfApp {
         } else if self.current_note == Some(doc_id) {
             self.close_document();
         }
-        // 캐시 제거.
+        // 로컬 캐시/목록 제거 (즉시).
         let _ = self.notes.delete_note(id);
         self.recents.remove(RecentKind::Note, doc_id);
-        // DB 제거 (strokes/pages/sessions/recents는 ON DELETE CASCADE).
-        if let Err(e) = self.db.delete_document(doc_id) {
-            self.status = Some(format!("Delete failed: {e}"));
-            return;
-        }
-        self.logger.log(AppEvent::NoteDeleted { note_id: id, title });
+        // DB 제거(strokes/pages/sessions/recents는 ON DELETE CASCADE)는
+        // 백그라운드 — 원격 왕복이 UI 스레드를 막지 않습니다.
+        self.spawn_library_delete(vec![LibraryJob::DeleteNote { doc_id, title }]);
     }
 
     /// DB의 문서(외부 PDF)를 삭제합니다. 원본 파일은 건드리지 않습니다
     /// (파일을 지우려면 탐색기에서 직접 삭제하세요).
     pub(crate) fn delete_pdf_action(&mut self, doc_id: i64) {
-        let name = self
-            .db
-            .get_document(doc_id)
-            .map(|d| d.title)
-            .unwrap_or_else(|| doc_id.to_string());
+        // 이름은 로컬 캐시(활성 문서/탭/최근 목록)에서만 — 원격 왕복을 피합니다.
+        let name = if self.doc_id == Some(doc_id) {
+            self.file_name.clone()
+        } else {
+            self.tabs
+                .iter()
+                .find(|t| matches!(&t.kind, TabKind::Pdf(id) if *id == doc_id))
+                .map(|t| t.label.clone())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    self.recents
+                        .items
+                        .iter()
+                        .find(|r| r.doc_id == Some(doc_id))
+                        .map(|r| r.title.clone())
+                })
+                .unwrap_or_else(|| doc_id.to_string())
+        };
         // 열린 탭 닫기 (활성 탭이면 인접 탭으로 전환됨).
         if let Some(idx) = self.find_tab(&TabKind::Pdf(doc_id)) {
             self.close_tab(idx);
         }
         self.recents.remove(RecentKind::File, doc_id);
-        if let Err(e) = self.db.delete_document(doc_id) {
-            self.status = Some(format!("Delete failed: {e}"));
-            return;
-        }
-        self.logger.log(AppEvent::PdfDeleted {
-            path: name.clone(),
-        });
-        self.status = Some(format!("Deleted {name} from the library"));
+        self.spawn_library_delete(vec![LibraryJob::DeletePdf { doc_id, name }]);
     }
 
     /// 현재 선택된 용지(스타일+색)를 **모든 페이지**에 적용합니다.
@@ -458,27 +461,38 @@ impl FreeDfApp {
     }
 
     /// 외부 PDF를 **DB에 import**하고 엽니다. 같은 경로가 이미 있으면 재사용합니다.
+    /// 파일 읽기(디스크)와 DB 업로드(원격 왕복, MB 단위일 수 있음)는
+    /// 백그라운드 스레드에서 진행 — UI 스레드를 막지 않습니다.
+    /// 완료되면 `poll_pdf_import → open_document`가 문서를 엽니다.
     pub(crate) fn open_pdf(&mut self, path: &Path) {
-        let key = path.to_string_lossy().into_owned();
-        if let Some(doc_id) = self.db.find_document_by_path(&key) {
-            self.open_document(doc_id);
+        if self.loading.is_some() || self.pdf_import_rx.is_some() {
             return;
         }
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) => {
-                self.show_error(format!("Could not read PDF file: {e}"));
-                return;
-            }
-        };
-        let name = path
+        let path = path.to_path_buf();
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pdf_import_rx = Some(rx);
+        let label = path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| key.clone());
-        match self.db.insert_document("pdf", &name, Some(&key), 1, &bytes) {
-            Ok(doc_id) => self.open_document(doc_id),
-            Err(e) => self.show_error(e),
-        }
+            .unwrap_or_else(|| path.display().to_string());
+        self.begin_loading(format!("Importing {label}…"));
+        std::thread::spawn(move || {
+            let result = (|| -> Result<i64, String> {
+                let key = path.to_string_lossy().into_owned();
+                if let Some(doc_id) = db.find_document_by_path(&key) {
+                    return Ok(doc_id);
+                }
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| format!("Could not read PDF file: {e}"))?;
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| key.clone());
+                db.insert_document("pdf", &name, Some(&key), 1, &bytes)
+            })();
+            let _ = tx.send(PdfImportMsg::Done(result));
+        });
     }
 
     // ---------- Pages ----------
@@ -618,8 +632,15 @@ impl FreeDfApp {
         });
     }
 
-    /// 새 빈 페이지를 삽입합니다. `target`에 따라 위치/크기/용지가 달라집니다.
+    /// 새 빈 페이지를 1장 삽입합니다 (`insert_pages_action`의 단건 래퍼).
     pub(crate) fn insert_page_action(&mut self, target: InsertTarget) {
+        self.insert_pages_action(target, 1);
+    }
+
+    /// 새 빈 페이지를 `count`장 삽입합니다. `target`에 따라 위치/크기/용지가
+    /// 달라집니다 (Insert Page 메뉴의 개수 지정).
+    pub(crate) fn insert_pages_action(&mut self, target: InsertTarget, count: usize) {
+        let count = count.clamp(1, 200);
         // (self.document를 가변 빌리기 전에 self 값을 미리 계산)
         let default_paper = PagePaper {
             style: self.paper_style,
@@ -647,17 +668,22 @@ impl FreeDfApp {
             InsertTarget::BeforeCurrent => (self.current_page, default_size, default_paper),
             InsertTarget::AfterCurrent => (self.current_page + 1, default_size, default_paper),
         };
-        if let Err(e) = doc.insert_page_at(idx, size) {
-            self.status = Some(e);
-            return;
+        // 같은 위치에 반복 삽입 → 연속된 count장 (빈 페이지라 순서 무관).
+        for _ in 0..count {
+            if let Err(e) = doc.insert_page_at(idx, size) {
+                self.status = Some(e);
+                return;
+            }
         }
-        // 끝에 삽입이면 기존 획 인덱스 불변(메타만), 중간이면 서버에서 +1 이동.
+        // 끝에 삽입이면 기존 획 인덱스 불변(메타만), 중간이면 서버에서 count장 이동.
         let shift = (idx < total).then_some(StructureOp::Shift {
             from: idx as i32,
-            delta: 1,
+            delta: count as i32,
         });
-        self.store.insert_page(idx);
-        self.store.set_paper(idx, paper);
+        for _ in 0..count {
+            self.store.insert_page(idx);
+            self.store.set_paper(idx, paper);
+        }
         self.current_page = idx;
         let total = doc.page_count();
         self.logger.log(AppEvent::PageAdded { page: idx, total });

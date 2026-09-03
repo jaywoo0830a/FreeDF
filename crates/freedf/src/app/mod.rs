@@ -95,8 +95,10 @@ const PAGE_ANIM_SECS: f32 = 0.28;
 const COMPACT_MIN_WIDTH: f32 = 640.0;
 /// Smoothing rate (1/second) for animated wheel scroll.
 const SCROLL_SMOOTH_RATE: f32 = 14.0;
-/// Smoothing rate (1/second) for animated Ctrl+wheel zoom.
-const ZOOM_SMOOTH_RATE: f32 = 16.0;
+/// 줌 한 스텝 = **5%**. PDF 렌더러 특성상 연속(애니메이션) 줌은 매 프레임
+/// 재래스터로 렉이 걸리므로, 모든 줌 입력(버튼/Ctrl+휠/핀치/단축키)을
+/// 이 고정 스텝으로 양자화해 한 번에 적용합니다.
+const ZOOM_STEP: f32 = 1.05;
 
 /// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -450,6 +452,23 @@ pub(crate) enum SaveMsg {
     Done(Result<(), String>),
 }
 
+/// 라이브러리 삭제(원격 DB 왕복) 작업 — 로컬 상태는 즉시 반영하고
+/// 원격 삭제만 백그라운드로 보냅니다 (UI 스레드 블로킹 방지).
+pub(crate) enum LibraryJob {
+    DeleteNote { doc_id: i64, title: String },
+    DeletePdf { doc_id: i64, name: String },
+}
+
+/// 라이브러리 삭제 작업 결과 (순서대로 도착).
+pub(crate) enum LibraryOutcome {
+    Done(LibraryJob, Result<(), String>),
+}
+
+/// 외부 PDF import(파일 읽기 → DB 업로드) 진행 — 완료되면 `open_document`로 연결.
+pub(crate) enum PdfImportMsg {
+    Done(Result<i64, String>),
+}
+
 /// 열려 있는 문서 탭의 종류 — 둘 다 DB의 `documents.id`입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabKind {
@@ -659,6 +678,8 @@ pub struct FreeDfApp {
     pen_monitor: Option<freedf_core::pen_input::PenMonitor>,
     /// evdev에서 직접 읽은 최신 필압 (없으면 egui Touch force 사용).
     live_pressure: Option<f32>,
+    /// 펜 사이드 버튼 현재 상태 (OTD/evdev 스트림) — 팔레트 토글 등에 사용.
+    pen_buttons: freedf_core::pen_input::PenButtons,
     /// OTD/evdev 펜 스트림이 마지막으로 도착한 시각 (ms) — 진단용.
     last_pen_state_ms: Option<u64>,
     /// 마지막 획의 진단 판정 문구 (Debug HUD 표시용).
@@ -746,17 +767,6 @@ pub struct FreeDfApp {
     smooth_active: bool,
     /// Trackpad/wheel momentum (points/sec) for inertial panning
     scroll_vel: Vec2,
-    /// Ctrl+wheel zoom acceleration ramp (0.01 per notch, capped)
-    zoom_accel: f32,
-    /// Time of the last Ctrl+wheel notch (used to restart the ramp)
-    zoom_accel_last: f64,
-    /// Animated (eased) zoom target — set by Ctrl+wheel notches; the actual
-    /// `view.zoom` glides toward it for a few frames (smooth, no jumps).
-    zoom_target: Option<f32>,
-    /// Page-space point that stays under the cursor while zoom animates.
-    zoom_anchor_page: Option<[f32; 2]>,
-    /// Canvas-space cursor position used as the zoom anchor.
-    zoom_anchor_ui: Option<[f32; 2]>,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// 다음 페이지 전환을 세로로 할지 (PgUp/PgDn 키가 세팅) — 시작 시 소비
@@ -781,6 +791,16 @@ pub struct FreeDfApp {
     /// (toggled with Ctrl+Shift+M, or from the floating pill). Always shows the
     /// writing palette; the pill restores the chrome.
     manual_minimal: bool,
+    /// 스플릿 뷰 포커스 제스처: 포커스가 없던 동안 이미 Focus를 요청했는지
+    /// (펜 호버 시 한 번만 요청 — 계속 뺏아오는 것을 방지).
+    focus_grabbed: bool,
+    /// 직전 프레임의 뷰포트 포커스 상태 — 이번 프레임에 false→true로
+    /// 바뀌었는지(첫 탭이 포커스를 만든 것인지) 판별용.
+    prev_viewport_focused: Option<bool>,
+    /// 포커스가 프레스와 동시에 잡힌 직후의 잉크 유예 만료 시각 (ms).
+    focus_grace_until_ms: Option<u64>,
+    /// 포커스 요청으로 삼킨 프레스의 릴리스(점)를 한 번만 무시하는 표식.
+    focus_swallow_next_click: bool,
 
     // ---------- Search ----------
     search_query: String,
@@ -857,6 +877,11 @@ pub struct FreeDfApp {
     media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
     /// 백그라운드 저장 진행 채널 (단계/완료).
     save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
+    /// 라이브러리 삭제(노트/PDF) 백그라운드 작업 채널 — 여러 배치가 동시에
+    /// 떠 있을 수 있어 벡터로 관리합니다.
+    library_rx: Vec<std::sync::mpsc::Receiver<LibraryOutcome>>,
+    /// 외부 PDF import(파일 읽기 + DB 업로드) 백그라운드 작업 채널.
+    pdf_import_rx: Option<std::sync::mpsc::Receiver<PdfImportMsg>>,
     /// 저장 완료 후 앱 종료 예정 여부 (Save & Quit).
     pending_quit: bool,
     // ---------- Media server ----------
@@ -898,21 +923,13 @@ impl FreeDfApp {
     ) -> Self {
         // Disable egui's built-in Ctrl+scroll zoom folding: it multiplies the
         // zoom by exp(speed * scroll), which jumps ~28% per wheel notch. We do
-        // discrete +1% zoom ourselves (see handle_canvas_input), so keep egui's
+        // discrete 5% zoom ourselves (see handle_canvas_input), so keep egui's
         // fold a no-op while still allowing real pinch (Event::Zoom).
         cc.egui_ctx.options_mut(|o| o.input_options.scroll_zoom_speed = 0.0);
 
-        let dark = matches!(cc.egui_ctx.theme(), egui::Theme::Dark);
-        let theme_pen = if dark {
-            [255, 255, 255, 255]
-        } else {
-            Palette::default_pen()
-        };
-        let theme_hi = if dark {
-            [255, 220, 60, 110]
-        } else {
-            Palette::default_highlighter()
-        };
+        // 기본 펜/만년필 색은 항상 진한 검정 (다크 테마에서도 흰색이 아님).
+        let theme_pen = Palette::default_pen();
+        let theme_hi = Palette::default_highlighter();
 
         // 전역 기본 세션 → DB app_state('session'). 없으면 테마 기본값.
         let (s, has) = match db.get_app_state("session") {
@@ -1106,6 +1123,7 @@ impl FreeDfApp {
             width_locker: None,
             pen_monitor,
             live_pressure: None,
+            pen_buttons: Default::default(),
             last_pen_state_ms: None,
             pen_verdict: None,
             pen_flat_log_ms: 0,
@@ -1147,11 +1165,6 @@ impl FreeDfApp {
             smooth_p: OneEuroFilter::from_smoothing(0.4),
             smooth_active: false,
             scroll_vel: Vec2::ZERO,
-            zoom_accel: 0.0,
-            zoom_accel_last: 0.0,
-            zoom_target: None,
-            zoom_anchor_page: None,
-            zoom_anchor_ui: None,
             page_anim: None,
             transition_vertical: false,
             prev_texture: None,
@@ -1164,6 +1177,10 @@ impl FreeDfApp {
             },
             narrow_chrome_expanded: false,
             manual_minimal: false,
+            focus_grabbed: false,
+            prev_viewport_focused: None,
+            focus_grace_until_ms: None,
+            focus_swallow_next_click: false,
             search_query: String::new(),
             search_runs: Vec::new(),
             search_matches: Vec::new(),
@@ -1199,6 +1216,8 @@ impl FreeDfApp {
             loader_rx: None,
             media_rx: None,
             save_rx: None,
+            library_rx: Vec::new(),
+            pdf_import_rx: None,
             pending_quit: false,
             media_config,
             server_settings_open: false,
@@ -1810,6 +1829,84 @@ impl FreeDfApp {
         }
     }
 
+    /// 라이브러리 삭제(원격 DB 왕복)를 백그라운드 스레드로 보냅니다.
+    /// 로컬 상태는 이미 반영된 뒤이므로 UI는 즉시 반응합니다.
+    pub(crate) fn spawn_library_delete(&mut self, jobs: Vec<LibraryJob>) {
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for job in jobs {
+                let doc_id = match &job {
+                    LibraryJob::DeleteNote { doc_id, .. } | LibraryJob::DeletePdf { doc_id, .. } => {
+                        *doc_id
+                    }
+                };
+                let result = db.delete_document(doc_id).map_err(|e| e.to_string());
+                if tx.send(LibraryOutcome::Done(job, result)).is_err() {
+                    break; // 소비자 종료.
+                }
+            }
+        });
+        self.library_rx.push(rx);
+    }
+
+    /// 라이브러리 삭제 작업 결과 수신 (매 프레임 호출).
+    fn poll_library(&mut self) {
+        if self.library_rx.is_empty() {
+            return;
+        }
+        let mut done = Vec::new();
+        let mut keep = Vec::new();
+        for rx in self.library_rx.drain(..) {
+            match rx.try_recv() {
+                Ok(msg) => done.push(msg),
+                Err(std::sync::mpsc::TryRecvError::Empty) => keep.push(rx),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+            }
+        }
+        self.library_rx = keep;
+        for msg in done {
+            match msg {
+                LibraryOutcome::Done(LibraryJob::DeleteNote { doc_id, title }, Ok(())) => {
+                    self.logger.log(AppEvent::NoteDeleted {
+                        note_id: doc_id as u64,
+                        title,
+                    });
+                }
+                LibraryOutcome::Done(LibraryJob::DeletePdf { name, .. }, Ok(())) => {
+                    self.logger.log(AppEvent::PdfDeleted { path: name });
+                }
+                LibraryOutcome::Done(_, Err(e)) => {
+                    self.status = Some(format!("Delete failed: {e}"));
+                }
+            }
+        }
+    }
+
+    /// 외부 PDF import(파일 읽기 + DB 업로드) 결과 수신 — 완료되면 엽니다.
+    fn poll_pdf_import(&mut self) {
+        let Some(rx) = self.pdf_import_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(PdfImportMsg::Done(Ok(doc_id))) => {
+                self.end_loading();
+                self.open_document(doc_id);
+            }
+            Ok(PdfImportMsg::Done(Err(e))) => {
+                self.end_loading();
+                self.show_error(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.pdf_import_rx = Some(rx); // 아직 — 다음 프레임에 다시.
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.end_loading();
+                self.show_error("PDF import was interrupted.".into());
+            }
+        }
+    }
+
     /// 진행 중 오버레이 — 스피너 + 단계 메시지 + 경과 시간 + 진행바.
     fn loading_overlay(&self, ctx: &egui::Context) {
         let Some(msg) = self.loading.clone() else {
@@ -2008,16 +2105,6 @@ impl FreeDfApp {
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::L)) {
             // 줌 잠금 토글 — 실수로 확대/축소되는 것을 막습니다.
             self.zoom_lock = !self.zoom_lock;
-            if self.zoom_lock {
-                // 진행 중이던 줌 애니메이션은 즉시 종료합니다.
-                if let Some(t) = self.zoom_target {
-                    self.view.zoom = t.clamp(MIN_ZOOM, MAX_ZOOM);
-                    self.render_dirty = true;
-                }
-                self.zoom_target = None;
-                self.zoom_anchor_page = None;
-                self.zoom_anchor_ui = None;
-            }
             self.save_default_session();
             self.save_session();
         }
@@ -2047,10 +2134,10 @@ impl FreeDfApp {
             if !self.zoom_lock
                 && ctx.input(|i| i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals))
             {
-                self.zoom_by(1.25);
+                self.zoom_by(ZOOM_STEP);
             }
             if !self.zoom_lock && ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
-                self.zoom_by(1.0 / 1.25);
+                self.zoom_by(1.0 / ZOOM_STEP);
             }
             // Tool shortcuts
             if ctx.input(|i| i.key_pressed(egui::Key::P)) {
@@ -2238,11 +2325,15 @@ impl eframe::App for FreeDfApp {
         self.poll_connect_result();
         self.poll_loader();
         self.poll_media();
+        self.poll_library();
+        self.poll_pdf_import();
         self.poll_save(&ctx);
         self.poll_stroke_refill();
         if self.pending_connect.is_some()
             || self.loader_rx.is_some()
             || self.media_rx.is_some()
+            || !self.library_rx.is_empty()
+            || self.pdf_import_rx.is_some()
             || self.save_rx.is_some()
             || self.stroke_id_refill.is_some()
         {
@@ -2324,8 +2415,9 @@ impl eframe::App for FreeDfApp {
             self.canvas(ui);
         });
 
-        // 플로팅 제어: 좁은 창이거나 수동 최소 모드일 때만 표시 (복귀 장치).
-        if narrow || self.manual_minimal {
+        // 플로팅 복귀 장치: 크롬이 숨겨진(최소) 모드에서만 표시.
+        // 크롬이 보일 때의 Show/Hide UI 토글은 툴바 Row1이 담당합니다.
+        if minimal {
             self.compact_pill(&ctx, minimal, narrow);
         }
 

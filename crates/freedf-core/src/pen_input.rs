@@ -9,13 +9,26 @@
 //! Windows에서는 WM_POINTER(POINTER_PEN_INFO) 훅이 필요하며, egui/winit이
 //! 이를 노출하지 않아 별도 통합이 필요합니다.
 
+/// 펜 사이드 버튼 상태 — OTD `Data.PenButtons[1..]` / evdev `BTN_STYLUS(2)`에서
+/// 읽습니다. 앱은 눌림/뗌(에지)을 감지해 단축 액션(예: 색상 팔레트 토글)에
+/// 연결할 수 있습니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PenButtons {
+    /// 사이드 버튼 1 (펜 그립의 가까운 쪽)
+    pub button1: bool,
+    /// 사이드 버튼 2 (펜 그립의 먼 쪽)
+    pub button2: bool,
+}
+
 /// 펜 상태 스냅샷 — 틸트(도, ±90), 필압(0..1, 장치가 보고할 때만),
-/// 접촉 여부.
+/// 접촉 여부, 사이드 버튼.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PenState {
     pub tilt: [f32; 2],
     pub pressure: Option<f32>,
     pub contact: bool,
+    /// 사이드 버튼 상태 (장치가 보고할 때만 의미 있음)
+    pub buttons: PenButtons,
 }
 
 /// 발견된 펜 장치 정보 (진단 출력용).
@@ -39,6 +52,8 @@ mod linux {
     const ABS_TILT_X: u16 = 0x1a;
     const ABS_TILT_Y: u16 = 0x1b;
     const BTN_TOUCH: u16 = 0x14a;
+    const BTN_STYLUS: u16 = 0x14b;
+    const BTN_STYLUS2: u16 = 0x14c;
 
     /// _IOC(_IOC_READ, 'E', 0x06, len) — 장치 이름 읽기.
     fn eviocgname(len: usize) -> libc::c_ulong {
@@ -153,6 +168,7 @@ mod linux {
         pressure: Option<f32>,
         pressure_max: i32,
         contact: bool,
+        buttons: super::PenButtons,
     }
 
     impl PenMonitor {
@@ -178,6 +194,7 @@ mod linux {
                 pressure: None,
                 pressure_max,
                 contact: false,
+                buttons: super::PenButtons::default(),
             })
         }
 
@@ -234,6 +251,20 @@ mod linux {
                                 changed = true;
                             }
                         }
+                        (EV_KEY, BTN_STYLUS) => {
+                            let c = ev.value != 0;
+                            if self.buttons.button1 != c {
+                                self.buttons.button1 = c;
+                                changed = true;
+                            }
+                        }
+                        (EV_KEY, BTN_STYLUS2) => {
+                            let c = ev.value != 0;
+                            if self.buttons.button2 != c {
+                                self.buttons.button2 = c;
+                                changed = true;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -250,6 +281,7 @@ mod linux {
                 tilt: self.tilt,
                 pressure: self.pressure,
                 contact: self.contact,
+                buttons: self.buttons,
             }
         }
     }
@@ -447,11 +479,23 @@ mod otd_ipc {
                 .and_then(|b| b.first())
                 .and_then(|t| t.as_bool())
                 .unwrap_or(false);
+            // 사이드 버튼 2개 — OTD 리포트의 PenButtons[1], [2].
+            // (장치가 버튼을 보고하지 않으면 false — 에지 감지가 그냥 안 뜸)
+            let buttons = data["PenButtons"].as_array();
+            let button1 = buttons
+                .and_then(|b| b.get(1))
+                .and_then(|t| t.as_bool())
+                .unwrap_or(false);
+            let button2 = buttons
+                .and_then(|b| b.get(2))
+                .and_then(|t| t.as_bool())
+                .unwrap_or(false);
             if tx
                 .send(PenState {
                     tilt: [tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)],
                     pressure: Some(pressure),
                     contact: tip || pressure > 0.0,
+                    buttons: PenButtons { button1, button2 },
                 })
                 .is_err()
             {
@@ -593,5 +637,7 @@ mod tests {
         assert_eq!(s.tilt, [0.0, 0.0]);
         assert!(s.pressure.is_none());
         assert!(!s.contact);
+        assert!(!s.buttons.button1);
+        assert!(!s.buttons.button2);
     }
 }

@@ -405,14 +405,14 @@ impl FreeDfApp {
             ui.add_space(3.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(icon_text(ui, "New", icons::PLUS))
+                    .button(icon_text(ui, "New Note", icons::PLUS))
                     .on_hover_text("New note (Ctrl+N)")
                     .clicked()
                 {
                     self.modal = Some(ModalState::ask_new_note());
                 }
                 if ui
-                    .button(icon_text(ui, "Open", icons::FOLDER_OPEN))
+                    .button(icon_text(ui, "Open PDF", icons::FOLDER_OPEN))
                     .on_hover_text("Open PDF (Ctrl+O)")
                     .clicked()
                 {

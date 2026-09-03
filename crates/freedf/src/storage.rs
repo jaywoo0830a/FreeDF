@@ -132,6 +132,9 @@ pub type SharedStorage = Arc<dyn StorageBackend>;
 ///
 /// 새 백엔드를 붙일 때는 여기에 한 줄 추가하면 됩니다 —
 /// 예: `"local-file" => Arc::new(local::FileBackend::open(...)?)`.
+///
+/// (시작 시 자동 연결은 하지 않으므로 현재는 테스트/미래 env 오버라이드용)
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn from_env(db_url: &str) -> Result<SharedStorage, String> {
     let kind = std::env::var("FREEDF_STORAGE").unwrap_or_else(|_| "postgres".to_string());
     match kind.as_str() {

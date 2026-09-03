@@ -41,27 +41,16 @@ fn main() -> eframe::Result<()> {
     }
     let open_path = open_path.filter(|p| p.is_file());
 
-    // DB 연결 — **창을 먼저 띄우고** 연결은 백그라운드 스레드에서 시도합니다.
-    // (네트워크 상태와 무관하게 앱이 즉시 뜹니다) 우선순위:
+    // DB 연결 — **시작 시에는 아무 연결도 시도하지 않습니다.**
+    // 사용자가 첫 실행 대화상자(또는 툴바 Server 창)에서 "Connect"를 누를
+    // 때만 백그라운드로 연결합니다. 아래 URL은 대화상자의 **입력 프리필**용:
     // FREEDF_DATABASE_URL 환경 변수 → 마지막 연결 성공(connection.json) → 기본값.
     let db_url = std::env::var("FREEDF_DATABASE_URL")
         .ok()
         .or_else(storage::load_saved_connection)
         .unwrap_or_else(|| db::DEFAULT_DATABASE_URL.to_string());
-    eprintln!("FreeDF: connecting to {db_url} (background)");
-    let (db, db_connected, connect_error, pending_connect) = {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let url = db_url.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(storage::from_env(&url));
-        });
-        (
-            storage::disconnected(),
-            false,
-            None,
-            Some((rx, true, db_url.clone())), // true = 자동 시작 (성공 시 대화상자 자동 닫힘)
-        )
-    };
+    let (db, db_connected, connect_error, pending_connect) =
+        (storage::disconnected(), false, None, None);
 
     // 이벤트 로그는 백그라운드 스레드로 비동기 기록 — 스트로크마다 원격 왕복
     // 없이 필기 응답성을 유지합니다 (연결 전이면 no-op 폴백).

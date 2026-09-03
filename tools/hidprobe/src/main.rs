@@ -18,11 +18,13 @@ fn main() {
             let mut last = std::time::Instant::now();
             while let Ok(st) = rx.recv() {
                 println!(
-                    "tilt=[{:+.0}°, {:+.0}°]  pressure={:.3}  contact={}",
+                    "tilt=[{:+.0}°, {:+.0}°]  pressure={:.3}  contact={}  b1={} b2={}",
                     st.tilt[0],
                     st.tilt[1],
                     st.pressure.unwrap_or(0.0),
-                    st.contact
+                    st.contact,
+                    st.buttons.button1,
+                    st.buttons.button2
                 );
                 last = std::time::Instant::now();
             }
@@ -67,13 +69,15 @@ fn main() {
         if let Some(st) = mon.poll() {
             let t = st.tilt;
             println!(
-                "tilt=[{:+.0}°, {:+.0}°]  pressure={}  contact={}",
+                "tilt=[{:+.0}°, {:+.0}°]  pressure={}  contact={}  b1={} b2={}",
                 t[0],
                 t[1],
                 st.pressure
                     .map(|p| format!("{:.3}", p))
                     .unwrap_or_else(|| "미보고".into()),
-                st.contact
+                st.contact,
+                st.buttons.button1,
+                st.buttons.button2
             );
             last_print = std::time::Instant::now();
         }
