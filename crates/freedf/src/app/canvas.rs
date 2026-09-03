@@ -271,8 +271,11 @@ impl FreeDfApp {
             .order(egui::Order::Foreground)
             .fixed_pos(center - egui::vec2(WHEEL_BACK_R, WHEEL_BACK_R))
             .show(ctx, |ui| {
-                let rect = egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
+                // 주의: `painter_at(rect)`의 rect는 **클립 영역**(화면 좌표) —
+                // 좌표 오프셋이 아닙니다. ZERO 기준 rect를 넘기면 원이 화면
+                // 좌상단에 그려지므로, 반드시 캔버스 중앙 기준 rect를 씁니다.
+                let rect = egui::Rect::from_center_size(
+                    center,
                     egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
                 );
                 let painter = ui.painter_at(rect);
