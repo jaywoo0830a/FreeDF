@@ -941,6 +941,14 @@ mod tests {
         db.insert_log(123, 1, &serde_json::json!({"kind": "AppStart"}));
 
         // ── event log batch (logger 스레드가 사용하는 경로) ──
+        // 이전 실행이 남긴 행을 먼저 지워 단언을 멱등하게 만듭니다.
+        {
+            let mut c = conn_guard(&db.conn);
+            let _ = c.execute(
+                "DELETE FROM event_log WHERE epoch_ms IN (456, 457)",
+                &[],
+            );
+        }
         db.insert_logs(&[
             (456, serde_json::json!({"kind": "Batch1"})),
             (457, serde_json::json!({"kind": "Batch2"})),

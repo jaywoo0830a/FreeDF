@@ -350,8 +350,9 @@ impl FreeDfApp {
                 self.file_name = row.title.clone();
                 self.document = Some(doc);
                 self.set_store(store);
-                // 스트로크 id 풀을 미리 채워 첫 획부터 왕복 없이 그립니다.
-                self.fill_stroke_pool_sync();
+                // 스트로크 id 풀을 백그라운드로 미리 채워 첫 획부터
+                // UI 왕복 없이 그립니다 (도착 전이면 로컬 id 폴백).
+                self.request_stroke_pool_refill();
                 // 편집 저널 재생 → 재시작 전의 undo/redo 가능.
                 self.restore_history_from_edits(&edits);
                 self.active_stroke = None;

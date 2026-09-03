@@ -85,7 +85,8 @@ const CANVAS_MARGIN: f32 = 16.0;
 /// Page top margin
 const TOP_MARGIN: f32 = 16.0;
 /// 스트로크 id 풀 배치 크기 — 한 번의 원격 왕복으로 이만큼씩 미리 받아둡니다.
-const STROKE_ID_POOL_BATCH: usize = 64;
+/// (풀 절반 이하에서 미리 보충 예약 — 소진 시 UI 왕복 없음)
+const STROKE_ID_POOL_BATCH: usize = 256;
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
 /// Window width (points) below which the UI collapses to canvas + palette
@@ -1249,16 +1250,6 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
-    /// 스트로크 id 풀을 원격 시퀀스에서 한 번에 채웁니다 (드물게 호출).
-    fn fill_stroke_pool_sync(&mut self) {
-        let ids = self.db.alloc_stroke_ids(STROKE_ID_POOL_BATCH);
-        if !ids.is_empty() {
-            let first = ids[0] as u64;
-            let last = ids[ids.len() - 1] as u64;
-            self.stroke_id_pool = (first, last + 1);
-        }
-    }
-
     /// 풀 보충을 백그라운드 스레드로 예약 — 원격 왕복이 UI 스레드를 막지 않음.
     fn request_stroke_pool_refill(&mut self) {
         if self.stroke_id_refill.is_some() {
@@ -1272,29 +1263,60 @@ impl FreeDfApp {
         });
     }
 
-    /// 다음 스트로크 id n개를 반환 — 원격 호출은 풀 소진 시 드물게,
-    /// 가능하면 백그라운드에서 미리 받아 둔 묶음으로 충당합니다.
+    /// 백그라운드로 도착한 id 묶음을 매 프레임 흡수 — 풀을 미리 채워
+    /// 소진 시에도 UI 스레드에서 DB를 호출할 일이 없습니다.
+    fn poll_stroke_refill(&mut self) {
+        let Some(rx) = self.stroke_id_refill.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(ids) => {
+                if !ids.is_empty() {
+                    let first = ids[0] as u64;
+                    let last = ids[ids.len() - 1] as u64;
+                    self.stroke_id_pool = (first, last + 1);
+                }
+                if self.stroke_id_pool.1 - self.stroke_id_pool.0
+                    < (STROKE_ID_POOL_BATCH as u64) / 2
+                {
+                    self.request_stroke_pool_refill();
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.stroke_id_refill = Some(rx); // 아직 — 다음 프레임에 다시.
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
+    }
+
+    /// 다음 스트로크 id n개를 반환 — **UI 스레드에서 DB를 절대 호출하지 않음**.
+    /// 풀이 마르면 백그라운드 보충이 도착할 때까지만 소비하고, 없으면 빈 목록
+    /// (호출자가 로컬 id 폴백 — 저장은 다음 resync에서 반영).
     fn next_stroke_ids(&mut self, n: usize) -> Vec<i64> {
         let mut out = Vec::with_capacity(n);
         while out.len() < n {
             if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
                 // 백그라운드 보충 결과가 도착했으면 소비 (왕복 없음).
                 if let Some(rx) = self.stroke_id_refill.take() {
-                    if let Ok(ids) = rx.try_recv() {
-                        if !ids.is_empty() {
-                            let first = ids[0] as u64;
-                            let last = ids[ids.len() - 1] as u64;
-                            self.stroke_id_pool = (first, last + 1);
+                    match rx.try_recv() {
+                        Ok(ids) => {
+                            if !ids.is_empty() {
+                                let first = ids[0] as u64;
+                                let last = ids[ids.len() - 1] as u64;
+                                self.stroke_id_pool = (first, last + 1);
+                            }
                         }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            self.stroke_id_refill = Some(rx); // 아직 — 다음에 다시.
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
                     }
                 }
             }
             if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
-                // 아직 없으면 동기 폴백 (연결 전/실패면 빈 풀 유지).
-                self.fill_stroke_pool_sync();
-                if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
-                    break;
-                }
+                // 동기 폴백 없음 — UI 멈춤 방지가 우선. 연결이 늦거나 끊긴
+                // 경우 호출자가 로컬 id(add_stroke)로 그립니다.
+                break;
             }
             let take = (n - out.len())
                 .min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
@@ -1346,7 +1368,7 @@ impl FreeDfApp {
                     self.close_all_documents();
                 }
                 self.reload_library_from_db();
-                self.fill_stroke_pool_sync();
+                self.request_stroke_pool_refill();
                 if auto {
                     self.setup_open = false;
                 }
@@ -2190,10 +2212,12 @@ impl eframe::App for FreeDfApp {
         self.poll_loader();
         self.poll_media();
         self.poll_save(&ctx);
+        self.poll_stroke_refill();
         if self.pending_connect.is_some()
             || self.loader_rx.is_some()
             || self.media_rx.is_some()
             || self.save_rx.is_some()
+            || self.stroke_id_refill.is_some()
         {
             ctx.request_repaint();
         }

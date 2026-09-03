@@ -522,13 +522,35 @@ impl FreeDfApp {
         }
         // DB 시퀀스에서 밴드 수만큼 id를 미리 할당합니다 (풀링).
         let ids = self.next_stroke_ids(rects.len());
+        // 풀이 마르면(연결 늦음/끊김) 나머지 밴드는 로컬 id 폴백 — UI 왕복 없음.
+        let mut local_next = ids
+            .iter()
+            .copied()
+            .map(|i| i as u64)
+            .max()
+            .or_else(|| {
+                self.store
+                    .strokes_on(self.current_page)
+                    .iter()
+                    .map(|s| s.id)
+                    .max()
+            })
+            .unwrap_or(0)
+            + 1;
         let created_ms = now_ms();
         let mut strokes = Vec::new();
         for (k, r) in rects.iter().enumerate() {
             // 밴드 높이 = 그 줄의 글자 높이(포인트). 필압은 1.0(무시).
             let line_h = (r[3] - r[1]).max(2.0);
             let yc = (r[1] + r[3]) * 0.5;
-            let sid = ids.get(k).copied().map(|i| i as u64).unwrap_or(0);
+            let sid = match ids.get(k) {
+                Some(i) => *i as u64,
+                None => {
+                    let id = local_next;
+                    local_next += 1;
+                    id
+                }
+            };
             strokes.push(freedf_core::model::Stroke {
                 id: sid,
                 tool: ToolType::Highlighter,
