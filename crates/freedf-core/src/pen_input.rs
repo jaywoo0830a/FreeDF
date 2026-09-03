@@ -406,7 +406,7 @@ pub fn spawn_otd_monitor() -> Option<std::sync::mpsc::Receiver<PenState>> {
 
 #[cfg(target_os = "windows")]
 mod otd_ipc {
-    use super::PenState;
+    use super::{PenButtons, PenState};
     use std::io::{Read, Write};
 
     const PIPE_NAME: &str = r"\\.\pipe\OpenTabletDriver.Daemon";
