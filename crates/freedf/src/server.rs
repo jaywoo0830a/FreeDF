@@ -40,7 +40,7 @@ impl MediaServerConfig {
     /// 설정 파일 경로: `<앱 데이터 폴더>/server.json` (Windows:
     /// `%LOCALAPPDATA%/FreeDF/server.json`).
     pub fn config_path() -> PathBuf {
-        app_data_dir().join("server.json")
+        crate::storage::app_data_dir().join("server.json")
     }
 
     /// 파일에서 로드 — 없거나 깨졌으면 기본값.
@@ -237,17 +237,6 @@ fn urlencode(s: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect()
-}
-
-/// 앱 데이터 폴더 (pdf.rs의 `app_data_dir`과 동일 규칙).
-fn app_data_dir() -> PathBuf {
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local).join("FreeDF");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local").join("share").join("freedf");
-    }
-    PathBuf::new()
 }
 
 #[cfg(test)]

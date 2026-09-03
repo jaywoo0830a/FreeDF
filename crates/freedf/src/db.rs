@@ -12,6 +12,7 @@ use freedf_core::model::{Stroke, StrokePoint};
 use freedf_core::paper::{PagePaper, PaperStyle};
 use freedf_core::store::AnnotationStore;
 use postgres::{Client, NoTls};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -29,7 +30,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
 ];
 
 /// 문서 행 (documents 테이블).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocRow {
     pub id: i64,
     /// "note" | "pdf"
@@ -48,7 +49,7 @@ impl DocRow {
 }
 
 /// 최근 항목 행 (recents JOIN documents).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecentRow {
     pub kind: String,
     pub doc_id: i64,
@@ -618,6 +619,12 @@ impl Db {
         );
         let _ = seq;
     }
+
+    /// 연결 상태 확인 (SELECT 1).
+    pub fn ping(&self) -> bool {
+        let mut c = conn_guard(&self.conn);
+        c.query_opt("SELECT 1", &[]).map(|r| r.is_some()).unwrap_or(false)
+    }
 }
 
 /// `Db`의 메서드 시그니처가 `StorageBackend`와 1:1로 일치합니다 —
@@ -720,6 +727,10 @@ impl StorageBackend for Db {
 
     fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
         Db::insert_log(self, epoch_ms, seq, event)
+    }
+
+    fn ping(&self) -> bool {
+        Db::ping(self)
     }
 }
 

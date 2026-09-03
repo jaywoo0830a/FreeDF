@@ -896,6 +896,8 @@ impl FreeDfApp {
             return;
         };
         // DB에 저장된 최신 상태로 재로드 (메모리 변경 폐기).
+        // 로컬 캐시가 있으면 먼저 무효화해 강제로 원격에서 다시 읽습니다.
+        self.db.invalidate_document(doc_id);
         self.set_store(self.db.load_store(doc_id));
         self.restore_history_from_db();
         self.render_dirty = true;

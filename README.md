@@ -207,6 +207,12 @@ docker compose up -d db
   - 연결은 `FREEDF_DATABASE_URL`(기본 `postgres://freedf:freedf@localhost:5432/freedf`)
   - 원격 DB도 가능: `FREEDF_DATABASE_URL=postgres://user:pass@host:5432/freedf`
   - 앱 시작 시 스키마 마이그레이션이 자동 적용됨
+  - **로컬 캐시 + write-behind** (기본 켜짐): 무거운 데이터(PDF 본문/주석)는
+    앱 데이터 폴더 `cache/`에 보관되어 원격 DB 왕복 없이 문서가 열리고,
+    스트로크 저장은 백그라운드에서 순서대로 동기화됩니다 (오프라인 필기 보존).
+    끄려면 `FREEDF_STORAGE_CACHE=0`.
+  - 저장소 백엔드는 `FREEDF_STORAGE`(기본 `postgres`)로 런타임 선택 —
+    새 백엔드 추가는 `storage.rs` 한 곳
 - **PDFium library** placed next to the executable
 
 ### Windows 11: getting pdfium.dll
