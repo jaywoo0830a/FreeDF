@@ -33,6 +33,11 @@ pub enum PendingOp {
         doc_id: i64,
         ids: Vec<i64>,
     },
+    /// 영속 편집 저널(undo) 기록 — 스트로크마다 왕복하지 않도록 배치 반영.
+    LogEdit {
+        doc_id: i64,
+        edit: Edit,
+    },
 }
 
 impl PendingOp {
@@ -40,6 +45,7 @@ impl PendingOp {
         match self {
             PendingOp::InsertStrokes { doc_id, .. } => *doc_id,
             PendingOp::DeleteStrokes { doc_id, .. } => *doc_id,
+            PendingOp::LogEdit { doc_id, .. } => *doc_id,
         }
     }
 }
@@ -61,6 +67,8 @@ pub fn apply_op_to_store(store: &mut AnnotationStore, op: &PendingOp) {
                 store.remove_strokes(page, &ids);
             }
         }
+        // 저널 기록은 스토어에 영향 없음 (편집 캐시는 CachingBackend가 갱신).
+        PendingOp::LogEdit { .. } => {}
     }
 }
 
@@ -330,6 +338,24 @@ mod tests {
         assert_eq!(loaded[0], op);
         cache.clear_pending();
         assert!(cache.load_pending().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pending_log_edit_roundtrip() {
+        let dir = temp_dir("logedit");
+        let cache = LocalCache::new(dir.clone());
+        let op = PendingOp::LogEdit {
+            doc_id: 3,
+            edit: freedf_core::history::Edit::AddStrokes {
+                page: 1,
+                strokes: vec![sample_stroke(7)],
+            },
+        };
+        cache.append_pending(&[op.clone()]);
+        let loaded = cache.load_pending();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0], op);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -431,8 +431,8 @@ impl FreeDfApp {
                 .filter(|t| *t > 0)
                 .unwrap_or_else(now_ms);
             // DB 시퀀스에서 id를 미리 할당받아 스토어/히스토리/DB 행이 같은
-            // id를 공유하게 합니다 (undo/redo가 정확히 같은 행을 복원).
-            let db_id = self.db.alloc_stroke_ids(1).first().copied();
+            // id를 공유하게 합니다 (풀링 — 스트로크마다 왕복하지 않음).
+            let db_id = self.next_stroke_ids(1).first().copied();
             let id = match (self.doc_id, db_id) {
                 (Some(doc_id), Some(sid)) => {
                     self.store.add_stroke_with_id(
@@ -520,8 +520,8 @@ impl FreeDfApp {
         if rects.is_empty() {
             return false;
         }
-        // DB 시퀀스에서 밴드 수만큼 id를 미리 할당합니다.
-        let ids = self.db.alloc_stroke_ids(rects.len());
+        // DB 시퀀스에서 밴드 수만큼 id를 미리 할당합니다 (풀링).
+        let ids = self.next_stroke_ids(rects.len());
         let created_ms = now_ms();
         let mut strokes = Vec::new();
         for (k, r) in rects.iter().enumerate() {

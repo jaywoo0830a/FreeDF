@@ -313,6 +313,7 @@ impl CachingBackend {
                     PendingOp::DeleteStrokes { doc_id, ids } => {
                         self.remote.delete_strokes(*doc_id, ids)
                     }
+                    PendingOp::LogEdit { doc_id, edit } => self.remote.log_edit(*doc_id, edit),
                 }
             }
             // 이 배치는 반영 완료 — 동시에 새로 쌓인 작업은 다음 루프에서.
@@ -550,12 +551,19 @@ impl StorageBackend for CachingBackend {
     }
 
     fn log_edit(&self, doc_id: i64, edit: &Edit) {
-        self.remote.log_edit(doc_id, edit);
-        let g = self.inner.lock().expect("cache mutex poisoned");
+        // write-behind — 스트로크마다 원격 왕복하지 않고, 순서 보장 큐로
+        // 스트로크 작업과 함께 원격에 배치 반영합니다.
+        let op = PendingOp::LogEdit {
+            doc_id,
+            edit: edit.clone(),
+        };
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
         if let Some(mut edits) = g.cache.get_edits(doc_id) {
             edits.push(edit.clone());
             g.cache.put_edits(doc_id, &edits);
         }
+        g.pending.push(op.clone());
+        g.cache.append_pending(&[op]);
     }
 
     fn load_edits(&self, doc_id: i64) -> Vec<Edit> {

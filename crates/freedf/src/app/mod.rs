@@ -76,6 +76,8 @@ use std::collections::HashSet;
 const CANVAS_MARGIN: f32 = 16.0;
 /// Page top margin
 const TOP_MARGIN: f32 = 16.0;
+/// 스트로크 id 풀 배치 크기 — 한 번의 원격 왕복으로 이만큼씩 미리 받아둡니다.
+const STROKE_ID_POOL_BATCH: usize = 64;
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
 /// Window width (points) below which the UI collapses to canvas + palette
@@ -532,6 +534,9 @@ pub struct FreeDfApp {
     // ---------- Annotations ----------
     store: AnnotationStore,
     history: History,
+    /// 원격 왕복을 줄이기 위한 스트로크 id 풀 [next, end) — 스트로크마다
+    /// DB 시퀀스를 부르지 않고 미리 받아 둡니다.
+    stroke_id_pool: (u64, u64),
 
     // ---------- Tools ----------
     tool: ToolType,
@@ -767,6 +772,8 @@ pub struct FreeDfApp {
     // ---------- DB connection (first-run setup) ----------
     /// 실제 DB 연결 여부 — 연결 전엔 `DisconnectedStorage` 폴백 백엔드.
     db_connected: bool,
+    /// 첫 실행 대화상자 표시 여부 (DB 연결 후에도 Media 서버 설정을 위해 유지).
+    setup_open: bool,
     /// 연결 대화상자/서버 설정 창의 DB URL 입력값 (런타임 입력).
     connect_url: String,
     /// 마지막 DB 연결 시도 결과 (성공 여부, 메시지).
@@ -979,6 +986,7 @@ impl FreeDfApp {
             last_render_ppp: 0.0,
             store: AnnotationStore::new(),
             history: History::new(256),
+            stroke_id_pool: (0, 0),
             tool,
             color_family,
             pen_color,
@@ -1095,6 +1103,7 @@ impl FreeDfApp {
             pending_doc,
             modal: None,
             db_connected,
+            setup_open: !db_connected,
             connect_url,
             connect_status: connect_error.map(|e| (false, e)),
             media_config,
@@ -1168,6 +1177,30 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
+    /// 다음 스트로크 id n개를 반환 — 풀이 부족할 때만 원격 시퀀스에서
+    /// `STROKE_ID_POOL_BATCH`개씩 미리 받아옵니다. 스트로크마다 왕복하지 않아
+    /// 해외 DB에서도 펜을 떼는 순간이 매끄럽습니다. 실패/연결 전이면 빈 목록.
+    fn next_stroke_ids(&mut self, n: usize) -> Vec<i64> {
+        let mut out = Vec::with_capacity(n);
+        while out.len() < n {
+            if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
+                let ids = self.db.alloc_stroke_ids(STROKE_ID_POOL_BATCH);
+                if ids.is_empty() {
+                    break;
+                }
+                let first = ids[0] as u64;
+                let last = ids[ids.len() - 1] as u64;
+                self.stroke_id_pool = (first, last + 1);
+            }
+            let take = (n - out.len()).min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
+            for _ in 0..take {
+                out.push(self.stroke_id_pool.0 as i64);
+                self.stroke_id_pool.0 += 1;
+            }
+        }
+        out
+    }
+
     /// DB 연결 시도 — 성공하면 백엔드를 교체하고 URL을 `connection.json`에 저장.
     fn try_connect_db(&mut self) {
         let url = self.connect_url.trim().to_string();
@@ -1227,36 +1260,97 @@ impl FreeDfApp {
         };
     }
 
-    /// 첫 실행 연결 대화상자 — DB 연결 전까지는 닫을 수 없습니다.
-    /// ① DB URL → ② 미디어 서버 주소 순서로 입력합니다 (하드코딩 없음).
+    /// First-run setup dialog.
+    ///
+    /// While the database is not connected it cannot be closed; once connected
+    /// it stays open so the media server can be configured, and the user
+    /// closes it with "Done".
     fn connection_dialog(&mut self, ctx: &egui::Context) {
-        if self.db_connected {
+        if !self.setup_open {
             return;
         }
-        egui::Window::new("FreeDF — first run setup")
+        let forced = !self.db_connected;
+        let mut open = self.setup_open;
+        let mut done = false;
+        let mut window = egui::Window::new("FreeDF — first run setup")
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .default_width(560.0)
-            .show(ctx, |ui| {
-                ui.label(egui::RichText::new("① Database (PostgreSQL 18.6)").strong());
-                ui.label(
-                    "DB 호스트에서 server/db/up.sh 실행 후 출력되는 URL을 붙여넣으세요:",
+            .default_width(560.0);
+        if !forced {
+            window = window.open(&mut open);
+        }
+        window.show(ctx, |ui| {
+            ui.label(egui::RichText::new("① Database (PostgreSQL 18.6)").strong());
+            if forced {
+                ui.label("Paste the URL printed by server/db/up.sh on the DB host:");
+            }
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.connect_url)
+                        .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
+                        .desired_width(420.0),
                 );
+                let label = if self.db_connected {
+                    "Reconnect"
+                } else {
+                    "Connect"
+                };
+                if ui.button(label).clicked() {
+                    self.try_connect_db();
+                }
+                if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    self.try_connect_db();
+                }
+            });
+            if let Some((ok, msg)) = &self.connect_status {
+                let color = if *ok {
+                    ui.visuals().hyperlink_color
+                } else {
+                    ui.visuals().error_fg_color
+                };
+                ui.colored_label(color, msg);
+            }
+            ui.add_space(10.0);
+            ui.separator();
+            ui.label(egui::RichText::new("② Media server (self-hosted)").strong());
+            ui.label("Optional — audio recordings. Available after the database connects:");
+            ui.add_enabled_ui(self.db_connected, |ui| {
+                let mut changed = false;
                 ui.horizontal(|ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.connect_url)
-                            .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
-                            .desired_width(420.0),
-                    );
-                    if ui.button("Connect").clicked() {
-                        self.try_connect_db();
-                    }
-                    if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.try_connect_db();
-                    }
+                    ui.label("Server URL");
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.media_config.base_url)
+                                .hint_text("https://media.example.com")
+                                .desired_width(240.0),
+                        )
+                        .changed();
                 });
-                if let Some((ok, msg)) = &self.connect_status {
+                ui.horizontal(|ui| {
+                    ui.label("API key");
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut self.media_config.api_key)
+                                .password(true)
+                                .desired_width(240.0),
+                        )
+                        .changed();
+                });
+                changed |= ui
+                    .checkbox(&mut self.media_config.enabled, "Connect to media server")
+                    .changed();
+                if ui.button("Save").clicked() {
+                    let path = MediaServerConfig::config_path();
+                    self.server_msg = Some(match self.media_config.save(&path) {
+                        Ok(()) => (true, format!("Saved to {}", path.display())),
+                        Err(e) => (false, format!("Save failed: {e}")),
+                    });
+                }
+                if changed {
+                    self.server_msg = None;
+                }
+                if let Some((ok, msg)) = &self.server_msg {
                     let color = if *ok {
                         ui.visuals().hyperlink_color
                     } else {
@@ -1264,54 +1358,15 @@ impl FreeDfApp {
                     };
                     ui.colored_label(color, msg);
                 }
-                ui.add_space(10.0);
-                ui.separator();
-                ui.label(egui::RichText::new("② Media server (self-hosted)").strong());
-                ui.label("Optional — audio recordings. Can be set up after the database:");
-                ui.add_enabled_ui(self.db_connected, |ui| {
-                    let mut changed = false;
-                    ui.horizontal(|ui| {
-                        ui.label("Server URL");
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.media_config.base_url)
-                                    .desired_width(240.0),
-                            )
-                            .changed();
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("API key");
-                        changed |= ui
-                            .add(
-                                egui::TextEdit::singleline(&mut self.media_config.api_key)
-                                    .password(true)
-                                    .desired_width(240.0),
-                            )
-                            .changed();
-                    });
-                    changed |= ui
-                        .checkbox(&mut self.media_config.enabled, "Connect to media server")
-                        .changed();
-                    if ui.button("Save").clicked() {
-                        let path = MediaServerConfig::config_path();
-                        self.server_msg = Some(match self.media_config.save(&path) {
-                            Ok(()) => (true, format!("Saved to {}", path.display())),
-                            Err(e) => (false, format!("Save failed: {e}")),
-                        });
-                    }
-                    if changed {
-                        self.server_msg = None;
-                    }
-                    if let Some((ok, msg)) = &self.server_msg {
-                        let color = if *ok {
-                            ui.visuals().hyperlink_color
-                        } else {
-                            ui.visuals().error_fg_color
-                        };
-                        ui.colored_label(color, msg);
-                    }
-                });
             });
+            if !forced {
+                ui.add_space(8.0);
+                if ui.button("Done").clicked() {
+                    done = true;
+                }
+            }
+        });
+        self.setup_open = open && !done;
     }
 
     /// 새 페이지/노트에 쓸 물리적 크기 (pt). `PaperSize::Custom`이면 사용자 정의 치수.
@@ -1426,6 +1481,7 @@ impl FreeDfApp {
     pub(crate) fn push_history(&mut self, edit: Edit) {
         self.history.push(edit.clone());
         if let Some(doc_id) = self.doc_id {
+            // CachingBackend에서는 write-behind 큐에 쌓여 원격 왕복이 없습니다.
             self.db.log_edit(doc_id, &edit);
         }
     }
