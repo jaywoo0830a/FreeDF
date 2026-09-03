@@ -8,7 +8,7 @@
 
 use freedf_core::ink::InkGrain;
 use freedf_core::model::ToolType;
-use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
+use freedf_core::paper::{PaperSize, PaperStyle, PaperStyleSettings};
 use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
@@ -60,15 +60,10 @@ pub struct SessionState {
     pub paper_style: PaperStyle,
     pub paper_color: [u8; 4],
     pub paper_size: PaperSize,
-    /// 줄/격자/점 간격 (포인트) 기본값
-    #[serde(default = "default_paper_spacing")]
-    pub paper_spacing: f32,
-    /// 줄/격자/점 색 (RGBA) 기본값
-    #[serde(default = "default_paper_line_color")]
-    pub paper_line_color: [u8; 4],
-    /// 줄/격자/점 두께 (포인트) 기본값
-    #[serde(default = "default_paper_line_width")]
-    pub paper_line_width: f32,
+    /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 — 각 스타일 독립.
+    /// 한 스타일의 값 변경은 그 스타일을 쓰는 모든 페이지에 반영됩니다.
+    #[serde(default)]
+    pub paper_style_settings: PaperStyleSettings,
     pub show_notes: bool,
     pub show_outline: bool,
     /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
@@ -148,18 +143,6 @@ fn default_tool_order() -> Vec<ToolType> {
     ToolType::default_order()
 }
 
-fn default_paper_spacing() -> f32 {
-    24.0
-}
-
-fn default_paper_line_color() -> [u8; 4] {
-    PAPER_LINE
-}
-
-fn default_paper_line_width() -> f32 {
-    PAPER_LINE_WIDTH_PT
-}
-
 fn default_library_width() -> f32 {
     260.0
 }
@@ -202,9 +185,7 @@ impl Default for SessionState {
             paper_style: PaperStyle::Blank,
             paper_color: [255, 255, 255, 255],
             paper_size: PaperSize::A4,
-            paper_spacing: 24.0,
-            paper_line_color: PAPER_LINE,
-            paper_line_width: PAPER_LINE_WIDTH_PT,
+            paper_style_settings: PaperStyleSettings::default(),
             show_notes: true,
             show_outline: false,
             library_width: 260.0,

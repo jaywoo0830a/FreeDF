@@ -23,6 +23,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_init", include_str!("../migrations/0001_init.sql")),
     ("0002_extensions", include_str!("../migrations/0002_extensions.sql")),
     ("0003_word_cache", include_str!("../migrations/0003_word_cache.sql")),
+    ("0004_paper_presets", include_str!("../migrations/0004_paper_presets.sql")),
 ];
 
 /// 문서 행 (documents 테이블).
@@ -264,7 +265,7 @@ impl Db {
     pub fn load_pages(&self, doc_id: i64) -> Vec<(i32, PagePaper, bool)> {
         let mut c = conn_guard(&self.conn);
         c.query(
-            "SELECT page_index, style, color, spacing, line_color, line_width, bookmarked
+            "SELECT page_index, style, color, bookmarked
              FROM pages WHERE doc_id = $1 ORDER BY page_index",
             &[&doc_id],
         )
@@ -272,15 +273,11 @@ impl Db {
             rows.iter()
                 .map(|r| {
                     let color: Vec<i32> = r.get(2);
-                    let line_color: Vec<i32> = r.get(4);
                     let paper = PagePaper {
                         style: style_from(r.get(1)),
                         color: color_from_i32(&color),
-                        spacing: r.get(3),
-                        line_color: color_from_i32(&line_color),
-                        line_width: r.get(5),
                     };
-                    (r.get(0), paper, r.get(6))
+                    (r.get(0), paper, r.get(3))
                 })
                 .collect()
         })
@@ -297,20 +294,16 @@ impl Db {
     ) {
         let mut c = conn_guard(&self.conn);
         let _ = c.execute(
-            "INSERT INTO pages (doc_id, page_index, style, color, spacing, line_color, line_width, bookmarked)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "INSERT INTO pages (doc_id, page_index, style, color, bookmarked)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (doc_id, page_index) DO UPDATE SET
-               style = EXCLUDED.style, color = EXCLUDED.color, spacing = EXCLUDED.spacing,
-               line_color = EXCLUDED.line_color, line_width = EXCLUDED.line_width,
+               style = EXCLUDED.style, color = EXCLUDED.color,
                bookmarked = EXCLUDED.bookmarked",
             &[
                 &doc_id,
                 &page_index,
                 &style_str(paper.style),
                 &color_to_i32(paper.color),
-                &paper.spacing,
-                &color_to_i32(paper.line_color),
-                &paper.line_width,
                 &bookmarked,
             ],
         );
@@ -326,16 +319,13 @@ impl Db {
         let _ = tx.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
         for (idx, paper, bookmarked) in entries {
             let _ = tx.execute(
-                "INSERT INTO pages (doc_id, page_index, style, color, spacing, line_color, line_width, bookmarked)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO pages (doc_id, page_index, style, color, bookmarked)
+                 VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &doc_id,
                     idx,
                     &style_str(paper.style),
                     &color_to_i32(paper.color),
-                    &paper.spacing,
-                    &color_to_i32(paper.line_color),
-                    &paper.line_width,
                     bookmarked,
                 ],
             );
@@ -691,16 +681,13 @@ mod tests {
         let paper = PagePaper {
             style: PaperStyle::Grid,
             color: [255, 255, 255, 255],
-            spacing: 24.0,
-            line_color: [1, 2, 3, 4],
-            line_width: 1.0,
         };
         db.upsert_page(doc_id, 0, &paper, true);
         let pages = db.load_pages(doc_id);
         assert_eq!(pages.len(), 1);
         assert!(pages[0].2, "bookmarked");
         assert_eq!(pages[0].1.style, PaperStyle::Grid);
-        assert_eq!(pages[0].1.line_color, [1, 2, 3, 4]);
+        assert_eq!(pages[0].1.color, [255, 255, 255, 255]);
 
         // ── sessions ──
         let state = serde_json::json!({"page": 2, "zoom": 1.5});

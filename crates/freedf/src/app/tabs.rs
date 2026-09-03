@@ -112,9 +112,7 @@ impl FreeDfApp {
         tab.paper_style = self.paper_style;
         tab.paper_color = self.paper_color;
         tab.paper_size = self.paper_size;
-        tab.paper_spacing = self.paper_spacing;
-        tab.paper_line_color = self.paper_line_color;
-        tab.paper_line_width = self.paper_line_width;
+        tab.paper_style_settings = self.paper_style_settings;
         tab.custom_paper_size = self.custom_paper_size;
         tab.smoothing = self.smoothing;
         tab.smoothing_enabled = self.smoothing_enabled;
@@ -163,9 +161,7 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
-            paper_spacing,
-            paper_line_color,
-            paper_line_width,
+            paper_style_settings,
             custom_paper_size,
             smoothing,
             smoothing_enabled,
@@ -212,9 +208,7 @@ impl FreeDfApp {
                 tab.paper_style,
                 tab.paper_color,
                 tab.paper_size,
-                tab.paper_spacing,
-                tab.paper_line_color,
-                tab.paper_line_width,
+                tab.paper_style_settings,
                 tab.custom_paper_size,
                 tab.smoothing,
                 tab.smoothing_enabled,
@@ -274,9 +268,7 @@ impl FreeDfApp {
         self.paper_style = paper_style;
         self.paper_color = paper_color;
         self.paper_size = paper_size;
-        self.paper_spacing = paper_spacing;
-        self.paper_line_color = paper_line_color;
-        self.paper_line_width = paper_line_width;
+        self.paper_style_settings = paper_style_settings;
         self.custom_paper_size = custom_paper_size;
         self.smoothing = smoothing;
         self.smoothing_enabled = smoothing_enabled;
@@ -364,9 +356,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
-            paper_spacing: self.paper_spacing,
-            paper_line_color: self.paper_line_color,
-            paper_line_width: self.paper_line_width,
+            paper_style_settings: self.paper_style_settings,
             custom_paper_size: self.custom_paper_size,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,

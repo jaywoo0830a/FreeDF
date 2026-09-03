@@ -156,15 +156,13 @@ mod tests {
 
     #[test]
     fn paper_settings_shift_with_pages() {
-        use crate::paper::{PagePaper, PaperStyle, GRID_SPACING_PTS, PAPER_WHITE};
+        use crate::paper::{PagePaper, PaperStyle, PAPER_WHITE};
         let mut store = AnnotationStore::new();
         store.set_paper(
             0,
             PagePaper {
                 style: PaperStyle::Grid,
                 color: PAPER_WHITE,
-                spacing: GRID_SPACING_PTS,
-                ..Default::default()
             },
         );
         store.set_paper(
@@ -172,8 +170,6 @@ mod tests {
             PagePaper {
                 style: PaperStyle::Ruled,
                 color: PAPER_WHITE,
-                spacing: GRID_SPACING_PTS,
-                ..Default::default()
             },
         );
 

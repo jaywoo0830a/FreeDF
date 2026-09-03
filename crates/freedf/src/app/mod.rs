@@ -43,7 +43,7 @@ pub(crate) use freedf_core::notes::NotesManager;
 pub(crate) use freedf_core::outline::{flatten, OutlineNode};
 pub(crate) use freedf_core::paper::{
     clamp_line_width, clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle,
-    PAPER_COLORS, PAPER_LINE, PAPER_LINE_WIDTH_PT, PAPER_WHITE,
+    PaperStyleSettings, PAPER_COLORS, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
     BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak, OneEuroFilter, Palette,
@@ -435,11 +435,8 @@ pub struct TabEntry {
     paper_style: PaperStyle,
     paper_color: [u8; 4],
     paper_size: PaperSize,
-    /// 줄/격자/점 간격 기본값 (pt)
-    paper_spacing: f32,
-    /// 줄/격자/점 색/두께 기본값 (pt) — 페이퍼 라인 옵션.
-    paper_line_color: [u8; 4],
-    paper_line_width: f32,
+    /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 프리셋 — 각 스타일 독립.
+    paper_style_settings: PaperStyleSettings,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
     custom_paper_size: [f32; 2],
     /// 펜 입력 스무딩 강도 0..1
@@ -648,12 +645,11 @@ pub struct FreeDfApp {
     paper_color: [u8; 4],
     /// 종이 크기 (새 페이지/노트 기본값)
     paper_size: PaperSize,
-    /// 줄/격자/점 간격 기본값 (pt)
-    paper_spacing: f32,
-    /// 줄/격자/점 색 (RGBA)
-    paper_line_color: [u8; 4],
-    /// 줄/격자/점 두께 기본값 (pt)
-    paper_line_width: f32,
+    /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 — 각 스타일 독립.
+    paper_style_settings: PaperStyleSettings,
+    /// Paper 설정 창 "범위 적용" 임시 입력 (1-based 페이지 번호).
+    paper_range_from: usize,
+    paper_range_to: usize,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
     custom_paper_size: [f32; 2],
     /// 펜 입력 스무딩 강도 0..1
@@ -821,16 +817,10 @@ impl FreeDfApp {
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
         let paper_size = if has { s.paper_size } else { PaperSize::A4 };
-        let paper_spacing = if has {
-            clamp_spacing(s.paper_spacing)
+        let paper_style_settings = if has {
+            s.paper_style_settings
         } else {
-            24.0
-        };
-        let paper_line_color = if has { s.paper_line_color } else { PAPER_LINE };
-        let paper_line_width = if has {
-            clamp_line_width(s.paper_line_width)
-        } else {
-            PAPER_LINE_WIDTH_PT
+            PaperStyleSettings::default()
         };
         let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
@@ -1009,9 +999,9 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
-            paper_spacing,
-            paper_line_color,
-            paper_line_width,
+            paper_style_settings,
+            paper_range_from: 0,
+            paper_range_to: 0,
             custom_paper_size,
             smoothing,
             zoom_lock,
@@ -1104,9 +1094,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
-            paper_spacing: self.paper_spacing,
-            paper_line_color: self.paper_line_color,
-            paper_line_width: self.paper_line_width,
+            paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
@@ -1147,14 +1135,11 @@ impl FreeDfApp {
             PagePaper {
                 style: self.paper_style,
                 color: self.paper_color,
-                spacing: self.paper_spacing,
-                line_color: self.paper_line_color,
-                line_width: self.paper_line_width,
             },
         )
     }
 
-    /// 툴바의 용지 기본값을 현재 페이지에 저장하고 다시 그립니다.
+    /// 툴바의 용지 기본값(스타일+색)을 현재 페이지에 저장하고 다시 그립니다.
     fn apply_paper_to_current_page(&mut self) {
         if let Some(doc) = &self.document {
             if self.current_page < doc.page_count() {
@@ -1163,9 +1148,6 @@ impl FreeDfApp {
                     PagePaper {
                         style: self.paper_style,
                         color: self.paper_color,
-                        spacing: self.paper_spacing,
-                        line_color: self.paper_line_color,
-                        line_width: self.paper_line_width,
                     },
                 );
                 // DB pages 행에도 즉시 반영.
@@ -1209,9 +1191,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
-            paper_spacing: self.paper_spacing,
-            paper_line_color: self.paper_line_color,
-            paper_line_width: self.paper_line_width,
+            paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
             library_width: self.library_width,
@@ -1292,9 +1272,7 @@ impl FreeDfApp {
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
         self.paper_size = s.paper_size;
-        self.paper_spacing = clamp_spacing(s.paper_spacing);
-        self.paper_line_color = s.paper_line_color;
-        self.paper_line_width = clamp_line_width(s.paper_line_width);
+        self.paper_style_settings = s.paper_style_settings;
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;

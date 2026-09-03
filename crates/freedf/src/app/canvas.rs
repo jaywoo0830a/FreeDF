@@ -1233,16 +1233,16 @@ impl FreeDfApp {
         let h = self.page_size_pts[1];
         let paper = self.current_page_paper();
         let style = paper.style;
-        let spacing = paper.spacing;
-        let line = Color32::from_rgba_unmultiplied(
-            paper.line_color[0],
-            paper.line_color[1],
-            paper.line_color[2],
-            paper.line_color[3],
-        );
+        // 줄/격자/점 세부설정은 **스타일별 프리셋**을 참조합니다 — 페이지에는
+        // 스타일만 저장되고, 프리셋을 바꾸면 그 스타일 페이지 전부가 함께 바뀝니다.
+        let Some(ls) = self.paper_style_settings.of(style) else {
+            return; // Blank — 그릴 줄 없음.
+        };
+        let spacing = ls.spacing;
+        let line = Color32::from_rgba_unmultiplied(ls.color[0], ls.color[1], ls.color[2], ls.color[3]);
         let zoom = self.view.zoom;
-        let stroke_w = (paper.line_width * zoom).clamp(0.5, 24.0);
-        let dot_r = (paper.line_width * zoom * 0.4).clamp(0.6, 8.0);
+        let stroke_w = (ls.width * zoom).clamp(0.5, 24.0);
+        let dot_r = (ls.width * zoom * 0.4).clamp(0.6, 8.0);
         for [x0, y0, x1, y1] in paper_lines(w, h, style, spacing) {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);

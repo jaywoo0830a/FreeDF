@@ -494,10 +494,24 @@ impl FreeDfApp {
     }
 
     /// Paper 세부 설정 — 전용 플로팅 창 내용 (툴바 Paper 옆 Settings 버튼으로 열림).
-    /// 크기/간격/줄 색·두께/전체 적용을 여기서 지정합니다.
+    ///
+    /// 적용 규칙 (명확하게):
+    /// - 스타일/색 선택: **현재 페이지에 즉시 적용** + 앞으로 만드는
+    ///   페이지의 기본값이 됩니다.
+    /// - 스타일별 세부설정(간격/색/두께): **스타일 프리셋** — 현재 선택된
+    ///   스타일의 값을 편집하며, 그 스타일을 쓰는 **모든 페이지**가 함께 바뀝니다.
+    /// - 대량 적용: 아래 Apply 섹션에서 모든 페이지/범위를 명시적으로 선택.
     fn paper_settings_ui(&mut self, ui: &mut egui::Ui) {
         const MM_TO_PT: f32 = 72.0 / 25.4;
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+        ui.label(
+            egui::RichText::new(
+                "Style & color apply to the current page right away\n\
+                 and become the default for new pages.",
+            )
+            .weak()
+            .small(),
+        );
         egui::CollapsingHeader::new("Paper")
             .id_salt("paper_win_paper")
             .default_open(true)
@@ -553,6 +567,97 @@ impl FreeDfApp {
                     self.save_session();
                 }
             });
+        // ── 스타일별 독립 세부설정 — **현재 선택된 스타일**을 편집합니다.
+        // Ruled/Grid/Dotted 각각 자기만의 간격/색/두께를 가집니다.
+        egui::CollapsingHeader::new("Style details")
+            .id_salt("paper_win_style")
+            .default_open(true)
+            .show(ui, |ui| {
+                match self.paper_style {
+                    PaperStyle::Blank => {
+                        ui.label(
+                            egui::RichText::new("Blank paper has no lines — nothing to configure.")
+                                .weak(),
+                        );
+                    }
+                    PaperStyle::Ruled | PaperStyle::Grid | PaperStyle::Dotted => {
+                        let style = self.paper_style;
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Editing the '{}' style — every page using it updates together.",
+                                style.label()
+                            ))
+                            .weak()
+                            .small(),
+                        );
+                        // 값 복사본으로 편집 → 변경 시 프리셋에 다시 기록.
+                        let mut ls = self.paper_style_settings.of(style).unwrap();
+                        let mut changed = false;
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut ls.spacing)
+                                    .range(12.0..=120.0)
+                                    .speed(1.0)
+                                    .prefix("Spacing ")
+                                    .suffix("pt"),
+                            )
+                            .on_hover_text("Line / dot spacing (pt)")
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut ls.width)
+                                    .range(0.25..=8.0)
+                                    .speed(0.05)
+                                    .fixed_decimals(2)
+                                    .prefix("Line ")
+                                    .suffix("pt"),
+                            )
+                            .on_hover_text("Line / dot thickness (pt)")
+                            .changed();
+                        // 줄 색: 프리셋 스와치 + 커스텀 컬러.
+                        for (i, preset) in LINE_COLOR_PRESETS.iter().enumerate() {
+                            let col = Color32::from_rgba_unmultiplied(
+                                preset[0],
+                                preset[1],
+                                preset[2],
+                                preset[3],
+                            );
+                            let selected = ls.color == *preset;
+                            if color_circle_swatch(ui, ("line_swatch_win", i), col, selected)
+                                .on_hover_text("Line color preset")
+                                .clicked()
+                            {
+                                ls.color = *preset;
+                                changed = true;
+                            }
+                        }
+                        let mut line_color = Color32::from_rgba_unmultiplied(
+                            ls.color[0],
+                            ls.color[1],
+                            ls.color[2],
+                            ls.color[3],
+                        );
+                        if ui
+                            .color_edit_button_srgba(&mut line_color)
+                            .on_hover_text("Custom line color")
+                            .changed()
+                        {
+                            ls.color =
+                                [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
+                            changed = true;
+                        }
+                        if changed {
+                            ls.spacing = clamp_spacing(ls.spacing);
+                            ls.width = clamp_line_width(ls.width);
+                            self.paper_style_settings.set(style, ls);
+                            self.save_default_session();
+                            self.save_session();
+                            // 프리셋 변경 → 그 스타일을 쓰는 페이지 전부 다시 그리기.
+                            self.render_dirty = true;
+                        }
+                    }
+                }
+            });
         egui::CollapsingHeader::new("Page size")
             .id_salt("paper_win_size")
             .default_open(true)
@@ -606,96 +711,46 @@ impl FreeDfApp {
                     }
                 }
             });
-        egui::CollapsingHeader::new("Grid & lines")
-            .id_salt("paper_win_lines")
-            .default_open(true)
-            .show(ui, |ui| {
-                // 줄/격자 간격 (숫자 직접 입력).
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.paper_spacing)
-                            .range(12.0..=120.0)
-                            .speed(1.0)
-                            .prefix("Spacing ")
-                            .suffix("pt"),
-                    )
-                    .on_hover_text("Ruled/Grid/Dotted spacing applied to the current page")
-                    .changed()
-                {
-                    self.paper_spacing = clamp_spacing(self.paper_spacing);
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-                // 줄/격자/점 색과 두께 (페이지에 바로 적용, 새 페이지 기본값으로 기억).
-                // 프리셋 스와치 + 커스텀 컬러 둘 다 지원.
-                for (i, preset) in LINE_COLOR_PRESETS.iter().enumerate() {
-                    let col = Color32::from_rgba_unmultiplied(
-                        preset[0],
-                        preset[1],
-                        preset[2],
-                        preset[3],
-                    );
-                    let selected = self.paper_line_color == *preset;
-                    if color_circle_swatch(ui, ("line_swatch_win", i), col, selected)
-                        .on_hover_text("Line color preset")
-                        .clicked()
-                    {
-                        self.paper_line_color = *preset;
-                        self.apply_paper_to_current_page();
-                        self.save_default_session();
-                        self.save_session();
-                    }
-                }
-                let mut line_color = Color32::from_rgba_unmultiplied(
-                    self.paper_line_color[0],
-                    self.paper_line_color[1],
-                    self.paper_line_color[2],
-                    self.paper_line_color[3],
-                );
-                if ui
-                    .color_edit_button_srgba(&mut line_color)
-                    .on_hover_text("Line color (ruled / grid / dotted)")
-                    .changed()
-                {
-                    self.paper_line_color =
-                        [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.paper_line_width)
-                            .range(0.25..=8.0)
-                            .speed(0.05)
-                            .fixed_decimals(2)
-                            .prefix("Line ")
-                            .suffix("pt"),
-                    )
-                    .on_hover_text("Line thickness (ruled / grid / dotted)")
-                    .changed()
-                {
-                    self.paper_line_width = clamp_line_width(self.paper_line_width);
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-            });
-        // 현재 설정을 문서의 모든 페이지에 복사합니다.
+        // ── 대량 적용 대상 (명시적) ──
+        ui.separator();
+        ui.label(egui::RichText::new("Apply selection to…").strong());
         if ui
             .add_enabled(
                 page_count > 0,
-                egui::Button::new(icon_text(ui, "Apply to all pages", icons::CHECK_SQUARE_OFFSET)),
+                egui::Button::new(icon_text(ui, "All pages", icons::CHECK_SQUARE_OFFSET)),
             )
-            .on_hover_text(
-                "Copy these paper settings (style/color/spacing/line) \
-                 onto every page of this document.",
-            )
+            .on_hover_text("Set every page to the current style & color.")
             .clicked()
         {
             self.apply_paper_to_all_pages();
         }
+        ui.horizontal(|ui| {
+            ui.label("Range:");
+            let (mut from, mut to) = (
+                (self.paper_range_from + 1).max(1),
+                (self.paper_range_to + 1).max(1),
+            );
+            let changed_from = ui
+                .add(egui::DragValue::new(&mut from).range(1..=page_count.max(1)))
+                .changed();
+            ui.label("–");
+            let changed_to = ui
+                .add(egui::DragValue::new(&mut to).range(1..=page_count.max(1)))
+                .changed();
+            if changed_from || changed_to {
+                self.paper_range_from = from.saturating_sub(1);
+                self.paper_range_to = to.saturating_sub(1);
+            }
+            if ui
+                .add_enabled(page_count > 0, egui::Button::new("Apply"))
+                .on_hover_text(
+                    "Set pages in this range (inclusive) to the current style & color.",
+                )
+                .clicked()
+            {
+                self.apply_paper_to_range(self.paper_range_from, self.paper_range_to);
+            }
+        });
     }
 
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {

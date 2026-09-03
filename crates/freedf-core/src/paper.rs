@@ -61,6 +61,10 @@ fn default_line_width() -> f32 {
     PAPER_LINE_WIDTH_PT
 }
 
+fn default_spacing() -> f32 {
+    GRID_SPACING_PTS
+}
+
 /// 유효한 용지 라인 두께(포인트). 0.25~8로 제한.
 pub fn clamp_line_width(w: f32) -> f32 {
     if !w.is_finite() || w <= 0.0 {
@@ -144,27 +148,15 @@ impl Default for PaperSize {
     }
 }
 
-/// 한 페이지의 용지 설정 (스타일 + 배경 색 + 줄/격자 간격 + 라인 두께/색).
+/// 한 페이지의 용지 설정 — **스타일 + 배경 색만** 페이지별로 저장합니다.
 ///
-/// 페이지마다 독립적으로 저장되어 노트 내에서 페이지별로 다른
-/// 그리드/줄/점선과 배경 색, 간격, 라인 굵기/색을 쓸 수 있습니다.
+/// 줄/격자/점의 간격·색·두께는 **스타일별 프리셋**([`PaperStyleSettings`])을
+/// 렌더 시점에 참조하므로 페이지마다 중복 저장하지 않습니다. 즉,
+/// 프리셋을 바꾸면 그 스타일을 쓰는 **모든 페이지**가 즉시 함께 바뀝니다.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PagePaper {
     pub style: PaperStyle,
     pub color: [u8; 4],
-    /// 줄/격자/점 간격 (포인트). 0 이하면 `GRID_SPACING_PTS`로 대체.
-    #[serde(default = "default_spacing")]
-    pub spacing: f32,
-    /// 줄/격자/점 색 (RGBA).
-    #[serde(default = "default_line_color")]
-    pub line_color: [u8; 4],
-    /// 줄/격자/점 두께 (포인트).
-    #[serde(default = "default_line_width")]
-    pub line_width: f32,
-}
-
-fn default_spacing() -> f32 {
-    GRID_SPACING_PTS
 }
 
 impl Default for PagePaper {
@@ -172,9 +164,75 @@ impl Default for PagePaper {
         Self {
             style: PaperStyle::Blank,
             color: PAPER_WHITE,
+        }
+    }
+}
+
+/// 줄/격자/점의 세부설정 (간격/색/두께) — 스타일 하나의 정의.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LineStyle {
+    /// 간격 (포인트). 0 이하면 `GRID_SPACING_PTS`로 대체.
+    #[serde(default = "default_spacing")]
+    pub spacing: f32,
+    /// 색 (RGBA).
+    #[serde(default = "default_line_color")]
+    pub color: [u8; 4],
+    /// 두께 (포인트).
+    #[serde(default = "default_line_width")]
+    pub width: f32,
+}
+
+impl Default for LineStyle {
+    fn default() -> Self {
+        Self {
             spacing: GRID_SPACING_PTS,
-            line_color: PAPER_LINE,
-            line_width: PAPER_LINE_WIDTH_PT,
+            color: PAPER_LINE,
+            width: PAPER_LINE_WIDTH_PT,
+        }
+    }
+}
+
+/// **스타일별 독립 세부설정** — Ruled / Grid / Dotted 각각 자기만의
+/// 간격·색·두께를 가집니다. Blank는 줄이 없어 항목이 없습니다.
+///
+/// 앱의 Paper 설정 창에서 "현재 선택된 스타일"의 값을 편집하며,
+/// 한 스타일의 값 변경은 그 스타일을 쓰는 모든 페이지에 반영됩니다.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaperStyleSettings {
+    pub ruled: LineStyle,
+    pub grid: LineStyle,
+    pub dotted: LineStyle,
+}
+
+impl Default for PaperStyleSettings {
+    fn default() -> Self {
+        Self {
+            ruled: LineStyle::default(),
+            grid: LineStyle::default(),
+            dotted: LineStyle::default(),
+        }
+    }
+}
+
+impl PaperStyleSettings {
+    /// 스타일에 해당하는 세부설정 (Blank는 줄이 없어 `None`).
+    pub fn of(&self, style: PaperStyle) -> Option<LineStyle> {
+        match style {
+            PaperStyle::Blank => None,
+            PaperStyle::Ruled => Some(self.ruled),
+            PaperStyle::Grid => Some(self.grid),
+            PaperStyle::Dotted => Some(self.dotted),
+        }
+    }
+
+    /// 스타일의 세부설정을 통째로 교체합니다 (Blank는 무시).
+    pub fn set(&mut self, style: PaperStyle, value: LineStyle) {
+        match style {
+            PaperStyle::Ruled => self.ruled = value,
+            PaperStyle::Grid => self.grid = value,
+            PaperStyle::Dotted => self.dotted = value,
+            PaperStyle::Blank => {}
         }
     }
 }
@@ -241,6 +299,29 @@ pub fn paper_dots(w: f32, h: f32, style: PaperStyle, spacing: f32) -> Vec<[f32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn style_settings_are_independent_per_style() {
+        // Ruled/Grid/Dotted 각각 독립 — 한 스타일을 바꿔도 다른 스타일은 그대로.
+        let mut s = PaperStyleSettings::default();
+        let custom = LineStyle {
+            spacing: 60.0,
+            color: [200, 10, 10, 255],
+            width: 3.0,
+        };
+        s.set(PaperStyle::Grid, custom);
+        assert_eq!(s.of(PaperStyle::Grid), Some(custom));
+        assert_eq!(s.of(PaperStyle::Ruled), Some(LineStyle::default()));
+        assert_eq!(s.of(PaperStyle::Dotted), Some(LineStyle::default()));
+        // Blank는 줄이 없음.
+        assert_eq!(s.of(PaperStyle::Blank), None);
+        // 직렬화 왕복.
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<PaperStyleSettings>(&json).unwrap(), s);
+        // 빈 객체 → 기본값 (이전 세션 호환).
+        let d: PaperStyleSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(d, PaperStyleSettings::default());
+    }
 
     #[test]
     fn blank_has_no_lines_or_dots() {
