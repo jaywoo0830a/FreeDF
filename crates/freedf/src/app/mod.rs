@@ -62,7 +62,7 @@ pub(crate) fn now_ms() -> u64 {
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
-pub(crate) use crate::storage::{SharedStorage, StorageBackend};
+pub(crate) use crate::storage::{DocRow, SharedStorage, StorageBackend};
 pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
@@ -388,6 +388,24 @@ impl ModalState {
             text: String::new(),
         }
     }
+}
+
+/// 문서 열기의 DB 부분 결과 (백그라운드 로더 — UI를 막지 않음).
+pub(crate) struct LoaderBundle {
+    pub doc_id: i64,
+    pub is_note: bool,
+    pub row: DocRow,
+    pub pdf_bytes: Vec<u8>,
+    pub store: AnnotationStore,
+    pub edits: Vec<Edit>,
+    pub session: Option<serde_json::Value>,
+}
+
+/// 미디어 작업 결과.
+pub(crate) enum MediaOutcome {
+    Listed(Vec<MediaObject>),
+    Uploaded(MediaObject),
+    Deleted,
 }
 
 /// 열려 있는 문서 탭의 종류 — 둘 다 DB의 `documents.id`입니다.
@@ -786,6 +804,13 @@ pub struct FreeDfApp {
         bool,
         String,
     )>,
+    // ---------- Loading / background ops ----------
+    /// 진행 중인 배경 작업 표시 (스피너+진행바 오버레이). 완료 시 None.
+    loading: Option<String>,
+    /// 문서 열기 로더 수신 채널 (DB 부분은 백그라운드 스레드에서).
+    loader_rx: Option<std::sync::mpsc::Receiver<Result<LoaderBundle, String>>>,
+    /// 미디어 작업(목록/업로드/삭제) 수신 채널.
+    media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
     // ---------- Media server ----------
     /// 미디어(녹음) 서버 연결 설정 — `server.json`에서 런타임 로드.
     media_config: MediaServerConfig,
@@ -1121,6 +1146,9 @@ impl FreeDfApp {
             connect_url,
             connect_status: connect_error.map(|e| (false, e)),
             pending_connect,
+            loading: None,
+            loader_rx: None,
+            media_rx: None,
             media_config,
             server_settings_open: false,
             server_msg: None,
@@ -1591,10 +1619,104 @@ impl FreeDfApp {
     pub(crate) fn restore_history_from_db(&mut self) {
         self.history = History::new(256);
         if let Some(doc_id) = self.doc_id {
-            for edit in self.db.load_edits(doc_id) {
-                self.history.push(edit);
+            let edits = self.db.load_edits(doc_id);
+            self.restore_history_from_edits(&edits);
+        }
+    }
+
+    /// 백그라운드에서 이미 가져온 편집 저널로 undo 스택을 복원합니다.
+    pub(crate) fn restore_history_from_edits(&mut self, edits: &[Edit]) {
+        self.history = History::new(256);
+        for edit in edits {
+            self.history.push(edit.clone());
+        }
+    }
+
+    /// 문서 열기 로더 결과 수신 (매 프레임 호출 — UI를 막지 않음).
+    fn poll_loader(&mut self) {
+        let Some(rx) = self.loader_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(bundle)) => {
+                self.loading = None;
+                self.finish_document_open(bundle);
+            }
+            Ok(Err(e)) => {
+                self.loading = None;
+                self.show_error(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.loader_rx = Some(rx); // 아직 — 다음 프레임에 다시.
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.loading = None;
+                self.show_error("Document loading was interrupted.".into());
             }
         }
+    }
+
+    /// 미디어 작업 결과 수신 (매 프레임 호출).
+    fn poll_media(&mut self) {
+        let Some(rx) = self.media_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(outcome)) => {
+                self.loading = None;
+                match outcome {
+                    MediaOutcome::Listed(items) => {
+                        self.media_status = if items.is_empty() {
+                            Some("No recordings yet.".into())
+                        } else {
+                            None
+                        };
+                        self.media_items = items;
+                    }
+                    MediaOutcome::Uploaded(obj) => {
+                        self.media_status = Some(format!("Uploaded {}", obj.name));
+                        self.media_list_job(); // 목록 재조회.
+                    }
+                    MediaOutcome::Deleted => {
+                        self.media_status = Some("Deleted.".into());
+                        self.media_list_job();
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                self.loading = None;
+                self.media_status = Some(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.media_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.loading = None;
+                self.media_status = Some("Media operation was interrupted.".into());
+            }
+        }
+    }
+
+    /// 진행 중 오버레이 — 스피너 + 진행바 (불확정 진행 애니메이션).
+    fn loading_overlay(&self, ctx: &egui::Context) {
+        let Some(msg) = self.loading.clone() else {
+            return;
+        };
+        let t = ctx.input(|i| i.time);
+        let frac = ((t * 0.7) % 1.0) as f32;
+        egui::Area::new(egui::Id::new("loading_overlay"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(&msg);
+                    });
+                    ui.add(egui::ProgressBar::new(frac).desired_width(260.0).show_percentage());
+                });
+            });
+        ctx.request_repaint();
     }
 
     /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
@@ -1982,7 +2104,12 @@ impl eframe::App for FreeDfApp {
         canvas::set_pen_trace(self.debug_hud);
         // 백그라운드 DB 연결 결과 수신 (연결 중이면 계속 갱신 요청).
         self.poll_connect_result();
-        if self.pending_connect.is_some() {
+        self.poll_loader();
+        self.poll_media();
+        if self.pending_connect.is_some()
+            || self.loader_rx.is_some()
+            || self.media_rx.is_some()
+        {
             ctx.request_repaint();
         }
         // CLI 시작 인자: `freedf <file.pdf>`은 import 후 열기,
@@ -2068,6 +2195,7 @@ impl eframe::App for FreeDfApp {
 
         self.connection_dialog(&ctx);
         self.fallback_dialog(&ctx);
+        self.loading_overlay(&ctx);
 
         // Close confirmation: ask whether to save before quitting.
         let close_requested = ctx.input(|i| i.viewport().close_requested());

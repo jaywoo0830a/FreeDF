@@ -6,6 +6,31 @@
 
 use super::*;
 
+/// 문서 열기의 DB 부분 — **백그라운드 스레드 전용** (UI를 절대 막지 않음).
+/// 결과는 `LoaderBundle`로 UI에 돌아가고, PDF 생성(pdfium)은 UI 스레드에서
+/// 로컬 바이트로 수행됩니다 (pdfium은 Send가 아니므로 네트워크만 분리).
+fn load_document_bundle(db: &dyn StorageBackend, doc_id: i64) -> Result<LoaderBundle, String> {
+    let row = db
+        .get_document(doc_id)
+        .ok_or_else(|| format!("Document {doc_id} not found in the database."))?;
+    let is_note = row.is_note();
+    let pdf_bytes = db.load_pdf(doc_id).ok_or_else(|| {
+        format!("{} has no PDF content in the database.", row.title)
+    })?;
+    let store = db.load_store(doc_id);
+    let edits = db.load_edits(doc_id);
+    let session = db.load_session(doc_id);
+    Ok(LoaderBundle {
+        doc_id,
+        is_note,
+        row,
+        pdf_bytes,
+        store,
+        edits,
+        session,
+    })
+}
+
 impl FreeDfApp {
     pub(crate) fn toggle_bookmark(&mut self, page: PageIndex) {
         self.store.toggle_bookmark(page);
@@ -261,37 +286,53 @@ impl FreeDfApp {
     }
 
     /// DB의 문서 id로 문서를 엽니다 (노트/외부 PDF 공통).
+    /// DB 조회는 백그라운드 스레드에서 진행되고, 완료되면
+    /// `poll_loader → finish_document_open`이 로컬에서 문서를 엽니다.
     pub(crate) fn open_document(&mut self, doc_id: i64) {
-        let Some(row) = self.db.get_document(doc_id) else {
-            self.show_error(format!("Document {doc_id} not found in the database."));
-            return;
-        };
-        let is_note = row.is_note();
-        let kind = if is_note {
-            TabKind::Note(doc_id)
-        } else {
-            TabKind::Pdf(doc_id)
-        };
-        // 이미 열려 있으면 해당 탭으로 전환만 합니다.
-        if let Some(idx) = self.find_tab(&kind) {
-            self.switch_tab(idx);
+        if self.loading.is_some() || self.loader_rx.is_some() {
             return;
         }
-        // 현재 활성 문서 상태를 탭에 보존하고 새 문서를 엽니다.
+        // 이미 열려 있는 탭이면 DB 조회 없이 전환만 합니다.
+        for kind in [TabKind::Note(doc_id), TabKind::Pdf(doc_id)] {
+            if let Some(idx) = self.find_tab(&kind) {
+                self.switch_tab(idx);
+                return;
+            }
+        }
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.loader_rx = Some(rx);
+        self.loading = Some(format!("Loading document {doc_id}…"));
+        std::thread::spawn(move || {
+            let _ = tx.send(load_document_bundle(db.as_ref(), doc_id));
+        });
+    }
+
+    /// 로더가 가져온 번들로 문서를 **로컬에서** 엽니다 (네트워크 없음).
+    pub(crate) fn finish_document_open(&mut self, bundle: LoaderBundle) {
+        let LoaderBundle {
+            doc_id,
+            is_note,
+            row,
+            pdf_bytes,
+            store,
+            edits,
+            session,
+        } = bundle;
+        // 로딩 중 다른 경로로 열렸으면 전환만 합니다.
+        for kind in [TabKind::Note(doc_id), TabKind::Pdf(doc_id)] {
+            if let Some(idx) = self.find_tab(&kind) {
+                self.switch_tab(idx);
+                return;
+            }
+        }
         self.save_session();
         if self.document.is_some() {
             self.capture_into(self.active);
         }
-        let Some(bytes) = self.db.load_pdf(doc_id) else {
-            self.show_error(format!(
-                "{} has no PDF content in the database.",
-                row.title
-            ));
-            return;
-        };
         let opened = self
             .pdfium()
-            .and_then(|p| DocumentView::open_bytes(p, &bytes, &row.title));
+            .and_then(|p| DocumentView::open_bytes(p, &pdf_bytes, &row.title));
         match opened {
             Ok(doc) => {
                 self.doc_id = Some(doc_id);
@@ -300,11 +341,11 @@ impl FreeDfApp {
                 self.page_size_pts = doc.page_size_pts(0);
                 self.file_name = row.title.clone();
                 self.document = Some(doc);
-                self.set_store(self.db.load_store(doc_id));
+                self.set_store(store);
                 // 스트로크 id 풀을 미리 채워 첫 획부터 왕복 없이 그립니다.
                 self.fill_stroke_pool_sync();
                 // 편집 저널 재생 → 재시작 전의 undo/redo 가능.
-                self.restore_history_from_db();
+                self.restore_history_from_edits(&edits);
                 self.active_stroke = None;
                 self.pan_last = None;
                 self.middle_pan_last = None;
@@ -323,7 +364,7 @@ impl FreeDfApp {
                 self.status = None;
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 // 마지막 세션(페이지/도구/펜/줌 등)을 복원합니다.
-                if let Some(value) = self.db.load_session(doc_id) {
+                if let Some(value) = session {
                     let session = crate::settings::SessionState::from_json_value(value);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
@@ -336,6 +377,11 @@ impl FreeDfApp {
                     });
                 }
                 self.load_outline_if_needed();
+                let kind = if is_note {
+                    TabKind::Note(doc_id)
+                } else {
+                    TabKind::Pdf(doc_id)
+                };
                 self.add_current_as_tab(kind);
                 self.note_recent(
                     if is_note { RecentKind::Note } else { RecentKind::File },
@@ -908,31 +954,34 @@ impl FreeDfApp {
 
     // ---------- Media (audio recordings) ----------
 
-    /// 현재 문서의 미디어 목록을 서버에서 다시 불러옵니다.
-    pub(crate) fn media_refresh(&mut self) {
+    /// 목록 조회 작업을 백그라운드 스레드로 실행 (로딩 오버레이 표시).
+    pub(crate) fn media_list_job(&mut self) {
+        if self.media_rx.is_some() || self.loading.is_some() {
+            return;
+        }
         let Some(doc_id) = self.doc_id else {
             return;
         };
-        let Some(client) = MediaClient::new_enabled(&self.media_config) else {
-            self.media_status = Some("Media server is not enabled — open Server settings.".into());
-            return;
-        };
-        // 실패해도 다시 시도하지 않게 문서 id는 먼저 기록 (수동 Refresh로 재시도).
+        let config = self.media_config.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.media_rx = Some(rx);
+        // 실패해도 재시도 루프가 생기지 않게 문서 id를 먼저 기록.
         self.media_loaded_for = Some(doc_id);
-        match client.list(Some(doc_id), 100, 0) {
-            Ok(items) => {
-                self.media_status = if items.is_empty() {
-                    Some("No recordings yet.".into())
-                } else {
-                    None
-                };
-                self.media_items = items;
-            }
-            Err(e) => {
-                self.media_items.clear();
-                self.media_status = Some(format!("Could not load recordings: {e}"));
-            }
-        }
+        self.loading = Some("Loading recordings…".into());
+        std::thread::spawn(move || {
+            let res = match MediaClient::new_enabled(&config) {
+                None => Err("Media server is not enabled — open Server settings.".to_string()),
+                Some(client) => client
+                    .list(Some(doc_id), 100, 0)
+                    .map(MediaOutcome::Listed),
+            };
+            let _ = tx.send(res);
+        });
+    }
+
+    /// 현재 문서의 미디어 목록을 서버에서 다시 불러옵니다 (비동기).
+    pub(crate) fn media_refresh(&mut self) {
+        self.media_list_job();
     }
 
     /// 업로드 파일 선택 — Windows는 네이티브 대화상자, 그 외엔 경로 입력.
@@ -959,8 +1008,11 @@ impl FreeDfApp {
         }
     }
 
-    /// 파일을 현재 문서의 녹음으로 업로드합니다.
+    /// 파일을 현재 문서의 녹음으로 업로드합니다 (비동기 — UI를 막지 않음).
     pub(crate) fn upload_media_path(&mut self, path: &Path) {
+        if self.media_rx.is_some() || self.loading.is_some() {
+            return;
+        }
         let Some(doc_id) = self.doc_id else {
             self.media_status = Some("Open a document first.".into());
             return;
@@ -973,40 +1025,42 @@ impl FreeDfApp {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "upload.bin".into());
-        let bytes = match std::fs::read(path) {
-            Ok(b) => b,
-            Err(e) => {
-                self.media_status = Some(format!("Could not read file: {e}"));
-                return;
-            }
-        };
-        if bytes.len() > 200 * 1024 * 1024 {
-            self.media_status = Some("File is larger than 200 MB (server limit).".into());
-            return;
-        }
-        let mime = crate::server::mime_for_ext(&name);
-        match client.upload(Some(doc_id), "audio", &name, mime, &bytes) {
-            Ok(obj) => {
-                self.media_status = Some(format!("Uploaded {}", obj.name));
-                self.media_refresh();
-            }
-            Err(e) => self.media_status = Some(format!("Upload failed: {e}")),
-        }
+        let path = path.to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.media_rx = Some(rx);
+        self.loading = Some(format!("Uploading {name}…"));
+        std::thread::spawn(move || {
+            let res = (|| -> Result<MediaOutcome, String> {
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("Could not read file: {e}"))?;
+                if bytes.len() > 200 * 1024 * 1024 {
+                    return Err("File is larger than 200 MB (server limit).".into());
+                }
+                let mime = crate::server::mime_for_ext(&name);
+                client
+                    .upload(Some(doc_id), "audio", &name, mime, &bytes)
+                    .map(MediaOutcome::Uploaded)
+            })();
+            let _ = tx.send(res);
+        });
     }
 
-    /// 녹음 하나를 서버에서 삭제합니다 (파일 + 메타데이터).
+    /// 녹음 하나를 서버에서 삭제합니다 (비동기 — 파일 + 메타데이터).
     pub(crate) fn delete_media_item(&mut self, id: i64) {
+        if self.media_rx.is_some() || self.loading.is_some() {
+            return;
+        }
         let Some(client) = MediaClient::new_enabled(&self.media_config) else {
             self.media_status = Some("Media server is not enabled.".into());
             return;
         };
-        match client.delete(id) {
-            Ok(()) => {
-                self.media_status = Some("Deleted.".into());
-                self.media_refresh();
-            }
-            Err(e) => self.media_status = Some(format!("Delete failed: {e}")),
-        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.media_rx = Some(rx);
+        self.loading = Some("Deleting recording…".into());
+        std::thread::spawn(move || {
+            let res = client.delete(id).map(|()| MediaOutcome::Deleted);
+            let _ = tx.send(res);
+        });
     }
 
     /// 녹음 URL을 OS 기본 미디어 플레이어로 엽니다 (nginx가 스트리밍).
