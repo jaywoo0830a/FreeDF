@@ -343,18 +343,21 @@ impl FreeDfApp {
                 painter.circle_filled(c, WHEEL_CENTER_R, cc);
                 painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
 
-                // 인터랙션 — 이 응답이 휠 영역의 탭을 받아 캔버스로 새지 않게 합니다.
-                let local_rect = egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
-                );
+                // (1) 공간을 잡아 이 Area의 **레이어가 휠 영역을 덮게** 합니다 —
+                //     그래야 휠 위에서 캔버스 response.hovered()가 false가 되어
+                //     펜 닙 커서가 휠 위에 그려지지 않고, OS 커서로 전환됩니다.
+                ui.allocate_space(egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0));
+                // (2) 클릭 위젯 — **화면 좌표 rect** (egui 0.36 위젯 rect는
+                //     화면 좌표. ZERO 기준 rect를 넘기면 화면 좌상단에 등록되어
+                //     휠 탭이 전혀 안 잡히던 버그의 원인).
                 let resp = ui.interact(
-                    local_rect,
+                    rect,
                     ui.id().with("color_wheel_hit"),
                     egui::Sense::click(),
                 );
                 if resp.clicked() {
-                    // interact_pointer_pos는 영역 로컬 좌표 → 화면 좌표로 변환.
+                    // interact_pointer_pos는 resp.rect.min(=area_pos) 기준
+                    // 로컬 좌표 → 화면 좌표로 변환.
                     tap = resp.interact_pointer_pos().map(|p| area_pos + p.to_vec2());
                 }
             });
@@ -1614,6 +1617,8 @@ impl FreeDfApp {
                 let wheel_center = self.color_wheel_center(canvas_rect);
                 if abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0 {
                     // 휠 안 탭 — color_wheel_overlay가 처리, 캔버스 입력은 스킵.
+                    // (릴리스 점도 삼켜 휠 탭이 페이지에 점을 남기지 않게)
+                    self.wheel_swallow_click = true;
                     return;
                 }
                 // 바깥 탭 — 닫고 점 없이 삼킵니다.
