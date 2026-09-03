@@ -13,6 +13,7 @@ mod db;
 mod fonts;
 mod pdf;
 mod recent;
+mod server;
 mod settings;
 mod theme;
 

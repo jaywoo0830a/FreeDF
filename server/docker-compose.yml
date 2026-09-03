@@ -1,0 +1,23 @@
+services:
+  backend:
+    build: ./backend
+    network_mode: host            # Linux VPS: 호스트의 Postgres(5432)에 직접 접근
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://freedf:freedf@localhost:5432/freedf
+      MEDIA_DIR: /srv/freedf-server/media
+      PUBLIC_BASE_URL: https://media.example.com
+      FREEDF_API_KEY: change-me-please
+    volumes:
+      - /srv/freedf-server/media:/srv/freedf-server/media
+
+  nginx:
+    image: nginx:1.27-alpine
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/freedf.conf:/etc/nginx/conf.d/default.conf:ro
+      - /srv/freedf-server/media:/srv/freedf-server/media:ro
+      - ./certs:/etc/nginx/certs:ro

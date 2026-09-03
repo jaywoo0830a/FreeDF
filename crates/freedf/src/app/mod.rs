@@ -66,6 +66,7 @@ pub(crate) use crate::db::Db;
 pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
+pub(crate) use crate::server::{MediaClient, MediaServerConfig};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
 pub(crate) use egui_phosphor_icons::icons;
 pub(crate) use pdfium_render::prelude::Pdfium;
@@ -756,6 +757,13 @@ pub struct FreeDfApp {
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
+    // ---------- Media server ----------
+    /// 미디어(녹음) 서버 연결 설정 — `server.json`에서 런타임 로드.
+    media_config: MediaServerConfig,
+    /// 미디어 서버 설정 창 표시 여부 (툴바 Server 버튼).
+    server_settings_open: bool,
+    /// 설정 창의 마지막 테스트/저장 결과 (성공 여부, 메시지).
+    server_msg: Option<(bool, String)>,
     // ---------- Close confirmation ----------
     asking_close: bool,
     quitting: bool,
@@ -890,6 +898,9 @@ impl FreeDfApp {
             }
         }
         let library_filter = String::new();
+
+        // 미디어 서버 연결 설정 — 빌드타임이 아니라 `server.json`에서 런타임 로드.
+        let media_config = MediaServerConfig::load(&MediaServerConfig::config_path());
 
         // 노트 캐시 + 최근 목록 캐시 → DB에서 로드.
         let notes = NotesManager::from_metas(
@@ -1057,6 +1068,9 @@ impl FreeDfApp {
             pending_open,
             pending_doc,
             modal: None,
+            media_config,
+            server_settings_open: false,
+            server_msg: None,
             asking_close: false,
             quitting: false,
         }

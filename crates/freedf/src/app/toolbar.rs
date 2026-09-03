@@ -778,6 +778,84 @@ impl FreeDfApp {
         });
     }
 
+    /// 미디어 서버 연결 설정 창 내용 (툴바 Server 버튼으로 열림).
+    ///
+    /// 설정은 `server.json`에 저장되고 다음 실행에서 로드됩니다 — 서버 주소는
+    /// 빌드타임이 아니라 **런타임 입력**입니다.
+    fn server_settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            "Self-hosted media server for audio recordings.\n\
+             Playback streams straight from nginx; this key only guards\n\
+             uploads, lists and deletes.",
+        );
+        ui.add_space(4.0);
+        let mut changed = false;
+        changed |= ui
+            .checkbox(&mut self.media_config.enabled, "Connect to media server")
+            .on_hover_text("Leave off until your VPS server is deployed.")
+            .changed();
+        ui.horizontal(|ui| {
+            ui.label("Server URL");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.media_config.base_url)
+                        .hint_text("https://media.example.com")
+                        .desired_width(230.0),
+                )
+                .changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label("API key");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.media_config.api_key)
+                        .password(true)
+                        .desired_width(230.0),
+                )
+                .changed();
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.media_config.enabled,
+                    egui::Button::new(icon_text(ui, "Test connection", icons::PLUG)),
+                )
+                .on_hover_text("GET /health on the server (4s timeout)")
+                .clicked()
+            {
+                let client = MediaClient::new(&self.media_config);
+                let start = std::time::Instant::now();
+                self.server_msg = Some(match client.health() {
+                    Ok(()) => (
+                        true,
+                        format!("Connected — {} ms", start.elapsed().as_millis()),
+                    ),
+                    Err(e) => (false, e),
+                });
+            }
+            if ui.button("Save").clicked() {
+                let path = MediaServerConfig::config_path();
+                self.server_msg = Some(match self.media_config.save(&path) {
+                    Ok(()) => (true, format!("Saved to {}", path.display())),
+                    Err(e) => (false, format!("Save failed: {e}")),
+                });
+            }
+        });
+        if changed {
+            // 값이 바뀌면 이전 테스트 결과는 더 이상 유효하지 않음.
+            self.server_msg = None;
+        }
+        if let Some((ok, msg)) = &self.server_msg {
+            let color = if *ok {
+                ui.visuals().hyperlink_color
+            } else {
+                ui.visuals().error_fg_color
+            };
+            ui.colored_label(color, msg);
+        }
+    }
+
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
             // Compact spacing + padding; uniform control height for tidy rows
@@ -823,6 +901,19 @@ impl FreeDfApp {
                     .changed()
                 {
                     self.save_default_session();
+                }
+                if ui
+                    .toggle_value(
+                        &mut self.server_settings_open,
+                        icon_text(ui, "Server", icons::CLOUD),
+                    )
+                    .on_hover_text(
+                        "Media server connection settings — upload & play audio recordings\n\
+                         from your self-hosted VPS.",
+                    )
+                    .changed()
+                {
+                    self.server_msg = None;
                 }
                 ui.separator();
 
@@ -1441,6 +1532,19 @@ impl FreeDfApp {
                     });
                 });
             self.paper_settings_open = open;
+        }
+
+        // ── 미디어 서버 연결 설정 창 (툴바 Server 버튼) ──
+        if self.server_settings_open {
+            let mut open = self.server_settings_open;
+            egui::Window::new("Media server")
+                .open(&mut open)
+                .resizable(false)
+                .default_width(380.0)
+                .show(ui.ctx(), |ui| {
+                    self.server_settings_ui(ui);
+                });
+            self.server_settings_open = open;
         }
     }
 }
