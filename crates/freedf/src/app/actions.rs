@@ -221,10 +221,11 @@ impl FreeDfApp {
         }
         self.render_dirty = true;
         if let Some(doc_id) = self.doc_id {
-            let entries: Vec<(i32, PagePaper, bool)> = (0..count)
-                .map(|i| (i as i32, paper, self.store.is_bookmarked(i)))
-                .collect();
-            self.db.replace_pages(doc_id, &entries);
+            // write-behind — 페이지 수만큼 왕복하지 않고 큐에 쌓아 백그라운드 반영.
+            for i in 0..count {
+                self.db
+                    .upsert_page(doc_id, i as i32, &paper, self.store.is_bookmarked(i));
+            }
         }
         self.save_session();
         self.status = Some(format!("Applied paper to all {count} pages"));
@@ -251,8 +252,7 @@ impl FreeDfApp {
         }
         self.render_dirty = true;
         if let Some(doc_id) = self.doc_id {
-            // 범위는 upsert_page로 각 행만 갱신 (replace_pages는 전체 삭제 후
-            // 재삽입이라 범위 밖 페이지가 지워짐 — 사용 금지).
+            // 범위는 upsert_page(write-behind)로 행 단위 갱신.
             for i in lo..=hi {
                 self.db.upsert_page(
                     doc_id,
@@ -944,20 +944,22 @@ impl FreeDfApp {
         self.begin_loading("Preparing save…");
         std::thread::spawn(move || {
             let res = (|| -> Result<(), String> {
-                let _ = tx.send(SaveMsg::Stage("Saving: resyncing strokes…".into()));
-                db.resync_strokes(doc_id, &store);
-                let _ = tx.send(SaveMsg::Stage("Saving: pages & bookmarks…".into()));
-                db.replace_pages(doc_id, &entries);
-                let _ = tx.send(SaveMsg::Stage("Updating document info…".into()));
-                db.update_page_count(doc_id, page_count as i32);
-                if let Some(bytes) = &pdf_bytes {
-                    let _ = tx.send(SaveMsg::Stage(format!(
-                        "Uploading PDF bytes ({} KB)…",
-                        bytes.len() / 1024
-                    )));
-                    db.save_pdf(doc_id, bytes)?;
-                }
-                Ok(())
+                // 문서 전체(획+페이지+문서 정보+PDF)를 **한 번의 왕복**으로
+                // 서버 함수(document_sync, migration 0006)가 원자 반영 —
+                // 함수가 없는 구형 스키마면 내부에서 단계별 경로로 폴백합니다.
+                let _ = tx.send(SaveMsg::Stage(format!(
+                    "Saving document ({} strokes / {} pages / {} KB PDF)…",
+                    store.total_stroke_count(),
+                    entries.len(),
+                    pdf_bytes.as_ref().map(|b| b.len() / 1024).unwrap_or(0)
+                )));
+                db.sync_document(
+                    doc_id,
+                    page_count as i32,
+                    &store,
+                    &entries,
+                    pdf_bytes.as_deref(),
+                )
             })();
             let _ = tx.send(SaveMsg::Done(res));
         });

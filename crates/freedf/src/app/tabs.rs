@@ -71,11 +71,31 @@ impl FreeDfApp {
             None => return,
         };
         let db = self.db.clone();
+        // 탭 분리 전 최신 상태 보장 — 한 번의 왕복으로 원자 동기화(0006 함수).
+        let default_paper = freedf_core::paper::PagePaper {
+            style: self.paper_style,
+            color: self.paper_color,
+        };
+        let page_count = self
+            .tabs
+            .get(idx)
+            .and_then(|t| t.document.as_ref())
+            .map(|d| d.page_count())
+            .unwrap_or(0);
+        let entries: Vec<(i32, freedf_core::paper::PagePaper, bool)> = (0..page_count)
+            .map(|i| {
+                let paper = store.paper_on(i).unwrap_or(default_paper);
+                (i as i32, paper, store.is_bookmarked(i))
+            })
+            .collect();
         std::thread::spawn(move || {
-            db.resync_strokes(doc_id, &store);
-            if let Some(bytes) = &pdf_bytes {
-                let _ = db.save_pdf(doc_id, bytes);
-            }
+            let _ = db.sync_document(
+                doc_id,
+                page_count as i32,
+                &store,
+                &entries,
+                pdf_bytes.as_deref(),
+            );
         });
         if idx == self.active {
             // 캡처로 옮겼으니 복원해 현재 상태 유지 (탭이 곧 닫혀도 안전).

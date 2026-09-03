@@ -38,23 +38,29 @@ pub trait StorageBackend: Send + Sync {
     fn get_document(&self, id: i64) -> Option<DocRow>;
     fn find_document_by_path(&self, path: &str) -> Option<i64>;
     fn load_pdf(&self, id: i64) -> Option<Vec<u8>>;
-    fn save_pdf(&self, id: i64, bytes: &[u8]) -> Result<(), String>;
     fn update_title(&self, id: i64, title: &str) -> Result<(), String>;
-    fn update_page_count(&self, id: i64, page_count: i32);
     fn delete_document(&self, id: i64) -> Result<(), String>;
     fn list_notes(&self) -> Vec<DocRow>;
 
     // ---------- pages (용지 + 북마크) ----------
     fn upsert_page(&self, doc_id: i64, page_index: i32, paper: &PagePaper, bookmarked: bool);
-    fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]);
 
     // ---------- strokes ----------
     /// 전역 시퀀스에서 스트로크 id를 n개 할당 (undo/redo가 DB와 같은 id를 쓰게 함).
     fn alloc_stroke_ids(&self, n: usize) -> Vec<i64>;
     fn insert_strokes(&self, doc_id: i64, page_index: i32, strokes: &[Stroke]);
     fn delete_strokes(&self, doc_id: i64, ids: &[i64]);
-    fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore);
     fn load_store(&self, doc_id: i64) -> AnnotationStore;
+
+    /// 문서 전체 저장을 **한 번의 왕복**으로 원자 반영 (스키마 0006 저장 함수).
+    fn sync_document(
+        &self,
+        doc_id: i64,
+        page_count: i32,
+        store: &AnnotationStore,
+        entries: &[(i32, PagePaper, bool)],
+        pdf: Option<&[u8]>,
+    ) -> Result<(), String>;
 
     // ---------- sessions ----------
     fn load_session(&self, doc_id: i64) -> Option<Value>;
@@ -192,13 +198,9 @@ impl StorageBackend for DisconnectedStorage {
     fn load_pdf(&self, _id: i64) -> Option<Vec<u8>> {
         None
     }
-    fn save_pdf(&self, _id: i64, _bytes: &[u8]) -> Result<(), String> {
-        Err("Not connected to the database yet.".into())
-    }
     fn update_title(&self, _id: i64, _title: &str) -> Result<(), String> {
         Err("Not connected to the database yet.".into())
     }
-    fn update_page_count(&self, _id: i64, _page_count: i32) {}
     fn delete_document(&self, _id: i64) -> Result<(), String> {
         Err("Not connected to the database yet.".into())
     }
@@ -206,15 +208,23 @@ impl StorageBackend for DisconnectedStorage {
         Vec::new()
     }
     fn upsert_page(&self, _doc_id: i64, _page_index: i32, _paper: &PagePaper, _bookmarked: bool) {}
-    fn replace_pages(&self, _doc_id: i64, _entries: &[(i32, PagePaper, bool)]) {}
     fn alloc_stroke_ids(&self, _n: usize) -> Vec<i64> {
         Vec::new()
     }
     fn insert_strokes(&self, _doc_id: i64, _page_index: i32, _strokes: &[Stroke]) {}
     fn delete_strokes(&self, _doc_id: i64, _ids: &[i64]) {}
-    fn resync_strokes(&self, _doc_id: i64, _store: &AnnotationStore) {}
     fn load_store(&self, _doc_id: i64) -> AnnotationStore {
         AnnotationStore::new()
+    }
+    fn sync_document(
+        &self,
+        _doc_id: i64,
+        _page_count: i32,
+        _store: &AnnotationStore,
+        _entries: &[(i32, PagePaper, bool)],
+        _pdf: Option<&[u8]>,
+    ) -> Result<(), String> {
+        Err("Not connected to the database yet.".into())
     }
     fn load_session(&self, _doc_id: i64) -> Option<Value> {
         None
@@ -496,25 +506,10 @@ impl StorageBackend for CachingBackend {
         Some(bytes)
     }
 
-    fn save_pdf(&self, id: i64, bytes: &[u8]) -> Result<(), String> {
-        self.remote.save_pdf(id, bytes)?;
-        self.inner
-            .lock()
-            .expect("cache mutex poisoned")
-            .cache
-            .put_pdf(id, bytes);
-        Ok(())
-    }
-
     fn update_title(&self, id: i64, title: &str) -> Result<(), String> {
         self.remote.update_title(id, title)?;
         self.inner.lock().expect("cache mutex poisoned").cache.invalidate_notes();
         Ok(())
-    }
-
-    fn update_page_count(&self, id: i64, page_count: i32) {
-        self.remote.update_page_count(id, page_count);
-        self.inner.lock().expect("cache mutex poisoned").cache.invalidate_notes();
     }
 
     fn delete_document(&self, id: i64) -> Result<(), String> {
@@ -556,12 +551,6 @@ impl StorageBackend for CachingBackend {
         });
     }
 
-    fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
-        // 구조 연산은 resync_strokes가 스토어 캐시를 통째로 교체하므로
-        // 여기서는 원격만 갱신합니다.
-        self.remote.replace_pages(doc_id, entries);
-    }
-
     fn alloc_stroke_ids(&self, n: usize) -> Vec<i64> {
         self.remote.alloc_stroke_ids(n)
     }
@@ -583,15 +572,25 @@ impl StorageBackend for CachingBackend {
         });
     }
 
-    fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
-        // 구조 연산(페이지 삽입/삭제/회전): 원격이 인메모리 스토어(병합 상태)로
-        // 통째로 교체되므로 해당 문서의 대기열은 폐기해도 안전합니다.
-        // (SetAppState처럼 문서 무관 작업은 유지)
-        self.remote.resync_strokes(doc_id, store);
+    fn sync_document(
+        &self,
+        doc_id: i64,
+        page_count: i32,
+        store: &AnnotationStore,
+        entries: &[(i32, PagePaper, bool)],
+        pdf: Option<&[u8]>,
+    ) -> Result<(), String> {
+        self.remote
+            .sync_document(doc_id, page_count, store, entries, pdf)?;
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        g.pending.retain(|o| o.doc_id() != Some(doc_id));
+        // 원격이 이 스토어 상태로 통째 교체 — 메모리 스냅샷도 동기화.
         g.stores.insert(doc_id, store.clone());
         g.dirty_stores.insert(doc_id);
+        // PDF 캐시 갱신 — 저장 직후 재오픈해도 낡은 본문이 나오지 않게.
+        if let Some(bytes) = pdf {
+            g.cache.put_pdf(doc_id, bytes);
+        }
+        Ok(())
     }
 
     fn load_store(&self, doc_id: i64) -> AnnotationStore {

@@ -124,6 +124,23 @@ impl Db {
                     .to_string(),
             );
         }
+        // 저장 함수(migration 0006) — 없으면 구형 스키마로 간주하고 거부.
+        // (regprocedure는 OID 타입이라 ::text로 받아야 String 변환 가능)
+        let has_sync: Option<String> = client
+            .query_opt(
+                "SELECT to_regprocedure('public.document_sync(bigint,integer,jsonb,jsonb,bytea)')::text",
+                &[],
+            )
+            .ok()
+            .flatten()
+            .map(|r| r.get(0));
+        if has_sync.is_none() {
+            return Err(
+                "FreeDF schema is outdated — run server/db/up.sh on the database host \
+                 (migration 0006_document_sync is missing)"
+                    .to_string(),
+            );
+        }
         Ok(Self {
             conn: Arc::new(Mutex::new(client)),
         })
@@ -187,16 +204,6 @@ impl Db {
             .map(|r| r.get(0))
     }
 
-    pub fn save_pdf(&self, id: i64, bytes: &[u8]) -> Result<(), String> {
-        let mut c = conn_guard(&self.conn);
-        c.execute(
-            "UPDATE documents SET pdf = $2, updated_at = $3 WHERE id = $1",
-            &[&id, &bytes.to_vec(), &now_ms()],
-        )
-        .map(|_| ())
-        .map_err(|e| format!("Could not save PDF bytes: {e}"))
-    }
-
     pub fn update_title(&self, id: i64, title: &str) -> Result<(), String> {
         let mut c = conn_guard(&self.conn);
         c.execute(
@@ -205,14 +212,6 @@ impl Db {
         )
         .map(|_| ())
         .map_err(|e| format!("Could not rename document: {e}"))
-    }
-
-    pub fn update_page_count(&self, id: i64, page_count: i32) {
-        let mut c = conn_guard(&self.conn);
-        let _ = c.execute(
-            "UPDATE documents SET page_count = $2, updated_at = $3 WHERE id = $1",
-            &[&id, &page_count, &now_ms()],
-        );
     }
 
     pub fn delete_document(&self, id: i64) -> Result<(), String> {
@@ -292,84 +291,6 @@ impl Db {
                 &bookmarked,
             ],
         );
-    }
-
-    /// 문서의 pages 테이블 전체를 스토어 상태로 재동기화합니다 (페이지 CRUD/회전 후).
-    ///
-    /// 페이지 인덱스는 항상 0..N 연속이므로(위치 기반), **단일 왕복**으로:
-    /// `WITH del AS (DELETE ... page_index >= $2)`로 줄어든 페이지를 지우고
-    /// 모든 페이지를 `ON CONFLICT DO UPDATE` upsert — DELETE와 INSERT의
-    /// 키 집합이 겹치지 않아 같은 스냅샷에서도 안전합니다.
-    pub fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
-        let mut c = conn_guard(&self.conn);
-        if entries.is_empty() {
-            let _ = c.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
-            return;
-        }
-        let contiguous = entries
-            .iter()
-            .enumerate()
-            .all(|(i, (idx, _, _))| *idx as usize == i);
-        const CHUNK: usize = 4000;
-        if contiguous {
-            // 단일 왕복: 줄어든 페이지 삭제 + 전체 upsert를 한 문장으로.
-            let mut sql = String::from(
-                "WITH del AS (DELETE FROM pages WHERE doc_id = $1 AND page_index >= $2) \
-                 INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
-            );
-            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(entries.len() * 4 + 2);
-            params.push(Box::new(doc_id)); // $1
-            params.push(Box::new(entries.len() as i32)); // $2 — 삭제 기준 인덱스
-            let mut rows_sql = String::new();
-            for (i, (idx, paper, bookmarked)) in entries.iter().enumerate() {
-                if i > 0 {
-                    rows_sql.push(',');
-                }
-                let b = i * 4;
-                rows_sql.push_str(&format!(
-                    "($1,${},${},${},${})",
-                    b + 3,
-                    b + 4,
-                    b + 5,
-                    b + 6
-                ));
-                params.push(Box::new(*idx));
-                params.push(Box::new(style_str(paper.style).to_string()));
-                params.push(Box::new(color_to_i32(paper.color)));
-                params.push(Box::new(*bookmarked));
-            }
-            sql.push_str(&rows_sql);
-            sql.push_str(
-                " ON CONFLICT (doc_id, page_index) DO UPDATE SET \
-                 style = EXCLUDED.style, color = EXCLUDED.color, bookmarked = EXCLUDED.bookmarked",
-            );
-            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
-            let _ = c.execute(&sql, &refs);
-        } else {
-            // 비연속 입력(방어적 폴백) — 전체 삭제 후 청크 삽입.
-            let _ = c.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
-            for chunk in entries.chunks(CHUNK) {
-                let mut sql = String::from(
-                    "INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
-                );
-                let mut params: Vec<Box<dyn ToSql + Sync>> =
-                    Vec::with_capacity(chunk.len() * 4 + 1);
-                params.push(Box::new(doc_id)); // $1 — 행마다 재사용
-                for (i, (idx, paper, bookmarked)) in chunk.iter().enumerate() {
-                    if i > 0 {
-                        sql.push(',');
-                    }
-                    let b = i * 4; // 행당 파라미터 4개 (doc_id는 공유 $1)
-                    sql.push_str(&format!("($1,${},${},${},${})", b + 2, b + 3, b + 4, b + 5));
-                    params.push(Box::new(*idx));
-                    params.push(Box::new(style_str(paper.style).to_string()));
-                    params.push(Box::new(color_to_i32(paper.color)));
-                    params.push(Box::new(*bookmarked));
-                }
-                let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
-                let _ = c.execute(&sql, &refs);
-            }
-        }
     }
 
     // ---------- strokes ----------
@@ -452,74 +373,63 @@ impl Db {
         );
     }
 
-    /// 문서의 strokes 테이블 전체를 스토어 상태로 재동기화합니다.
-    /// (페이지 삽입/삭제/회전처럼 페이지 인덱스·좌표가 통째로 바뀌는 구조 연산용)
-    ///
-    /// 왕복 최소화: DELETE 1회 + 다중 행 INSERT ceil(N/4,000)회 —
-    /// 일반 문서(≤4,000획)는 **왕복 2회** (기존: 획 수만큼).
-    /// (같은 문장의 CTE는 같은 스냅샷을 공유해 재삽입 키가 충돌하므로
-    /// DELETE와 INSERT를 분리합니다.)
-    pub fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
+    /// 문서 전체 저장을 **한 번의 왕복**으로 원자 반영 (migration 0006 저장 함수).
+    /// 획 배열·페이지 배열·PDF를 파라미터 하나의 문장으로 보내 서버가
+    /// 하나의 원자적 함수 호출로 전부 반영합니다.
+    pub fn sync_document(
+        &self,
+        doc_id: i64,
+        page_count: i32,
+        store: &AnnotationStore,
+        entries: &[(i32, PagePaper, bool)],
+        pdf: Option<&[u8]>,
+    ) -> Result<(), String> {
         let mut c = conn_guard(&self.conn);
         let now = now_ms();
-        let rows: Vec<(i64, i32, String, Vec<i32>, f32, Value, i64)> = store
-            .pages()
-            .flat_map(|page| {
-                let page_index = page.page_index as i32;
-                page.strokes.iter().map(move |s| {
-                    let points: Value =
-                        serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
-                    let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
-                    (
-                        s.id as i64,
-                        page_index,
-                        s.tool.label().to_string(),
-                        color_to_i32(s.color),
-                        s.width,
-                        points,
-                        created,
-                    )
+        let strokes: Value = Value::Array(
+            store
+                .pages()
+                .flat_map(|page| {
+                    let page_index = page.page_index;
+                    page.strokes.iter().map(move |s| {
+                        serde_json::json!({
+                            "id": s.id,
+                            "page_index": page_index,
+                            "tool": s.tool.label(),
+                            "color": s.color,
+                            "width": s.width,
+                            "points": s.points,
+                            "created_at": if s.created_ms > 0 { s.created_ms } else { now as u64 },
+                        })
+                    })
                 })
-            })
-            .collect();
-        if rows.is_empty() {
-            let _ = c.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
-            return;
-        }
-        let _ = c.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
-        const CHUNK: usize = 4000; // 행당 파라미터 8개 → 문장당 32,000개 (한계 65,535 안전)
-        for chunk in rows.chunks(CHUNK) {
-            let mut sql = String::from(
-                "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) VALUES ",
-            );
-            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 8 + 1);
-            params.push(Box::new(doc_id)); // $1 — 행마다 doc_id로 재사용
-            for (i, r) in chunk.iter().enumerate() {
-                if i > 0 {
-                    sql.push(',');
-                }
-                let b = i * 7; // 행당 파라미터 7개 (doc_id는 공유 $1)
-                sql.push_str(&format!(
-                    "(${},$1,${},${},${},${},${},${})",
-                    b + 2,
-                    b + 3,
-                    b + 4,
-                    b + 5,
-                    b + 6,
-                    b + 7,
-                    b + 8
-                ));
-                params.push(Box::new(r.0));
-                params.push(Box::new(r.1));
-                params.push(Box::new(r.2.clone()));
-                params.push(Box::new(r.3.clone()));
-                params.push(Box::new(r.4));
-                params.push(Box::new(r.5.clone()));
-                params.push(Box::new(r.6));
-            }
-            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
-            let _ = c.execute(&sql, &refs);
-        }
+                .collect(),
+        );
+        let pages: Value = Value::Array(
+            entries
+                .iter()
+                .map(|(idx, paper, bookmarked)| {
+                    serde_json::json!({
+                        "page_index": idx,
+                        "style": style_str(paper.style),
+                        "color": paper.color,
+                        "bookmarked": bookmarked,
+                    })
+                })
+                .collect(),
+        );
+        c.execute(
+            "SELECT public.document_sync($1, $2, $3, $4, $5)",
+            &[
+                &doc_id,
+                &page_count,
+                &strokes,
+                &pages,
+                &pdf.map(|b| b.to_vec()),
+            ],
+        )
+        .map(|_| ())
+        .map_err(|e| format!("document_sync failed: {e}"))
     }
 
     /// 문서의 전체 주석/용지/북마크를 메모리 스토어로 로드합니다.
@@ -791,14 +701,8 @@ impl StorageBackend for Db {
     fn load_pdf(&self, id: i64) -> Option<Vec<u8>> {
         Db::load_pdf(self, id)
     }
-    fn save_pdf(&self, id: i64, bytes: &[u8]) -> Result<(), String> {
-        Db::save_pdf(self, id, bytes)
-    }
     fn update_title(&self, id: i64, title: &str) -> Result<(), String> {
         Db::update_title(self, id, title)
-    }
-    fn update_page_count(&self, id: i64, page_count: i32) {
-        Db::update_page_count(self, id, page_count)
     }
     fn delete_document(&self, id: i64) -> Result<(), String> {
         Db::delete_document(self, id)
@@ -810,9 +714,6 @@ impl StorageBackend for Db {
     fn upsert_page(&self, doc_id: i64, page_index: i32, paper: &PagePaper, bookmarked: bool) {
         Db::upsert_page(self, doc_id, page_index, paper, bookmarked)
     }
-    fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
-        Db::replace_pages(self, doc_id, entries)
-    }
 
     fn alloc_stroke_ids(&self, n: usize) -> Vec<i64> {
         Db::alloc_stroke_ids(self, n)
@@ -823,8 +724,15 @@ impl StorageBackend for Db {
     fn delete_strokes(&self, doc_id: i64, ids: &[i64]) {
         Db::delete_strokes(self, doc_id, ids)
     }
-    fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
-        Db::resync_strokes(self, doc_id, store)
+    fn sync_document(
+        &self,
+        doc_id: i64,
+        page_count: i32,
+        store: &AnnotationStore,
+        entries: &[(i32, PagePaper, bool)],
+        pdf: Option<&[u8]>,
+    ) -> Result<(), String> {
+        Db::sync_document(self, doc_id, page_count, store, entries, pdf)
     }
     fn load_store(&self, doc_id: i64) -> AnnotationStore {
         Db::load_store(self, doc_id)
@@ -972,17 +880,46 @@ mod tests {
         assert!(db.load_recents().iter().any(|r| r.doc_id == doc_id));
         assert_eq!(db.load_recents()[0].title, "Smoke Note");
 
-        // ── pdf bytes ──
-        db.save_pdf(doc_id, b"%PDF-1.4 real").expect("save pdf");
-        assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 real");
+        // ── document_sync 함수 (migration 0006) — 한 번의 왕복 원자 동기화 ──
+        {
+            let mut store2 = db.load_store(doc_id);
+            let sid = db.alloc_stroke_ids(1)[0];
+            store2.add_strokes(
+                0,
+                vec![Stroke {
+                    id: sid as u64,
+                    tool: ToolType::Pen,
+                    color: [9, 9, 9, 255],
+                    width: 1.5,
+                    points: vec![StrokePoint::new(5.0, 5.0, 0.5)],
+                    created_ms: 0,
+                }],
+            );
+            // 3페이지로 확장 + PDF 교체 — 전부 한 번의 호출로.
+            let entries2 = vec![
+                (0i32, paper, true),
+                (1i32, paper, true),
+                (2i32, paper, false),
+            ];
+            db.sync_document(doc_id, 3, &store2, &entries2, Some(b"%PDF-1.4 synced"))
+                .expect("sync_document");
+            assert_eq!(db.load_store(doc_id).total_stroke_count(), 3);
+            let pages = db.load_pages(doc_id);
+            assert_eq!(pages.len(), 3);
+            assert!(pages[1].2);
+            assert_eq!(db.get_document(doc_id).unwrap().page_count, 3);
+            assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
 
-        // ── resync / replace_pages ──
-        db.resync_strokes(doc_id, &store);
-        assert_eq!(db.load_store(doc_id).total_stroke_count(), 2);
-        let entries = vec![(0i32, paper, true), (1i32, paper, false)];
-        db.replace_pages(doc_id, &entries);
-        assert_eq!(db.load_pages(doc_id).len(), 2);
-        assert!(!db.load_pages(doc_id)[1].2);
+            // 1페이지로 축소 — 잉여 페이지가 삭제되어야 함.
+            let entries3 = vec![(0i32, paper, false)];
+            db.sync_document(doc_id, 1, &store2, &entries3, None)
+                .expect("sync shrink");
+            assert_eq!(db.load_pages(doc_id).len(), 1);
+            assert_eq!(db.load_store(doc_id).total_stroke_count(), 3);
+            assert_eq!(db.get_document(doc_id).unwrap().page_count, 1);
+            // PDF는 NULL이면 유지.
+            assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
+        }
 
         // ── event log ──
         db.insert_log(123, 1, &serde_json::json!({"kind": "AppStart"}));
@@ -1071,11 +1008,11 @@ mod tests {
         assert!(db.load_edits(doc_id).is_empty());
     }
 
-    /// 왕복 수 스트레스 검증 (기본 제외 — 대량 획 삽입/재동기화가 배치로 도는지).
-    /// `FREEDF_TEST_DB=1 cargo test -p freedf resync_batch_stroke_inserts_live -- --ignored --nocapture`
+    /// 왕복 수 스트레스 검증 (기본 제외) — 대량 획 삽입과 전체 동기화 측정.
+    /// `FREEDF_TEST_DB=1 cargo test -p freedf sync_document_batch_live -- --ignored --nocapture`
     #[test]
     #[ignore]
-    fn resync_batch_stroke_inserts_live() {
+    fn sync_document_batch_live() {
         if std::env::var("FREEDF_TEST_DB").is_err() {
             return;
         }
@@ -1110,18 +1047,24 @@ mod tests {
 
         let mut store = AnnotationStore::new();
         store.add_strokes(0, strokes.clone());
+        let paper = PagePaper {
+            style: PaperStyle::Grid,
+            color: [255, 255, 255, 255],
+        };
+        let entries = vec![(0i32, paper, false)];
         let t1 = std::time::Instant::now();
-        db.resync_strokes(doc_id, &store);
-        let resync_ms = t1.elapsed().as_millis();
+        db.sync_document(doc_id, 1, &store, &entries, None)
+            .expect("sync_document");
+        let sync_ms = t1.elapsed().as_millis();
 
         assert_eq!(db.load_store(doc_id).total_stroke_count(), N);
         println!(
-            "batch perf: insert {N} strokes = {insert_ms}ms, resync = {resync_ms}ms"
+            "batch perf: insert {N} strokes = {insert_ms}ms, document_sync = {sync_ms}ms"
         );
 
         // 관대한 상한 — 행별 왕복이었다면 수 분 걸리는 시나리오입니다.
         assert!(insert_ms < 30_000, "insert too slow: {insert_ms}ms");
-        assert!(resync_ms < 30_000, "resync too slow: {resync_ms}ms");
+        assert!(sync_ms < 30_000, "sync too slow: {sync_ms}ms");
 
         db.delete_document(doc_id).expect("delete");
     }
