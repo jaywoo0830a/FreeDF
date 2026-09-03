@@ -41,20 +41,19 @@ fn main() -> eframe::Result<()> {
     }
     let open_path = open_path.filter(|p| p.is_file());
 
-    // 저장소 연결 — 런타임 백엔드 선택(`FREEDF_STORAGE`, 기본 postgres).
-    // 새 백엔드(로컬 파일/자체 API)를 붙일 때는 storage::from_env만 수정.
+    // DB 연결 — 실패해도 앱은 실행되고, 첫 화면 대화상자에서 URL을 입력받습니다.
+    // 우선순위: FREEDF_DATABASE_URL 환경 변수 → 마지막 연결 성공(connection.json)
+    // → 기본값. (하드코딩 없음 — 항상 런타임 입력 가능)
     let db_url = std::env::var("FREEDF_DATABASE_URL")
-        .unwrap_or_else(|_| db::DEFAULT_DATABASE_URL.to_string());
-    let db = match storage::from_env(&db_url) {
-        Ok(db) => db,
-        Err(e) => {
-            eprintln!("FreeDF storage error: {e}");
-            eprintln!("Start the database on the DB host with: cd server/db && ./up.sh");
-            std::process::exit(1);
-        }
+        .ok()
+        .or_else(storage::load_saved_connection)
+        .unwrap_or_else(|| db::DEFAULT_DATABASE_URL.to_string());
+    let (db, db_connected, connect_error) = match storage::from_env(&db_url) {
+        Ok(db) => (db, true, None),
+        Err(e) => (storage::disconnected(), false, Some(e)),
     };
 
-    // 이벤트 로그 → PostgreSQL event_log 테이블.
+    // 이벤트 로그 → PostgreSQL event_log 테이블 (연결 전이면 no-op 폴백).
     let logger = {
         let db = db.clone();
         Logger::to_sink(move |entry| {
@@ -87,7 +86,14 @@ fn main() -> eframe::Result<()> {
             theme::nord::install(&cc.egui_ctx);
 
             Ok(Box::new(app::FreeDfApp::new(
-                cc, db, logger, open_path, open_doc,
+                cc,
+                db,
+                db_connected,
+                db_url,
+                connect_error,
+                logger,
+                open_path,
+                open_doc,
             )))
         }),
     )

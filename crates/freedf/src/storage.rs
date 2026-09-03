@@ -94,28 +94,135 @@ pub type SharedStorage = Arc<dyn StorageBackend>;
 ///
 /// 새 백엔드를 붙일 때는 여기에 한 줄 추가하면 됩니다 —
 /// 예: `"local-file" => Arc::new(local::FileBackend::open(...)?)`.
-///
-/// 로컬 캐시 + write-behind(`CachingBackend`)는 기본 켜짐 —
-/// `FREEDF_STORAGE_CACHE=0`이면 끕니다.
 pub fn from_env(db_url: &str) -> Result<SharedStorage, String> {
     let kind = std::env::var("FREEDF_STORAGE").unwrap_or_else(|_| "postgres".to_string());
     match kind.as_str() {
-        "postgres" => {
-            let db = Arc::new(crate::db::Db::connect(db_url)?);
-            let cache_off = std::env::var("FREEDF_STORAGE_CACHE").as_deref() == Ok("0");
-            if cache_off {
-                return Ok(db);
-            }
-            let cached = Arc::new(CachingBackend::new(
-                db,
-                LocalCache::new(app_data_dir().join("cache")),
-            ));
-            cached.start_flusher();
-            Ok(cached)
-        }
+        "postgres" => connect(db_url),
         other => Err(format!(
             "Unknown FREEDF_STORAGE backend: {other} (supported: postgres)"
         )),
+    }
+}
+
+/// PostgreSQL + (기본) 로컬 캐시/write-behind 백엔드 연결.
+/// `from_env`와 첫 실행 연결 대화상자 둘 다 이 경로를 사용합니다.
+/// 로컬 캐시는 `FREEDF_STORAGE_CACHE=0`이면 끕니다.
+pub fn connect(db_url: &str) -> Result<SharedStorage, String> {
+    let db = Arc::new(crate::db::Db::connect(db_url)?);
+    let cache_off = std::env::var("FREEDF_STORAGE_CACHE").as_deref() == Ok("0");
+    if cache_off {
+        return Ok(db);
+    }
+    let cached = Arc::new(CachingBackend::new(
+        db,
+        LocalCache::new(app_data_dir().join("cache")),
+    ));
+    cached.start_flusher();
+    Ok(cached)
+}
+
+// ---------- DB 연결 정보 영속화 (connection.json) ----------
+
+fn connection_path() -> PathBuf {
+    app_data_dir().join("connection.json")
+}
+
+/// 마지막으로 연결에 성공한 DB URL (없으면 None).
+pub fn load_saved_connection() -> Option<String> {
+    std::fs::read_to_string(connection_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("database_url")?.as_str().map(String::from))
+}
+
+/// 연결 성공 시 URL을 저장 — 다음 실행에서 자동으로 사용합니다.
+pub fn save_connection(db_url: &str) {
+    if let Some(parent) = connection_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::json!({ "database_url": db_url });
+    let _ = std::fs::write(
+        connection_path(),
+        serde_json::to_string_pretty(&json).unwrap_or_default(),
+    );
+}
+
+/// DB 연결 전 폴백 백엔드 — 읽기는 빈 결과, 쓰기는 오류/무시.
+/// 첫 실행 대화상자에서 실제 백엔드로 교체됩니다.
+#[derive(Default)]
+pub struct DisconnectedStorage;
+
+pub fn disconnected() -> SharedStorage {
+    Arc::new(DisconnectedStorage)
+}
+
+impl StorageBackend for DisconnectedStorage {
+    fn insert_document(
+        &self,
+        _kind: &str,
+        _title: &str,
+        _origin_path: Option<&str>,
+        _pdf: &[u8],
+    ) -> Result<i64, String> {
+        Err("Not connected to the database yet — set the DB URL in the setup dialog.".into())
+    }
+    fn get_document(&self, _id: i64) -> Option<DocRow> {
+        None
+    }
+    fn find_document_by_path(&self, _path: &str) -> Option<i64> {
+        None
+    }
+    fn load_pdf(&self, _id: i64) -> Option<Vec<u8>> {
+        None
+    }
+    fn save_pdf(&self, _id: i64, _bytes: &[u8]) -> Result<(), String> {
+        Err("Not connected to the database yet.".into())
+    }
+    fn update_title(&self, _id: i64, _title: &str) -> Result<(), String> {
+        Err("Not connected to the database yet.".into())
+    }
+    fn update_page_count(&self, _id: i64, _page_count: i32) {}
+    fn delete_document(&self, _id: i64) -> Result<(), String> {
+        Err("Not connected to the database yet.".into())
+    }
+    fn list_notes(&self) -> Vec<DocRow> {
+        Vec::new()
+    }
+    fn upsert_page(&self, _doc_id: i64, _page_index: i32, _paper: &PagePaper, _bookmarked: bool) {}
+    fn replace_pages(&self, _doc_id: i64, _entries: &[(i32, PagePaper, bool)]) {}
+    fn alloc_stroke_ids(&self, _n: usize) -> Vec<i64> {
+        Vec::new()
+    }
+    fn insert_strokes(&self, _doc_id: i64, _page_index: i32, _strokes: &[Stroke]) {}
+    fn delete_strokes(&self, _doc_id: i64, _ids: &[i64]) {}
+    fn resync_strokes(&self, _doc_id: i64, _store: &AnnotationStore) {}
+    fn load_store(&self, _doc_id: i64) -> AnnotationStore {
+        AnnotationStore::new()
+    }
+    fn load_session(&self, _doc_id: i64) -> Option<Value> {
+        None
+    }
+    fn upsert_session(&self, _doc_id: i64, _state: &Value) {}
+    fn get_app_state(&self, _key: &str) -> Option<Value> {
+        None
+    }
+    fn set_app_state(&self, _key: &str, _value: &Value) {}
+    fn load_recents(&self) -> Vec<RecentRow> {
+        Vec::new()
+    }
+    fn touch_recent(&self, _kind: &str, _doc_id: i64, _title: &str) {}
+    fn log_edit(&self, _doc_id: i64, _edit: &Edit) {}
+    fn load_edits(&self, _doc_id: i64) -> Vec<Edit> {
+        Vec::new()
+    }
+    fn clear_edits(&self, _doc_id: i64) {}
+    fn get_word_cache(&self, _word: &str) -> Option<Value> {
+        None
+    }
+    fn set_word_cache(&self, _word: &str, _data: &Value) {}
+    fn insert_log(&self, _epoch_ms: u128, _seq: u64, _event: &Value) {}
+    fn ping(&self) -> bool {
+        false
     }
 }
 
@@ -513,6 +620,33 @@ mod tests {
     fn shared_storage_is_object_safe_and_thread_safe() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<SharedStorage>();
+    }
+
+    #[test]
+    fn connection_url_roundtrips_through_file() {
+        // app_data_dir은 LOCALAPPDATA/HOME 기준 — 테스트에서는 임시 폴더로 우회.
+        let tmp = std::env::temp_dir().join(format!("freedf-conn-{}", std::process::id()));
+        std::env::set_var("LOCALAPPDATA", &tmp);
+        save_connection("postgres://u:p@h:5432/db");
+        assert_eq!(
+            load_saved_connection().as_deref(),
+            Some("postgres://u:p@h:5432/db")
+        );
+        std::env::remove_var("LOCALAPPDATA");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn disconnected_backend_is_safe_fallback() {
+        let db = disconnected();
+        assert!(!db.ping());
+        assert!(db.list_notes().is_empty());
+        assert!(db.load_recents().is_empty());
+        assert!(db.get_document(1).is_none());
+        assert!(db.insert_document("note", "x", None, b"x").is_err());
+        // 쓰기는 크래시 없이 무시됩니다.
+        db.insert_strokes(1, 0, &[]);
+        db.delete_strokes(1, &[1]);
     }
 
     /// 실 DB 왕복 — `FREEDF_TEST_DB=1 cargo test -p freedf caching_backend_against_live_db`

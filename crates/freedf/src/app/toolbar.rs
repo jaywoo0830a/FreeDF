@@ -783,6 +783,37 @@ impl FreeDfApp {
     /// 설정은 `server.json`에 저장되고 다음 실행에서 로드됩니다 — 서버 주소는
     /// 빌드타임이 아니라 **런타임 입력**입니다.
     fn server_settings_ui(&mut self, ui: &mut egui::Ui) {
+        // ── Database (런타임 입력 — 하드코딩 없음) ──
+        ui.label(egui::RichText::new("Database (PostgreSQL 18.6)").strong());
+        ui.horizontal(|ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.connect_url)
+                    .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
+                    .desired_width(210.0),
+            );
+            if ui
+                .button(if self.db_connected { "Reconnect" } else { "Connect" })
+                .clicked()
+            {
+                self.try_connect_db();
+            }
+            if resp.lost_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.try_connect_db();
+            }
+        });
+        if let Some((ok, msg)) = &self.connect_status {
+            let color = if *ok {
+                ui.visuals().hyperlink_color
+            } else {
+                ui.visuals().error_fg_color
+            };
+            ui.colored_label(color, msg);
+        } else if self.db_connected {
+            ui.label(egui::RichText::new("Connected.").weak());
+        }
+        ui.add_space(6.0);
+        ui.separator();
+
         ui.label(
             "Self-hosted media server for audio recordings.\n\
              Playback streams straight from nginx; this key only guards\n\

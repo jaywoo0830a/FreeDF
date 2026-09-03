@@ -299,8 +299,11 @@ fn color_circle_swatch(
 pub(crate) enum TextAction {
     NewNote,
     RenameNote,
+    /// 외부 PDF 경로 입력 폴백 — 비 Windows에서만 구성됨.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     OpenPdf,
     /// 미디어(녹음) 업로드 — 비 Windows에서 경로 입력 폴백.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     UploadMedia,
 }
 
@@ -761,6 +764,13 @@ pub struct FreeDfApp {
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
+    // ---------- DB connection (first-run setup) ----------
+    /// 실제 DB 연결 여부 — 연결 전엔 `DisconnectedStorage` 폴백 백엔드.
+    db_connected: bool,
+    /// 연결 대화상자/서버 설정 창의 DB URL 입력값 (런타임 입력).
+    connect_url: String,
+    /// 마지막 DB 연결 시도 결과 (성공 여부, 메시지).
+    connect_status: Option<(bool, String)>,
     // ---------- Media server ----------
     /// 미디어(녹음) 서버 연결 설정 — `server.json`에서 런타임 로드.
     media_config: MediaServerConfig,
@@ -786,6 +796,9 @@ impl FreeDfApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         db: std::sync::Arc<dyn StorageBackend>,
+        db_connected: bool,
+        connect_url: String,
+        connect_error: Option<String>,
         logger: Logger,
         pending_open: Option<PathBuf>,
         pending_doc: Option<i64>,
@@ -1081,6 +1094,9 @@ impl FreeDfApp {
             pending_open,
             pending_doc,
             modal: None,
+            db_connected,
+            connect_url,
+            connect_status: connect_error.map(|e| (false, e)),
             media_config,
             server_settings_open: false,
             server_msg: None,
@@ -1150,6 +1166,152 @@ impl FreeDfApp {
             dictionary_enabled: self.dictionary.enabled,
         };
         self.db.set_app_state("session", &state.to_json_value());
+    }
+
+    /// DB 연결 시도 — 성공하면 백엔드를 교체하고 URL을 `connection.json`에 저장.
+    fn try_connect_db(&mut self) {
+        let url = self.connect_url.trim().to_string();
+        if url.is_empty() {
+            self.connect_status = Some((false, "Enter the database URL first.".into()));
+            return;
+        }
+        match crate::storage::connect(&url) {
+            Ok(db) => {
+                self.db = db;
+                self.db_connected = true;
+                crate::storage::save_connection(&url);
+                self.connect_status = Some((true, format!("Connected — {url}")));
+                self.reload_library_from_db();
+            }
+            Err(e) => self.connect_status = Some((false, e)),
+        }
+    }
+
+    /// 연결 성공 직후 라이브러리/최근 목록을 DB에서 다시 채웁니다.
+    fn reload_library_from_db(&mut self) {
+        self.notes = NotesManager::from_metas(
+            self.db
+                .list_notes()
+                .into_iter()
+                .map(|d| freedf_core::notes::NoteMeta {
+                    id: d.id as u64,
+                    title: d.title,
+                    created_at_ms: d.created_at.max(0) as u128,
+                    updated_at_ms: d.updated_at.max(0) as u128,
+                    page_count: d.page_count.max(0) as usize,
+                })
+                .collect(),
+        );
+        self.recents = RecentList {
+            items: self
+                .db
+                .load_recents()
+                .into_iter()
+                .map(|r| RecentItem {
+                    kind: if r.kind == "note" {
+                        RecentKind::Note
+                    } else {
+                        RecentKind::File
+                    },
+                    doc_id: Some(r.doc_id),
+                    note_id: if r.kind == "note" {
+                        Some(r.doc_id as u64)
+                    } else {
+                        None
+                    },
+                    path: r.origin_path.map(PathBuf::from),
+                    title: r.title,
+                    opened_at_ms: r.opened_at.max(0) as u128,
+                })
+                .collect(),
+        };
+    }
+
+    /// 첫 실행 연결 대화상자 — DB 연결 전까지는 닫을 수 없습니다.
+    /// ① DB URL → ② 미디어 서버 주소 순서로 입력합니다 (하드코딩 없음).
+    fn connection_dialog(&mut self, ctx: &egui::Context) {
+        if self.db_connected {
+            return;
+        }
+        egui::Window::new("FreeDF — first run setup")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("① Database (PostgreSQL 18.6)").strong());
+                ui.label(
+                    "DB 호스트에서 server/db/up.sh 실행 후 출력되는 URL을 붙여넣으세요:",
+                );
+                ui.horizontal(|ui| {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.connect_url)
+                            .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
+                            .desired_width(420.0),
+                    );
+                    if ui.button("Connect").clicked() {
+                        self.try_connect_db();
+                    }
+                    if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.try_connect_db();
+                    }
+                });
+                if let Some((ok, msg)) = &self.connect_status {
+                    let color = if *ok {
+                        ui.visuals().hyperlink_color
+                    } else {
+                        ui.visuals().error_fg_color
+                    };
+                    ui.colored_label(color, msg);
+                }
+                ui.add_space(10.0);
+                ui.separator();
+                ui.label(egui::RichText::new("② Media server (self-hosted)").strong());
+                ui.label("Optional — audio recordings. Can be set up after the database:");
+                ui.add_enabled_ui(self.db_connected, |ui| {
+                    let mut changed = false;
+                    ui.horizontal(|ui| {
+                        ui.label("Server URL");
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.media_config.base_url)
+                                    .desired_width(240.0),
+                            )
+                            .changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("API key");
+                        changed |= ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.media_config.api_key)
+                                    .password(true)
+                                    .desired_width(240.0),
+                            )
+                            .changed();
+                    });
+                    changed |= ui
+                        .checkbox(&mut self.media_config.enabled, "Connect to media server")
+                        .changed();
+                    if ui.button("Save").clicked() {
+                        let path = MediaServerConfig::config_path();
+                        self.server_msg = Some(match self.media_config.save(&path) {
+                            Ok(()) => (true, format!("Saved to {}", path.display())),
+                            Err(e) => (false, format!("Save failed: {e}")),
+                        });
+                    }
+                    if changed {
+                        self.server_msg = None;
+                    }
+                    if let Some((ok, msg)) = &self.server_msg {
+                        let color = if *ok {
+                            ui.visuals().hyperlink_color
+                        } else {
+                            ui.visuals().error_fg_color
+                        };
+                        ui.colored_label(color, msg);
+                    }
+                });
+            });
     }
 
     /// 새 페이지/노트에 쓸 물리적 크기 (pt). `PaperSize::Custom`이면 사용자 정의 치수.
@@ -1742,6 +1904,7 @@ impl eframe::App for FreeDfApp {
             self.compact_pill(&ctx, minimal, narrow);
         }
 
+        self.connection_dialog(&ctx);
         self.fallback_dialog(&ctx);
 
         // Close confirmation: ask whether to save before quitting.

@@ -98,9 +98,15 @@ fn color_from_i32(v: &[i32]) -> [u8; 4] {
 
 impl Db {
     /// 연결 + 스키마 존재 확인. 스키마 생성/마이그레이션은 서버 측
-    /// (`server/db/up.sh`)이 담당합니다.
+    /// (`server/db/up.sh`)이 담당합니다. 연결 대화상자에서 즉각적인
+    /// 피드백이 가능하도록 TCP 타임아웃 5초를 적용합니다.
     pub fn connect(url: &str) -> Result<Self, String> {
-        let mut client = Client::connect(url, NoTls)
+        let mut config: postgres::Config = url
+            .parse()
+            .map_err(|e| format!("Invalid connection URL {url}: {e}"))?;
+        config.connect_timeout(std::time::Duration::from_secs(5));
+        let mut client = config
+            .connect(NoTls)
             .map_err(|e| format!("Could not connect to PostgreSQL at {url}: {e}"))?;
         let has_schema: Option<i32> = client
             .query_opt(
