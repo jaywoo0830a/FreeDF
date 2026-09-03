@@ -98,8 +98,7 @@ docker compose up -d db
 - 🎨 **Color families** — Red / Blue / Black (plus Green / Orange / Purple / Custom)
   **round** swatch palettes for one-tap color picking
 - ↩️ **Undo / Redo** — diff-based, up to 256 steps; eraser and clear are undoable
-- 🖼️ **PNG export** — renders the annotated page at 150 dpi
-- 🖥️ **High refresh** — the app keeps repainting while a document is open so ink
+- ️ **High refresh** — the app keeps repainting while a document is open so ink
   stays smooth on 120 Hz+ displays
 - 📊 **Analysis logs** — structured JSON-lines event log (`freedf.log`)
 - 🔤 **Typography** — the entire UI uses a bundled **Inter** font, with
@@ -164,7 +163,7 @@ docker compose up -d db
   and toggles the palette — great for multitasking side-by-side. `Ctrl+Shift+M`
   toggles the same focus mode at **any** window size
 - 📄 **Paper per page** — each page keeps its own style (blank, ruled, grid,
-  dotted) and color, applied independently and exported to PNG. The Paper
+  dotted) and color, applied independently. The Paper
   section edits the **current page** and becomes the **default for new pages**;
   press **Apply to all** to copy the current paper onto every page at once
 - 🎨 **Fully custom paper** — paper **color** accepts any color from a full color
@@ -173,8 +172,8 @@ docker compose up -d db
   width × height entered in millimetres (new pages & notes use it)
 - 🎨 **Custom ruling** — the **line color** (any RGBA) and **line thickness** of
   the ruled / grid / dotted paper are adjustable per page; the thickness is
-  stored in page points (scales with zoom & export). Settings live in the Paper
-  options next to the spacing field
+  stored in page points (scales with zoom). Settings live in the Paper
+  settings window (Paper ▸ Settings)
 - 🔢 **Numerical paper spacing** — the ruled/grid/dotted spacing is a number
   (in points, 12–120) you can type directly in the Paper options; it is saved
   per page
@@ -305,7 +304,6 @@ freedf --open /path/to/document.pdf
 | `Ctrl+F` | Toggle search bar |
 | `Ctrl+Z` / `Ctrl+Y` (or `Ctrl+Shift+Z`) | Undo / Redo |
 | `Ctrl+S` | Save annotations |
-| `Ctrl+E` | Export current page as PNG |
 | `Ctrl+Shift+M` | Toggle **focus mode**: hide all toolbars (any window size);
   canvas + palette remain, `☰ Show UI` (top-right) or the shortcut restores them |
 | `PgDn` / `PgUp` | Browser-style paging: scroll one viewport inside the page;
@@ -343,7 +341,7 @@ The log records one JSON object per line for analysis, e.g.:
 
 Events: `app_start`, `note_opened`, `note_created`, `note_renamed`, `note_deleted`,
 `page_changed`, `page_added`, `page_deleted`, `stroke_added`, `stroke_erased`,
-`undo_redo`, `search`, `outline_jump`, `export_png`, `error`.
+`undo_redo`, `search`, `outline_jump`, `error`.
 
 ## Project structure
 
@@ -365,8 +363,7 @@ Events: `app_start`, `note_opened`, `note_created`, `note_renamed`, `note_delete
 | `crates/freedf/src/app/toolbar.rs` | three-tier toolbar, tool picker (drag to reorder), per-tool settings |
 | `crates/freedf/src/app/panels.rs` | Library (Notes/PDFs/Recents) + Outline side panels |
 | `crates/freedf/src/app/canvas.rs` | page canvas: pan/zoom/draw, painting, text-aware highlight, palette & nav overlays, cursors |
-| `crates/freedf/src/app/actions.rs` | open/save/export, page CRUD & rotate, search, bookmarks, undo/redo |
-| `crates/freedf/src/export.rs` | rasterize annotations onto an image → PNG |
+| `crates/freedf/src/app/actions.rs` | open/save, page CRUD & rotate, search, bookmarks, undo/redo |
 
 ## Troubleshooting
 

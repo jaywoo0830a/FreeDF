@@ -18,7 +18,7 @@
 //! - [`panels`] — Library (Notes / PDFs / Recents) and Outline side panels
 //! - [`canvas`] — page canvas: pan / zoom / drawing input, page painting,
 //!   text-aware highlights, palette & navigation overlays, custom cursors
-//! - [`actions`] — document & note actions: open / save / export, page CRUD,
+//! - [`actions`] — document & note actions: open / save, page CRUD,
 //!   rotation, search, bookmarks, undo / redo
 //!
 //! The child modules each `use super::*;` — they extend `FreeDfApp` with more
@@ -64,7 +64,6 @@ pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_
 
 pub(crate) use crate::db::Db;
 pub(crate) use dictionary::Dictionary;
-pub(crate) use crate::export::draw_strokes_on_image;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
@@ -300,30 +299,6 @@ pub(crate) enum TextAction {
     NewNote,
     RenameNote,
     OpenPdf,
-    ExportPng,
-}
-
-/// 페이지 내보내기 형식.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExportFormat {
-    Png,
-    Jpg,
-    Pdf,
-}
-
-impl ExportFormat {
-    /// 파일 경로 확장자로 형식을 추론합니다 (.pdf/.jpg/.jpeg → 해당 형식, 그 외 PNG).
-    pub(crate) fn from_path(path: &std::path::Path) -> ExportFormat {
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        match ext.as_str() {
-            "pdf" => ExportFormat::Pdf,
-            "jpg" | "jpeg" => ExportFormat::Jpg,
-            _ => ExportFormat::Png,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1446,9 +1421,6 @@ impl FreeDfApp {
         }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::S)) {
             self.save_annotations();
-        }
-        if ctrl && ctx.input(|i| i.key_pressed(egui::Key::E)) {
-            self.export_png();
         }
         if ctrl && shift && ctx.input(|i| i.key_pressed(egui::Key::M)) {
             // 최소(포커스) 모드: 화면 크기와 무관하게 모든 툴바를 숨깁니다.

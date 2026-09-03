@@ -10,7 +10,6 @@
 
 mod app;
 mod db;
-mod export;
 mod fonts;
 mod pdf;
 mod recent;

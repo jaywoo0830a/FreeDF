@@ -24,7 +24,6 @@ pub enum AppEvent {
     UndoRedo { kind: String },
     Search { query: String, results: usize },
     OutlineJump { title: String, page: usize },
-    ExportPng { page: usize },
     Error { message: String },
 }
 

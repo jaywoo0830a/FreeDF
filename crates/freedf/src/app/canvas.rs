@@ -100,7 +100,8 @@ fn pen_trace(msg: &str) {
 // 진행 중 획과 완성 획이 **같은 지오메트리 생성기(stroke_ribbon)** 를 씁니다.
 // 과거 완성 획은 귀 자르기 삼각분할(정확 경로)을 썼는데, 곡선 필기는 분할이
 // 실패해 폴백(딱딱한 quad, AA 없음)으로 바뀌며 진행 중과 시각 차이가 났음.
-// 정확 경로는 내보내기(export.rs) 전용으로 남습니다.
+// 정확 삼각분할 경로는 과거 PNG 내보내기 전용이었고 지금은 사용처가 없어
+// core에 pub API로만 유지됩니다.
 
 /// 리본(근사) 지오메트리를 메시에 덧붙입니다 — 버텍스별 알파 램프
 /// (1 = 본체, 0 = 페더 바깥 가장자리)를 베이스 색에 곱해 칠합니다.
@@ -2193,7 +2194,7 @@ impl FreeDfApp {
                     (base + 0.65 * fade).clamp(0.0, 1.0)
                 };
                 let sh_scale = 1.3 - 0.55 * prox; // 멀수록 그림자가 더 떨어짐.
-                let (sh1_a, sh2_a) = ((24.0 + 18.0 * prox) as u8, (40.0 + 32.0 * prox) as u8);
+                let (sh1_a, sh2_a) = ((38.0 + 24.0 * prox) as u8, (62.0 + 42.0 * prox) as u8);
                 for (sh, alpha) in [
                     (egui::vec2(4.0 * sh_scale, 5.0 * sh_scale), sh1_a),
                     (egui::vec2(2.0 * sh_scale, 2.5 * sh_scale), sh2_a),

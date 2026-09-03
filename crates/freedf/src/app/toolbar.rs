@@ -140,6 +140,14 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
     changed
 }
 
+/// 줄/격자/점 색 프리셋 (RGBA) — Paper 설정 창에서 한 번에 선택.
+const LINE_COLOR_PRESETS: [[u8; 4]; 4] = [
+    [120, 120, 140, 110], // 회보라 (기본)
+    [90, 95, 115, 150],   // 진한 회청
+    [100, 130, 170, 140], // 파랑
+    [45, 48, 56, 150],    // 진회색
+];
+
 impl FreeDfApp {
     /// 볼펜(일반 펜) 세부 설정 — 전용 플로팅 창 내용 (툴바 Settings 버튼으로 열림).
     /// 툴바에는 색/두께/필수 토글만 남기고 나머지는 여기서 지정합니다.
@@ -490,6 +498,61 @@ impl FreeDfApp {
     fn paper_settings_ui(&mut self, ui: &mut egui::Ui) {
         const MM_TO_PT: f32 = 72.0 / 25.4;
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+        egui::CollapsingHeader::new("Paper")
+            .id_salt("paper_win_paper")
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ComboBox::from_id_salt("paper_style_win")
+                    .selected_text(self.paper_style.label())
+                    .show_ui(ui, |ui| {
+                        for style in PaperStyle::all() {
+                            let changed = ui
+                                .selectable_value(&mut self.paper_style, style, style.label())
+                                .changed();
+                            if changed {
+                                self.apply_paper_to_current_page();
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Paper style for the current page.\n\
+                         New pages & new notes use it as their default.",
+                    );
+                for (i, paper) in PAPER_COLORS.iter().enumerate() {
+                    let color =
+                        Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
+                    let selected = self.paper_color == *paper;
+                    if color_circle_swatch(ui, ("paper_swatch_win", i), color, selected)
+                        .on_hover_text("Paper color (current page)")
+                        .clicked()
+                    {
+                        self.paper_color = *paper;
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
+                // 프리셋 5색 외에 원하는 배경색을 직접 고릅니다.
+                let mut paper_color = Color32::from_rgba_unmultiplied(
+                    self.paper_color[0],
+                    self.paper_color[1],
+                    self.paper_color[2],
+                    self.paper_color[3],
+                );
+                if ui
+                    .color_edit_button_srgba(&mut paper_color)
+                    .on_hover_text("Custom paper color (current page)")
+                    .changed()
+                {
+                    self.paper_color = paper_color.to_array();
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
         egui::CollapsingHeader::new("Page size")
             .id_salt("paper_win_size")
             .default_open(true)
@@ -565,6 +628,25 @@ impl FreeDfApp {
                     self.save_session();
                 }
                 // 줄/격자/점 색과 두께 (페이지에 바로 적용, 새 페이지 기본값으로 기억).
+                // 프리셋 스와치 + 커스텀 컬러 둘 다 지원.
+                for (i, preset) in LINE_COLOR_PRESETS.iter().enumerate() {
+                    let col = Color32::from_rgba_unmultiplied(
+                        preset[0],
+                        preset[1],
+                        preset[2],
+                        preset[3],
+                    );
+                    let selected = self.paper_line_color == *preset;
+                    if color_circle_swatch(ui, ("line_swatch_win", i), col, selected)
+                        .on_hover_text("Line color preset")
+                        .clicked()
+                    {
+                        self.paper_line_color = *preset;
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
                 let mut line_color = Color32::from_rgba_unmultiplied(
                     self.paper_line_color[0],
                     self.paper_line_color[1],
@@ -765,22 +847,6 @@ impl FreeDfApp {
                 {
                     self.load_annotations();
                 }
-                ui.menu_button(icon_text(ui, "Export", icons::IMAGE), |ui| {
-                    if ui.button("Export as PNG").clicked() {
-                        ui.close();
-                        self.export_with_format(ExportFormat::Png);
-                    }
-                    if ui.button("Export as JPG").clicked() {
-                        ui.close();
-                        self.export_with_format(ExportFormat::Jpg);
-                    }
-                    if ui.button("Export as PDF").clicked() {
-                        ui.close();
-                        self.export_with_format(ExportFormat::Pdf);
-                    }
-                })
-                .response
-                .on_hover_text("Export current page as PNG / JPG / PDF (Ctrl+E = PNG)");
                 });
             });
 
