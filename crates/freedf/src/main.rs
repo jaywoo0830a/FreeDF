@@ -41,16 +41,26 @@ fn main() -> eframe::Result<()> {
     }
     let open_path = open_path.filter(|p| p.is_file());
 
-    // DB 연결 — 실패해도 앱은 실행되고, 첫 화면 대화상자에서 URL을 입력받습니다.
-    // 우선순위: FREEDF_DATABASE_URL 환경 변수 → 마지막 연결 성공(connection.json)
-    // → 기본값. (하드코딩 없음 — 항상 런타임 입력 가능)
+    // DB 연결 — **창을 먼저 띄우고** 연결은 백그라운드 스레드에서 시도합니다.
+    // (네트워크 상태와 무관하게 앱이 즉시 뜹니다) 우선순위:
+    // FREEDF_DATABASE_URL 환경 변수 → 마지막 연결 성공(connection.json) → 기본값.
     let db_url = std::env::var("FREEDF_DATABASE_URL")
         .ok()
         .or_else(storage::load_saved_connection)
         .unwrap_or_else(|| db::DEFAULT_DATABASE_URL.to_string());
-    let (db, db_connected, connect_error) = match storage::from_env(&db_url) {
-        Ok(db) => (db, true, None),
-        Err(e) => (storage::disconnected(), false, Some(e)),
+    eprintln!("FreeDF: connecting to {db_url} (background)");
+    let (db, db_connected, connect_error, pending_connect) = {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let url = db_url.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(storage::from_env(&url));
+        });
+        (
+            storage::disconnected(),
+            false,
+            None,
+            Some((rx, true, db_url.clone())), // true = 자동 시작 (성공 시 대화상자 자동 닫힘)
+        )
     };
 
     // 이벤트 로그는 백그라운드 스레드로 비동기 기록 — 스트로크마다 원격 왕복
@@ -96,6 +106,7 @@ fn main() -> eframe::Result<()> {
                 db_connected,
                 db_url,
                 connect_error,
+                pending_connect,
                 logger,
                 open_path,
                 open_doc,

@@ -62,7 +62,7 @@ pub(crate) fn now_ms() -> u64 {
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
-pub(crate) use crate::storage::StorageBackend;
+pub(crate) use crate::storage::{SharedStorage, StorageBackend};
 pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
@@ -780,6 +780,12 @@ pub struct FreeDfApp {
     connect_url: String,
     /// 마지막 DB 연결 시도 결과 (성공 여부, 메시지).
     connect_status: Option<(bool, String)>,
+    /// 백그라운드 연결 시도 수신 채널 (+자동 시작 여부, 시도한 URL).
+    pending_connect: Option<(
+        std::sync::mpsc::Receiver<Result<SharedStorage, String>>,
+        bool,
+        String,
+    )>,
     // ---------- Media server ----------
     /// 미디어(녹음) 서버 연결 설정 — `server.json`에서 런타임 로드.
     media_config: MediaServerConfig,
@@ -808,6 +814,11 @@ impl FreeDfApp {
         db_connected: bool,
         connect_url: String,
         connect_error: Option<String>,
+        pending_connect: Option<(
+            std::sync::mpsc::Receiver<Result<SharedStorage, String>>,
+            bool,
+            String,
+        )>,
         logger: Logger,
         pending_open: Option<PathBuf>,
         pending_doc: Option<i64>,
@@ -1109,6 +1120,7 @@ impl FreeDfApp {
             setup_open: !db_connected,
             connect_url,
             connect_status: connect_error.map(|e| (false, e)),
+            pending_connect,
             media_config,
             server_settings_open: false,
             server_msg: None,
@@ -1241,28 +1253,58 @@ impl FreeDfApp {
         out
     }
 
-    /// DB 연결 시도 — 성공하면 백엔드를 교체하고 URL을 `connection.json`에 저장.
-    /// 도중에 다른 DB로 전환하면 열린 문서(이전 DB 소속)를 닫습니다.
+    /// DB 연결 시도 (백그라운드 — UI를 블로킹하지 않음). 성공하면 백엔드를
+    /// 교체하고 URL을 `connection.json`에 저장. 도중에 다른 DB로 전환하면
+    /// 열린 문서(이전 DB 소속)를 닫습니다.
     fn try_connect_db(&mut self) {
         let url = self.connect_url.trim().to_string();
         if url.is_empty() {
             self.connect_status = Some((false, "Enter the database URL first.".into()));
             return;
         }
-        let switching = self.db_connected;
-        match crate::storage::connect(&url) {
-            Ok(db) => {
+        if self.pending_connect.is_some() {
+            return; // 이미 시도 중.
+        }
+        self.connect_status = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_connect = Some((rx, false, url.clone())); // 수동 — 성공해도 대화상자 유지.
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::storage::connect(&url));
+        });
+    }
+
+    /// 백그라운드 연결 결과 수신 (매 프레임 호출).
+    fn poll_connect_result(&mut self) {
+        let Some((rx, auto, url)) = self.pending_connect.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(db)) => {
+                let switching = self.db_connected;
                 self.db = db;
                 self.db_connected = true;
                 crate::storage::save_connection(&url);
-                self.connect_status = Some((true, format!("Connected — {url}")));
+                self.connect_status = Some((true, "Connected.".into()));
                 if switching {
                     self.close_all_documents();
                 }
                 self.reload_library_from_db();
                 self.fill_stroke_pool_sync();
+                if auto {
+                    self.setup_open = false;
+                }
             }
-            Err(e) => self.connect_status = Some((false, e)),
+            Ok(Err(e)) => {
+                self.db_connected = false;
+                self.connect_status = Some((false, e));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.pending_connect = Some((rx, auto, url)); // 아직 — 다음 프레임에 다시.
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.connect_status =
+                    Some((false, "Connection attempt was interrupted.".into()));
+            }
         }
     }
 
@@ -1360,7 +1402,9 @@ impl FreeDfApp {
                     self.try_connect_db();
                 }
             });
-            if let Some((ok, msg)) = &self.connect_status {
+            if self.pending_connect.is_some() {
+                ui.label(egui::RichText::new("Connecting…").weak());
+            } else if let Some((ok, msg)) = &self.connect_status {
                 let color = if *ok {
                     ui.visuals().hyperlink_color
                 } else {
@@ -1936,6 +1980,11 @@ impl eframe::App for FreeDfApp {
         let ctx = ui.ctx().clone();
         // 펜 진단 로그는 Debug HUD가 켜져 있을 때만 (평소 I/O 비용 0).
         canvas::set_pen_trace(self.debug_hud);
+        // 백그라운드 DB 연결 결과 수신 (연결 중이면 계속 갱신 요청).
+        self.poll_connect_result();
+        if self.pending_connect.is_some() {
+            ctx.request_repaint();
+        }
         // CLI 시작 인자: `freedf <file.pdf>`은 import 후 열기,
         // `freedf --doc <id>`는 DB의 문서 id로 열기("새 창" 분리 시 사용).
         if let Some(path) = self.pending_open.take() {

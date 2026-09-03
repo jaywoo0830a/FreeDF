@@ -806,6 +806,7 @@ impl FreeDfApp {
                     )
                     .clicked()
             {
+                self.pending_connect = None; // 진행 중이던 시도 폐기.
                 self.close_all_documents();
                 self.db = crate::storage::disconnected();
                 self.db_connected = false;
@@ -817,7 +818,9 @@ impl FreeDfApp {
                 self.try_connect_db();
             }
         });
-        if let Some((ok, msg)) = &self.connect_status {
+        if self.pending_connect.is_some() {
+            ui.label(egui::RichText::new("Connecting…").weak());
+        } else if let Some((ok, msg)) = &self.connect_status {
             let color = if *ok {
                 ui.visuals().hyperlink_color
             } else {
