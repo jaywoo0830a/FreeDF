@@ -16,9 +16,11 @@
 use crate::db::{DocRow, RecentRow};
 use freedf_core::history::Edit;
 use freedf_core::model::Stroke;
+use freedf_core::paper::PagePaper;
 use freedf_core::store::AnnotationStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// 원격에 아직 반영되지 않은 쓰기 작업 (JSONL로 영속).
@@ -38,14 +40,42 @@ pub enum PendingOp {
         doc_id: i64,
         edit: Edit,
     },
+    /// 문서별 GUI 세션 저장 (도구/색 변경 등 빈번한 쓰기).
+    UpsertSession {
+        doc_id: i64,
+        state: Value,
+    },
+    /// 전역 앱 상태(기본 세션) 저장.
+    SetAppState {
+        key: String,
+        value: Value,
+    },
+    /// 페이지 하나의 용지/북마크 저장 (북마크 토글, 용지 적용).
+    UpsertPage {
+        doc_id: i64,
+        page_index: i32,
+        paper: PagePaper,
+        bookmarked: bool,
+    },
+    /// 최근 문서 기록 (문서 열 때).
+    TouchRecent {
+        kind: String,
+        doc_id: i64,
+        title: String,
+    },
 }
 
 impl PendingOp {
-    pub fn doc_id(&self) -> i64 {
+    /// 문서 단위 작업이면 해당 doc_id (SetAppState는 None).
+    pub fn doc_id(&self) -> Option<i64> {
         match self {
-            PendingOp::InsertStrokes { doc_id, .. } => *doc_id,
-            PendingOp::DeleteStrokes { doc_id, .. } => *doc_id,
-            PendingOp::LogEdit { doc_id, .. } => *doc_id,
+            PendingOp::InsertStrokes { doc_id, .. } => Some(*doc_id),
+            PendingOp::DeleteStrokes { doc_id, .. } => Some(*doc_id),
+            PendingOp::LogEdit { doc_id, .. } => Some(*doc_id),
+            PendingOp::UpsertSession { doc_id, .. } => Some(*doc_id),
+            PendingOp::UpsertPage { doc_id, .. } => Some(*doc_id),
+            PendingOp::TouchRecent { doc_id, .. } => Some(*doc_id),
+            PendingOp::SetAppState { .. } => None,
         }
     }
 }
@@ -67,8 +97,127 @@ pub fn apply_op_to_store(store: &mut AnnotationStore, op: &PendingOp) {
                 store.remove_strokes(page, &ids);
             }
         }
-        // 저널 기록은 스토어에 영향 없음 (편집 캐시는 CachingBackend가 갱신).
+        // 저널 기록/세션/앱상태/용지/최근은 apply_local에서 처리 (스토어 전용
+        // 헬퍼인 이 함수에서는 무시 — 용지/북마크는 apply_local이 스토어에 반영).
         PendingOp::LogEdit { .. } => {}
+        PendingOp::UpsertSession { .. } => {}
+        PendingOp::SetAppState { .. } => {}
+        PendingOp::UpsertPage { .. } => {}
+        PendingOp::TouchRecent { .. } => {}
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write-behind 공용 파이프라인
+//
+// 새 write-behind 액션을 추가하려면 3곳만 고치면 됩니다:
+//   1) `PendingOp`에 변형 추가 (serde)
+//   2) `apply_local`에 arm — 로컬(메모리/파일) 캐시 즉시 반영
+//   3) storage.rs의 `apply_remote`에 arm — 원격 반영
+// 그리고 CachingBackend 메서드는 `g.enqueue(op)` 한 줄이면 끝입니다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 메모리 병합 캐시 상태 (CachingBackend 내부 — 뮤텍스로 직렬화).
+pub(crate) struct CacheInner {
+    pub cache: LocalCache,
+    pub pending: Vec<PendingOp>,
+    /// 메모리 병합 스토어 — UI 스레드는 파일 직렬화 없이 O(1)로 갱신.
+    pub stores: BTreeMap<i64, AnnotationStore>,
+    pub dirty_stores: HashSet<i64>,
+    /// 메모리 편집 저널 캐시.
+    pub edits: BTreeMap<i64, Vec<Edit>>,
+    pub dirty_edits: HashSet<i64>,
+}
+
+impl CacheInner {
+    /// 재시작 후 남아 있던 미처리 대기열을 복원해 초기화.
+    pub fn new(cache: LocalCache) -> Self {
+        let pending = cache.load_pending();
+        Self {
+            cache,
+            pending,
+            stores: BTreeMap::new(),
+            dirty_stores: HashSet::new(),
+            edits: BTreeMap::new(),
+            dirty_edits: HashSet::new(),
+        }
+    }
+
+    /// **write-behind 공용 파이프라인** — 어떤 액션이든 이 한 줄로:
+    /// ① 로컬 캐시 즉시 반영(apply_local) → ② 메모리 대기열 → ③ JSONL 영속.
+    pub fn enqueue(&mut self, op: PendingOp) {
+        apply_local(&op, self);
+        self.pending.push(op.clone());
+        self.cache.append_pending(&[op]);
+    }
+}
+
+fn ensure_store(g: &mut CacheInner, doc_id: i64) {
+    if !g.stores.contains_key(&doc_id) {
+        let s = g.cache.get_store(doc_id).unwrap_or_default();
+        g.stores.insert(doc_id, s);
+    }
+}
+
+/// 작업의 **로컬 반영** — 불변식 유지: 캐시 = 원격 상태 + 미처리 대기열.
+/// (apply_op_to_store와 달리 세션/저널/앱상태까지 한 테이블에서 처리)
+pub fn apply_local(op: &PendingOp, g: &mut CacheInner) {
+    match op {
+        PendingOp::InsertStrokes {
+            doc_id,
+            page_index,
+            strokes,
+        } => {
+            ensure_store(g, *doc_id);
+            if let Some(store) = g.stores.get_mut(doc_id) {
+                store.add_strokes(*page_index as usize, strokes.clone());
+                g.dirty_stores.insert(*doc_id);
+            }
+        }
+        PendingOp::DeleteStrokes { doc_id, .. } => {
+            ensure_store(g, *doc_id);
+            if let Some(store) = g.stores.get_mut(doc_id) {
+                apply_op_to_store(store, op);
+                g.dirty_stores.insert(*doc_id);
+            }
+        }
+        PendingOp::LogEdit { doc_id, edit } => {
+            if !g.edits.contains_key(doc_id) {
+                let e = g.cache.get_edits(*doc_id).unwrap_or_default();
+                g.edits.insert(*doc_id, e);
+            }
+            if let Some(edits) = g.edits.get_mut(doc_id) {
+                edits.push(edit.clone());
+                g.dirty_edits.insert(*doc_id);
+            }
+        }
+        PendingOp::UpsertSession { doc_id, state } => {
+            // 세션 JSON은 작아 파일 캐시도 즉시 갱신해도 저렴합니다.
+            g.cache.put_session(*doc_id, state);
+        }
+        PendingOp::SetAppState { .. } => {
+            // 로컬 미러 없음 — 큐에만 (다음 시작 시 pending에서 플러시).
+        }
+        PendingOp::UpsertPage {
+            doc_id,
+            page_index,
+            paper,
+            bookmarked,
+        } => {
+            ensure_store(g, *doc_id);
+            if let Some(store) = g.stores.get_mut(doc_id) {
+                let idx = *page_index as usize;
+                store.set_paper(idx, *paper);
+                if store.is_bookmarked(idx) != *bookmarked {
+                    store.toggle_bookmark(idx);
+                }
+                g.dirty_stores.insert(*doc_id);
+            }
+        }
+        PendingOp::TouchRecent { .. } => {
+            // 다음 load_recents가 원격에서 다시 가져오도록 스냅샷 무효화.
+            g.cache.invalidate_recents();
+        }
     }
 }
 
@@ -395,6 +544,28 @@ mod tests {
     }
 
     #[test]
+    fn pending_session_and_app_state_roundtrip() {
+        let dir = temp_dir("sessionops");
+        let cache = LocalCache::new(dir.clone());
+        let ops = vec![
+            PendingOp::UpsertSession {
+                doc_id: 4,
+                state: serde_json::json!({ "page": 2 }),
+            },
+            PendingOp::SetAppState {
+                key: "session".into(),
+                value: serde_json::json!({ "tool": "Pen" }),
+            },
+        ];
+        cache.append_pending(&ops);
+        let loaded = cache.load_pending();
+        assert_eq!(loaded, ops);
+        assert_eq!(loaded[0].doc_id(), Some(4));
+        assert_eq!(loaded[1].doc_id(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn apply_insert_and_delete_merge() {
         let mut store = AnnotationStore::new();
         apply_op_to_store(
@@ -414,5 +585,51 @@ mod tests {
             },
         );
         assert_eq!(store.stroke_count_on(2), 0);
+    }
+
+    #[test]
+    fn enqueue_pipeline_updates_local_and_persists() {
+        let dir = temp_dir("pipeline");
+        let cache = LocalCache::new(dir.clone());
+        let mut inner = CacheInner::new(cache);
+        inner.enqueue(PendingOp::InsertStrokes {
+            doc_id: 1,
+            page_index: 0,
+            strokes: vec![sample_stroke(1)],
+        });
+        // ① 로컬(메모리) 즉시 반영.
+        assert_eq!(inner.stores.get(&1).map(|s| s.stroke_count_on(0)), Some(1));
+        // ② 메모리 대기열.
+        assert_eq!(inner.pending.len(), 1);
+        // ③ JSONL 영속.
+        let fresh = LocalCache::new(dir.clone());
+        assert_eq!(fresh.load_pending().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn enqueue_page_op_applies_bookmark_and_paper_locally() {
+        let dir = temp_dir("pageops");
+        let cache = LocalCache::new(dir.clone());
+        let mut inner = CacheInner::new(cache);
+        let op = PendingOp::UpsertPage {
+            doc_id: 2,
+            page_index: 1,
+            paper: PagePaper {
+                style: freedf_core::paper::PaperStyle::Grid,
+                color: [1, 2, 3, 4],
+            },
+            bookmarked: true,
+        };
+        inner.enqueue(op.clone());
+        let store = inner.stores.get(&2).expect("store in memory");
+        assert!(store.is_bookmarked(1));
+        assert_eq!(
+            store.paper_on(1).map(|p| p.style),
+            Some(freedf_core::paper::PaperStyle::Grid)
+        );
+        let loaded = LocalCache::new(dir.clone()).load_pending();
+        assert_eq!(loaded, vec![op]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

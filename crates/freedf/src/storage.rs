@@ -15,13 +15,12 @@
 
 pub use crate::db::{DocRow, RecentRow};
 
-use crate::cache::{apply_op_to_store, LocalCache, PendingOp};
+use crate::cache::{apply_op_to_store, CacheInner, LocalCache, PendingOp};
 use freedf_core::history::Edit;
 use freedf_core::model::Stroke;
 use freedf_core::paper::PagePaper;
 use freedf_core::store::AnnotationStore;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -259,16 +258,31 @@ pub struct CachingBackend {
     inner: Arc<Mutex<CacheInner>>,
 }
 
-struct CacheInner {
-    cache: LocalCache,
-    pending: Vec<PendingOp>,
-    /// 메모리 병합 스토어 — UI 스레드는 파일 직렬화 없이 O(1)로 갱신하고,
-    /// 비싼 JSON 직렬화/디스크 쓰기는 백그라운드 스레드(persist_dirty)가 합니다.
-    stores: BTreeMap<i64, AnnotationStore>,
-    dirty_stores: HashSet<i64>,
-    /// 메모리 편집 저널 캐시 (동일한 이유로 메모리 우선).
-    edits: BTreeMap<i64, Vec<Edit>>,
-    dirty_edits: HashSet<i64>,
+/// 작업의 **원격 반영** 테이블 — flush_pending이 순서대로 실행합니다.
+/// (apply_local과 짝 — 새 액션은 이 두 곳에 arm을 추가)
+pub fn apply_remote(op: &PendingOp, remote: &dyn StorageBackend) {
+    match op {
+        PendingOp::InsertStrokes {
+            doc_id,
+            page_index,
+            strokes,
+        } => remote.insert_strokes(*doc_id, *page_index, strokes),
+        PendingOp::DeleteStrokes { doc_id, ids } => remote.delete_strokes(*doc_id, ids),
+        PendingOp::LogEdit { doc_id, edit } => remote.log_edit(*doc_id, edit),
+        PendingOp::UpsertSession { doc_id, state } => remote.upsert_session(*doc_id, state),
+        PendingOp::SetAppState { key, value } => remote.set_app_state(key, value),
+        PendingOp::UpsertPage {
+            doc_id,
+            page_index,
+            paper,
+            bookmarked,
+        } => remote.upsert_page(*doc_id, *page_index, paper, *bookmarked),
+        PendingOp::TouchRecent {
+            kind,
+            doc_id,
+            title,
+        } => remote.touch_recent(kind, *doc_id, title),
+    }
 }
 
 impl CachingBackend {
@@ -294,17 +308,9 @@ impl CachingBackend {
                 cache.set_identity(id);
             }
         }
-        let pending = cache.load_pending();
         Self {
             remote,
-            inner: Arc::new(Mutex::new(CacheInner {
-                cache,
-                pending,
-                stores: BTreeMap::new(),
-                dirty_stores: HashSet::new(),
-                edits: BTreeMap::new(),
-                dirty_edits: HashSet::new(),
-            })),
+            inner: Arc::new(Mutex::new(CacheInner::new(cache))),
         }
     }
 
@@ -375,17 +381,7 @@ impl CachingBackend {
                 return false;
             }
             for op in &ops {
-                match op {
-                    PendingOp::InsertStrokes {
-                        doc_id,
-                        page_index,
-                        strokes,
-                    } => self.remote.insert_strokes(*doc_id, *page_index, strokes),
-                    PendingOp::DeleteStrokes { doc_id, ids } => {
-                        self.remote.delete_strokes(*doc_id, ids)
-                    }
-                    PendingOp::LogEdit { doc_id, edit } => self.remote.log_edit(*doc_id, edit),
-                }
+                apply_remote(op, self.remote.as_ref());
             }
             // 이 배치는 반영 완료 — 동시에 새로 쌓인 작업은 다음 루프에서.
         }
@@ -479,20 +475,14 @@ impl StorageBackend for CachingBackend {
     }
 
     fn upsert_page(&self, doc_id: i64, page_index: i32, paper: &PagePaper, bookmarked: bool) {
-        self.remote.upsert_page(doc_id, page_index, paper, bookmarked);
+        // write-behind — 북마크 토글/용지 적용이 페이지 수만큼 왕복하지 않게.
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if !g.stores.contains_key(&doc_id) {
-            let s = g.cache.get_store(doc_id).unwrap_or_default();
-            g.stores.insert(doc_id, s);
-        }
-        if let Some(store) = g.stores.get_mut(&doc_id) {
-            let idx = page_index as usize;
-            store.set_paper(idx, *paper);
-            if store.is_bookmarked(idx) != bookmarked {
-                store.toggle_bookmark(idx);
-            }
-            g.dirty_stores.insert(doc_id);
-        }
+        g.enqueue(PendingOp::UpsertPage {
+            doc_id,
+            page_index,
+            paper: *paper,
+            bookmarked,
+        });
     }
 
     fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
@@ -506,48 +496,29 @@ impl StorageBackend for CachingBackend {
     }
 
     fn insert_strokes(&self, doc_id: i64, page_index: i32, strokes: &[Stroke]) {
-        let op = PendingOp::InsertStrokes {
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::InsertStrokes {
             doc_id,
             page_index,
             strokes: strokes.to_vec(),
-        };
-        let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if !g.stores.contains_key(&doc_id) {
-            let s = g.cache.get_store(doc_id).unwrap_or_default();
-            g.stores.insert(doc_id, s);
-        }
-        if let Some(store) = g.stores.get_mut(&doc_id) {
-            store.add_strokes(page_index as usize, strokes.to_vec());
-            g.dirty_stores.insert(doc_id);
-        }
-        g.pending.push(op.clone());
-        g.cache.append_pending(&[op]);
+        });
     }
 
     fn delete_strokes(&self, doc_id: i64, ids: &[i64]) {
-        let op = PendingOp::DeleteStrokes {
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::DeleteStrokes {
             doc_id,
             ids: ids.to_vec(),
-        };
-        let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if !g.stores.contains_key(&doc_id) {
-            let s = g.cache.get_store(doc_id).unwrap_or_default();
-            g.stores.insert(doc_id, s);
-        }
-        if let Some(store) = g.stores.get_mut(&doc_id) {
-            apply_op_to_store(store, &op);
-            g.dirty_stores.insert(doc_id);
-        }
-        g.pending.push(op.clone());
-        g.cache.append_pending(&[op]);
+        });
     }
 
     fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
         // 구조 연산(페이지 삽입/삭제/회전): 원격이 인메모리 스토어(병합 상태)로
         // 통째로 교체되므로 해당 문서의 대기열은 폐기해도 안전합니다.
+        // (SetAppState처럼 문서 무관 작업은 유지)
         self.remote.resync_strokes(doc_id, store);
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        g.pending.retain(|o| o.doc_id() != doc_id);
+        g.pending.retain(|o| o.doc_id() != Some(doc_id));
         g.stores.insert(doc_id, store.clone());
         g.dirty_stores.insert(doc_id);
     }
@@ -569,7 +540,7 @@ impl StorageBackend for CachingBackend {
             let g = self.inner.lock().expect("cache mutex poisoned");
             g.pending
                 .iter()
-                .filter(|o| o.doc_id() == doc_id)
+                .filter(|o| o.doc_id() == Some(doc_id))
                 .cloned()
                 .collect()
         };
@@ -603,12 +574,12 @@ impl StorageBackend for CachingBackend {
     }
 
     fn upsert_session(&self, doc_id: i64, state: &Value) {
-        self.remote.upsert_session(doc_id, state);
-        self.inner
-            .lock()
-            .expect("cache mutex poisoned")
-            .cache
-            .put_session(doc_id, state);
+        // write-behind — 도구/색 변경 등 빈번한 쓰기가 원격 왕복하지 않게.
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::UpsertSession {
+            doc_id,
+            state: state.clone(),
+        });
     }
 
     fn get_app_state(&self, key: &str) -> Option<Value> {
@@ -616,7 +587,12 @@ impl StorageBackend for CachingBackend {
     }
 
     fn set_app_state(&self, key: &str, value: &Value) {
-        self.remote.set_app_state(key, value);
+        // write-behind — 전역 기본 세션 저장도 마찬가지로 큐에 쌓습니다.
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::SetAppState {
+            key: key.to_string(),
+            value: value.clone(),
+        });
     }
 
     fn load_recents(&self) -> Vec<RecentRow> {
@@ -636,28 +612,23 @@ impl StorageBackend for CachingBackend {
     }
 
     fn touch_recent(&self, kind: &str, doc_id: i64, title: &str) {
-        self.remote.touch_recent(kind, doc_id, title);
-        self.inner.lock().expect("cache mutex poisoned").cache.invalidate_recents();
+        // write-behind — 문서 열기 경로의 왕복 하나를 더 제거.
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::TouchRecent {
+            kind: kind.to_string(),
+            doc_id,
+            title: title.to_string(),
+        });
     }
 
     fn log_edit(&self, doc_id: i64, edit: &Edit) {
         // write-behind — 스트로크마다 원격 왕복하지 않고, 순서 보장 큐로
         // 스트로크 작업과 함께 원격에 배치 반영합니다.
-        let op = PendingOp::LogEdit {
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.enqueue(PendingOp::LogEdit {
             doc_id,
             edit: edit.clone(),
-        };
-        let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if !g.edits.contains_key(&doc_id) {
-            let e = g.cache.get_edits(doc_id).unwrap_or_default();
-            g.edits.insert(doc_id, e);
-        }
-        if let Some(edits) = g.edits.get_mut(&doc_id) {
-            edits.push(edit.clone());
-            g.dirty_edits.insert(doc_id);
-        }
-        g.pending.push(op.clone());
-        g.cache.append_pending(&[op]);
+        });
     }
 
     fn load_edits(&self, doc_id: i64) -> Vec<Edit> {
