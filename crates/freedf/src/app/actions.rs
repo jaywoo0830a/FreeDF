@@ -101,7 +101,7 @@ impl FreeDfApp {
         self.pdfium.as_ref().map(|b| b.as_ref()).map_err(|e| e.clone())
     }
 
-    pub(crate) fn create_note_action(&mut self, title: &str) {
+    pub(crate) fn create_note_action(&mut self, title: &str, page_count: usize) {
         // 1) 제목 검증 + 중복 검사 (캐시 기준).
         let title = match freedf_core::notes::validate_title(title) {
             Ok(t) => t,
@@ -119,10 +119,11 @@ impl FreeDfApp {
             self.status = Some("A note with this title already exists.".to_string());
             return;
         }
-        // 2) 빈 PDF를 메모리에 생성 → 바이트.
+        let pages = page_count.clamp(1, 2000);
+        // 2) 빈 PDF(페이지 N장)를 메모리에 생성 → 바이트.
         let bytes = match self
             .pdfium()
-            .and_then(|p| DocumentView::create_blank_view(p, self.new_page_size_pts(), &title))
+            .and_then(|p| DocumentView::create_blank_view(p, self.new_page_size_pts(), &title, pages))
             .and_then(|view| view.save_to_bytes())
         {
             Ok(b) => b,
@@ -132,7 +133,10 @@ impl FreeDfApp {
             }
         };
         // 3) documents 행 삽입 + 캐시 반영.
-        match self.db.insert_document("note", &title, None, &bytes) {
+        match self
+            .db
+            .insert_document("note", &title, None, pages as i32, &bytes)
+        {
             Ok(doc_id) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -143,7 +147,7 @@ impl FreeDfApp {
                     title: title.clone(),
                     created_at_ms: now,
                     updated_at_ms: now,
-                    page_count: 1,
+                    page_count: pages,
                 };
                 let _ = self.notes.insert_meta(meta);
                 self.logger.log(AppEvent::NoteCreated {
@@ -471,7 +475,7 @@ impl FreeDfApp {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| key.clone());
-        match self.db.insert_document("pdf", &name, Some(&key), &bytes) {
+        match self.db.insert_document("pdf", &name, Some(&key), 1, &bytes) {
             Ok(doc_id) => self.open_document(doc_id),
             Err(e) => self.show_error(e),
         }
@@ -1172,9 +1176,9 @@ impl FreeDfApp {
         }
     }
 
-    pub(crate) fn run_text_action(&mut self, action: TextAction, text: String) {
+    pub(crate) fn run_text_action(&mut self, action: TextAction, text: String, pages: usize) {
         match action {
-            TextAction::NewNote => self.create_note_action(text.trim()),
+            TextAction::NewNote => self.create_note_action(text.trim(), pages),
             TextAction::RenameNote => {
                 if let Some(id) = self.current_note {
                     self.rename_note_action(id as u64, text.trim());

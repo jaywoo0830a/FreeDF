@@ -409,11 +409,7 @@ impl FreeDfApp {
                     .on_hover_text("New note (Ctrl+N)")
                     .clicked()
                 {
-                    self.modal = Some(ModalState::ask_text(
-                        "New Note",
-                        "Note title:",
-                        TextAction::NewNote,
-                    ));
+                    self.modal = Some(ModalState::ask_new_note());
                 }
                 if ui
                     .button(icon_text(ui, "Open", icons::FOLDER_OPEN))

@@ -231,15 +231,16 @@ impl Db {
         kind: &str,
         title: &str,
         origin_path: Option<&str>,
+        page_count: i32,
         pdf: &[u8],
     ) -> Result<i64, String> {
         let mut c = conn_guard(&self.conn);
         let now = now_ms();
         c.query_one(
             "INSERT INTO documents (kind, title, origin_path, pdf, page_count, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 1, $5, $5)
+             VALUES ($1, $2, $3, $4, $5, $6, $6)
              RETURNING id",
-            &[&kind, &title, &origin_path, &pdf.to_vec(), &now],
+            &[&kind, &title, &origin_path, &pdf.to_vec(), &page_count, &now],
         )
         .map(|r| r.get(0))
         .map_err(|e| format!("Could not insert document: {e}"))
@@ -734,9 +735,10 @@ impl StorageBackend for Db {
         kind: &str,
         title: &str,
         origin_path: Option<&str>,
+        page_count: i32,
         pdf: &[u8],
     ) -> Result<i64, String> {
-        Db::insert_document(self, kind, title, origin_path, pdf)
+        Db::insert_document(self, kind, title, origin_path, page_count, pdf)
     }
     fn get_document(&self, id: i64) -> Option<DocRow> {
         Db::get_document(self, id)
@@ -865,13 +867,20 @@ mod tests {
 
         // ── documents ──
         let doc_id = db
-            .insert_document("note", "Smoke Note", None, b"%PDF-1.4 fake")
+            .insert_document("note", "Smoke Note", None, 1, b"%PDF-1.4 fake")
             .expect("insert document");
         assert!(doc_id > 0);
         let row = db.get_document(doc_id).expect("get document");
         assert_eq!(row.title, "Smoke Note");
         assert!(row.is_note());
         assert_eq!(row.page_count, 1);
+
+        // ── 다량 페이지 노트 (page_count 왕복) ──
+        let bulk_id = db
+            .insert_document("note", "Bulk Note", None, 100, b"%PDF-1.4 bulk")
+            .expect("insert bulk document");
+        assert_eq!(db.get_document(bulk_id).unwrap().page_count, 100);
+        db.delete_document(bulk_id).expect("delete bulk");
 
         // ── strokes (시퀀스 id → load_bundle 스토어 일치) ──
         let ids = db.alloc_stroke_ids(2);
@@ -1101,7 +1110,7 @@ mod tests {
             .unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
         let db = Db::connect(&url).expect("connect");
         let doc_id = db
-            .insert_document("note", "Batch Perf", None, b"%PDF-1.4 perf")
+            .insert_document("note", "Batch Perf", None, 1, b"%PDF-1.4 perf")
             .expect("insert document");
 
         const N: usize = 5000;

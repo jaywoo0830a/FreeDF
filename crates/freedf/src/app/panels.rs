@@ -265,6 +265,7 @@ impl FreeDfApp {
                     },
                 },
                 text: String::new(),
+                pages: 1,
             });
         }
 

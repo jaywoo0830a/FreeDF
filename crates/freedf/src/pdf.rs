@@ -190,11 +190,13 @@ impl DocumentView {
         })
     }
 
-    /// 이미 로드된 PDFium 인스턴스로 빈 문서(페이지 1장)를 **메모리에** 생성합니다.
+    /// 이미 로드된 PDFium 인스턴스로 빈 문서(페이지 `page_count`장)를
+    /// **메모리에** 생성합니다 (1~2,000장으로 클램프).
     pub fn create_blank_view(
         pdfium: &Pdfium,
         size_pts: [f32; 2],
         name: &str,
+        page_count: usize,
     ) -> Result<Self, String> {
         let document = pdfium
             .create_new_pdf()
@@ -203,14 +205,17 @@ impl DocumentView {
         let mut document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
         let paper =
             PdfPagePaperSize::new_custom(PdfPoints::new(size_pts[0]), PdfPoints::new(size_pts[1]));
-        document
-            .pages_mut()
-            .create_page_at_end(paper)
-            .map_err(|e| format!("Could not create page: {e}"))?;
+        let count = page_count.clamp(1, 2000);
+        for _ in 0..count {
+            document
+                .pages_mut()
+                .create_page_at_end(paper)
+                .map_err(|e| format!("Could not create page: {e}"))?;
+        }
         Ok(Self {
             document,
             file_name: name.to_string(),
-            page_sizes_pts: vec![size_pts],
+            page_sizes_pts: vec![size_pts; count],
         })
     }
 

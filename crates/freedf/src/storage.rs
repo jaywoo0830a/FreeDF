@@ -33,6 +33,7 @@ pub trait StorageBackend: Send + Sync {
         kind: &str,
         title: &str,
         origin_path: Option<&str>,
+        page_count: i32,
         pdf: &[u8],
     ) -> Result<i64, String>;
     fn get_document(&self, id: i64) -> Option<DocRow>;
@@ -199,6 +200,7 @@ impl StorageBackend for DisconnectedStorage {
         _kind: &str,
         _title: &str,
         _origin_path: Option<&str>,
+        _page_count: i32,
         _pdf: &[u8],
     ) -> Result<i64, String> {
         Err("Not connected to the database yet — set the DB URL in the setup dialog.".into())
@@ -486,9 +488,12 @@ impl StorageBackend for CachingBackend {
         kind: &str,
         title: &str,
         origin_path: Option<&str>,
+        page_count: i32,
         pdf: &[u8],
     ) -> Result<i64, String> {
-        let id = self.remote.insert_document(kind, title, origin_path, pdf)?;
+        let id = self
+            .remote
+            .insert_document(kind, title, origin_path, page_count, pdf)?;
         self.inner.lock().expect("cache mutex poisoned").cache.invalidate_notes();
         Ok(id)
     }
@@ -830,7 +835,7 @@ mod tests {
         assert!(db.list_notes().is_empty());
         assert!(db.load_recents().is_empty());
         assert!(db.get_document(1).is_none());
-        assert!(db.insert_document("note", "x", None, b"x").is_err());
+        assert!(db.insert_document("note", "x", None, 1, b"x").is_err());
         // 쓰기는 크래시 없이 무시됩니다.
         db.insert_strokes(1, 0, &[]);
         db.delete_strokes(1, &[1]);
@@ -964,7 +969,7 @@ mod tests {
         let cached = CachingBackend::new(db.clone(), LocalCache::new(dir.clone()));
 
         let doc_id = db
-            .insert_document("note", "cache-live-test", None, b"%PDF-1.4 fake")
+            .insert_document("note", "cache-live-test", None, 1, b"%PDF-1.4 fake")
             .expect("insert");
 
         // 1) 원격 로드 → 캐시에 저장.

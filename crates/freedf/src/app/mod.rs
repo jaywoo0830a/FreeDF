@@ -306,6 +306,9 @@ fn color_circle_swatch(
 
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
 
+/// 새 노트 페이지 수 프리셋 (1장 ~ 대량 노트).
+const NOTE_PAGE_PRESETS: &[usize] = &[1, 100, 200, 300, 500, 1000];
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
@@ -363,6 +366,8 @@ pub(crate) enum ModalKind {
 pub(crate) struct ModalState {
     kind: ModalKind,
     text: String,
+    /// 새 노트 페이지 수 프리셋 선택 (NewNote 전용).
+    pages: usize,
 }
 
 impl ModalState {
@@ -374,6 +379,20 @@ impl ModalState {
                 action,
             },
             text: String::new(),
+            pages: 1,
+        }
+    }
+
+    /// 새 노트 전용 — 페이지 수 프리셋(기본 100장) 선택 UI가 함께 표시됩니다.
+    fn ask_new_note() -> Self {
+        Self {
+            kind: ModalKind::AskText {
+                title: "New Note".into(),
+                hint: "Note title:".into(),
+                action: TextAction::NewNote,
+            },
+            text: String::new(),
+            pages: 100,
         }
     }
 
@@ -385,6 +404,7 @@ impl ModalState {
                 action,
             },
             text: String::new(),
+            pages: 1,
         }
     }
 
@@ -395,6 +415,7 @@ impl ModalState {
                 message: message.into(),
             },
             text: String::new(),
+            pages: 1,
         }
     }
 }
@@ -1951,11 +1972,7 @@ impl FreeDfApp {
             self.open_file_dialog();
         }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::N)) {
-            self.modal = Some(ModalState::ask_text(
-                "New Note",
-                "Note title:",
-                TextAction::NewNote,
-            ));
+            self.modal = Some(ModalState::ask_new_note());
         }
         if ctrl && ctx.input(|i| i.key_pressed(egui::Key::Z)) {
             if shift {
@@ -2112,11 +2129,12 @@ impl FreeDfApp {
             return;
         };
         let mut text = modal.text.clone();
+        let mut pages = modal.pages;
         let mut ok = false;
         let mut cancel = false;
 
         match &modal.kind {
-            ModalKind::AskText { title, hint, .. } => {
+            ModalKind::AskText { title, hint, action } => {
                 egui::Window::new(title)
                     .collapsible(false)
                     .resizable(false)
@@ -2128,6 +2146,23 @@ impl FreeDfApp {
                                 .hint_text("Type here...")
                                 .desired_width(360.0),
                         );
+                        if *action == TextAction::NewNote {
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                ui.label("Pages:");
+                                egui::ComboBox::from_id_salt("note_pages")
+                                    .selected_text(format!("{pages}"))
+                                    .show_ui(ui, |ui| {
+                                        for p in NOTE_PAGE_PRESETS {
+                                            ui.selectable_value(
+                                                &mut pages,
+                                                *p,
+                                                format!("{p} pages"),
+                                            );
+                                        }
+                                    });
+                            });
+                        }
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             ok = ui.button("OK").clicked();
@@ -2173,6 +2208,7 @@ impl FreeDfApp {
         // Keep text updated while typing
         if let Some(m) = &mut self.modal {
             m.text = text.clone();
+            m.pages = pages;
         }
 
         if ok {
@@ -2181,7 +2217,7 @@ impl FreeDfApp {
             if let Some(kind) = kind {
                 match kind {
                     ModalKind::AskText { action, .. } if !text.trim().is_empty() => {
-                        self.run_text_action(action, text);
+                        self.run_text_action(action, text, pages);
                     }
                     ModalKind::Confirm { action, .. } => self.run_confirm_action(action, text),
                     _ => {}
