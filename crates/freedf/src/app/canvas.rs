@@ -285,9 +285,10 @@ impl FreeDfApp {
         ring.truncate(MAX_FAVORITE_COLORS);
         let current = self.current_drawing_style().0;
 
-        // 탭 좌표 — 포인터 클릭(마우스)과 터치(펜) 양쪽 경로에서 수집합니다.
+        // 탭 판정은 위젯 라우팅(`clicked`)에 의존하지 않고 **프레스 이벤트를
+        // 직접 읽습니다** — 마우스(포인터)든 펜(Touch)이든, 캔버스에 걸린
+        // 클릭 제약(예: 마우스=팬)과도 무관하게 항상 동작합니다.
         let area_pos = center - egui::vec2(WHEEL_BACK_R, WHEEL_BACK_R);
-        let mut tap: Option<Pos2> = None;
         egui::Area::new(egui::Id::new("color_wheel"))
             .order(egui::Order::Foreground)
             .fixed_pos(area_pos)
@@ -295,12 +296,19 @@ impl FreeDfApp {
                 // 주의: `painter_at(rect)`의 rect는 **클립 영역**(화면 좌표) —
                 // 좌표 오프셋이 아닙니다. ZERO 기준 rect를 넘기면 원이 화면
                 // 좌상단에 그려지므로, 반드시 화면 좌표 rect를 넘깁니다.
+                // (여유 8px — AA 페더링이 클립에 잘려 원이 찌그러져 보이는 것 방지)
                 let rect = egui::Rect::from_center_size(
                     center,
-                    egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
+                    egui::vec2(WHEEL_BACK_R * 2.0 + 8.0, WHEEL_BACK_R * 2.0 + 8.0),
                 );
                 let painter = ui.painter_at(rect);
                 let c = rect.center();
+                // 드롭 섀도우 — 살짝 아래로 떨어진 어두운 원 (입체감).
+                painter.circle_filled(
+                    c + egui::vec2(2.0, 4.0),
+                    WHEEL_BACK_R,
+                    Color32::from_black_alpha(90),
+                );
                 let fill = crate::theme::nord::semantic::overlay_bg();
                 let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
                 painter.circle_filled(c, WHEEL_BACK_R, fill);
@@ -343,46 +351,13 @@ impl FreeDfApp {
                 painter.circle_filled(c, WHEEL_CENTER_R, cc);
                 painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
 
-                // (1) 공간을 잡아 이 Area의 **레이어가 휠 영역을 덮게** 합니다 —
-                //     그래야 휠 위에서 캔버스 response.hovered()가 false가 되어
-                //     펜 닙 커서가 휠 위에 그려지지 않고, OS 커서로 전환됩니다.
+                // 공간을 잡아 이 Area의 **레이어가 휠 영역을 덮게** 합니다 —
+                // 휠 위에서는 캔버스 response.hovered()가 false가 되어
+                // OS 커서가 표시됩니다 (닙 커서가 휠 위에 안 그려짐).
                 ui.allocate_space(egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0));
-                // (2) 클릭 위젯 — **화면 좌표 rect** (egui 0.36 위젯 rect는
-                //     화면 좌표. ZERO 기준 rect를 넘기면 화면 좌상단에 등록되어
-                //     휠 탭이 전혀 안 잡히던 버그의 원인).
-                let resp = ui.interact(
-                    rect,
-                    ui.id().with("color_wheel_hit"),
-                    egui::Sense::click(),
-                );
-                if resp.clicked() {
-                    // interact_pointer_pos는 resp.rect.min(=area_pos) 기준
-                    // 로컬 좌표 → 화면 좌표로 변환.
-                    tap = resp.interact_pointer_pos().map(|p| area_pos + p.to_vec2());
-                }
             });
 
-        // egui의 clicked()는 포인터(마우스) 경로 전용 — Windows Ink 펜 탭이
-        // `Event::Touch`로만 오는 경우를 위해 이벤트에서 직접 판정합니다
-        // (클릭이 안 먹던 원인 대응 — 두 경로 모두 지원).
-        if tap.is_none() {
-            tap = ctx.input(|i| {
-                i.events.iter().rev().find_map(|e| match e {
-                    egui::Event::Touch {
-                        phase: egui::TouchPhase::End,
-                        pos,
-                        ..
-                    } => Some(*pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        pressed: false,
-                        ..
-                    } => Some(*pos),
-                    _ => None,
-                })
-            });
-        }
-        let Some(pos) = tap else {
+        let Some(pos) = frame_tap_pos(ctx) else {
             return;
         };
         if pos.distance(center) <= WHEEL_CENTER_R {
