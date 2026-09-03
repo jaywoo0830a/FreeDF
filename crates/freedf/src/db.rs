@@ -12,6 +12,7 @@
 use freedf_core::model::{Stroke, StrokePoint};
 use freedf_core::paper::{PagePaper, PaperStyle};
 use freedf_core::store::AnnotationStore;
+use postgres::types::ToSql;
 use postgres::{Client, NoTls};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -335,46 +336,66 @@ impl Db {
     }
 
     /// 스트로크 삽입 (id는 이미 최종 값 — undo/redo 복원에도 동일하게 사용).
+    /// 왕복 최소화를 위해 청크 단위 다중 행 INSERT를 사용합니다.
     pub fn insert_strokes(&self, doc_id: i64, page_index: i32, strokes: &[Stroke]) {
         if strokes.is_empty() {
             return;
         }
         let mut c = conn_guard(&self.conn);
         let now = now_ms();
-        for s in strokes {
-            let points: Value = serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
-            let tool = s.tool.label();
-            let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
-            let _ = c.execute(
-                "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                 ON CONFLICT (id) DO NOTHING",
-                &[
-                    &(s.id as i64),
-                    &doc_id,
-                    &page_index,
-                    &tool,
-                    &color_to_i32(s.color),
-                    &s.width,
-                    &points,
-                    &created,
-                ],
+        const CHUNK: usize = 400;
+        for chunk in strokes.chunks(CHUNK) {
+            let mut sql = String::from(
+                "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) VALUES ",
             );
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 8);
+            for (i, s) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                let b = i * 8;
+                sql.push_str(&format!(
+                    "(${},${},${},${},${},${},${},${})",
+                    b + 1,
+                    b + 2,
+                    b + 3,
+                    b + 4,
+                    b + 5,
+                    b + 6,
+                    b + 7,
+                    b + 8
+                ));
+                let id = s.id as i64;
+                let points: Value =
+                    serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
+                let tool = s.tool.label().to_string();
+                let color = color_to_i32(s.color);
+                let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
+                params.push(Box::new(id));
+                params.push(Box::new(doc_id));
+                params.push(Box::new(page_index));
+                params.push(Box::new(tool));
+                params.push(Box::new(color));
+                params.push(Box::new(s.width));
+                params.push(Box::new(points));
+                params.push(Box::new(created));
+            }
+            sql.push_str(" ON CONFLICT (id) DO NOTHING");
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+            let _ = c.execute(&sql, &refs);
         }
     }
 
-    /// 스트로크 삭제 (지우개/clear/undo).
+    /// 스트로크 삭제 (지우개/clear/undo) — id별 왕복 없이 한 번의 쿼리로.
     pub fn delete_strokes(&self, doc_id: i64, ids: &[i64]) {
         if ids.is_empty() {
             return;
         }
         let mut c = conn_guard(&self.conn);
-        for id in ids {
-            let _ = c.execute(
-                "DELETE FROM strokes WHERE doc_id = $1 AND id = $2",
-                &[&doc_id, id],
-            );
-        }
+        let _ = c.execute(
+            "DELETE FROM strokes WHERE doc_id = $1 AND id = ANY($2)",
+            &[&doc_id, &ids],
+        );
     }
 
     /// 문서의 strokes 테이블 전체를 스토어 상태로 재동기화합니다.
@@ -387,27 +408,60 @@ impl Db {
         };
         let _ = tx.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
         let now = now_ms();
-        // 모든 (페이지, 스트로크)를 순서대로 다시 삽입.
-        for page in store.pages() {
-            for s in &page.strokes {
-                let points: Value =
-                    serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
-                let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
-                let _ = tx.execute(
-                    "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                    &[
-                        &(s.id as i64),
-                        &doc_id,
-                        &(page.page_index as i32),
-                        &s.tool.label(),
-                        &color_to_i32(s.color),
-                        &s.width,
-                        &points,
-                        &created,
-                    ],
-                );
+        // 행별 INSERT는 획 수만큼 네트워크 왕복(원격 DB에서 수천 획 = 수 분) —
+        // 청크 단위 다중 행 INSERT로 왕복을 N → ceil(N/CHUNK)으로 줄입니다.
+        let rows: Vec<(i64, i32, String, Vec<i32>, f32, Value, i64)> = store
+            .pages()
+            .flat_map(|page| {
+                let page_index = page.page_index as i32;
+                page.strokes.iter().map(move |s| {
+                    let points: Value =
+                        serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new()));
+                    let created = if s.created_ms > 0 { s.created_ms as i64 } else { now };
+                    (
+                        s.id as i64,
+                        page_index,
+                        s.tool.label().to_string(),
+                        color_to_i32(s.color),
+                        s.width,
+                        points,
+                        created,
+                    )
+                })
+            })
+            .collect();
+        const CHUNK: usize = 400; // 행당 파라미터 8개 → 청크당 3,200개 (한계 65,535 안전)
+        for chunk in rows.chunks(CHUNK) {
+            let mut sql = String::from(
+                "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) VALUES ",
+            );
+            let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(chunk.len() * 8);
+            for (i, r) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                let b = i * 8;
+                sql.push_str(&format!(
+                    "(${},${},${},${},${},${},${},${})",
+                    b + 1,
+                    b + 2,
+                    b + 3,
+                    b + 4,
+                    b + 5,
+                    b + 6,
+                    b + 7,
+                    b + 8
+                ));
+                params.push(&r.0);
+                params.push(&doc_id);
+                params.push(&r.1);
+                params.push(&r.2);
+                params.push(&r.3);
+                params.push(&r.4);
+                params.push(&r.5);
+                params.push(&r.6);
             }
+            let _ = tx.execute(&sql, &params);
         }
         let _ = tx.commit();
     }
@@ -886,5 +940,60 @@ mod tests {
         assert!(db.load_session(doc_id).is_none());
         assert!(db.load_recents().iter().all(|r| r.doc_id != doc_id));
         assert!(db.load_edits(doc_id).is_empty());
+    }
+
+    /// 왕복 수 스트레스 검증 (기본 제외 — 대량 획 삽입/재동기화가 배치로 도는지).
+    /// `FREEDF_TEST_DB=1 cargo test -p freedf resync_batch_stroke_inserts_live -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn resync_batch_stroke_inserts_live() {
+        if std::env::var("FREEDF_TEST_DB").is_err() {
+            return;
+        }
+        let url = std::env::var("FREEDF_DATABASE_URL")
+            .unwrap_or_else(|_| DEFAULT_DATABASE_URL.to_string());
+        let db = Db::connect(&url).expect("connect");
+        let doc_id = db
+            .insert_document("note", "Batch Perf", None, b"%PDF-1.4 perf")
+            .expect("insert document");
+
+        const N: usize = 5000;
+        let ids = db.alloc_stroke_ids(N);
+        assert_eq!(ids.len(), N);
+        let strokes: Vec<Stroke> = ids
+            .iter()
+            .map(|id| Stroke {
+                id: *id as u64,
+                tool: ToolType::Pen,
+                color: [20, 20, 20, 255],
+                width: 2.0,
+                points: vec![
+                    StrokePoint::new(1.0, 2.0, 0.5),
+                    StrokePoint::new(3.0, 4.0, 0.9),
+                ],
+                created_ms: 0,
+            })
+            .collect();
+
+        let t0 = std::time::Instant::now();
+        db.insert_strokes(doc_id, 0, &strokes);
+        let insert_ms = t0.elapsed().as_millis();
+
+        let mut store = AnnotationStore::new();
+        store.add_strokes(0, strokes.clone());
+        let t1 = std::time::Instant::now();
+        db.resync_strokes(doc_id, &store);
+        let resync_ms = t1.elapsed().as_millis();
+
+        assert_eq!(db.load_store(doc_id).total_stroke_count(), N);
+        println!(
+            "batch perf: insert {N} strokes = {insert_ms}ms, resync = {resync_ms}ms"
+        );
+
+        // 관대한 상한 — 행별 왕복이었다면 수 분 걸리는 시나리오입니다.
+        assert!(insert_ms < 30_000, "insert too slow: {insert_ms}ms");
+        assert!(resync_ms < 30_000, "resync too slow: {resync_ms}ms");
+
+        db.delete_document(doc_id).expect("delete");
     }
 }

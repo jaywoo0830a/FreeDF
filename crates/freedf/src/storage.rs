@@ -353,6 +353,44 @@ impl CachingBackend {
         }
     }
 
+    /// 대기열의 연속된 동일 작업을 병합 — 플러시 왕복을 획 단위에서 배치 단위로.
+    /// (InsertStrokes는 같은 문서·페이지가 연속이면 합치고, DeleteStrokes는
+    /// 같은 문서면 id를 이어 붙입니다. 순서는 그대로 유지됩니다.)
+    fn coalesce_ops(ops: Vec<PendingOp>) -> Vec<PendingOp> {
+        let mut out: Vec<PendingOp> = Vec::with_capacity(ops.len());
+        for op in ops {
+            let merged = match (out.last_mut(), &op) {
+                (
+                    Some(PendingOp::InsertStrokes {
+                        doc_id,
+                        page_index,
+                        strokes,
+                    }),
+                    PendingOp::InsertStrokes {
+                        doc_id: d2,
+                        page_index: p2,
+                        strokes: s2,
+                    },
+                ) if doc_id == d2 && page_index == p2 => {
+                    strokes.extend(s2.iter().cloned());
+                    true
+                }
+                (
+                    Some(PendingOp::DeleteStrokes { doc_id, ids }),
+                    PendingOp::DeleteStrokes { doc_id: d2, ids: ids2 },
+                ) if doc_id == d2 => {
+                    ids.extend_from_slice(ids2);
+                    true
+                }
+                _ => false,
+            };
+            if !merged {
+                out.push(op);
+            }
+        }
+        out
+    }
+
     /// 대기열을 원격에 **순서대로** 플러시. 전부 반영되면 true,
     /// 원격 연결이 없으면 대기열을 그대로 보류하고 false.
     pub fn flush_pending(&self) -> bool {
@@ -380,7 +418,7 @@ impl CachingBackend {
                 g.pending = all;
                 return false;
             }
-            for op in &ops {
+            for op in &Self::coalesce_ops(ops) {
                 apply_remote(op, self.remote.as_ref());
             }
             // 이 배치는 반영 완료 — 동시에 새로 쌓인 작업은 다음 루프에서.
