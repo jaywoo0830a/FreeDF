@@ -59,9 +59,9 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
     }
 }
 
-/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 사실상 매 프레임
-/// (리본이 O(n)으로 저렴해져 지연 없이 바로 따라갑니다).
-const ACTIVE_STROKE_GEOM_MS: u64 = 10;
+/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 20ms면 50Hz. 사람 눈에는
+/// 충분히 부드럽고(리본이 O(n)으로 저렴), 재구성 비용을 반으로 아낍니다.
+const ACTIVE_STROKE_GEOM_MS: u64 = 20;
 /// 번지는 후광(병합 메시) 재구성 스로틀 (ms) — 후광은 느리게 자라므로
 /// 20Hz면 충분하고, 페이지 전체 재구성 비용을 아낍니다.
 const HALO_GEOM_MS: u64 = 50;
@@ -317,7 +317,7 @@ impl FreeDfApp {
                     if let Some(v) = &self.pen_verdict {
                         ui.label(format!("verdict: {v}"));
                     }
-                    ui.label("render: ribbon ≈ O(n) · 10ms 스로틀  (완성 획: 동일 리본)");
+                    ui.label("render: ribbon ≈ O(n) · 20ms 스로틀  (완성 획: 동일 리본)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -1792,8 +1792,8 @@ impl FreeDfApp {
             (now_ms().saturating_sub(created_ms)) as f32 / 1000.0
         };
         let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
-        // ── 10ms 스로틀: 지오메트리 재구성은 최대 100Hz(사실상 매 프레임) —
-        // 그 사이엔 캐시된 메시를 그대로 다시 그립니다.
+        // ── 20ms 스로틀: 지오메트리 재구성은 최대 50Hz — 그 사이엔
+        // 캐시된 메시를 그대로 다시 그립니다.
         let now = now_ms();
         let view_key = (
             self.view.zoom,
@@ -2175,8 +2175,29 @@ impl FreeDfApp {
                     Color32::from_rgb(c(br), c(bg), c(bb))
                 };
 
-                // 1) 입체 그림자 2겹 (넓고 옅게 + 좁고 진하게).
-                for (sh, alpha) in [(egui::vec2(4.0, 5.0), 26u8), (egui::vec2(2.0, 2.5), 44u8)] {
+                // 1) 입체 그림자 2겹 (넓고 옅게 + 좁고 진하게) — **근접감** 반영:
+                // 펜이 패드에 닿으면(접촉) 짙고 팁에 가깝게, 호버는 중간,
+                // 패드에서 떨어져 리포트가 끊기면 옅고 멀어집니다 (입체감).
+                let pen_contact = self
+                    .pen_monitor
+                    .as_ref()
+                    .is_some_and(|m| m.snapshot().contact);
+                let hover_age = self
+                    .last_pen_state_ms
+                    .map_or(u64::MAX, |t| now_ms().saturating_sub(t));
+                let prox = if pen_contact {
+                    1.0
+                } else {
+                    let base = if hover_age < 400 { 0.65 } else { 0.0 };
+                    let fade = 1.0 - ((hover_age.saturating_sub(400)) as f32 / 900.0).clamp(0.0, 1.0);
+                    (base + 0.65 * fade).clamp(0.0, 1.0)
+                };
+                let sh_scale = 1.3 - 0.55 * prox; // 멀수록 그림자가 더 떨어짐.
+                let (sh1_a, sh2_a) = ((24.0 + 18.0 * prox) as u8, (40.0 + 32.0 * prox) as u8);
+                for (sh, alpha) in [
+                    (egui::vec2(4.0 * sh_scale, 5.0 * sh_scale), sh1_a),
+                    (egui::vec2(2.0 * sh_scale, 2.5 * sh_scale), sh2_a),
+                ] {
                     let sc = Color32::from_black_alpha(alpha);
                     painter.add(egui::Shape::convex_polygon(
                         vec![tip + sh, tr + sh, tl + sh],

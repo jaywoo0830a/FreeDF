@@ -580,6 +580,8 @@ pub struct FreeDfApp {
     tool_drop: Option<usize>,
     /// 도구별 세부 설정 플로팅 창 표시 여부 (툴바 Settings 버튼, 임시)
     tool_settings_open: bool,
+    /// Paper 세부 설정 플로팅 창 표시 여부 (임시)
+    paper_settings_open: bool,
     /// 마지막으로 감지된 입력 장치 (펜/마우스)
     input_device: InputDevice,
     /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
@@ -989,6 +991,7 @@ impl FreeDfApp {
             tool_drag: None,
             tool_drop: None,
             tool_settings_open: false,
+            paper_settings_open: false,
             input_device: InputDevice::Mouse,
             last_touch_time: None,
             mouse_draws,

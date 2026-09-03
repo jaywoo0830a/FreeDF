@@ -485,6 +485,137 @@ impl FreeDfApp {
             });
     }
 
+    /// Paper 세부 설정 — 전용 플로팅 창 내용 (툴바 Paper 옆 Settings 버튼으로 열림).
+    /// 크기/간격/줄 색·두께/전체 적용을 여기서 지정합니다.
+    fn paper_settings_ui(&mut self, ui: &mut egui::Ui) {
+        const MM_TO_PT: f32 = 72.0 / 25.4;
+        let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
+        egui::CollapsingHeader::new("Page size")
+            .id_salt("paper_win_size")
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ComboBox::from_id_salt("paper_size_win")
+                    .selected_text(self.paper_size.label())
+                    .show_ui(ui, |ui| {
+                        for size in PaperSize::all() {
+                            let changed = ui
+                                .selectable_value(&mut self.paper_size, size, size.label())
+                                .changed();
+                            if changed {
+                                self.save_default_session();
+                                self.save_session();
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text(
+                        "Size of new pages & new notes (existing pages keep their size).",
+                    );
+                // 사용자 정의 크기: mm 단위 숫자 입력.
+                if self.paper_size == PaperSize::Custom {
+                    let mut w_mm = self.custom_paper_size[0] / MM_TO_PT;
+                    let mut h_mm = self.custom_paper_size[1] / MM_TO_PT;
+                    let w_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut w_mm)
+                                .range(50.0..=1200.0)
+                                .speed(1.0)
+                                .prefix("W "),
+                        )
+                        .on_hover_text("Custom page width (mm)")
+                        .changed();
+                    let h_changed = ui
+                        .add(
+                            egui::DragValue::new(&mut h_mm)
+                                .range(50.0..=1200.0)
+                                .speed(1.0)
+                                .prefix("H "),
+                        )
+                        .on_hover_text("Custom page height (mm)")
+                        .changed();
+                    if w_changed || h_changed {
+                        self.custom_paper_size = [
+                            (w_mm * MM_TO_PT).clamp(100.0, 3400.0),
+                            (h_mm * MM_TO_PT).clamp(100.0, 3400.0),
+                        ];
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
+            });
+        egui::CollapsingHeader::new("Grid & lines")
+            .id_salt("paper_win_lines")
+            .default_open(true)
+            .show(ui, |ui| {
+                // 줄/격자 간격 (숫자 직접 입력).
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.paper_spacing)
+                            .range(12.0..=120.0)
+                            .speed(1.0)
+                            .prefix("Spacing ")
+                            .suffix("pt"),
+                    )
+                    .on_hover_text("Ruled/Grid/Dotted spacing applied to the current page")
+                    .changed()
+                {
+                    self.paper_spacing = clamp_spacing(self.paper_spacing);
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
+                // 줄/격자/점 색과 두께 (페이지에 바로 적용, 새 페이지 기본값으로 기억).
+                let mut line_color = Color32::from_rgba_unmultiplied(
+                    self.paper_line_color[0],
+                    self.paper_line_color[1],
+                    self.paper_line_color[2],
+                    self.paper_line_color[3],
+                );
+                if ui
+                    .color_edit_button_srgba(&mut line_color)
+                    .on_hover_text("Line color (ruled / grid / dotted)")
+                    .changed()
+                {
+                    self.paper_line_color =
+                        [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut self.paper_line_width)
+                            .range(0.25..=8.0)
+                            .speed(0.05)
+                            .fixed_decimals(2)
+                            .prefix("Line ")
+                            .suffix("pt"),
+                    )
+                    .on_hover_text("Line thickness (ruled / grid / dotted)")
+                    .changed()
+                {
+                    self.paper_line_width = clamp_line_width(self.paper_line_width);
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
+        // 현재 설정을 문서의 모든 페이지에 복사합니다.
+        if ui
+            .add_enabled(
+                page_count > 0,
+                egui::Button::new(icon_text(ui, "Apply to all pages", icons::CHECK_SQUARE_OFFSET)),
+            )
+            .on_hover_text(
+                "Copy these paper settings (style/color/spacing/line) \
+                 onto every page of this document.",
+            )
+            .clicked()
+        {
+            self.apply_paper_to_all_pages();
+        }
+    }
+
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
             // Compact spacing + padding; uniform control height for tidy rows
@@ -783,118 +914,16 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
-                egui::ComboBox::from_id_salt("paper_size")
-                    .selected_text(self.paper_size.label())
-                    .show_ui(ui, |ui| {
-                        for size in PaperSize::all() {
-                            let changed = ui
-                                .selectable_value(&mut self.paper_size, size, size.label())
-                                .changed();
-                            if changed {
-                                self.save_default_session();
-                                self.save_session();
-                            }
-                        }
-                    })
-                    .response
+                // 세부 설정 전용 창 트리거 — 크기/간격/줄 색·두께/전체 적용.
+                if ui
+                    .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
                     .on_hover_text(
-                        "Size of new pages & new notes (existing pages keep their size).",
-                    );
-                // 사용자 정의 크기: mm 단위 숫자 입력.
-                if self.paper_size == PaperSize::Custom {
-                    const MM_TO_PT: f32 = 72.0 / 25.4;
-                    let mut w_mm = self.custom_paper_size[0] / MM_TO_PT;
-                    let mut h_mm = self.custom_paper_size[1] / MM_TO_PT;
-                    let w_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut w_mm)
-                                .range(50.0..=1200.0)
-                                .speed(1.0)
-                                .prefix("W "),
-                        )
-                        .on_hover_text("Custom page width (mm)")
-                        .changed();
-                    let h_changed = ui
-                        .add(
-                            egui::DragValue::new(&mut h_mm)
-                                .range(50.0..=1200.0)
-                                .speed(1.0)
-                                .prefix("H "),
-                        )
-                        .on_hover_text("Custom page height (mm)")
-                        .changed();
-                    if w_changed || h_changed {
-                        self.custom_paper_size =
-                            [(w_mm * MM_TO_PT).clamp(100.0, 3400.0), (h_mm * MM_TO_PT).clamp(100.0, 3400.0)];
-                        self.save_default_session();
-                        self.save_session();
-                    }
-                }
-                // 줄/격자 간격 (숫자 직접 입력).
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.paper_spacing)
-                            .range(12.0..=120.0)
-                            .speed(1.0)
-                            .prefix("Spacing ")
-                            .suffix("pt"),
-                    )
-                    .on_hover_text("Ruled/Grid/Dotted spacing applied to the current page")
-                    .changed()
-                {
-                    self.paper_spacing = clamp_spacing(self.paper_spacing);
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-                // 줄/격자/점 색과 두께 (페이지에 바로 적용, 새 페이지 기본값으로 기억).
-                let mut line_color = Color32::from_rgba_unmultiplied(
-                    self.paper_line_color[0],
-                    self.paper_line_color[1],
-                    self.paper_line_color[2],
-                    self.paper_line_color[3],
-                );
-                if ui
-                    .color_edit_button_srgba(&mut line_color)
-                    .on_hover_text("Line color (ruled / grid / dotted)")
-                    .changed()
-                {
-                    self.paper_line_color =
-                        [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut self.paper_line_width)
-                            .range(0.25..=8.0)
-                            .speed(0.05)
-                            .fixed_decimals(2)
-                            .prefix("Line ")
-                            .suffix("pt"),
-                    )
-                    .on_hover_text("Line thickness (ruled / grid / dotted)")
-                    .changed()
-                {
-                    self.paper_line_width = clamp_line_width(self.paper_line_width);
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                }
-                // 현재 툴바의 Paper 설정을 문서의 모든 페이지에 복사합니다.
-                if ui
-                    .add_enabled(
-                        page_count > 0,
-                        egui::Button::new(icon_text(ui, "Apply to all", icons::CHECK_SQUARE_OFFSET)),
-                    )
-                    .on_hover_text(
-                        "Copy these paper settings (style/color/spacing/line) \
-                         onto every page of this document.",
+                        "Open the paper settings window:\n\
+                         page size, grid spacing, line color & thickness, apply to all.",
                     )
                     .clicked()
                 {
-                    self.apply_paper_to_all_pages();
+                    self.paper_settings_open = true;
                 }
                 });
             });
@@ -1251,6 +1280,21 @@ impl FreeDfApp {
                     });
                 });
             self.tool_settings_open = open;
+        }
+
+        // ── Paper 세부 설정 플로팅 창 (툴바 Paper 옆 Settings 버튼) ──
+        if self.paper_settings_open {
+            let mut open = self.paper_settings_open;
+            egui::Window::new("Paper settings")
+                .open(&mut open)
+                .resizable(true)
+                .default_width(330.0)
+                .show(ui.ctx(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        self.paper_settings_ui(ui);
+                    });
+                });
+            self.paper_settings_open = open;
         }
     }
 }
