@@ -68,8 +68,22 @@ fn main() -> eframe::Result<()> {
     let (log_tx, log_rx) = std::sync::mpsc::channel();
     let log_db = db.clone();
     std::thread::spawn(move || {
-        for (epoch_ms, seq, event) in log_rx {
-            log_db.insert_log(epoch_ms, seq, &event);
+        // 이벤트를 모아서 배치 기록 — 이벤트마다 원격 왕복하지 않습니다.
+        loop {
+            match log_rx.recv() {
+                Ok((epoch_ms, seq, event)) => {
+                    let mut items = vec![(epoch_ms, event)];
+                    let _ = seq;
+                    while items.len() < 200 {
+                        match log_rx.try_recv() {
+                            Ok((e2, _s2, ev2)) => items.push((e2, ev2)),
+                            Err(_) => break,
+                        }
+                    }
+                    log_db.insert_logs(&items);
+                }
+                Err(_) => break,
+            }
         }
     });
     let logger = Logger::to_sink(move |entry| {

@@ -40,6 +40,11 @@ pub enum PendingOp {
         doc_id: i64,
         edit: Edit,
     },
+    /// 편집 저널 일괄 기록 — 플러시 시 연속 LogEdit을 합친 형태.
+    LogEdits {
+        doc_id: i64,
+        edits: Vec<Edit>,
+    },
     /// 문서별 GUI 세션 저장 (도구/색 변경 등 빈번한 쓰기).
     UpsertSession {
         doc_id: i64,
@@ -72,6 +77,7 @@ impl PendingOp {
             PendingOp::InsertStrokes { doc_id, .. } => Some(*doc_id),
             PendingOp::DeleteStrokes { doc_id, .. } => Some(*doc_id),
             PendingOp::LogEdit { doc_id, .. } => Some(*doc_id),
+            PendingOp::LogEdits { doc_id, .. } => Some(*doc_id),
             PendingOp::UpsertSession { doc_id, .. } => Some(*doc_id),
             PendingOp::UpsertPage { doc_id, .. } => Some(*doc_id),
             PendingOp::TouchRecent { doc_id, .. } => Some(*doc_id),
@@ -100,6 +106,7 @@ pub fn apply_op_to_store(store: &mut AnnotationStore, op: &PendingOp) {
         // 저널 기록/세션/앱상태/용지/최근은 apply_local에서 처리 (스토어 전용
         // 헬퍼인 이 함수에서는 무시 — 용지/북마크는 apply_local이 스토어에 반영).
         PendingOp::LogEdit { .. } => {}
+        PendingOp::LogEdits { .. } => {}
         PendingOp::UpsertSession { .. } => {}
         PendingOp::SetAppState { .. } => {}
         PendingOp::UpsertPage { .. } => {}
@@ -188,6 +195,16 @@ pub fn apply_local(op: &PendingOp, g: &mut CacheInner) {
             }
             if let Some(edits) = g.edits.get_mut(doc_id) {
                 edits.push(edit.clone());
+                g.dirty_edits.insert(*doc_id);
+            }
+        }
+        PendingOp::LogEdits { doc_id, edits } => {
+            if !g.edits.contains_key(doc_id) {
+                let e = g.cache.get_edits(*doc_id).unwrap_or_default();
+                g.edits.insert(*doc_id, e);
+            }
+            if let Some(store_edits) = g.edits.get_mut(doc_id) {
+                store_edits.extend(edits.iter().cloned());
                 g.dirty_edits.insert(*doc_id);
             }
         }
@@ -529,17 +546,25 @@ mod tests {
     fn pending_log_edit_roundtrip() {
         let dir = temp_dir("logedit");
         let cache = LocalCache::new(dir.clone());
+        let edit = freedf_core::history::Edit::AddStrokes {
+            page: 1,
+            strokes: vec![sample_stroke(7)],
+        };
         let op = PendingOp::LogEdit {
             doc_id: 3,
-            edit: freedf_core::history::Edit::AddStrokes {
-                page: 1,
-                strokes: vec![sample_stroke(7)],
-            },
+            edit: edit.clone(),
         };
-        cache.append_pending(&[op.clone()]);
+        let batch = PendingOp::LogEdits {
+            doc_id: 3,
+            edits: vec![edit.clone(), edit],
+        };
+        cache.append_pending(&[op.clone(), batch.clone()]);
         let loaded = cache.load_pending();
-        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0], op);
+        assert_eq!(loaded[1], batch);
+        assert_eq!(loaded[0].doc_id(), Some(3));
+        assert_eq!(loaded[1].doc_id(), Some(3));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

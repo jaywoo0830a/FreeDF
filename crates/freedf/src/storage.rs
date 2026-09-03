@@ -70,6 +70,12 @@ pub trait StorageBackend: Send + Sync {
 
     // ---------- 편집 저널 (영속 히스토리) ----------
     fn log_edit(&self, doc_id: i64, edit: &Edit);
+    /// 편집 저널 일괄 기록 (기본은 개별 log_edit — Db는 배치 오버라이드).
+    fn log_edits(&self, doc_id: i64, edits: &[Edit]) {
+        for e in edits {
+            self.log_edit(doc_id, e);
+        }
+    }
     fn load_edits(&self, doc_id: i64) -> Vec<Edit>;
     fn clear_edits(&self, doc_id: i64);
 
@@ -79,6 +85,12 @@ pub trait StorageBackend: Send + Sync {
 
     // ---------- 이벤트 로그 ----------
     fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value);
+    /// 이벤트 로그 일괄 기록 (기본은 개별 insert_log — Db는 배치 오버라이드).
+    fn insert_logs(&self, items: &[(u128, Value)]) {
+        for (epoch_ms, event) in items {
+            self.insert_log(*epoch_ms, 0, event);
+        }
+    }
 
     /// 원격 저장소 연결 확인 — write-behind 플러시 게이트용.
     fn ping(&self) -> bool;
@@ -269,6 +281,7 @@ pub fn apply_remote(op: &PendingOp, remote: &dyn StorageBackend) {
         } => remote.insert_strokes(*doc_id, *page_index, strokes),
         PendingOp::DeleteStrokes { doc_id, ids } => remote.delete_strokes(*doc_id, ids),
         PendingOp::LogEdit { doc_id, edit } => remote.log_edit(*doc_id, edit),
+        PendingOp::LogEdits { doc_id, edits } => remote.log_edits(*doc_id, edits),
         PendingOp::UpsertSession { doc_id, state } => remote.upsert_session(*doc_id, state),
         PendingOp::SetAppState { key, value } => remote.set_app_state(key, value),
         PendingOp::UpsertPage {
@@ -359,6 +372,19 @@ impl CachingBackend {
     fn coalesce_ops(ops: Vec<PendingOp>) -> Vec<PendingOp> {
         let mut out: Vec<PendingOp> = Vec::with_capacity(ops.len());
         for op in ops {
+            // LogEdit + LogEdit → LogEdits 승격 (마지막 원소 교체).
+            if let (
+                Some(PendingOp::LogEdit { doc_id: d1, edit: e1 }),
+                PendingOp::LogEdit { doc_id: d2, edit: e2 },
+            ) = (out.last(), &op)
+            {
+                if d1 == d2 {
+                    let doc = *d1;
+                    let edits = vec![e1.clone(), e2.clone()];
+                    *out.last_mut().unwrap() = PendingOp::LogEdits { doc_id: doc, edits };
+                    continue;
+                }
+            }
             let merged = match (out.last_mut(), &op) {
                 (
                     Some(PendingOp::InsertStrokes {
@@ -380,6 +406,13 @@ impl CachingBackend {
                     PendingOp::DeleteStrokes { doc_id: d2, ids: ids2 },
                 ) if doc_id == d2 => {
                     ids.extend_from_slice(ids2);
+                    true
+                }
+                (
+                    Some(PendingOp::LogEdits { doc_id, edits }),
+                    PendingOp::LogEdit { doc_id: d2, edit },
+                ) if doc_id == d2 => {
+                    edits.push(edit.clone());
                     true
                 }
                 _ => false,
@@ -669,6 +702,10 @@ impl StorageBackend for CachingBackend {
         });
     }
 
+    fn log_edits(&self, doc_id: i64, edits: &[Edit]) {
+        self.remote.log_edits(doc_id, edits);
+    }
+
     fn load_edits(&self, doc_id: i64) -> Vec<Edit> {
         {
             let mut g = self.inner.lock().expect("cache mutex poisoned");
@@ -705,6 +742,10 @@ impl StorageBackend for CachingBackend {
 
     fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
         self.remote.insert_log(epoch_ms, seq, event);
+    }
+
+    fn insert_logs(&self, items: &[(u128, Value)]) {
+        self.remote.insert_logs(items);
     }
 
     fn ping(&self) -> bool {
@@ -804,8 +845,89 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 실 DB 왕복 — `FREEDF_TEST_DB=1 cargo test -p freedf caching_backend_against_live_db`
-    /// (freedf Postgres가 떠 있어야 함). 플러시 스레드는 시작하지 않아 결정적입니다.
+    #[test]
+    fn coalesce_merges_consecutive_ops_in_order() {
+        use freedf_core::history::Edit;
+        use freedf_core::model::{Stroke, StrokePoint, ToolType};
+        let stroke = |id: u64| Stroke {
+            id,
+            tool: ToolType::Pen,
+            color: [20, 20, 20, 255],
+            width: 2.0,
+            points: vec![StrokePoint::new(0.0, 0.0, 0.5)],
+            created_ms: 0,
+        };
+        let edit = || Edit::AddStrokes {
+            page: 0,
+            strokes: Vec::new(),
+        };
+        let ops = vec![
+            PendingOp::InsertStrokes {
+                doc_id: 1,
+                page_index: 0,
+                strokes: vec![stroke(1)],
+            },
+            PendingOp::InsertStrokes {
+                doc_id: 1,
+                page_index: 0,
+                strokes: vec![stroke(2)],
+            },
+            PendingOp::InsertStrokes {
+                doc_id: 1,
+                page_index: 1,
+                strokes: vec![stroke(3)],
+            },
+            PendingOp::LogEdit {
+                doc_id: 1,
+                edit: edit(),
+            },
+            PendingOp::LogEdit {
+                doc_id: 1,
+                edit: edit(),
+            },
+            PendingOp::LogEdit {
+                doc_id: 2,
+                edit: edit(),
+            },
+            PendingOp::DeleteStrokes {
+                doc_id: 1,
+                ids: vec![1],
+            },
+            PendingOp::DeleteStrokes {
+                doc_id: 1,
+                ids: vec![2, 3],
+            },
+        ];
+        let merged = CachingBackend::coalesce_ops(ops);
+        assert_eq!(merged.len(), 5, "병합 후: {merged:?}");
+        assert!(matches!(
+            &merged[0],
+            PendingOp::InsertStrokes {
+                doc_id: 1,
+                page_index: 0,
+                strokes
+            } if strokes.len() == 2
+        ));
+        assert!(matches!(
+            &merged[1],
+            PendingOp::InsertStrokes {
+                doc_id: 1,
+                page_index: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &merged[2],
+            PendingOp::LogEdits { doc_id: 1, edits } if edits.len() == 2
+        ));
+        assert!(matches!(&merged[3], PendingOp::LogEdit { doc_id: 2, .. }));
+        assert!(matches!(
+            &merged[4],
+            PendingOp::DeleteStrokes { doc_id: 1, ids } if ids == &vec![1, 2, 3]
+        ));
+    }
+
+    /// 실 DB 왕복 — `FREEDF_TEST_DB=1 cargo test -p freedf caching_backend_against_live_db`    /// (freedf Postgres가 떠 있어야 함). 플러시 스레드는 시작하지 않아 결정적입니다.
     #[test]
     fn caching_backend_against_live_db() {
         if std::env::var("FREEDF_TEST_DB").as_deref() != Ok("1") {

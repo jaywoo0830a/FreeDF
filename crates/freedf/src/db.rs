@@ -295,6 +295,7 @@ impl Db {
     }
 
     /// 문서의 pages 테이블 전체를 스토어 상태로 재동기화합니다 (페이지 CRUD/회전 후).
+    /// 페이지별 왕복 대신 청크 단위 다중 행 INSERT (왕복 N → ceil(N/400)).
     pub fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
         let mut c = conn_guard(&self.conn);
         let mut tx = match c.transaction() {
@@ -302,18 +303,26 @@ impl Db {
             Err(_) => return,
         };
         let _ = tx.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
-        for (idx, paper, bookmarked) in entries {
-            let _ = tx.execute(
-                "INSERT INTO pages (doc_id, page_index, style, color, bookmarked)
-                 VALUES ($1, $2, $3, $4, $5)",
-                &[
-                    &doc_id,
-                    idx,
-                    &style_str(paper.style),
-                    &color_to_i32(paper.color),
-                    bookmarked,
-                ],
+        const CHUNK: usize = 400;
+        for chunk in entries.chunks(CHUNK) {
+            let mut sql = String::from(
+                "INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
             );
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 5);
+            for (i, (idx, paper, bookmarked)) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                let b = i * 5;
+                sql.push_str(&format!("(${},${},${},${},${})", b + 1, b + 2, b + 3, b + 4, b + 5));
+                params.push(Box::new(doc_id));
+                params.push(Box::new(*idx));
+                params.push(Box::new(style_str(paper.style).to_string()));
+                params.push(Box::new(color_to_i32(paper.color)));
+                params.push(Box::new(*bookmarked));
+            }
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+            let _ = tx.execute(&sql, &refs);
         }
         let _ = tx.commit();
     }
@@ -572,34 +581,56 @@ impl Db {
     }
 
     pub fn touch_recent(&self, kind: &str, doc_id: i64, title: &str) {
+        // DELETE + INSERT 두 왕복 → upsert 한 번으로 (PK (kind, doc_id) 충돌 시 갱신).
         let mut c = conn_guard(&self.conn);
-        let now = now_ms();
         let _ = c.execute(
-            "DELETE FROM recents WHERE kind = $1 AND doc_id = $2",
-            &[&kind, &doc_id],
-        );
-        let _ = c.execute(
-            "INSERT INTO recents (kind, doc_id, title, opened_at) VALUES ($1, $2, $3, $4)",
-            &[&kind, &doc_id, &title, &now],
+            "INSERT INTO recents (kind, doc_id, title, opened_at) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (kind, doc_id) DO UPDATE SET
+               title = EXCLUDED.title, opened_at = EXCLUDED.opened_at",
+            &[&kind, &doc_id, &title, &now_ms()],
         );
     }
 
     // ---------- edit journal (영속 히스토리) ----------
 
-    /// 편집 하나를 저널에 기록하고 문서당 최근 500건만 유지합니다.
-    pub fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
+    /// 편집 저널 일괄 기록 — 청크 다중 행 INSERT 후 트리밍 1회.
+    /// (편집별로 2왕복(INSERT+트리밍) 하던 것을 배치로 줄입니다.)
+    pub fn log_edits(&self, doc_id: i64, edits: &[freedf_core::history::Edit]) {
+        if edits.is_empty() {
+            return;
+        }
         let mut c = conn_guard(&self.conn);
-        let value = serde_json::to_value(edit).unwrap_or(Value::Null);
         let now = now_ms();
-        let _ = c.execute(
-            "INSERT INTO doc_edits (doc_id, edit, created_at) VALUES ($1, $2, $3)",
-            &[&doc_id, &value, &now],
-        );
+        const CHUNK: usize = 500; // 행당 파라미터 3개
+        for chunk in edits.chunks(CHUNK) {
+            let mut sql =
+                String::from("INSERT INTO doc_edits (doc_id, edit, created_at) VALUES ");
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 3);
+            for (i, edit) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                let b = i * 3;
+                sql.push_str(&format!("(${},${},${})", b + 1, b + 2, b + 3));
+                let value = serde_json::to_value(edit).unwrap_or(Value::Null);
+                params.push(Box::new(doc_id));
+                params.push(Box::new(value));
+                params.push(Box::new(now));
+            }
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+            let _ = c.execute(&sql, &refs);
+        }
+        // 문서당 최근 500건만 유지 (배치 후 1회 트리밍).
         let _ = c.execute(
             "DELETE FROM doc_edits WHERE doc_id = $1 AND id NOT IN \
              (SELECT id FROM doc_edits WHERE doc_id = $1 ORDER BY id DESC LIMIT 500)",
             &[&doc_id],
         );
+    }
+
+    /// 편집 하나를 저널에 기록 (배치 경로의 단일 편집 케이스).
+    pub fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
+        self.log_edits(doc_id, std::slice::from_ref(edit));
     }
 
     /// 편집 저널을 시간 순으로 로드합니다 (재시작 후 undo 스택 복원용).
@@ -647,12 +678,32 @@ impl Db {
     // ---------- event log ----------
 
     pub fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
-        let mut c = conn_guard(&self.conn);
-        let _ = c.execute(
-            "INSERT INTO event_log (epoch_ms, event) VALUES ($1, $2)",
-            &[&(epoch_ms as i64), event],
-        );
         let _ = seq;
+        self.insert_logs(&[(epoch_ms, event.clone())]);
+    }
+
+    /// 이벤트 로그 일괄 기록 — 로거 스레드가 모아서 보내므로 왕복 수를 줄입니다.
+    pub fn insert_logs(&self, items: &[(u128, Value)]) {
+        if items.is_empty() {
+            return;
+        }
+        let mut c = conn_guard(&self.conn);
+        const CHUNK: usize = 500; // 행당 파라미터 2개
+        for chunk in items.chunks(CHUNK) {
+            let mut sql = String::from("INSERT INTO event_log (epoch_ms, event) VALUES ");
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 2);
+            for (i, (epoch_ms, event)) in chunk.iter().enumerate() {
+                if i > 0 {
+                    sql.push(',');
+                }
+                let b = i * 2;
+                sql.push_str(&format!("(${},${})", b + 1, b + 2));
+                params.push(Box::new(*epoch_ms as i64));
+                params.push(Box::new(event.clone()));
+            }
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+            let _ = c.execute(&sql, &refs);
+        }
     }
 
     /// 연결 상태 확인 (SELECT 1).
@@ -756,6 +807,9 @@ impl StorageBackend for Db {
     fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
         Db::log_edit(self, doc_id, edit)
     }
+    fn log_edits(&self, doc_id: i64, edits: &[freedf_core::history::Edit]) {
+        Db::log_edits(self, doc_id, edits)
+    }
     fn load_edits(&self, doc_id: i64) -> Vec<freedf_core::history::Edit> {
         Db::load_edits(self, doc_id)
     }
@@ -772,6 +826,9 @@ impl StorageBackend for Db {
 
     fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
         Db::insert_log(self, epoch_ms, seq, event)
+    }
+    fn insert_logs(&self, items: &[(u128, Value)]) {
+        Db::insert_logs(self, items)
     }
 
     fn ping(&self) -> bool {
@@ -882,6 +939,23 @@ mod tests {
 
         // ── event log ──
         db.insert_log(123, 1, &serde_json::json!({"kind": "AppStart"}));
+
+        // ── event log batch (logger 스레드가 사용하는 경로) ──
+        db.insert_logs(&[
+            (456, serde_json::json!({"kind": "Batch1"})),
+            (457, serde_json::json!({"kind": "Batch2"})),
+        ]);
+        {
+            let mut c = conn_guard(&db.conn);
+            let n: i64 = c
+                .query_one(
+                    "SELECT count(*) FROM event_log WHERE epoch_ms IN (456, 457)",
+                    &[],
+                )
+                .map(|r| r.get(0))
+                .unwrap_or(-1);
+            assert_eq!(n, 2);
+        }
 
         // ── 영속 편집 저널 (doc_edits) ──
         use freedf_core::history::Edit;
