@@ -295,36 +295,81 @@ impl Db {
     }
 
     /// 문서의 pages 테이블 전체를 스토어 상태로 재동기화합니다 (페이지 CRUD/회전 후).
-    /// 페이지별 왕복 대신 청크 단위 다중 행 INSERT (왕복 N → ceil(N/400)).
+    ///
+    /// 페이지 인덱스는 항상 0..N 연속이므로(위치 기반), **단일 왕복**으로:
+    /// `WITH del AS (DELETE ... page_index >= $2)`로 줄어든 페이지를 지우고
+    /// 모든 페이지를 `ON CONFLICT DO UPDATE` upsert — DELETE와 INSERT의
+    /// 키 집합이 겹치지 않아 같은 스냅샷에서도 안전합니다.
     pub fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
         let mut c = conn_guard(&self.conn);
-        let mut tx = match c.transaction() {
-            Ok(tx) => tx,
-            Err(_) => return,
-        };
-        let _ = tx.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
-        const CHUNK: usize = 400;
-        for chunk in entries.chunks(CHUNK) {
+        if entries.is_empty() {
+            let _ = c.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
+            return;
+        }
+        let contiguous = entries
+            .iter()
+            .enumerate()
+            .all(|(i, (idx, _, _))| *idx as usize == i);
+        const CHUNK: usize = 4000;
+        if contiguous {
+            // 단일 왕복: 줄어든 페이지 삭제 + 전체 upsert를 한 문장으로.
             let mut sql = String::from(
-                "INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
+                "WITH del AS (DELETE FROM pages WHERE doc_id = $1 AND page_index >= $2) \
+                 INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
             );
-            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 5);
-            for (i, (idx, paper, bookmarked)) in chunk.iter().enumerate() {
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(entries.len() * 4 + 2);
+            params.push(Box::new(doc_id)); // $1
+            params.push(Box::new(entries.len() as i32)); // $2 — 삭제 기준 인덱스
+            let mut rows_sql = String::new();
+            for (i, (idx, paper, bookmarked)) in entries.iter().enumerate() {
                 if i > 0 {
-                    sql.push(',');
+                    rows_sql.push(',');
                 }
-                let b = i * 5;
-                sql.push_str(&format!("(${},${},${},${},${})", b + 1, b + 2, b + 3, b + 4, b + 5));
-                params.push(Box::new(doc_id));
+                let b = i * 4;
+                rows_sql.push_str(&format!(
+                    "($1,${},${},${},${})",
+                    b + 3,
+                    b + 4,
+                    b + 5,
+                    b + 6
+                ));
                 params.push(Box::new(*idx));
                 params.push(Box::new(style_str(paper.style).to_string()));
                 params.push(Box::new(color_to_i32(paper.color)));
                 params.push(Box::new(*bookmarked));
             }
+            sql.push_str(&rows_sql);
+            sql.push_str(
+                " ON CONFLICT (doc_id, page_index) DO UPDATE SET \
+                 style = EXCLUDED.style, color = EXCLUDED.color, bookmarked = EXCLUDED.bookmarked",
+            );
             let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
-            let _ = tx.execute(&sql, &refs);
+            let _ = c.execute(&sql, &refs);
+        } else {
+            // 비연속 입력(방어적 폴백) — 전체 삭제 후 청크 삽입.
+            let _ = c.execute("DELETE FROM pages WHERE doc_id = $1", &[&doc_id]);
+            for chunk in entries.chunks(CHUNK) {
+                let mut sql = String::from(
+                    "INSERT INTO pages (doc_id, page_index, style, color, bookmarked) VALUES ",
+                );
+                let mut params: Vec<Box<dyn ToSql + Sync>> =
+                    Vec::with_capacity(chunk.len() * 4 + 1);
+                params.push(Box::new(doc_id)); // $1 — 행마다 재사용
+                for (i, (idx, paper, bookmarked)) in chunk.iter().enumerate() {
+                    if i > 0 {
+                        sql.push(',');
+                    }
+                    let b = i * 4; // 행당 파라미터 4개 (doc_id는 공유 $1)
+                    sql.push_str(&format!("($1,${},${},${},${})", b + 2, b + 3, b + 4, b + 5));
+                    params.push(Box::new(*idx));
+                    params.push(Box::new(style_str(paper.style).to_string()));
+                    params.push(Box::new(color_to_i32(paper.color)));
+                    params.push(Box::new(*bookmarked));
+                }
+                let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+                let _ = c.execute(&sql, &refs);
+            }
         }
-        let _ = tx.commit();
     }
 
     // ---------- strokes ----------
@@ -352,7 +397,7 @@ impl Db {
         }
         let mut c = conn_guard(&self.conn);
         let now = now_ms();
-        const CHUNK: usize = 400;
+        const CHUNK: usize = 4000; // 행당 파라미터 8개 → 문장당 32,000개
         for chunk in strokes.chunks(CHUNK) {
             let mut sql = String::from(
                 "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) VALUES ",
@@ -409,16 +454,14 @@ impl Db {
 
     /// 문서의 strokes 테이블 전체를 스토어 상태로 재동기화합니다.
     /// (페이지 삽입/삭제/회전처럼 페이지 인덱스·좌표가 통째로 바뀌는 구조 연산용)
+    ///
+    /// 왕복 최소화: DELETE 1회 + 다중 행 INSERT ceil(N/4,000)회 —
+    /// 일반 문서(≤4,000획)는 **왕복 2회** (기존: 획 수만큼).
+    /// (같은 문장의 CTE는 같은 스냅샷을 공유해 재삽입 키가 충돌하므로
+    /// DELETE와 INSERT를 분리합니다.)
     pub fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
         let mut c = conn_guard(&self.conn);
-        let mut tx = match c.transaction() {
-            Ok(tx) => tx,
-            Err(_) => return,
-        };
-        let _ = tx.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
         let now = now_ms();
-        // 행별 INSERT는 획 수만큼 네트워크 왕복(원격 DB에서 수천 획 = 수 분) —
-        // 청크 단위 다중 행 INSERT로 왕복을 N → ceil(N/CHUNK)으로 줄입니다.
         let rows: Vec<(i64, i32, String, Vec<i32>, f32, Value, i64)> = store
             .pages()
             .flat_map(|page| {
@@ -439,20 +482,25 @@ impl Db {
                 })
             })
             .collect();
-        const CHUNK: usize = 400; // 행당 파라미터 8개 → 청크당 3,200개 (한계 65,535 안전)
+        if rows.is_empty() {
+            let _ = c.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
+            return;
+        }
+        let _ = c.execute("DELETE FROM strokes WHERE doc_id = $1", &[&doc_id]);
+        const CHUNK: usize = 4000; // 행당 파라미터 8개 → 문장당 32,000개 (한계 65,535 안전)
         for chunk in rows.chunks(CHUNK) {
             let mut sql = String::from(
                 "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) VALUES ",
             );
-            let mut params: Vec<&(dyn ToSql + Sync)> = Vec::with_capacity(chunk.len() * 8);
+            let mut params: Vec<Box<dyn ToSql + Sync>> = Vec::with_capacity(chunk.len() * 8 + 1);
+            params.push(Box::new(doc_id)); // $1 — 행마다 doc_id로 재사용
             for (i, r) in chunk.iter().enumerate() {
                 if i > 0 {
                     sql.push(',');
                 }
-                let b = i * 8;
+                let b = i * 7; // 행당 파라미터 7개 (doc_id는 공유 $1)
                 sql.push_str(&format!(
-                    "(${},${},${},${},${},${},${},${})",
-                    b + 1,
+                    "(${},$1,${},${},${},${},${},${})",
                     b + 2,
                     b + 3,
                     b + 4,
@@ -461,18 +509,17 @@ impl Db {
                     b + 7,
                     b + 8
                 ));
-                params.push(&r.0);
-                params.push(&doc_id);
-                params.push(&r.1);
-                params.push(&r.2);
-                params.push(&r.3);
-                params.push(&r.4);
-                params.push(&r.5);
-                params.push(&r.6);
+                params.push(Box::new(r.0));
+                params.push(Box::new(r.1));
+                params.push(Box::new(r.2.clone()));
+                params.push(Box::new(r.3.clone()));
+                params.push(Box::new(r.4));
+                params.push(Box::new(r.5.clone()));
+                params.push(Box::new(r.6));
             }
-            let _ = tx.execute(&sql, &params);
+            let refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(|p| &**p).collect();
+            let _ = c.execute(&sql, &refs);
         }
-        let _ = tx.commit();
     }
 
     /// 문서의 전체 주석/용지/북마크를 메모리 스토어로 로드합니다.
