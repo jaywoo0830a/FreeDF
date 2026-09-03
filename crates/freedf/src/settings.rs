@@ -60,6 +60,9 @@ pub struct SessionState {
     pub paper_style: PaperStyle,
     pub paper_color: [u8; 4],
     pub paper_size: PaperSize,
+    /// 캔버스(페이지 뒤 서라운드) 배경색 — 전역 기본값 + 탭별 상태.
+    #[serde(default = "default_canvas_color")]
+    pub canvas_color: [u8; 4],
     /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 — 각 스타일 독립.
     /// 한 스타일의 값 변경은 그 스타일을 쓰는 모든 페이지에 반영됩니다.
     #[serde(default)]
@@ -128,6 +131,11 @@ fn default_show_palette() -> bool {
     true
 }
 
+/// 캔버스 서라운드 기본색 — Nord NORD0 (#2E3440, 다크 테마 기본).
+fn default_canvas_color() -> [u8; 4] {
+    crate::theme::nord::semantic::PAGE_SURROUND.to_array()
+}
+
 /// 자주 쓰는 색 팔레트 최대 개수 (기본 3색 제한).
 pub const MAX_FAVORITE_COLORS: usize = 3;
 
@@ -185,6 +193,7 @@ impl Default for SessionState {
             paper_style: PaperStyle::Blank,
             paper_color: [255, 255, 255, 255],
             paper_size: PaperSize::A4,
+            canvas_color: default_canvas_color(),
             paper_style_settings: PaperStyleSettings::default(),
             show_notes: true,
             show_outline: false,

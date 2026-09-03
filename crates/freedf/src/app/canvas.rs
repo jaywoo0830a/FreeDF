@@ -76,6 +76,26 @@ const HALO_GEOM_MS: u64 = 50;
 /// (평소에는 로그 파일/콘솔 I/O 비용 0).
 static PEN_TRACE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 이번 프레임의 탭(펜 터치 시작/마우스 클릭) 좌표 — 이벤트 소스에 무관하게
+/// 잡습니다 (Windows Ink 펜은 `Event::Touch`, 마우스는 `PointerButton`로 옴).
+fn frame_tap_pos(ctx: &egui::Context) -> Option<Pos2> {
+    ctx.input(|i| {
+        i.events.iter().find_map(|e| match e {
+            egui::Event::PointerButton {
+                pos,
+                pressed: true,
+                ..
+            } => Some(*pos),
+            egui::Event::Touch {
+                phase: egui::TouchPhase::Start,
+                pos,
+                ..
+            } => Some(*pos),
+            _ => None,
+        })
+    })
+}
+
 pub(crate) fn set_pen_trace(on: bool) {
     PEN_TRACE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
 }
@@ -254,8 +274,8 @@ impl FreeDfApp {
             self.color_wheel_open = false;
             return;
         }
-        // 캔버스 중앙에 고정 — 펜 위치는 OTD 전용 모드에서 egui가 알 수 없습니다.
-        let center = canvas.center();
+        // 펜 위치(버튼을 누른 순간의 포인터)에 열리되, 캔버스 안으로 클램프.
+        let center = self.color_wheel_center(canvas);
 
         // 둘레 색: 즐겨찾기(전역) + 현재 계열 스와치 (중복 제거, 최대 8개).
         let mut ring = self.favorite_colors.clone();
@@ -273,7 +293,7 @@ impl FreeDfApp {
             .show(ctx, |ui| {
                 // 주의: `painter_at(rect)`의 rect는 **클립 영역**(화면 좌표) —
                 // 좌표 오프셋이 아닙니다. ZERO 기준 rect를 넘기면 원이 화면
-                // 좌상단에 그려지므로, 반드시 캔버스 중앙 기준 rect를 씁니다.
+                // 좌상단에 그려지므로, 반드시 화면 좌표 rect를 넘깁니다.
                 let rect = egui::Rect::from_center_size(
                     center,
                     egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
@@ -321,35 +341,55 @@ impl FreeDfApp {
                 );
                 painter.circle_filled(c, WHEEL_CENTER_R, cc);
                 painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
-            });
 
-        // 탭 판정 — 클릭 위치로 스와치/중앙/바깥을 구분합니다.
-        let pressed = ctx.input(|i| i.pointer.primary_pressed());
-        if !pressed {
-            return;
+                // 인터랙션 — 이 응답이 휠 영역의 탭을 **실제로 받아**
+                // 캔버스로 새지 않게 합니다 (Painter만으로는 클릭이 안 먹음).
+                let local_rect = egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
+                );
+                let resp = ui.interact(
+                    local_rect,
+                    ui.id().with("color_wheel_hit"),
+                    egui::Sense::click(),
+                );
+                if resp.clicked() {
+                    if let Some(p) = resp.interact_pointer_pos() {
+                        // p는 영역 로컬 좌표 (0..112, 0..112).
+                        let lc = egui::pos2(WHEEL_BACK_R, WHEEL_BACK_R);
+                        if p.distance(lc) <= WHEEL_CENTER_R {
+                            self.color_wheel_open = false; // 중앙 탭 = 변경 없이 닫기.
+                            return;
+                        }
+                        use std::f32::consts::TAU;
+                        for (i, color) in ring.iter().enumerate() {
+                            let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
+                            let sc = lc + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
+                            if p.distance(sc) <= WHEEL_SWATCH_R + 3.0 {
+                                self.apply_wheel_color(*color);
+                                self.color_wheel_open = false;
+                                return;
+                            }
+                        }
+                        // 뒷판의 빈 곳 탭 → 그냥 닫기.
+                        self.color_wheel_open = false;
+                    }
+                }
+            });
+    }
+
+    /// 원형 팔레트의 화면 중심 — 펜 위치(버튼을 누른 순간의 포인터)를
+    /// 캔버스 안으로 클램프합니다 (캔버스가 휠보다 작으면 캔버스 중심).
+    fn color_wheel_center(&self, canvas: Rect) -> Pos2 {
+        let ax = canvas.min.x + self.color_wheel_anchor[0];
+        let ay = canvas.min.y + self.color_wheel_anchor[1];
+        if canvas.width() < WHEEL_BACK_R * 2.0 || canvas.height() < WHEEL_BACK_R * 2.0 {
+            return canvas.center();
         }
-        let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
-            return;
-        };
-        if pos.distance(center) <= WHEEL_CENTER_R {
-            self.color_wheel_open = false; // 중앙 탭 = 변경 없이 닫기.
-            return;
-        }
-        if pos.distance(center) > WHEEL_BACK_R {
-            return; // 바깥 클릭은 handle_canvas_input 가드가 닫습니다.
-        }
-        use std::f32::consts::TAU;
-        for (i, color) in ring.iter().enumerate() {
-            let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
-            let sc = center + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
-            if pos.distance(sc) <= WHEEL_SWATCH_R + 3.0 {
-                self.apply_wheel_color(*color);
-                self.color_wheel_open = false;
-                return;
-            }
-        }
-        // 뒷판의 빈 곳 탭 → 그냥 닫기.
-        self.color_wheel_open = false;
+        egui::pos2(
+            ax.clamp(canvas.min.x + WHEEL_BACK_R, canvas.max.x - WHEEL_BACK_R),
+            ay.clamp(canvas.min.y + WHEEL_BACK_R, canvas.max.y - WHEEL_BACK_R),
+        )
     }
 
     /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
@@ -841,8 +881,13 @@ impl FreeDfApp {
         self.prev_canvas = canvas_size;
         self.last_canvas = canvas_size;
 
-        // Background behind the page (Nord canvas surround — dark mode)
-        let bg = crate::theme::nord::semantic::PAGE_SURROUND;
+        // Background behind the page (canvas surround — 사용자 지정 색)
+        let bg = Color32::from_rgba_unmultiplied(
+            self.canvas_color[0],
+            self.canvas_color[1],
+            self.canvas_color[2],
+            self.canvas_color[3],
+        );
         painter.rect_filled(canvas, egui::CornerRadius::ZERO, bg);
 
         if self.document.is_none() {
@@ -877,6 +922,13 @@ impl FreeDfApp {
             let prev = self.pen_buttons;
             self.pen_buttons = st.buttons;
             if st.buttons.button1 && !prev.button1 {
+                // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
+                if !self.color_wheel_open {
+                    self.color_wheel_anchor = ctx
+                        .input(|i| i.pointer.hover_pos())
+                        .map(|p| [p.x - origin.x, p.y - origin.y])
+                        .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+                }
                 self.on_pen_button(1, true);
             }
             if st.buttons.button2 && !prev.button2 {
@@ -1527,18 +1579,20 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
-        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 바깥 프레스는 닫고 삼킴.
-        // 휠 안 프레스는 여기서 무시하고 color_wheel_overlay가 처리합니다.
-        if self.color_wheel_open && ctx.input(|i| i.pointer.primary_pressed()) {
-            let wheel_center =
-                origin + egui::vec2(canvas_size[0] * 0.5, canvas_size[1] * 0.5);
-            if let Some(abs) = ctx.input(|i| i.pointer.latest_pos()) {
-                let on_wheel = abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0;
-                if !on_wheel {
-                    self.color_wheel_open = false;
-                    self.wheel_swallow_click = true;
+        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 탭을 휠이 전담합니다.
+        if self.color_wheel_open {
+            if let Some(abs) = frame_tap_pos(ctx) {
+                let canvas_rect =
+                    egui::Rect::from_min_size(origin, egui::vec2(canvas_size[0], canvas_size[1]));
+                let wheel_center = self.color_wheel_center(canvas_rect);
+                if abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0 {
+                    // 휠 안 탭 — color_wheel_overlay가 처리, 캔버스 입력은 스킵.
                     return;
                 }
+                // 바깥 탭 — 닫고 점 없이 삼킵니다.
+                self.color_wheel_open = false;
+                self.wheel_swallow_click = true;
+                return;
             }
         }
 

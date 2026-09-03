@@ -148,6 +148,14 @@ const LINE_COLOR_PRESETS: [[u8; 4]; 4] = [
     [45, 48, 56, 150],    // 진회색
 ];
 
+/// 캔버스(페이지 뒤 서라운드) 색 프리셋 (RGBA) — Canvas 설정 창에서 선택.
+const CANVAS_COLOR_PRESETS: [[u8; 4]; 4] = [
+    [46, 52, 64, 255],    // Nord (#2E3440 — 기본)
+    [17, 17, 27, 255],    // 차콜
+    [40, 44, 52, 255],    // 그라파이트
+    [224, 228, 236, 255], // 라이트
+];
+
 impl FreeDfApp {
     /// 볼펜(일반 펜) 세부 설정 — 전용 플로팅 창 내용 (툴바 Settings 버튼으로 열림).
     /// 툴바에는 색/두께/필수 토글만 남기고 나머지는 여기서 지정합니다.
@@ -495,6 +503,55 @@ impl FreeDfApp {
 
     /// Paper 세부 설정 — 전용 플로팅 창 내용 (툴바 Paper 옆 Settings 버튼으로 열림).
     ///
+    /// Canvas(페이지 뒤 배경) 색 설정 창 내용 — 프리셋 + 커스텀 색.
+    fn canvas_settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Canvas background").strong());
+        ui.label(
+            egui::RichText::new(
+                "The area behind the page (page surround).\n\
+                 Applies immediately and is saved with the session.",
+            )
+            .weak()
+            .small(),
+        );
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
+                let color = Color32::from_rgba_unmultiplied(
+                    preset[0],
+                    preset[1],
+                    preset[2],
+                    preset[3],
+                );
+                let selected = self.canvas_color == *preset;
+                if color_circle_swatch(ui, ("canvas_preset", i), color, selected)
+                    .on_hover_text("Preset")
+                    .clicked()
+                {
+                    self.canvas_color = *preset;
+                    self.save_default_session();
+                    self.save_session();
+                }
+            }
+        });
+        ui.add_space(4.0);
+        let mut custom = Color32::from_rgba_unmultiplied(
+            self.canvas_color[0],
+            self.canvas_color[1],
+            self.canvas_color[2],
+            self.canvas_color[3],
+        );
+        if ui
+            .color_edit_button_srgba(&mut custom)
+            .on_hover_text("Custom canvas color")
+            .changed()
+        {
+            self.canvas_color = custom.to_array();
+            self.save_default_session();
+            self.save_session();
+        }
+    }
+
     /// 적용 규칙 (명확하게):
     /// - 스타일/색 선택: **현재 페이지에 즉시 적용** + 앞으로 만드는
     ///   페이지의 기본값이 됩니다.
@@ -1248,6 +1305,22 @@ impl FreeDfApp {
                 {
                     self.paper_settings_open = true;
                 }
+                ui.separator();
+
+                // Canvas (페이지 뒤 배경색) — 전용 설정 창으로 지정.
+                ui.label(icon_text(ui, "Canvas", icons::IMAGE));
+                let canvas_color = Color32::from_rgba_unmultiplied(
+                    self.canvas_color[0],
+                    self.canvas_color[1],
+                    self.canvas_color[2],
+                    self.canvas_color[3],
+                );
+                if color_circle_swatch(ui, "canvas_swatch", canvas_color, false)
+                    .on_hover_text("Canvas background (page surround) — click to open settings")
+                    .clicked()
+                {
+                    self.canvas_settings_open = true;
+                }
                 });
             });
 
@@ -1618,6 +1691,19 @@ impl FreeDfApp {
                     });
                 });
             self.paper_settings_open = open;
+        }
+
+        // ── Canvas(페이지 뒤 배경색) 설정 플로팅 창 ──
+        if self.canvas_settings_open {
+            let mut open = self.canvas_settings_open;
+            egui::Window::new("Canvas settings")
+                .open(&mut open)
+                .resizable(false)
+                .default_width(330.0)
+                .show(ui.ctx(), |ui| {
+                    self.canvas_settings_ui(ui);
+                });
+            self.canvas_settings_open = open;
         }
 
         // ── 미디어 서버 연결 설정 창 (툴바 Server 버튼) ──

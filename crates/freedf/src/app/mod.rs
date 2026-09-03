@@ -522,6 +522,8 @@ pub struct TabEntry {
     paper_style: PaperStyle,
     paper_color: [u8; 4],
     paper_size: PaperSize,
+    /// 캔버스(페이지 뒤 서라운드) 배경색 — 탭별 상태.
+    canvas_color: [u8; 4],
     /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 프리셋 — 각 스타일 독립.
     paper_style_settings: PaperStyleSettings,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
@@ -648,6 +650,8 @@ pub struct FreeDfApp {
     tool_settings_open: bool,
     /// Paper 세부 설정 플로팅 창 표시 여부 (임시)
     paper_settings_open: bool,
+    /// Canvas(서라운드 배경색) 설정 플로팅 창 표시 여부 (임시)
+    canvas_settings_open: bool,
     /// 마지막으로 감지된 입력 장치 (펜/마우스)
     input_device: InputDevice,
     /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
@@ -743,6 +747,8 @@ pub struct FreeDfApp {
     paper_color: [u8; 4],
     /// 종이 크기 (새 페이지/노트 기본값)
     paper_size: PaperSize,
+    /// 캔버스(페이지 뒤 서라운드) 배경색.
+    canvas_color: [u8; 4],
     /// 스타일별(Ruled/Grid/Dotted) 줄/점 세부설정 — 각 스타일 독립.
     paper_style_settings: PaperStyleSettings,
     /// Paper 설정 창 "범위 적용" 임시 입력 (1-based 페이지 번호).
@@ -754,6 +760,8 @@ pub struct FreeDfApp {
     color_wheel_open: bool,
     /// 원형 팔레트가 열린 시각 (ms) — 일정 시간 입력이 없으면 자동 닫힘.
     color_wheel_opened_at: u64,
+    /// 원형 팔레트가 열린 위치 (캔버스 좌표) — 펜 위치, 클램프 후 사용.
+    color_wheel_anchor: [f32; 2],
     /// 원형 팔레트를 닫은 바깥 탭의 릴리스(점)를 한 번만 무시하는 표식.
     wheel_swallow_click: bool,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
@@ -970,6 +978,11 @@ impl FreeDfApp {
         };
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
+        let canvas_color = if has {
+            s.canvas_color
+        } else {
+            crate::theme::nord::semantic::PAGE_SURROUND.to_array()
+        };
         let paper_size = if has { s.paper_size } else { PaperSize::A4 };
         let paper_style_settings = if has {
             s.paper_style_settings
@@ -1116,6 +1129,7 @@ impl FreeDfApp {
             tool_drop: None,
             tool_settings_open: false,
             paper_settings_open: false,
+            canvas_settings_open: false,
             input_device: InputDevice::Mouse,
             last_touch_time: None,
             mouse_draws,
@@ -1159,12 +1173,14 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
+            canvas_color,
             paper_style_settings,
             paper_range_from: 0,
             paper_range_to: 0,
             insert_page_count: 1,
             color_wheel_open: false,
             color_wheel_opened_at: 0,
+            color_wheel_anchor: [0.0, 0.0],
             wheel_swallow_click: false,
             custom_paper_size,
             smoothing,
@@ -1277,6 +1293,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            canvas_color: self.canvas_color,
             paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
@@ -1673,6 +1690,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            canvas_color: self.canvas_color,
             paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
@@ -1972,6 +1990,7 @@ impl FreeDfApp {
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
         self.paper_size = s.paper_size;
+        self.canvas_color = s.canvas_color;
         self.paper_style_settings = s.paper_style_settings;
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);

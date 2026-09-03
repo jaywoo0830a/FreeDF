@@ -138,6 +138,7 @@ impl FreeDfApp {
         tab.paper_style = self.paper_style;
         tab.paper_color = self.paper_color;
         tab.paper_size = self.paper_size;
+        tab.canvas_color = self.canvas_color;
         tab.paper_style_settings = self.paper_style_settings;
         tab.custom_paper_size = self.custom_paper_size;
         tab.smoothing = self.smoothing;
@@ -187,6 +188,7 @@ impl FreeDfApp {
             paper_style,
             paper_color,
             paper_size,
+            canvas_color,
             paper_style_settings,
             custom_paper_size,
             smoothing,
@@ -234,6 +236,7 @@ impl FreeDfApp {
                 tab.paper_style,
                 tab.paper_color,
                 tab.paper_size,
+                tab.canvas_color,
                 tab.paper_style_settings,
                 tab.custom_paper_size,
                 tab.smoothing,
@@ -294,6 +297,7 @@ impl FreeDfApp {
         self.paper_style = paper_style;
         self.paper_color = paper_color;
         self.paper_size = paper_size;
+        self.canvas_color = canvas_color;
         self.paper_style_settings = paper_style_settings;
         self.custom_paper_size = custom_paper_size;
         self.smoothing = smoothing;
@@ -382,6 +386,7 @@ impl FreeDfApp {
             paper_style: self.paper_style,
             paper_color: self.paper_color,
             paper_size: self.paper_size,
+            canvas_color: self.canvas_color,
             paper_style_settings: self.paper_style_settings,
             custom_paper_size: self.custom_paper_size,
             smoothing: self.smoothing,
