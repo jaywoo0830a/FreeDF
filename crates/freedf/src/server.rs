@@ -67,7 +67,6 @@ impl MediaServerConfig {
 }
 
 /// 서버가 반환하는 미디어 객체 (백엔드 JSON과 1:1).
-#[allow(dead_code)] // 로드맵 ③(목록/업로드 UI)에서 소비 예정.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaObject {
     pub id: i64,
@@ -99,6 +98,11 @@ impl MediaClient {
         }
     }
 
+    /// 설정이 활성화(enabled)됐을 때만 클라이언트를 만듭니다.
+    pub fn new_enabled(config: &MediaServerConfig) -> Option<Self> {
+        config.enabled.then(|| Self::new(config))
+    }
+
     /// GET 요청 (X-Api-Key 포함). 상태 코드가 2xx가 아니면 Err.
     fn get(&self, path: &str) -> Result<ureq::Response, String> {
         self.agent
@@ -118,7 +122,6 @@ impl MediaClient {
     }
 
     /// 미디어 목록 (최신순). `doc_id`가 Some이면 해당 문서만.
-    #[allow(dead_code)] // 로드맵 ③에서 UI에 연결 예정.
     pub fn list(
         &self,
         doc_id: Option<i64>,
@@ -135,7 +138,6 @@ impl MediaClient {
 
     /// 파일 업로드 (multipart/form-data 직접 구성 — ureq 2.x에는
     /// multipart 헬퍼 모듈이 없으므로 본문을 수동 조립).
-    #[allow(dead_code)] // 로드맵 ③에서 녹음 업로드에 연결 예정.
     pub fn upload(
         &self,
         doc_id: Option<i64>,
@@ -161,7 +163,6 @@ impl MediaClient {
     }
 
     /// 삭제 — 파일과 메타데이터 행을 함께 제거.
-    #[allow(dead_code)] // 로드맵 ③에서 삭제 UI에 연결 예정.
     pub fn delete(&self, id: i64) -> Result<(), String> {
         let resp = self
             .agent
@@ -192,8 +193,27 @@ fn http_err(e: ureq::Error) -> String {
     }
 }
 
+/// 파일 확장자 → MIME (업로드 Content-Type 힌트용).
+pub fn mime_for_ext(file_name: &str) -> &'static str {
+    let ext = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "m4a" | "m4b" | "mp4" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "webm" => "audio/webm",
+        "ogg" | "oga" => "audio/ogg",
+        "aac" => "audio/aac",
+        "flac" => "audio/flac",
+        "opus" => "audio/opus",
+        _ => "application/octet-stream",
+    }
+}
+
 /// multipart/form-data 본문 (파일 필드 하나).
-#[allow(dead_code)] // upload()와 함께 로드맵 ③에서 사용 예정.
 fn multipart_body(boundary: &str, file_name: &str, mime: &str, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() + 256);
     out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
@@ -210,7 +230,6 @@ fn multipart_body(boundary: &str, file_name: &str, mime: &str, data: &[u8]) -> V
 }
 
 /// 쿼리 값 URL 인코딩 (영숫자/-_/. 외에는 %XX).
-#[allow(dead_code)] // upload()와 함께 로드맵 ③에서 사용 예정.
 fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
@@ -285,5 +304,43 @@ mod tests {
     fn urlencode_keeps_safe_chars_only() {
         assert_eq!(urlencode("audio"), "audio");
         assert_eq!(urlencode("a b"), "a%20b");
+    }
+
+    #[test]
+    fn mime_for_ext_maps_common_audio_types() {
+        assert_eq!(mime_for_ext("rec.m4a"), "audio/mp4");
+        assert_eq!(mime_for_ext("REC.MP3"), "audio/mpeg");
+        assert_eq!(mime_for_ext("voice.wav"), "audio/wav");
+        assert_eq!(mime_for_ext("noext"), "application/octet-stream");
+    }
+
+    /// 실서버 왕복 — `FREEDF_TEST_MEDIA=1 cargo test -p freedf media_client_against_live_server`
+    /// (로컬에서 서버/backend를 127.0.0.1:9091로 띄운 상태에서 실행).
+    #[test]
+    fn media_client_against_live_server() {
+        if std::env::var("FREEDF_TEST_MEDIA").as_deref() != Ok("1") {
+            return;
+        }
+        let cfg = MediaServerConfig {
+            enabled: true,
+            base_url: "http://127.0.0.1:9091".into(),
+            api_key: "e2e-test-key".into(),
+        };
+        let client = MediaClient::new(&cfg);
+        client.health().expect("health");
+
+        // 수동 조립한 multipart 본문이 axum Multipart가 파싱하는지가 핵심.
+        let obj = client
+            .upload(Some(43), "audio", "client-upload.m4a", "audio/mp4", b"CLIENT-BODY-TEST")
+            .expect("upload");
+        assert_eq!(obj.name, "client-upload.m4a");
+        assert_eq!(obj.doc_id, Some(43));
+
+        let items = client.list(Some(43), 10, 0).expect("list");
+        assert!(items.iter().any(|m| m.id == obj.id), "uploaded item missing");
+
+        client.delete(obj.id).expect("delete");
+        let after = client.list(Some(43), 10, 0).expect("list after delete");
+        assert!(!after.iter().any(|m| m.id == obj.id));
     }
 }

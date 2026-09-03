@@ -88,7 +88,8 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/api/media", post(upload).get(list))
-        .route("/api/media/{id}", delete(remove))
+        // axum 0.7은 matchit 0.7 — 경로 파라미터는 `:id` 문법 ({}는 0.8+).
+        .route("/api/media/:id", delete(remove))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind)
@@ -241,7 +242,7 @@ async fn list(
     Json(out).into_response()
 }
 
-/// DELETE /api/media/{id} — 파일 + 행 삭제.
+/// DELETE /api/media/:id — 파일 + 행 삭제.
 async fn remove(
     State(state): State<AppState>,
     headers: HeaderMap,

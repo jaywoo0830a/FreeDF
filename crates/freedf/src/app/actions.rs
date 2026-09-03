@@ -902,6 +902,116 @@ impl FreeDfApp {
         self.status = Some("Annotations reloaded from database.".to_string());
     }
 
+    // ---------- Media (audio recordings) ----------
+
+    /// 현재 문서의 미디어 목록을 서버에서 다시 불러옵니다.
+    pub(crate) fn media_refresh(&mut self) {
+        let Some(doc_id) = self.doc_id else {
+            return;
+        };
+        let Some(client) = MediaClient::new_enabled(&self.media_config) else {
+            self.media_status = Some("Media server is not enabled — open Server settings.".into());
+            return;
+        };
+        // 실패해도 다시 시도하지 않게 문서 id는 먼저 기록 (수동 Refresh로 재시도).
+        self.media_loaded_for = Some(doc_id);
+        match client.list(Some(doc_id), 100, 0) {
+            Ok(items) => {
+                self.media_status = if items.is_empty() {
+                    Some("No recordings yet.".into())
+                } else {
+                    None
+                };
+                self.media_items = items;
+            }
+            Err(e) => {
+                self.media_items.clear();
+                self.media_status = Some(format!("Could not load recordings: {e}"));
+            }
+        }
+    }
+
+    /// 업로드 파일 선택 — Windows는 네이티브 대화상자, 그 외엔 경로 입력.
+    pub(crate) fn upload_media_dialog(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter(
+                    "Audio files",
+                    &["m4a", "mp3", "wav", "webm", "ogg", "aac", "flac", "m4b", "opus"],
+                )
+                .pick_file()
+            {
+                self.upload_media_path(&path);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.modal = Some(ModalState::ask_text(
+                "Upload recording",
+                "Enter the audio file path (e.g. /home/me/rec.m4a)",
+                TextAction::UploadMedia,
+            ));
+        }
+    }
+
+    /// 파일을 현재 문서의 녹음으로 업로드합니다.
+    pub(crate) fn upload_media_path(&mut self, path: &Path) {
+        let Some(doc_id) = self.doc_id else {
+            self.media_status = Some("Open a document first.".into());
+            return;
+        };
+        let Some(client) = MediaClient::new_enabled(&self.media_config) else {
+            self.media_status = Some("Media server is not enabled — open Server settings.".into());
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "upload.bin".into());
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.media_status = Some(format!("Could not read file: {e}"));
+                return;
+            }
+        };
+        if bytes.len() > 200 * 1024 * 1024 {
+            self.media_status = Some("File is larger than 200 MB (server limit).".into());
+            return;
+        }
+        let mime = crate::server::mime_for_ext(&name);
+        match client.upload(Some(doc_id), "audio", &name, mime, &bytes) {
+            Ok(obj) => {
+                self.media_status = Some(format!("Uploaded {}", obj.name));
+                self.media_refresh();
+            }
+            Err(e) => self.media_status = Some(format!("Upload failed: {e}")),
+        }
+    }
+
+    /// 녹음 하나를 서버에서 삭제합니다 (파일 + 메타데이터).
+    pub(crate) fn delete_media_item(&mut self, id: i64) {
+        let Some(client) = MediaClient::new_enabled(&self.media_config) else {
+            self.media_status = Some("Media server is not enabled.".into());
+            return;
+        };
+        match client.delete(id) {
+            Ok(()) => {
+                self.media_status = Some("Deleted.".into());
+                self.media_refresh();
+            }
+            Err(e) => self.media_status = Some(format!("Delete failed: {e}")),
+        }
+    }
+
+    /// 녹음 URL을 OS 기본 미디어 플레이어로 엽니다 (nginx가 스트리밍).
+    pub(crate) fn play_media_item(&mut self, url: String) {
+        if let Err(e) = open_in_system_player(&url) {
+            self.media_status = Some(format!("Could not open player: {e}"));
+        }
+    }
+
     pub(crate) fn run_text_action(&mut self, action: TextAction, text: String) {
         match action {
             TextAction::NewNote => self.create_note_action(text.trim()),
@@ -911,6 +1021,7 @@ impl FreeDfApp {
                 }
             }
             TextAction::OpenPdf => self.open_pdf(&PathBuf::from(text.trim())),
+            TextAction::UploadMedia => self.upload_media_path(&PathBuf::from(text.trim())),
         }
     }
 
@@ -938,4 +1049,26 @@ impl FreeDfApp {
             }
         }
     }
+}
+
+/// URL을 OS 기본 플레이어로 엽니다 (미디어 스트리밍은 nginx가 직접 서빙).
+#[cfg(target_os = "windows")]
+fn open_in_system_player(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn open_in_system_player(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(url).spawn().map(|_| ())
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn open_in_system_player(url: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
 }

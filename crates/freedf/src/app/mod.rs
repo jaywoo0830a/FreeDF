@@ -66,7 +66,7 @@ pub(crate) use crate::storage::StorageBackend;
 pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
-pub(crate) use crate::server::{MediaClient, MediaServerConfig};
+pub(crate) use crate::server::{MediaClient, MediaObject, MediaServerConfig};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
 pub(crate) use egui_phosphor_icons::icons;
 pub(crate) use pdfium_render::prelude::Pdfium;
@@ -300,6 +300,8 @@ pub(crate) enum TextAction {
     NewNote,
     RenameNote,
     OpenPdf,
+    /// 미디어(녹음) 업로드 — 비 Windows에서 경로 입력 폴백.
+    UploadMedia,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -766,6 +768,15 @@ pub struct FreeDfApp {
     server_settings_open: bool,
     /// 설정 창의 마지막 테스트/저장 결과 (성공 여부, 메시지).
     server_msg: Option<(bool, String)>,
+    // ---------- Media (audio recordings) ----------
+    /// 녹음 패널 표시 여부 (툴바 Media 버튼).
+    show_media: bool,
+    /// 현재 문서의 미디어 목록 캐시.
+    media_items: Vec<MediaObject>,
+    /// `media_items`를 로드한 문서 id (문서가 바뀌면 재로드).
+    media_loaded_for: Option<i64>,
+    /// 패널 안 마지막 작업 결과 메시지.
+    media_status: Option<String>,
     // ---------- Close confirmation ----------
     asking_close: bool,
     quitting: bool,
@@ -1073,6 +1084,10 @@ impl FreeDfApp {
             media_config,
             server_settings_open: false,
             server_msg: None,
+            show_media: false,
+            media_items: Vec::new(),
+            media_loaded_for: None,
+            media_status: None,
             asking_close: false,
             quitting: false,
         }
@@ -1707,6 +1722,15 @@ impl eframe::App for FreeDfApp {
                 .max_size(460.0)
                 .show(ui, |ui| self.outline_panel(ui));
             self.outline_width = resp.response.rect.width().clamp(160.0, 460.0);
+        }
+        if !minimal && self.show_media {
+            let panel_id = egui::Id::new(("media_panel", self.active));
+            egui::Panel::left(panel_id)
+                .resizable(true)
+                .default_size(300.0)
+                .min_size(200.0)
+                .max_size(460.0)
+                .show(ui, |ui| self.media_panel(ui));
         }
 
         egui::CentralPanel::default().show(ui, |ui| {

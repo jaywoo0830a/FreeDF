@@ -915,6 +915,14 @@ impl FreeDfApp {
                 {
                     self.server_msg = None;
                 }
+                if ui
+                    .toggle_value(&mut self.show_media, icon_text(ui, "Media", icons::MICROPHONE))
+                    .on_hover_text("Recordings for this document — upload / play / delete")
+                    .changed()
+                {
+                    // 열릴 때 목록 갱신.
+                    self.media_refresh();
+                }
                 ui.separator();
 
                 // Bookmark the current page + jump list.

@@ -42,7 +42,7 @@ docker compose up -d --build
 | GET | `/health` | 상태 확인 |
 | POST | `/api/media?doc_id=1&kind=audio` | multipart `file` 업로드 → JSON 메타데이터 반환 |
 | GET | `/api/media?doc_id=1&limit=50&offset=0` | 목록 (최신순) |
-| DELETE | `/api/media/{id}` | 파일+행 삭제 |
+| DELETE | `/api/media/:id` | 파일+행 삭제 |
 
 ## TLS
 
