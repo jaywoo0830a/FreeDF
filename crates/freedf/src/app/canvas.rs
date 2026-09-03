@@ -202,9 +202,13 @@ impl FreeDfApp {
     pub(crate) fn on_pen_button(&mut self, button: u8, _pressed: bool) {
         match button {
             1 => {
-                // 버튼 1: 원형 색상 팔레트를 펜 위치에 열고 닫습니다
-                // (열기 위치는 canvas()의 폴링에서 펜 위치로 설정).
+                // 버튼 1: 원형 색상 팔레트를 **캔버스 중앙**에 열고 닫습니다.
+                // (OTD 전용 모드에서는 펜의 화면 좌표를 egui가 알 수 없어서
+                // 포인터 위치 대신 중앙 고정 — 좌측 끝에 뜨던 문제 방지)
                 self.color_wheel_open = !self.color_wheel_open;
+                if self.color_wheel_open {
+                    self.color_wheel_opened_at = now_ms();
+                }
                 self.status = Some(if self.color_wheel_open {
                     "Color wheel open — tap a color".into()
                 } else {
@@ -235,17 +239,23 @@ impl FreeDfApp {
     }
 
     /// 굿노트식 **원형 색상 팔레트** 오버레이 — 펜 사이드 버튼으로 열립니다.
-    /// 중앙 = 현재 색, 둘레 = 즐겨찾기 + 현재 계열 스와치. 탭하면 적용+닫힘.
+    /// **캔버스 중앙**에 고정 표시 (중앙 = 현재 색, 둘레 = 즐겨찾기 + 계열
+    /// 스와치). 탭하면 적용+닫힘, 4초간 입력 없으면 자동으로 닫힙니다.
     pub(crate) fn color_wheel_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
         if !self.color_wheel_open {
             return;
         }
-        // 펜 위치에 열리되 캔버스 안에 들어오도록 클램프.
-        let cx = (canvas.min.x + self.color_wheel_anchor[0])
-            .clamp(canvas.min.x + WHEEL_BACK_R, canvas.max.x - WHEEL_BACK_R);
-        let cy = (canvas.min.y + self.color_wheel_anchor[1])
-            .clamp(canvas.min.y + WHEEL_BACK_R, canvas.max.y - WHEEL_BACK_R);
-        let center = egui::pos2(cx, cy);
+        // 방치 시 자동 닫힘 (누르는 중이면 유지).
+        const WHEEL_AUTO_CLOSE_MS: u64 = 4000;
+        if self.color_wheel_opened_at != 0
+            && now_ms().saturating_sub(self.color_wheel_opened_at) > WHEEL_AUTO_CLOSE_MS
+            && !ctx.input(|i| i.pointer.any_down())
+        {
+            self.color_wheel_open = false;
+            return;
+        }
+        // 캔버스 중앙에 고정 — 펜 위치는 OTD 전용 모드에서 egui가 알 수 없습니다.
+        let center = canvas.center();
 
         // 둘레 색: 즐겨찾기(전역) + 현재 계열 스와치 (중복 제거, 최대 8개).
         let mut ring = self.favorite_colors.clone();
@@ -864,13 +874,6 @@ impl FreeDfApp {
             let prev = self.pen_buttons;
             self.pen_buttons = st.buttons;
             if st.buttons.button1 && !prev.button1 {
-                // 굿노트식 원형 팔레트 토글 — 펜 위치(없으면 캔버스 중심)에 엽니다.
-                if !self.color_wheel_open {
-                    self.color_wheel_anchor = ctx
-                        .input(|i| i.pointer.hover_pos())
-                        .map(|p| [p.x - origin.x, p.y - origin.y])
-                        .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-                }
                 self.on_pen_button(1, true);
             }
             if st.buttons.button2 && !prev.button2 {
@@ -1524,8 +1527,8 @@ impl FreeDfApp {
         // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 바깥 프레스는 닫고 삼킴.
         // 휠 안 프레스는 여기서 무시하고 color_wheel_overlay가 처리합니다.
         if self.color_wheel_open && ctx.input(|i| i.pointer.primary_pressed()) {
-            let wheel_center = origin
-                + egui::vec2(self.color_wheel_anchor[0], self.color_wheel_anchor[1]);
+            let wheel_center =
+                origin + egui::vec2(canvas_size[0] * 0.5, canvas_size[1] * 0.5);
             if let Some(abs) = ctx.input(|i| i.pointer.latest_pos()) {
                 let on_wheel = abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0;
                 if !on_wheel {

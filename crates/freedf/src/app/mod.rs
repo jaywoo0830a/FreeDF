@@ -752,8 +752,8 @@ pub struct FreeDfApp {
     insert_page_count: usize,
     /// 펜 사이드 버튼 1로 여는 원형 색상 팔레트(굿노트식) 표시 여부 (임시).
     color_wheel_open: bool,
-    /// 원형 팔레트가 열린 위치 (캔버스 좌표).
-    color_wheel_anchor: [f32; 2],
+    /// 원형 팔레트가 열린 시각 (ms) — 일정 시간 입력이 없으면 자동 닫힘.
+    color_wheel_opened_at: u64,
     /// 원형 팔레트를 닫은 바깥 탭의 릴리스(점)를 한 번만 무시하는 표식.
     wheel_swallow_click: bool,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
@@ -1164,7 +1164,7 @@ impl FreeDfApp {
             paper_range_to: 0,
             insert_page_count: 1,
             color_wheel_open: false,
-            color_wheel_anchor: [0.0, 0.0],
+            color_wheel_opened_at: 0,
             wheel_swallow_click: false,
             custom_paper_size,
             smoothing,
