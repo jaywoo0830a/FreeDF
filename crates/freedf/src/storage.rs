@@ -21,6 +21,7 @@ use freedf_core::model::Stroke;
 use freedf_core::paper::PagePaper;
 use freedf_core::store::AnnotationStore;
 use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -256,6 +257,13 @@ pub struct CachingBackend {
 struct CacheInner {
     cache: LocalCache,
     pending: Vec<PendingOp>,
+    /// 메모리 병합 스토어 — UI 스레드는 파일 직렬화 없이 O(1)로 갱신하고,
+    /// 비싼 JSON 직렬화/디스크 쓰기는 백그라운드 스레드(persist_dirty)가 합니다.
+    stores: BTreeMap<i64, AnnotationStore>,
+    dirty_stores: HashSet<i64>,
+    /// 메모리 편집 저널 캐시 (동일한 이유로 메모리 우선).
+    edits: BTreeMap<i64, Vec<Edit>>,
+    dirty_edits: HashSet<i64>,
 }
 
 impl CachingBackend {
@@ -265,7 +273,14 @@ impl CachingBackend {
         let pending = cache.load_pending();
         Self {
             remote,
-            inner: Arc::new(Mutex::new(CacheInner { cache, pending })),
+            inner: Arc::new(Mutex::new(CacheInner {
+                cache,
+                pending,
+                stores: BTreeMap::new(),
+                dirty_stores: HashSet::new(),
+                edits: BTreeMap::new(),
+                dirty_edits: HashSet::new(),
+            })),
         }
     }
 
@@ -273,14 +288,46 @@ impl CachingBackend {
     pub fn start_flusher(self: &Arc<Self>) {
         let me = Arc::clone(self);
         std::thread::spawn(move || loop {
+            me.persist_dirty();
             me.flush_pending();
             std::thread::sleep(std::time::Duration::from_millis(1000));
         });
     }
 
+    /// 더러워진 메모리 캐시(스토어/저널)를 디스크에 기록합니다.
+    /// 직렬화는 **락 밖**에서 — UI 스레드가 파일 쓰기 동안 대기하지 않습니다.
+    /// (스냅샷 이후 새로 쌓인 변경은 dirty 플래그가 남아 다음 주기에 기록)
+    fn persist_dirty(&self) {
+        let (stores, edits) = {
+            let mut g = self.inner.lock().expect("cache mutex poisoned");
+            let stores: Vec<(i64, AnnotationStore)> = g
+                .dirty_stores
+                .iter()
+                .filter_map(|d| g.stores.get(d).map(|s| (*d, s.clone())))
+                .collect();
+            let edits: Vec<(i64, Vec<Edit>)> = g
+                .dirty_edits
+                .iter()
+                .filter_map(|d| g.edits.get(d).map(|e| (*d, e.clone())))
+                .collect();
+            g.dirty_stores.clear();
+            g.dirty_edits.clear();
+            (stores, edits)
+        };
+        let g = self.inner.lock().expect("cache mutex poisoned");
+        for (doc, store) in stores {
+            g.cache.put_store(doc, &store);
+        }
+        for (doc, edits) in edits {
+            g.cache.put_edits(doc, &edits);
+        }
+    }
+
     /// 대기열을 원격에 **순서대로** 플러시. 전부 반영되면 true,
     /// 원격 연결이 없으면 대기열을 그대로 보류하고 false.
     pub fn flush_pending(&self) -> bool {
+        // 디스크 캐시도 함께 반영 (테스트/수동 플러시 경로에서도 동일 상태 유지).
+        self.persist_dirty();
         loop {
             let ops = {
                 let mut g = self.inner.lock().expect("cache mutex poisoned");
@@ -381,9 +428,13 @@ impl StorageBackend for CachingBackend {
 
     fn delete_document(&self, id: i64) -> Result<(), String> {
         self.remote.delete_document(id)?;
-        let g = self.inner.lock().expect("cache mutex poisoned");
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
         g.cache.invalidate_notes();
         g.cache.invalidate_store(id);
+        g.stores.remove(&id);
+        g.dirty_stores.remove(&id);
+        g.edits.remove(&id);
+        g.dirty_edits.remove(&id);
         Ok(())
     }
 
@@ -405,14 +456,18 @@ impl StorageBackend for CachingBackend {
 
     fn upsert_page(&self, doc_id: i64, page_index: i32, paper: &PagePaper, bookmarked: bool) {
         self.remote.upsert_page(doc_id, page_index, paper, bookmarked);
-        let g = self.inner.lock().expect("cache mutex poisoned");
-        if let Some(mut store) = g.cache.get_store(doc_id) {
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        if !g.stores.contains_key(&doc_id) {
+            let s = g.cache.get_store(doc_id).unwrap_or_default();
+            g.stores.insert(doc_id, s);
+        }
+        if let Some(store) = g.stores.get_mut(&doc_id) {
             let idx = page_index as usize;
             store.set_paper(idx, *paper);
             if store.is_bookmarked(idx) != bookmarked {
                 store.toggle_bookmark(idx);
             }
-            g.cache.put_store(doc_id, &store);
+            g.dirty_stores.insert(doc_id);
         }
     }
 
@@ -433,9 +488,13 @@ impl StorageBackend for CachingBackend {
             strokes: strokes.to_vec(),
         };
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if let Some(mut store) = g.cache.get_store(doc_id) {
+        if !g.stores.contains_key(&doc_id) {
+            let s = g.cache.get_store(doc_id).unwrap_or_default();
+            g.stores.insert(doc_id, s);
+        }
+        if let Some(store) = g.stores.get_mut(&doc_id) {
             store.add_strokes(page_index as usize, strokes.to_vec());
-            g.cache.put_store(doc_id, &store);
+            g.dirty_stores.insert(doc_id);
         }
         g.pending.push(op.clone());
         g.cache.append_pending(&[op]);
@@ -447,9 +506,13 @@ impl StorageBackend for CachingBackend {
             ids: ids.to_vec(),
         };
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if let Some(mut store) = g.cache.get_store(doc_id) {
-            apply_op_to_store(&mut store, &op);
-            g.cache.put_store(doc_id, &store);
+        if !g.stores.contains_key(&doc_id) {
+            let s = g.cache.get_store(doc_id).unwrap_or_default();
+            g.stores.insert(doc_id, s);
+        }
+        if let Some(store) = g.stores.get_mut(&doc_id) {
+            apply_op_to_store(store, &op);
+            g.dirty_stores.insert(doc_id);
         }
         g.pending.push(op.clone());
         g.cache.append_pending(&[op]);
@@ -461,14 +524,19 @@ impl StorageBackend for CachingBackend {
         self.remote.resync_strokes(doc_id, store);
         let mut g = self.inner.lock().expect("cache mutex poisoned");
         g.pending.retain(|o| o.doc_id() != doc_id);
-        g.cache.put_store(doc_id, store);
+        g.stores.insert(doc_id, store.clone());
+        g.dirty_stores.insert(doc_id);
     }
 
     fn load_store(&self, doc_id: i64) -> AnnotationStore {
         {
-            let g = self.inner.lock().expect("cache mutex poisoned");
+            let mut g = self.inner.lock().expect("cache mutex poisoned");
+            if let Some(store) = g.stores.get(&doc_id) {
+                // 메모리 병합 상태 — 쓰기 시 동기 갱신.
+                return store.clone();
+            }
             if let Some(store) = g.cache.get_store(doc_id) {
-                // 캐시는 로컬 기록이 이미 병합된 상태 (쓰기 시 동기 갱신).
+                g.stores.insert(doc_id, store.clone());
                 return store;
             }
         }
@@ -482,11 +550,9 @@ impl StorageBackend for CachingBackend {
                 .collect()
         };
         if pending_for_doc.is_empty() {
-            self.inner
-                .lock()
-                .expect("cache mutex poisoned")
-                .cache
-                .put_store(doc_id, &store);
+            let mut g = self.inner.lock().expect("cache mutex poisoned");
+            g.stores.insert(doc_id, store.clone());
+            g.dirty_stores.insert(doc_id);
         } else {
             // 대기열이 남아 있으면 캐시하지 않음 (다음 로드의 이중 적용 방지).
             for op in &pending_for_doc {
@@ -558,9 +624,13 @@ impl StorageBackend for CachingBackend {
             edit: edit.clone(),
         };
         let mut g = self.inner.lock().expect("cache mutex poisoned");
-        if let Some(mut edits) = g.cache.get_edits(doc_id) {
+        if !g.edits.contains_key(&doc_id) {
+            let e = g.cache.get_edits(doc_id).unwrap_or_default();
+            g.edits.insert(doc_id, e);
+        }
+        if let Some(edits) = g.edits.get_mut(&doc_id) {
             edits.push(edit.clone());
-            g.cache.put_edits(doc_id, &edits);
+            g.dirty_edits.insert(doc_id);
         }
         g.pending.push(op.clone());
         g.cache.append_pending(&[op]);
@@ -568,23 +638,28 @@ impl StorageBackend for CachingBackend {
 
     fn load_edits(&self, doc_id: i64) -> Vec<Edit> {
         {
-            let g = self.inner.lock().expect("cache mutex poisoned");
+            let mut g = self.inner.lock().expect("cache mutex poisoned");
+            if let Some(edits) = g.edits.get(&doc_id) {
+                return edits.clone();
+            }
             if let Some(edits) = g.cache.get_edits(doc_id) {
+                g.edits.insert(doc_id, edits.clone());
                 return edits;
             }
         }
         let edits = self.remote.load_edits(doc_id);
-        self.inner
-            .lock()
-            .expect("cache mutex poisoned")
-            .cache
-            .put_edits(doc_id, &edits);
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.edits.insert(doc_id, edits.clone());
+        g.dirty_edits.insert(doc_id);
         edits
     }
 
     fn clear_edits(&self, doc_id: i64) {
         self.remote.clear_edits(doc_id);
-        self.inner.lock().expect("cache mutex poisoned").cache.clear_edits(doc_id);
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.edits.remove(&doc_id);
+        g.dirty_edits.remove(&doc_id);
+        g.cache.clear_edits(doc_id);
     }
 
     fn get_word_cache(&self, word: &str) -> Option<Value> {
@@ -604,7 +679,10 @@ impl StorageBackend for CachingBackend {
     }
 
     fn invalidate_document(&self, doc_id: i64) {
-        self.inner.lock().expect("cache mutex poisoned").cache.invalidate_store(doc_id);
+        let mut g = self.inner.lock().expect("cache mutex poisoned");
+        g.stores.remove(&doc_id);
+        g.dirty_stores.remove(&doc_id);
+        g.cache.invalidate_store(doc_id);
     }
 }
 
@@ -691,9 +769,13 @@ mod tests {
         cached.insert_strokes(doc_id, 0, &[stroke.clone()]);
         assert_eq!(cached.load_store(doc_id).stroke_count_on(0), 1);
         assert_eq!(db.load_store(doc_id).stroke_count_on(0), 0);
-        // 3) 동기 플러시 → 원격 반영.
+        // 디스크 직렬화는 아직 백그라운드 몫 — 플러시 전엔 파일에 없음.
+        let disk = LocalCache::new(dir.clone());
+        assert_ne!(disk.get_store(doc_id).map(|s| s.stroke_count_on(0)), Some(1));
+        // 3) 동기 플러시 → 원격 반영 + 디스크 캐시 직렬화.
         assert!(cached.flush_pending());
         assert_eq!(db.load_store(doc_id).stroke_count_on(0), 1);
+        assert_eq!(disk.get_store(doc_id).map(|s| s.stroke_count_on(0)), Some(1));
         // 4) 무효화 → 원격(병합 상태)에서 다시 로드.
         cached.invalidate_document(doc_id);
         assert_eq!(cached.load_store(doc_id).stroke_count_on(0), 1);
