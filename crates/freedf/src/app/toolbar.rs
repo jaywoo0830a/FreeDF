@@ -797,6 +797,22 @@ impl FreeDfApp {
             {
                 self.try_connect_db();
             }
+            if self.db_connected
+                && ui
+                    .button("Disconnect")
+                    .on_hover_text(
+                        "Close open documents and switch to offline mode — \n\
+                         then enter a different database URL.",
+                    )
+                    .clicked()
+            {
+                self.close_all_documents();
+                self.db = crate::storage::disconnected();
+                self.db_connected = false;
+                self.setup_open = true;
+                self.connect_status =
+                    Some((false, "Disconnected — enter a new URL and Connect.".into()));
+            }
             if resp.lost_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter)) {
                 self.try_connect_db();
             }

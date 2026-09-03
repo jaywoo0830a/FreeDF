@@ -53,14 +53,19 @@ fn main() -> eframe::Result<()> {
         Err(e) => (storage::disconnected(), false, Some(e)),
     };
 
-    // 이벤트 로그 → PostgreSQL event_log 테이블 (연결 전이면 no-op 폴백).
-    let logger = {
-        let db = db.clone();
-        Logger::to_sink(move |entry| {
-            let event = serde_json::to_value(&entry.event).unwrap_or(serde_json::Value::Null);
-            db.insert_log(entry.epoch_ms, entry.seq, &event);
-        })
-    };
+    // 이벤트 로그는 백그라운드 스레드로 비동기 기록 — 스트로크마다 원격 왕복
+    // 없이 필기 응답성을 유지합니다 (연결 전이면 no-op 폴백).
+    let (log_tx, log_rx) = std::sync::mpsc::channel();
+    let log_db = db.clone();
+    std::thread::spawn(move || {
+        for (epoch_ms, seq, event) in log_rx {
+            log_db.insert_log(epoch_ms, seq, &event);
+        }
+    });
+    let logger = Logger::to_sink(move |entry| {
+        let event = serde_json::to_value(&entry.event).unwrap_or(serde_json::Value::Null);
+        let _ = log_tx.send((entry.epoch_ms, entry.seq, event));
+    });
 
     let options = eframe::NativeOptions {
         // 기본: OpenGL(glow) — 호환성이 가장 좋습니다 (Windows 크래시 방지).

@@ -537,6 +537,8 @@ pub struct FreeDfApp {
     /// 원격 왕복을 줄이기 위한 스트로크 id 풀 [next, end) — 스트로크마다
     /// DB 시퀀스를 부르지 않고 미리 받아 둡니다.
     stroke_id_pool: (u64, u64),
+    /// 백그라운드에서 미리 받아 둔 id 묶음 수신 채널 (UI 스레드 왕복 제거).
+    stroke_id_refill: Option<std::sync::mpsc::Receiver<Vec<i64>>>,
 
     // ---------- Tools ----------
     tool: ToolType,
@@ -987,6 +989,7 @@ impl FreeDfApp {
             store: AnnotationStore::new(),
             history: History::new(256),
             stroke_id_pool: (0, 0),
+            stroke_id_refill: None,
             tool,
             color_family,
             pen_color,
@@ -1177,46 +1180,100 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
-    /// 다음 스트로크 id n개를 반환 — 풀이 부족할 때만 원격 시퀀스에서
-    /// `STROKE_ID_POOL_BATCH`개씩 미리 받아옵니다. 스트로크마다 왕복하지 않아
-    /// 해외 DB에서도 펜을 떼는 순간이 매끄럽습니다. 실패/연결 전이면 빈 목록.
+    /// 스트로크 id 풀을 원격 시퀀스에서 한 번에 채웁니다 (드물게 호출).
+    fn fill_stroke_pool_sync(&mut self) {
+        let ids = self.db.alloc_stroke_ids(STROKE_ID_POOL_BATCH);
+        if !ids.is_empty() {
+            let first = ids[0] as u64;
+            let last = ids[ids.len() - 1] as u64;
+            self.stroke_id_pool = (first, last + 1);
+        }
+    }
+
+    /// 풀 보충을 백그라운드 스레드로 예약 — 원격 왕복이 UI 스레드를 막지 않음.
+    fn request_stroke_pool_refill(&mut self) {
+        if self.stroke_id_refill.is_some() {
+            return;
+        }
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.stroke_id_refill = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(db.alloc_stroke_ids(STROKE_ID_POOL_BATCH));
+        });
+    }
+
+    /// 다음 스트로크 id n개를 반환 — 원격 호출은 풀 소진 시 드물게,
+    /// 가능하면 백그라운드에서 미리 받아 둔 묶음으로 충당합니다.
     fn next_stroke_ids(&mut self, n: usize) -> Vec<i64> {
         let mut out = Vec::with_capacity(n);
         while out.len() < n {
             if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
-                let ids = self.db.alloc_stroke_ids(STROKE_ID_POOL_BATCH);
-                if ids.is_empty() {
+                // 백그라운드 보충 결과가 도착했으면 소비 (왕복 없음).
+                if let Some(rx) = self.stroke_id_refill.take() {
+                    if let Ok(ids) = rx.try_recv() {
+                        if !ids.is_empty() {
+                            let first = ids[0] as u64;
+                            let last = ids[ids.len() - 1] as u64;
+                            self.stroke_id_pool = (first, last + 1);
+                        }
+                    }
+                }
+            }
+            if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
+                // 아직 없으면 동기 폴백 (연결 전/실패면 빈 풀 유지).
+                self.fill_stroke_pool_sync();
+                if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
                     break;
                 }
-                let first = ids[0] as u64;
-                let last = ids[ids.len() - 1] as u64;
-                self.stroke_id_pool = (first, last + 1);
             }
-            let take = (n - out.len()).min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
+            let take = (n - out.len())
+                .min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
             for _ in 0..take {
                 out.push(self.stroke_id_pool.0 as i64);
                 self.stroke_id_pool.0 += 1;
             }
         }
+        // 절반 미만이면 미리 보충 예약 (다음 소진 때 왕복 없도록).
+        if self.stroke_id_pool.1 - self.stroke_id_pool.0 < (STROKE_ID_POOL_BATCH as u64) / 2 {
+            self.request_stroke_pool_refill();
+        }
         out
     }
 
     /// DB 연결 시도 — 성공하면 백엔드를 교체하고 URL을 `connection.json`에 저장.
+    /// 도중에 다른 DB로 전환하면 열린 문서(이전 DB 소속)를 닫습니다.
     fn try_connect_db(&mut self) {
         let url = self.connect_url.trim().to_string();
         if url.is_empty() {
             self.connect_status = Some((false, "Enter the database URL first.".into()));
             return;
         }
+        let switching = self.db_connected;
         match crate::storage::connect(&url) {
             Ok(db) => {
                 self.db = db;
                 self.db_connected = true;
                 crate::storage::save_connection(&url);
                 self.connect_status = Some((true, format!("Connected — {url}")));
+                if switching {
+                    self.close_all_documents();
+                }
                 self.reload_library_from_db();
+                self.fill_stroke_pool_sync();
             }
             Err(e) => self.connect_status = Some((false, e)),
+        }
+    }
+
+    /// 도중에 DB를 바꾸거나 연결을 끊을 때 — 열린 문서는 이전 DB 소속이므로
+    /// 모두 닫습니다.
+    fn close_all_documents(&mut self) {
+        while !self.tabs.is_empty() {
+            self.close_tab(0);
+        }
+        if self.document.is_some() {
+            self.close_document();
         }
     }
 
