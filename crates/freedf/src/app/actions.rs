@@ -601,6 +601,11 @@ impl FreeDfApp {
         let total = doc.page_count();
         self.logger
             .log(AppEvent::PageRotated { page: idx, total, clockwise });
+        self.status = Some(format!(
+            "Rotated page {} 90° {}",
+            idx + 1,
+            if clockwise { "clockwise" } else { "counter-clockwise" }
+        ));
         self.on_page_changed();
         self.flush_current_document();
     }
@@ -634,6 +639,10 @@ impl FreeDfApp {
             total: count,
             clockwise,
         });
+        self.status = Some(format!(
+            "Rotated all {count} pages 90° {}",
+            if clockwise { "clockwise" } else { "counter-clockwise" }
+        ));
         self.on_page_changed();
         self.flush_current_document();
     }
