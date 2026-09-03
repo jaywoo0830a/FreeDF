@@ -136,8 +136,8 @@ fn default_canvas_color() -> [u8; 4] {
     crate::theme::nord::semantic::PAGE_SURROUND.to_array()
 }
 
-/// 자주 쓰는 색 팔레트 최대 개수 (기본 3색 제한).
-pub const MAX_FAVORITE_COLORS: usize = 3;
+/// 자주 쓰는 색 팔레트(원형 휠/사이드 팔레트 공용) 최대 개수 — 기본 8색.
+pub const MAX_FAVORITE_COLORS: usize = 8;
 
 fn default_false() -> bool {
     false

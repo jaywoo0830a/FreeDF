@@ -503,8 +503,64 @@ impl FreeDfApp {
 
     /// Paper 세부 설정 — 전용 플로팅 창 내용 (툴바 Paper 옆 Settings 버튼으로 열림).
     ///
-    /// Canvas(페이지 뒤 배경) 색 설정 창 내용 — 프리셋 + 커스텀 색.
+    /// Color wheel(펜 사이드 버튼 원형 팔레트) + Canvas 배경 색 설정 창 내용.
     fn canvas_settings_ui(&mut self, ui: &mut egui::Ui) {
+        // ── Color wheel (원형 팔레트 색 지정) ──────────────────────────
+        ui.label(egui::RichText::new("Color wheel").strong());
+        ui.label(
+            egui::RichText::new(
+                "Colors shown around the pen wheel (side-button palette).\n\
+                 Click a color to remove it. Pick a color and press Add.",
+            )
+            .weak()
+            .small(),
+        );
+        ui.add_space(4.0);
+        let mut remove_idx: Option<usize> = None;
+        ui.horizontal_wrapped(|ui| {
+            for (i, color) in self.favorite_colors.iter().enumerate() {
+                let c = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+                let resp = color_circle_swatch(ui, ("wheel_color", i), c, false)
+                    .on_hover_text("Click to remove from the wheel");
+                if resp.clicked() {
+                    remove_idx = Some(i);
+                }
+            }
+        });
+        if let Some(i) = remove_idx {
+            self.favorite_colors.remove(i);
+            self.save_default_session();
+            self.save_session();
+        }
+        // 새 색 추가 (최대 MAX_FAVORITE_COLORS).
+        let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
+        ui.horizontal(|ui| {
+            let mut new_color = Color32::from_rgb(200, 40, 40);
+            ui.color_edit_button_srgba(&mut new_color)
+                .on_hover_text("Pick a color to add");
+            if ui
+                .add_enabled(!full, egui::Button::new("Add to wheel"))
+                .clicked()
+            {
+                let arr = new_color.to_array();
+                if !self.favorite_colors.contains(&arr) {
+                    self.favorite_colors.push(arr);
+                    self.save_default_session();
+                    self.save_session();
+                }
+            }
+        });
+        if full {
+            ui.label(
+                egui::RichText::new(format!("Wheel is full ({MAX_FAVORITE_COLORS} colors) — remove one first."))
+                    .weak()
+                    .small(),
+            );
+        }
+        ui.add_space(10.0);
+        ui.separator();
+
+        // ── Canvas background (페이지 뒤 서라운드) ─────────────────────
         ui.label(egui::RichText::new("Canvas background").strong());
         ui.label(
             egui::RichText::new(
@@ -1307,7 +1363,7 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
-                // Canvas (페이지 뒤 배경색) — 전용 설정 창으로 지정.
+                // Canvas (페이지 뒤 배경색 + 원형 휠 팔레트) — 전용 설정 창.
                 ui.label(icon_text(ui, "Canvas", icons::IMAGE));
                 let canvas_color = Color32::from_rgba_unmultiplied(
                     self.canvas_color[0],
@@ -1316,7 +1372,10 @@ impl FreeDfApp {
                     self.canvas_color[3],
                 );
                 if color_circle_swatch(ui, "canvas_swatch", canvas_color, false)
-                    .on_hover_text("Canvas background (page surround) — click to open settings")
+                    .on_hover_text(
+                        "Canvas background & color wheel palette —\n\
+                         click to open settings",
+                    )
                     .clicked()
                 {
                     self.canvas_settings_open = true;
@@ -1693,10 +1752,10 @@ impl FreeDfApp {
             self.paper_settings_open = open;
         }
 
-        // ── Canvas(페이지 뒤 배경색) 설정 플로팅 창 ──
+        // ── Canvas(배경색) + Color wheel(원형 팔레트) 설정 플로팅 창 ──
         if self.canvas_settings_open {
             let mut open = self.canvas_settings_open;
-            egui::Window::new("Canvas settings")
+            egui::Window::new("Canvas & color wheel")
                 .open(&mut open)
                 .resizable(false)
                 .default_width(330.0)

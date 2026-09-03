@@ -259,8 +259,8 @@ impl FreeDfApp {
     }
 
     /// 굿노트식 **원형 색상 팔레트** 오버레이 — 펜 사이드 버튼으로 열립니다.
-    /// **캔버스 중앙**에 고정 표시 (중앙 = 현재 색, 둘레 = 즐겨찾기 + 계열
-    /// 스와치). 탭하면 적용+닫힘, 4초간 입력 없으면 자동으로 닫힙니다.
+    /// 펜 위치(클램프 후)에 표시: 중앙 = 현재 색, 둘레 = 사용자가 지정한
+    /// 팔레트(즐겨찾기). 탭하면 적용+닫힘, 4초간 입력 없으면 자동으로 닫힙니다.
     pub(crate) fn color_wheel_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
         if !self.color_wheel_open {
             return;
@@ -277,19 +277,20 @@ impl FreeDfApp {
         // 펜 위치(버튼을 누른 순간의 포인터)에 열리되, 캔버스 안으로 클램프.
         let center = self.color_wheel_center(canvas);
 
-        // 둘레 색: 즐겨찾기(전역) + 현재 계열 스와치 (중복 제거, 최대 8개).
+        // 둘레 색: **사용자가 지정한 팔레트(즐겨찾기)만** 사용.
         let mut ring = self.favorite_colors.clone();
-        for c in Palette::swatches(self.color_family) {
-            if !ring.contains(&c) {
-                ring.push(c);
-            }
+        if ring.is_empty() {
+            ring = crate::settings::SessionState::default().favorite_colors;
         }
-        ring.truncate(8);
+        ring.truncate(MAX_FAVORITE_COLORS);
         let current = self.current_drawing_style().0;
 
+        // 탭 좌표 — 포인터 클릭(마우스)과 터치(펜) 양쪽 경로에서 수집합니다.
+        let area_pos = center - egui::vec2(WHEEL_BACK_R, WHEEL_BACK_R);
+        let mut tap: Option<Pos2> = None;
         egui::Area::new(egui::Id::new("color_wheel"))
             .order(egui::Order::Foreground)
-            .fixed_pos(center - egui::vec2(WHEEL_BACK_R, WHEEL_BACK_R))
+            .fixed_pos(area_pos)
             .show(ctx, |ui| {
                 // 주의: `painter_at(rect)`의 rect는 **클립 영역**(화면 좌표) —
                 // 좌표 오프셋이 아닙니다. ZERO 기준 rect를 넘기면 원이 화면
@@ -342,8 +343,7 @@ impl FreeDfApp {
                 painter.circle_filled(c, WHEEL_CENTER_R, cc);
                 painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
 
-                // 인터랙션 — 이 응답이 휠 영역의 탭을 **실제로 받아**
-                // 캔버스로 새지 않게 합니다 (Painter만으로는 클릭이 안 먹음).
+                // 인터랙션 — 이 응답이 휠 영역의 탭을 받아 캔버스로 새지 않게 합니다.
                 let local_rect = egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
                     egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
@@ -354,28 +354,53 @@ impl FreeDfApp {
                     egui::Sense::click(),
                 );
                 if resp.clicked() {
-                    if let Some(p) = resp.interact_pointer_pos() {
-                        // p는 영역 로컬 좌표 (0..112, 0..112).
-                        let lc = egui::pos2(WHEEL_BACK_R, WHEEL_BACK_R);
-                        if p.distance(lc) <= WHEEL_CENTER_R {
-                            self.color_wheel_open = false; // 중앙 탭 = 변경 없이 닫기.
-                            return;
-                        }
-                        use std::f32::consts::TAU;
-                        for (i, color) in ring.iter().enumerate() {
-                            let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
-                            let sc = lc + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
-                            if p.distance(sc) <= WHEEL_SWATCH_R + 3.0 {
-                                self.apply_wheel_color(*color);
-                                self.color_wheel_open = false;
-                                return;
-                            }
-                        }
-                        // 뒷판의 빈 곳 탭 → 그냥 닫기.
-                        self.color_wheel_open = false;
-                    }
+                    // interact_pointer_pos는 영역 로컬 좌표 → 화면 좌표로 변환.
+                    tap = resp.interact_pointer_pos().map(|p| area_pos + p.to_vec2());
                 }
             });
+
+        // egui의 clicked()는 포인터(마우스) 경로 전용 — Windows Ink 펜 탭이
+        // `Event::Touch`로만 오는 경우를 위해 이벤트에서 직접 판정합니다
+        // (클릭이 안 먹던 원인 대응 — 두 경로 모두 지원).
+        if tap.is_none() {
+            tap = ctx.input(|i| {
+                i.events.iter().rev().find_map(|e| match e {
+                    egui::Event::Touch {
+                        phase: egui::TouchPhase::End,
+                        pos,
+                        ..
+                    } => Some(*pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        pressed: false,
+                        ..
+                    } => Some(*pos),
+                    _ => None,
+                })
+            });
+        }
+        let Some(pos) = tap else {
+            return;
+        };
+        if pos.distance(center) <= WHEEL_CENTER_R {
+            self.color_wheel_open = false; // 중앙 탭 = 변경 없이 닫기.
+            return;
+        }
+        if pos.distance(center) > WHEEL_BACK_R {
+            return; // 바깥 탭은 handle_canvas_input 가드가 닫습니다.
+        }
+        use std::f32::consts::TAU;
+        for (i, color) in ring.iter().enumerate() {
+            let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
+            let sc = center + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
+            if pos.distance(sc) <= WHEEL_SWATCH_R + 3.0 {
+                self.apply_wheel_color(*color);
+                self.color_wheel_open = false;
+                return;
+            }
+        }
+        // 뒷판의 빈 곳 탭 → 그냥 닫기.
+        self.color_wheel_open = false;
     }
 
     /// 원형 팔레트의 화면 중심 — 펜 위치(버튼을 누른 순간의 포인터)를
@@ -1446,9 +1471,11 @@ impl FreeDfApp {
                                 egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false),
                             )
                             .on_hover_text(if full {
-                                "Palette is full (3 colors) — right-click a swatch to remove one first"
+                                format!(
+                                    "Palette is full ({MAX_FAVORITE_COLORS} colors) — remove one first"
+                                )
                             } else {
-                                "Add current color to favorites"
+                                "Add current color to favorites".into()
                             })
                             .clicked()
                         {
