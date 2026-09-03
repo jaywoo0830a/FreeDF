@@ -59,6 +59,14 @@ pub(crate) fn now_ms() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// 현재 시각 (초, f64) — 로딩 경과 시간 표시용.
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
@@ -406,6 +414,18 @@ pub(crate) enum MediaOutcome {
     Listed(Vec<MediaObject>),
     Uploaded(MediaObject),
     Deleted,
+}
+
+/// 문서 열기 로더 진행 메시지 — 단계(무슨 데이터를 가져오는지) + 완료.
+pub(crate) enum LoaderMsg {
+    Stage(String),
+    Done(Result<LoaderBundle, String>),
+}
+
+/// 백그라운드 저장 진행 메시지 — 단계(무슨 패킷을 보내는지) + 완료.
+pub(crate) enum SaveMsg {
+    Stage(String),
+    Done(Result<(), String>),
 }
 
 /// 열려 있는 문서 탭의 종류 — 둘 다 DB의 `documents.id`입니다.
@@ -807,10 +827,16 @@ pub struct FreeDfApp {
     // ---------- Loading / background ops ----------
     /// 진행 중인 배경 작업 표시 (스피너+진행바 오버레이). 완료 시 None.
     loading: Option<String>,
-    /// 문서 열기 로더 수신 채널 (DB 부분은 백그라운드 스레드에서).
-    loader_rx: Option<std::sync::mpsc::Receiver<Result<LoaderBundle, String>>>,
+    /// 로딩 시작 시각 (경과 시간 표시용).
+    loading_started: Option<f64>,
+    /// 문서 열기 로더 수신 채널 (단계/완료 메시지).
+    loader_rx: Option<std::sync::mpsc::Receiver<LoaderMsg>>,
     /// 미디어 작업(목록/업로드/삭제) 수신 채널.
     media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
+    /// 백그라운드 저장 진행 채널 (단계/완료).
+    save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
+    /// 저장 완료 후 앱 종료 예정 여부 (Save & Quit).
+    pending_quit: bool,
     // ---------- Media server ----------
     /// 미디어(녹음) 서버 연결 설정 — `server.json`에서 런타임 로드.
     media_config: MediaServerConfig,
@@ -1147,8 +1173,11 @@ impl FreeDfApp {
             connect_status: connect_error.map(|e| (false, e)),
             pending_connect,
             loading: None,
+            loading_started: None,
             loader_rx: None,
             media_rx: None,
+            save_rx: None,
+            pending_quit: false,
             media_config,
             server_settings_open: false,
             server_msg: None,
@@ -1638,22 +1667,72 @@ impl FreeDfApp {
             return;
         };
         match rx.try_recv() {
-            Ok(Ok(bundle)) => {
-                self.loading = None;
+            Ok(LoaderMsg::Stage(msg)) => {
+                self.begin_loading(msg);
+                self.loader_rx = Some(rx);
+            }
+            Ok(LoaderMsg::Done(Ok(bundle))) => {
+                self.end_loading();
                 self.finish_document_open(bundle);
             }
-            Ok(Err(e)) => {
-                self.loading = None;
+            Ok(LoaderMsg::Done(Err(e))) => {
+                self.end_loading();
                 self.show_error(e);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 self.loader_rx = Some(rx); // 아직 — 다음 프레임에 다시.
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.loading = None;
+                self.end_loading();
                 self.show_error("Document loading was interrupted.".into());
             }
         }
+    }
+
+    /// 백그라운드 저장 진행 수신 (단계 갱신 + 완료 처리).
+    fn poll_save(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.save_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(SaveMsg::Stage(msg)) => {
+                self.begin_loading(msg);
+                self.save_rx = Some(rx);
+            }
+            Ok(SaveMsg::Done(Ok(()))) => {
+                self.end_loading();
+                self.status = Some("Saved to database.".into());
+                if self.pending_quit {
+                    self.pending_quit = false;
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+            Ok(SaveMsg::Done(Err(e))) => {
+                self.end_loading();
+                self.status = Some(format!("Save failed: {e}"));
+                self.pending_quit = false;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.save_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.end_loading();
+                self.status = Some("Save was interrupted.".into());
+                self.pending_quit = false;
+            }
+        }
+    }
+
+    /// 배경 작업 시작 표시 (오버레이 + 경과 시간).
+    fn begin_loading(&mut self, msg: impl Into<String>) {
+        self.loading = Some(msg.into());
+        self.loading_started = Some(now_secs());
+    }
+
+    fn end_loading(&mut self) {
+        self.loading = None;
+        self.loading_started = None;
     }
 
     /// 미디어 작업 결과 수신 (매 프레임 호출).
@@ -1663,7 +1742,7 @@ impl FreeDfApp {
         };
         match rx.try_recv() {
             Ok(Ok(outcome)) => {
-                self.loading = None;
+                self.end_loading();
                 match outcome {
                     MediaOutcome::Listed(items) => {
                         self.media_status = if items.is_empty() {
@@ -1684,26 +1763,27 @@ impl FreeDfApp {
                 }
             }
             Ok(Err(e)) => {
-                self.loading = None;
+                self.end_loading();
                 self.media_status = Some(e);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 self.media_rx = Some(rx);
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.loading = None;
+                self.end_loading();
                 self.media_status = Some("Media operation was interrupted.".into());
             }
         }
     }
 
-    /// 진행 중 오버레이 — 스피너 + 진행바 (불확정 진행 애니메이션).
+    /// 진행 중 오버레이 — 스피너 + 단계 메시지 + 경과 시간 + 진행바.
     fn loading_overlay(&self, ctx: &egui::Context) {
         let Some(msg) = self.loading.clone() else {
             return;
         };
         let t = ctx.input(|i| i.time);
         let frac = ((t * 0.7) % 1.0) as f32;
+        let elapsed = self.loading_started.map(|s| (now_secs() - s).max(0.0)).unwrap_or(0.0);
         egui::Area::new(egui::Id::new("loading_overlay"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
@@ -1713,7 +1793,10 @@ impl FreeDfApp {
                         ui.spinner();
                         ui.label(&msg);
                     });
-                    ui.add(egui::ProgressBar::new(frac).desired_width(260.0).show_percentage());
+                    ui.horizontal(|ui| {
+                        ui.add(egui::ProgressBar::new(frac).desired_width(220.0).show_percentage());
+                        ui.label(egui::RichText::new(format!("{elapsed:.1}s")).weak());
+                    });
                 });
             });
         ctx.request_repaint();
@@ -2106,9 +2189,11 @@ impl eframe::App for FreeDfApp {
         self.poll_connect_result();
         self.poll_loader();
         self.poll_media();
+        self.poll_save(&ctx);
         if self.pending_connect.is_some()
             || self.loader_rx.is_some()
             || self.media_rx.is_some()
+            || self.save_rx.is_some()
         {
             ctx.request_repaint();
         }
@@ -2228,14 +2313,19 @@ impl eframe::App for FreeDfApp {
                     });
                 });
             if let Some(save) = decision {
+                self.asking_close = false;
                 if save {
-                    // 종료 전 전부 DB에 플러시.
+                    // 백그라운드 저장 — 완료되면 poll_save가 창을 닫습니다.
+                    self.save_default_session();
+                    self.save_session();
+                    self.pending_quit = true;
                     self.flush_current_document();
+                } else {
+                    self.save_default_session();
+                    self.save_session();
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                self.save_default_session();
-                self.save_session();
-                self.quitting = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
 

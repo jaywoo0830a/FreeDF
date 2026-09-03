@@ -7,17 +7,24 @@
 use super::*;
 
 /// 문서 열기의 DB 부분 — **백그라운드 스레드 전용** (UI를 절대 막지 않음).
-/// 결과는 `LoaderBundle`로 UI에 돌아가고, PDF 생성(pdfium)은 UI 스레드에서
-/// 로컬 바이트로 수행됩니다 (pdfium은 Send가 아니므로 네트워크만 분리).
-fn load_document_bundle(db: &dyn StorageBackend, doc_id: i64) -> Result<LoaderBundle, String> {
+/// 단계마다 `LoaderMsg::Stage`를 보내 진행 바에 무엇을 가져오는지 표시합니다.
+fn load_document_bundle(
+    db: &dyn StorageBackend,
+    doc_id: i64,
+    tx: &std::sync::mpsc::Sender<LoaderMsg>,
+) -> Result<LoaderBundle, String> {
+    let _ = tx.send(LoaderMsg::Stage("Loading: document info…".into()));
     let row = db
         .get_document(doc_id)
         .ok_or_else(|| format!("Document {doc_id} not found in the database."))?;
     let is_note = row.is_note();
+    let _ = tx.send(LoaderMsg::Stage("Loading: PDF bytes…".into()));
     let pdf_bytes = db.load_pdf(doc_id).ok_or_else(|| {
         format!("{} has no PDF content in the database.", row.title)
     })?;
+    let _ = tx.send(LoaderMsg::Stage("Loading: annotations…".into()));
     let store = db.load_store(doc_id);
+    let _ = tx.send(LoaderMsg::Stage("Loading: history & session…".into()));
     let edits = db.load_edits(doc_id);
     let session = db.load_session(doc_id);
     Ok(LoaderBundle {
@@ -302,9 +309,10 @@ impl FreeDfApp {
         let db = self.db.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.loader_rx = Some(rx);
-        self.loading = Some(format!("Loading document {doc_id}…"));
+        self.begin_loading(format!("Loading document {doc_id}…"));
         std::thread::spawn(move || {
-            let _ = tx.send(load_document_bundle(db.as_ref(), doc_id));
+            let result = load_document_bundle(db.as_ref(), doc_id, &tx);
+            let _ = tx.send(LoaderMsg::Done(result));
         });
     }
 
@@ -892,13 +900,18 @@ impl FreeDfApp {
 
     /// 현재 문서를 전부 DB로 플러시합니다: 스트로크 전체 재동기화 + pages 테이블
     /// (용지/북마크) + 페이지 수 + PDF 본문 바이트.
-    /// (페이지 CRUD/회전 등 구조 연산과 종료 시 호출)
+    /// (페이지 CRUD/회전 등 구조 연산과 저장/종료 시 호출)
+    ///
+    /// PDF 직렬화(pdfium)만 UI 스레드에서 하고, **DB 반영은 백그라운드**로
+    /// 단계별 진행 메시지(SaveMsg::Stage)를 보냅니다.
     pub(crate) fn flush_current_document(&mut self) {
         let Some(doc_id) = self.doc_id else {
             return;
         };
+        if self.save_rx.is_some() {
+            return; // 이미 저장 진행 중 (완료 시 최종 상태 반영).
+        }
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-        self.db.resync_strokes(doc_id, &self.store);
         let default_paper = PagePaper {
             style: self.paper_style,
             color: self.paper_color,
@@ -909,22 +922,44 @@ impl FreeDfApp {
                 (i as i32, paper, self.store.is_bookmarked(i))
             })
             .collect();
-        self.db.replace_pages(doc_id, &entries);
-        self.db.update_page_count(doc_id, page_count as i32);
         if let Some(note_id) = self.current_note {
             let _ = self.notes.set_page_count(note_id as u64, page_count);
         }
-        // PDF 본문 바이트 저장.
-        if let Some(doc) = &self.document {
-            match doc.save_to_bytes() {
-                Ok(bytes) => {
-                    if let Err(e) = self.db.save_pdf(doc_id, &bytes) {
-                        self.status = Some(format!("Save PDF failed: {e}"));
-                    }
+        // PDF 직렬화(pdfium)는 UI 스레드에서만 가능 — 로컬 작업.
+        let pdf_bytes = match &self.document {
+            Some(doc) => match doc.save_to_bytes() {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    self.status = Some(format!("Save PDF failed: {e}"));
+                    None
                 }
-                Err(e) => self.status = Some(format!("Save PDF failed: {e}")),
-            }
-        }
+            },
+            None => None,
+        };
+        let store = self.store.clone();
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.save_rx = Some(rx);
+        self.begin_loading("Preparing save…");
+        std::thread::spawn(move || {
+            let res = (|| -> Result<(), String> {
+                let _ = tx.send(SaveMsg::Stage("Saving: resyncing strokes…".into()));
+                db.resync_strokes(doc_id, &store);
+                let _ = tx.send(SaveMsg::Stage("Saving: pages & bookmarks…".into()));
+                db.replace_pages(doc_id, &entries);
+                let _ = tx.send(SaveMsg::Stage("Updating document info…".into()));
+                db.update_page_count(doc_id, page_count as i32);
+                if let Some(bytes) = &pdf_bytes {
+                    let _ = tx.send(SaveMsg::Stage(format!(
+                        "Uploading PDF bytes ({} KB)…",
+                        bytes.len() / 1024
+                    )));
+                    db.save_pdf(doc_id, bytes)?;
+                }
+                Ok(())
+            })();
+            let _ = tx.send(SaveMsg::Done(res));
+        });
     }
 
     // ---------- Save / Load buttons ----------
@@ -934,8 +969,8 @@ impl FreeDfApp {
             self.status = Some("Open a PDF or note first.".to_string());
             return;
         }
+        // 비동기 저장 — 완료 메시지는 poll_save가 "Saved to database."로 표시.
         self.flush_current_document();
-        self.status = Some("Saved to database.".to_string());
     }
 
     pub(crate) fn load_annotations(&mut self) {
@@ -967,7 +1002,7 @@ impl FreeDfApp {
         self.media_rx = Some(rx);
         // 실패해도 재시도 루프가 생기지 않게 문서 id를 먼저 기록.
         self.media_loaded_for = Some(doc_id);
-        self.loading = Some("Loading recordings…".into());
+        self.begin_loading("Loading recordings…");
         std::thread::spawn(move || {
             let res = match MediaClient::new_enabled(&config) {
                 None => Err("Media server is not enabled — open Server settings.".to_string()),
@@ -1028,7 +1063,7 @@ impl FreeDfApp {
         let path = path.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         self.media_rx = Some(rx);
-        self.loading = Some(format!("Uploading {name}…"));
+        self.begin_loading(format!("Uploading {name}…"));
         std::thread::spawn(move || {
             let res = (|| -> Result<MediaOutcome, String> {
                 let bytes =
@@ -1056,7 +1091,7 @@ impl FreeDfApp {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         self.media_rx = Some(rx);
-        self.loading = Some("Deleting recording…".into());
+        self.begin_loading("Deleting recording…");
         std::thread::spawn(move || {
             let res = client.delete(id).map(|()| MediaOutcome::Deleted);
             let _ = tx.send(res);

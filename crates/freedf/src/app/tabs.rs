@@ -49,6 +49,7 @@ impl FreeDfApp {
 
     /// 탭을 새 창으로 보내기 전에 해당 문서를 DB에 플러시합니다.
     /// (공유 DB라 두 창이 같은 데이터를 보므로, 최신 상태만 보장하면 됨)
+    /// PDF 직렬화(pdfium)만 UI 스레드, DB 반영은 백그라운드 — UI가 멈추지 않음.
     pub(crate) fn flush_tab_to_db(&mut self, idx: usize) {
         // 활성 탭이면 문서 상태를 탭 항목으로 먼저 옮깁니다.
         if idx == self.active && self.document.is_some() {
@@ -58,15 +59,24 @@ impl FreeDfApp {
             Some(TabKind::Note(id)) | Some(TabKind::Pdf(id)) => id,
             None => return,
         };
-        // 비활성 탭이면 탭에 실데이터가 있습니다.
-        if let Some(tab) = self.tabs.get_mut(idx) {
-            self.db.resync_strokes(doc_id, &tab.store);
-            if let Some(doc) = &tab.document {
-                if let Ok(bytes) = doc.save_to_bytes() {
-                    let _ = self.db.save_pdf(doc_id, &bytes);
-                }
+        // 비활성 탭이면 탭에 실데이터가 있습니다 — 로컬 직렬화만 추출.
+        let (store, pdf_bytes) = match self.tabs.get(idx) {
+            Some(tab) => {
+                let bytes = tab
+                    .document
+                    .as_ref()
+                    .and_then(|doc| doc.save_to_bytes().ok());
+                (tab.store.clone(), bytes)
             }
-        }
+            None => return,
+        };
+        let db = self.db.clone();
+        std::thread::spawn(move || {
+            db.resync_strokes(doc_id, &store);
+            if let Some(bytes) = &pdf_bytes {
+                let _ = db.save_pdf(doc_id, bytes);
+            }
+        });
         if idx == self.active {
             // 캡처로 옮겼으니 복원해 현재 상태 유지 (탭이 곧 닫혀도 안전).
             self.restore_from(idx);
