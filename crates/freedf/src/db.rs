@@ -16,6 +16,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use crate::storage::StorageBackend;
+
 /// 기본 연결 문자열 (docker-compose.yml과 일치).
 pub const DEFAULT_DATABASE_URL: &str = "postgres://freedf:freedf@localhost:5432/freedf";
 
@@ -615,6 +617,109 @@ impl Db {
             &[&(epoch_ms as i64), event],
         );
         let _ = seq;
+    }
+}
+
+/// `Db`의 메서드 시그니처가 `StorageBackend`와 1:1로 일치합니다 —
+/// 앱 코드는 이 트레이트만 바라보고, SQL은 db.rs 안에만 남습니다.
+impl StorageBackend for Db {
+    fn insert_document(
+        &self,
+        kind: &str,
+        title: &str,
+        origin_path: Option<&str>,
+        pdf: &[u8],
+    ) -> Result<i64, String> {
+        Db::insert_document(self, kind, title, origin_path, pdf)
+    }
+    fn get_document(&self, id: i64) -> Option<DocRow> {
+        Db::get_document(self, id)
+    }
+    fn find_document_by_path(&self, path: &str) -> Option<i64> {
+        Db::find_document_by_path(self, path)
+    }
+    fn load_pdf(&self, id: i64) -> Option<Vec<u8>> {
+        Db::load_pdf(self, id)
+    }
+    fn save_pdf(&self, id: i64, bytes: &[u8]) -> Result<(), String> {
+        Db::save_pdf(self, id, bytes)
+    }
+    fn update_title(&self, id: i64, title: &str) -> Result<(), String> {
+        Db::update_title(self, id, title)
+    }
+    fn update_page_count(&self, id: i64, page_count: i32) {
+        Db::update_page_count(self, id, page_count)
+    }
+    fn delete_document(&self, id: i64) -> Result<(), String> {
+        Db::delete_document(self, id)
+    }
+    fn list_notes(&self) -> Vec<DocRow> {
+        Db::list_notes(self)
+    }
+
+    fn upsert_page(&self, doc_id: i64, page_index: i32, paper: &PagePaper, bookmarked: bool) {
+        Db::upsert_page(self, doc_id, page_index, paper, bookmarked)
+    }
+    fn replace_pages(&self, doc_id: i64, entries: &[(i32, PagePaper, bool)]) {
+        Db::replace_pages(self, doc_id, entries)
+    }
+
+    fn alloc_stroke_ids(&self, n: usize) -> Vec<i64> {
+        Db::alloc_stroke_ids(self, n)
+    }
+    fn insert_strokes(&self, doc_id: i64, page_index: i32, strokes: &[Stroke]) {
+        Db::insert_strokes(self, doc_id, page_index, strokes)
+    }
+    fn delete_strokes(&self, doc_id: i64, ids: &[i64]) {
+        Db::delete_strokes(self, doc_id, ids)
+    }
+    fn resync_strokes(&self, doc_id: i64, store: &AnnotationStore) {
+        Db::resync_strokes(self, doc_id, store)
+    }
+    fn load_store(&self, doc_id: i64) -> AnnotationStore {
+        Db::load_store(self, doc_id)
+    }
+
+    fn load_session(&self, doc_id: i64) -> Option<Value> {
+        Db::load_session(self, doc_id)
+    }
+    fn upsert_session(&self, doc_id: i64, state: &Value) {
+        Db::upsert_session(self, doc_id, state)
+    }
+
+    fn get_app_state(&self, key: &str) -> Option<Value> {
+        Db::get_app_state(self, key)
+    }
+    fn set_app_state(&self, key: &str, value: &Value) {
+        Db::set_app_state(self, key, value)
+    }
+
+    fn load_recents(&self) -> Vec<RecentRow> {
+        Db::load_recents(self)
+    }
+    fn touch_recent(&self, kind: &str, doc_id: i64, title: &str) {
+        Db::touch_recent(self, kind, doc_id, title)
+    }
+
+    fn log_edit(&self, doc_id: i64, edit: &freedf_core::history::Edit) {
+        Db::log_edit(self, doc_id, edit)
+    }
+    fn load_edits(&self, doc_id: i64) -> Vec<freedf_core::history::Edit> {
+        Db::load_edits(self, doc_id)
+    }
+    fn clear_edits(&self, doc_id: i64) {
+        Db::clear_edits(self, doc_id)
+    }
+
+    fn get_word_cache(&self, word: &str) -> Option<Value> {
+        Db::get_word_cache(self, word)
+    }
+    fn set_word_cache(&self, word: &str, data: &Value) {
+        Db::set_word_cache(self, word, data)
+    }
+
+    fn insert_log(&self, epoch_ms: u128, seq: u64, event: &Value) {
+        Db::insert_log(self, epoch_ms, seq, event)
     }
 }
 

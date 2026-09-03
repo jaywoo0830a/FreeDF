@@ -15,6 +15,7 @@ mod pdf;
 mod recent;
 mod server;
 mod settings;
+mod storage;
 mod theme;
 
 use eframe::egui;
@@ -38,13 +39,14 @@ fn main() -> eframe::Result<()> {
     }
     let open_path = open_path.filter(|p| p.is_file());
 
-    // PostgreSQL 연결 (없으면 앱을 실행할 수 없습니다 — Docker로 띄우세요).
+    // 저장소 연결 — 런타임 백엔드 선택(`FREEDF_STORAGE`, 기본 postgres).
+    // 새 백엔드(로컬 파일/자체 API)를 붙일 때는 storage::from_env만 수정.
     let db_url = std::env::var("FREEDF_DATABASE_URL")
         .unwrap_or_else(|_| db::DEFAULT_DATABASE_URL.to_string());
-    let db = match db::Db::connect(&db_url) {
+    let db = match storage::from_env(&db_url) {
         Ok(db) => db,
         Err(e) => {
-            eprintln!("FreeDF database error: {e}");
+            eprintln!("FreeDF storage error: {e}");
             eprintln!("Start the database with: docker compose up -d db");
             std::process::exit(1);
         }

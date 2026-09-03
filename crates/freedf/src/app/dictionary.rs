@@ -113,17 +113,17 @@ pub(crate) struct Dictionary {
 /// 백그라운드 스레드에서 단어를 조회합니다 (UI 블로킹 없음).
 pub(crate) fn spawn_lookup(
     service: DictionaryService,
-    db: Db,
+    db: std::sync::Arc<dyn StorageBackend>,
     word: String,
 ) -> Receiver<Result<String, String>> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let _ = tx.send(lookup(&service, &db, &word));
+        let _ = tx.send(lookup(&service, db.as_ref(), &word));
     });
     rx
 }
 
-fn lookup(service: &DictionaryService, db: &Db, word: &str) -> Result<String, String> {
+fn lookup(service: &DictionaryService, db: &dyn StorageBackend, word: &str) -> Result<String, String> {
     // 1) DB 캐시 (공통 형식 JSONB; 이전 형식이면 무시하고 재조회).
     if let Some(v) = db.get_word_cache(word) {
         if let Some(e) = DictionaryEntry::from_value(&v) {

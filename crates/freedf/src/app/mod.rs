@@ -62,7 +62,7 @@ pub(crate) fn now_ms() -> u64 {
 pub(crate) use freedf_core::store::AnnotationStore;
 pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
 
-pub(crate) use crate::db::Db;
+pub(crate) use crate::storage::StorageBackend;
 pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
@@ -500,8 +500,10 @@ pub struct FreeDfApp {
     // ---------- Recent files (in-memory cache of recents table) ----------
     recents: RecentList,
 
-    // ---------- PostgreSQL ----------
-    db: Db,
+    // ---------- Storage backend ----------
+    /// 저장소 백엔드(트레이트 객체) — UI는 `StorageBackend`만 바라보고,
+    /// 실제 구현(postgres/로컬/자체 API)은 main.rs의 `storage::from_env`가 선택.
+    db: std::sync::Arc<dyn StorageBackend>,
 
     // ---------- Document ----------
     document: Option<DocumentView>,
@@ -772,7 +774,7 @@ pub struct FreeDfApp {
 impl FreeDfApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        db: Db,
+        db: std::sync::Arc<dyn StorageBackend>,
         logger: Logger,
         pending_open: Option<PathBuf>,
         pending_doc: Option<i64>,
