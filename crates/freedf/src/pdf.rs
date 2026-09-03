@@ -225,6 +225,14 @@ impl DocumentView {
             .unwrap_or([595.0, 842.0])
     }
 
+    /// 페이지의 표시 회전 (0/90/180/270) — 용지 줄/점 렌더링 방향 결정용.
+    pub fn page_rotation(&self, index: usize) -> PageRotation {
+        let Ok(page) = self.document.pages().get(index as i32) else {
+            return PageRotation::None;
+        };
+        core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None))
+    }
+
     /// 페이지를 `target_width`(물리 픽셀)로 렌더링합니다.
     /// 종횡비는 유지되고 `max_dimension`을 넘지 않습니다.
     pub fn render_page(

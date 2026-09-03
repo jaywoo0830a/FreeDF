@@ -466,6 +466,19 @@ impl FreeDfApp {
                     );
                     self.store
                         .set_stroke_created_ms(self.current_page, id, created_ms);
+                    // 풀 소진 폴백이어도 문서가 열려 있으면 write-behind 큐에
+                    // 보냅니다 (메타-only 저장에서도 유실되지 않도록).
+                    if let Some(doc_id) = self.doc_id {
+                        let strokes: Vec<_> = self
+                            .store
+                            .strokes_on(self.current_page)
+                            .iter()
+                            .filter(|s| s.id == id)
+                            .cloned()
+                            .collect();
+                        self.db
+                            .insert_strokes(doc_id, self.current_page as i32, &strokes);
+                    }
                     id
                 }
             };
@@ -1280,7 +1293,13 @@ impl FreeDfApp {
         let zoom = self.view.zoom;
         let stroke_w = (ls.width * zoom).clamp(0.5, 24.0);
         let dot_r = (ls.width * zoom * 0.4).clamp(0.6, 8.0);
-        for [x0, y0, x1, y1] in paper_lines(w, h, style, spacing) {
+        // 회전된 페이지는 줄도 종이와 함께 돌아야 합니다 (90/270° → 세로줄).
+        let rotation = self
+            .document
+            .as_ref()
+            .map(|d| d.page_rotation(self.current_page))
+            .unwrap_or(freedf_core::text::PageRotation::None);
+        for [x0, y0, x1, y1] in paper_lines_rotated(w, h, style, spacing, rotation) {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);
             painter.line_segment(

@@ -42,7 +42,7 @@ pub(crate) use freedf_core::model::{PageIndex, StrokePoint, ToolType};
 pub(crate) use freedf_core::notes::NotesManager;
 pub(crate) use freedf_core::outline::{flatten, OutlineNode};
 pub(crate) use freedf_core::paper::{
-    clamp_line_width, clamp_spacing, paper_dots, paper_lines, PagePaper, PaperSize, PaperStyle,
+    clamp_line_width, clamp_spacing, paper_dots, paper_lines_rotated, PagePaper, PaperSize, PaperStyle,
     PaperStyleSettings, PAPER_COLORS, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{

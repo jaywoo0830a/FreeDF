@@ -54,15 +54,29 @@ pub trait StorageBackend: Send + Sync {
     /// 문서의 주석/페이지/저널/세션을 **한 번의 왕복**으로 로드 (스키마 0007 함수).
     fn load_bundle(&self, doc_id: i64) -> LoadedBundle;
 
-    /// 문서 전체 저장을 **한 번의 왕복**으로 원자 반영 (스키마 0006 저장 함수).
-    fn sync_document(
+    /// 메타 동기화(0008) — 페이지(용지/북마크)·문서 정보·PDF만 반영.
+    /// **획은 건드리지 않음** — 획은 write-behind 대기열이 이미 증분 반영합니다.
+    fn sync_meta(
         &self,
         doc_id: i64,
         page_count: i32,
-        store: &AnnotationStore,
         entries: &[(i32, PagePaper, bool)],
         pdf: Option<&[u8]>,
     ) -> Result<(), String>;
+
+    /// 페이지 중간 삽입 — from 이상 획의 page_index를 서버에서 이동 (재전송 없음).
+    fn shift_strokes(&self, doc_id: i64, from: i32, delta: i32);
+    /// 페이지 삭제 — 해당 페이지 획 삭제 + 이후 인덱스 -1 (서버 처리).
+    fn delete_page_data(&self, doc_id: i64, page: i32);
+    /// 페이지 회전 — 해당 페이지 획의 x/y를 서버에서 변환 (재전송 없음).
+    fn rotate_page_data(&self, doc_id: i64, page: i32, clockwise: bool, w: f32, h: f32);
+    /// 전체 페이지 회전 — 페이지별 크기를 서버에 보내 내부에서 반복 변환.
+    fn rotate_all_data(&self, doc_id: i64, clockwise: bool, sizes: &[[f32; 2]]);
+
+    /// 미처리 write-behind 대기열을 지금 원격에 반영 (기본 true — 큐 없음).
+    fn flush_pending(&self) -> bool {
+        true
+    }
 
     // ---------- sessions ----------
     fn upsert_session(&self, doc_id: i64, state: &Value);
@@ -216,16 +230,19 @@ impl StorageBackend for DisconnectedStorage {
     fn load_bundle(&self, _doc_id: i64) -> LoadedBundle {
         LoadedBundle::default()
     }
-    fn sync_document(
+    fn sync_meta(
         &self,
         _doc_id: i64,
         _page_count: i32,
-        _store: &AnnotationStore,
         _entries: &[(i32, PagePaper, bool)],
         _pdf: Option<&[u8]>,
     ) -> Result<(), String> {
         Err("Not connected to the database yet.".into())
     }
+    fn shift_strokes(&self, _doc_id: i64, _from: i32, _delta: i32) {}
+    fn delete_page_data(&self, _doc_id: i64, _page: i32) {}
+    fn rotate_page_data(&self, _doc_id: i64, _page: i32, _clockwise: bool, _w: f32, _h: f32) {}
+    fn rotate_all_data(&self, _doc_id: i64, _clockwise: bool, _sizes: &[[f32; 2]]) {}
     fn upsert_session(&self, _doc_id: i64, _state: &Value) {}
     fn get_app_state(&self, _key: &str) -> Option<Value> {
         None
@@ -566,25 +583,42 @@ impl StorageBackend for CachingBackend {
         });
     }
 
-    fn sync_document(
+    fn sync_meta(
         &self,
         doc_id: i64,
         page_count: i32,
-        store: &AnnotationStore,
         entries: &[(i32, PagePaper, bool)],
         pdf: Option<&[u8]>,
     ) -> Result<(), String> {
         self.remote
-            .sync_document(doc_id, page_count, store, entries, pdf)?;
-        let mut g = self.inner.lock().expect("cache mutex poisoned");
-        // 원격이 이 스토어 상태로 통째 교체 — 메모리 스냅샷도 동기화.
-        g.stores.insert(doc_id, store.clone());
-        g.dirty_stores.insert(doc_id);
-        // PDF 캐시 갱신 — 저장 직후 재오픈해도 낡은 본문이 나오지 않게.
+            .sync_meta(doc_id, page_count, entries, pdf)?;
+        let g = self.inner.lock().expect("cache mutex poisoned");
+        // 페이지 수가 바뀌면 노트 목록 캐시 무효화. 스토어(획)는 불변.
+        g.cache.invalidate_notes();
         if let Some(bytes) = pdf {
             g.cache.put_pdf(doc_id, bytes);
         }
         Ok(())
+    }
+
+    fn shift_strokes(&self, doc_id: i64, from: i32, delta: i32) {
+        self.remote.shift_strokes(doc_id, from, delta);
+    }
+
+    fn delete_page_data(&self, doc_id: i64, page: i32) {
+        self.remote.delete_page_data(doc_id, page);
+    }
+
+    fn rotate_page_data(&self, doc_id: i64, page: i32, clockwise: bool, w: f32, h: f32) {
+        self.remote.rotate_page_data(doc_id, page, clockwise, w, h);
+    }
+
+    fn rotate_all_data(&self, doc_id: i64, clockwise: bool, sizes: &[[f32; 2]]) {
+        self.remote.rotate_all_data(doc_id, clockwise, sizes);
+    }
+
+    fn flush_pending(&self) -> bool {
+        Self::flush_pending(self)
     }
 
     fn load_bundle(&self, doc_id: i64) -> LoadedBundle {

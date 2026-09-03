@@ -126,6 +126,23 @@ fn color_from_i32(v: &[i32]) -> [u8; 4] {
     [at(0), at(1), at(2), at(3)]
 }
 
+/// entries → document_sync/document_sync_meta용 페이지 JSONB 배열.
+fn pages_json(entries: &[(i32, PagePaper, bool)]) -> Value {
+    Value::Array(
+        entries
+            .iter()
+            .map(|(idx, paper, bookmarked)| {
+                serde_json::json!({
+                    "page_index": idx,
+                    "style": style_str(paper.style),
+                    "color": paper.color,
+                    "bookmarked": bookmarked,
+                })
+            })
+            .collect(),
+    )
+}
+
 impl Db {
     /// 연결 + 스키마 존재 확인. 스키마 생성/마이그레이션은 서버 측
     /// (`server/db/up.sh`)이 담당합니다. 연결 대화상자에서 즉각적인
@@ -183,6 +200,22 @@ impl Db {
             return Err(
                 "FreeDF schema is outdated — run server/db/up.sh on the database host \
                  (migration 0007_document_load is missing)"
+                    .to_string(),
+            );
+        }
+        // 델타 함수(migration 0008)도 필수 — 구조 연산을 서버에서 처리합니다.
+        let has_delta: Option<String> = client
+            .query_opt(
+                "SELECT to_regprocedure('public.document_sync_meta(bigint,integer,jsonb,bytea)')::text",
+                &[],
+            )
+            .ok()
+            .flatten()
+            .map(|r| r.get(0));
+        if has_delta.is_none() {
+            return Err(
+                "FreeDF schema is outdated — run server/db/up.sh on the database host \
+                 (migration 0008_document_delta is missing)"
                     .to_string(),
             );
         }
@@ -396,63 +429,67 @@ impl Db {
         );
     }
 
-    /// 문서 전체 저장을 **한 번의 왕복**으로 원자 반영 (migration 0006 저장 함수).
-    /// 획 배열·페이지 배열·PDF를 파라미터 하나의 문장으로 보내 서버가
-    /// 하나의 원자적 함수 호출로 전부 반영합니다.
-    pub fn sync_document(
+    /// 메타 동기화(migration 0008) — 페이지(용지/북마크)·문서 정보·PDF만
+    /// 한 번의 왕복으로 반영합니다. **스트로크는 건드리지 않습니다**
+    /// (획은 write-behind 대기열이 이미 증분 반영).
+    pub fn sync_meta(
         &self,
         doc_id: i64,
         page_count: i32,
-        store: &AnnotationStore,
         entries: &[(i32, PagePaper, bool)],
         pdf: Option<&[u8]>,
     ) -> Result<(), String> {
         let mut c = conn_guard(&self.conn);
-        let now = now_ms();
-        let strokes: Value = Value::Array(
-            store
-                .pages()
-                .flat_map(|page| {
-                    let page_index = page.page_index;
-                    page.strokes.iter().map(move |s| {
-                        serde_json::json!({
-                            "id": s.id,
-                            "page_index": page_index,
-                            "tool": s.tool.label(),
-                            "color": s.color,
-                            "width": s.width,
-                            "points": s.points,
-                            "created_at": if s.created_ms > 0 { s.created_ms } else { now as u64 },
-                        })
-                    })
-                })
-                .collect(),
-        );
-        let pages: Value = Value::Array(
-            entries
-                .iter()
-                .map(|(idx, paper, bookmarked)| {
-                    serde_json::json!({
-                        "page_index": idx,
-                        "style": style_str(paper.style),
-                        "color": paper.color,
-                        "bookmarked": bookmarked,
-                    })
-                })
-                .collect(),
-        );
+        let pages = pages_json(entries);
         c.execute(
-            "SELECT public.document_sync($1, $2, $3, $4, $5)",
-            &[
-                &doc_id,
-                &page_count,
-                &strokes,
-                &pages,
-                &pdf.map(|b| b.to_vec()),
-            ],
+            "SELECT public.document_sync_meta($1, $2, $3, $4)",
+            &[&doc_id, &page_count, &pages, &pdf.map(|b| b.to_vec())],
         )
         .map(|_| ())
-        .map_err(|e| format!("document_sync failed: {e}"))
+        .map_err(|e| format!("document_sync_meta failed: {e}"))
+    }
+
+    /// 페이지 중간 삽입 — from 이상 획의 page_index를 서버에서 이동합니다
+    /// (재전송 없음 — 앱 로컬 스토어는 이미 동일하게 이동돼 있습니다).
+    pub fn shift_strokes(&self, doc_id: i64, from: i32, delta: i32) {
+        let mut c = conn_guard(&self.conn);
+        let _ = c.execute(
+            "SELECT public.document_shift_strokes($1, $2, $3)",
+            &[&doc_id, &from, &delta],
+        );
+    }
+
+    /// 페이지 삭제 — 해당 페이지 획 삭제 + 이후 인덱스 -1 (서버 처리).
+    pub fn delete_page_data(&self, doc_id: i64, page: i32) {
+        let mut c = conn_guard(&self.conn);
+        let _ = c.execute(
+            "SELECT public.document_delete_page($1, $2)",
+            &[&doc_id, &page],
+        );
+    }
+
+    /// 페이지 회전 — 해당 페이지 획의 x/y를 서버에서 변환 (재전송 없음).
+    pub fn rotate_page_data(&self, doc_id: i64, page: i32, clockwise: bool, w: f32, h: f32) {
+        let mut c = conn_guard(&self.conn);
+        let _ = c.execute(
+            "SELECT public.document_rotate_page($1, $2, $3, $4, $5)",
+            &[&doc_id, &page, &clockwise, &w, &h],
+        );
+    }
+
+    /// 전체 페이지 회전 — 페이지별 크기를 서버에 보내 내부에서 반복 변환합니다.
+    pub fn rotate_all_data(&self, doc_id: i64, clockwise: bool, sizes: &[[f32; 2]]) {
+        let mut c = conn_guard(&self.conn);
+        let sizes: Value = Value::Array(
+            sizes
+                .iter()
+                .map(|s| serde_json::json!([s[0], s[1]]))
+                .collect(),
+        );
+        let _ = c.execute(
+            "SELECT public.document_rotate_all($1, $2, $3)",
+            &[&doc_id, &clockwise, &sizes],
+        );
     }
 
     /// 문서의 전체 주석/용지/북마크/저널/세션을 **한 번의 왕복**으로 로드
@@ -733,15 +770,26 @@ impl StorageBackend for Db {
     fn delete_strokes(&self, doc_id: i64, ids: &[i64]) {
         Db::delete_strokes(self, doc_id, ids)
     }
-    fn sync_document(
+    fn sync_meta(
         &self,
         doc_id: i64,
         page_count: i32,
-        store: &AnnotationStore,
         entries: &[(i32, PagePaper, bool)],
         pdf: Option<&[u8]>,
     ) -> Result<(), String> {
-        Db::sync_document(self, doc_id, page_count, store, entries, pdf)
+        Db::sync_meta(self, doc_id, page_count, entries, pdf)
+    }
+    fn shift_strokes(&self, doc_id: i64, from: i32, delta: i32) {
+        Db::shift_strokes(self, doc_id, from, delta)
+    }
+    fn delete_page_data(&self, doc_id: i64, page: i32) {
+        Db::delete_page_data(self, doc_id, page)
+    }
+    fn rotate_page_data(&self, doc_id: i64, page: i32, clockwise: bool, w: f32, h: f32) {
+        Db::rotate_page_data(self, doc_id, page, clockwise, w, h)
+    }
+    fn rotate_all_data(&self, doc_id: i64, clockwise: bool, sizes: &[[f32; 2]]) {
+        Db::rotate_all_data(self, doc_id, clockwise, sizes)
     }
     fn load_bundle(&self, doc_id: i64) -> LoadedBundle {
         Db::load_bundle(self, doc_id)
@@ -888,13 +936,20 @@ mod tests {
         assert!(db.load_recents().iter().any(|r| r.doc_id == doc_id));
         assert_eq!(db.load_recents()[0].title, "Smoke Note");
 
-        // ── document_sync 함수 (migration 0006) — 한 번의 왕복 원자 동기화 ──
+        // ── 델타 함수 (migration 0008) — 구조 연산을 재전송 없이 서버 처리 ──
         {
-            let mut store2 = db.load_bundle(doc_id).store;
+            // ① shift: 페이지 0부터 +1 → 기존 2획은 페이지 1로 이동.
+            db.shift_strokes(doc_id, 0, 1);
+            let shifted = db.load_bundle(doc_id);
+            assert_eq!(shifted.store.stroke_count_on(0), 0);
+            assert_eq!(shifted.store.stroke_count_on(1), 2);
+
+            // ② 새 획을 (이동 후) 페이지 0에 추가.
             let sid = db.alloc_stroke_ids(1)[0];
-            store2.add_strokes(
+            db.insert_strokes(
+                doc_id,
                 0,
-                vec![Stroke {
+                &[Stroke {
                     id: sid as u64,
                     tool: ToolType::Pen,
                     color: [9, 9, 9, 255],
@@ -903,14 +958,22 @@ mod tests {
                     created_ms: 0,
                 }],
             );
-            // 3페이지로 확장 + PDF 교체 — 전부 한 번의 호출로.
+
+            // ③ rotate: 페이지 0의 점 (x,y) → (h-y, x) 시계방향 (w=100,h=200).
+            db.rotate_page_data(doc_id, 0, true, 100.0, 200.0);
+            let rotated = db.load_bundle(doc_id);
+            let p0 = &rotated.store.strokes_on(0)[0].points[0];
+            assert!((p0.x - 195.0).abs() < 0.01, "x' = h - y = 195");
+            assert!((p0.y - 5.0).abs() < 0.01, "y' = x = 5");
+
+            // ④ meta: 3페이지 확장 + PDF 교체 — 획은 불변.
             let entries2 = vec![
                 (0i32, paper, true),
                 (1i32, paper, true),
                 (2i32, paper, false),
             ];
-            db.sync_document(doc_id, 3, &store2, &entries2, Some(b"%PDF-1.4 synced"))
-                .expect("sync_document");
+            db.sync_meta(doc_id, 3, &entries2, Some(b"%PDF-1.4 synced"))
+                .expect("sync_meta");
             let synced = db.load_bundle(doc_id);
             assert_eq!(synced.store.total_stroke_count(), 3);
             for i in 0..3 {
@@ -921,16 +984,20 @@ mod tests {
             assert_eq!(db.get_document(doc_id).unwrap().page_count, 3);
             assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
 
-            // 1페이지로 축소 — 잉여 페이지가 삭제되어야 함.
+            // ⑤ delete_page_data: 페이지 1 삭제 → 그 페이지 획 제거 + 이후 -1.
+            db.delete_page_data(doc_id, 1);
+            let deleted = db.load_bundle(doc_id);
+            assert_eq!(deleted.store.total_stroke_count(), 1);
+            assert_eq!(deleted.store.stroke_count_on(0), 1);
+
+            // ⑥ meta 축소: 1페이지로 줄이면 잉여 페이지 삭제, PDF NULL 유지.
             let entries3 = vec![(0i32, paper, false)];
-            db.sync_document(doc_id, 1, &store2, &entries3, None)
+            db.sync_meta(doc_id, 1, &entries3, None)
                 .expect("sync shrink");
             let shrunk = db.load_bundle(doc_id);
             assert!(shrunk.store.paper_on(1).is_none(), "page 1 removed");
             assert!(shrunk.store.paper_on(2).is_none(), "page 2 removed");
-            assert_eq!(shrunk.store.total_stroke_count(), 3);
             assert_eq!(db.get_document(doc_id).unwrap().page_count, 1);
-            // PDF는 NULL이면 유지.
             assert_eq!(db.load_pdf(doc_id).unwrap(), b"%PDF-1.4 synced");
         }
 
@@ -1059,31 +1126,35 @@ mod tests {
         db.insert_strokes(doc_id, 0, &strokes);
         let insert_ms = t0.elapsed().as_millis();
 
-        let mut store = AnnotationStore::new();
-        store.add_strokes(0, strokes.clone());
         let paper = PagePaper {
             style: PaperStyle::Grid,
             color: [255, 255, 255, 255],
         };
         let entries = vec![(0i32, paper, false)];
+        // 델타 프로토콜: 메타 동기화는 획과 무관 — 획 수에 비례하지 않습니다.
         let t1 = std::time::Instant::now();
-        db.sync_document(doc_id, 1, &store, &entries, None)
-            .expect("sync_document");
+        db.sync_meta(doc_id, 1, &entries, None).expect("sync_meta");
         let sync_ms = t1.elapsed().as_millis();
 
         let t2 = std::time::Instant::now();
         let loaded = db.load_bundle(doc_id);
         let load_ms = t2.elapsed().as_millis();
 
+        // 서버 회전도 획 수와 무관하게 한 번의 UPDATE입니다.
+        let t3 = std::time::Instant::now();
+        db.rotate_page_data(doc_id, 0, true, 595.0, 842.0);
+        let rotate_ms = t3.elapsed().as_millis();
+
         assert_eq!(loaded.store.total_stroke_count(), N);
         println!(
-            "batch perf: insert {N} strokes = {insert_ms}ms, document_sync = {sync_ms}ms, document_load = {load_ms}ms"
+            "batch perf: insert {N} strokes = {insert_ms}ms, sync_meta = {sync_ms}ms, document_load = {load_ms}ms, rotate = {rotate_ms}ms"
         );
 
         // 관대한 상한 — 행별 왕복이었다면 수 분 걸리는 시나리오입니다.
         assert!(insert_ms < 30_000, "insert too slow: {insert_ms}ms");
         assert!(sync_ms < 30_000, "sync too slow: {sync_ms}ms");
         assert!(load_ms < 30_000, "load too slow: {load_ms}ms");
+        assert!(rotate_ms < 30_000, "rotate too slow: {rotate_ms}ms");
 
         db.delete_document(doc_id).expect("delete");
     }

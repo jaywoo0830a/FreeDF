@@ -39,6 +39,28 @@ fn load_document_bundle(
     })
 }
 
+/// 구조 연산 델타 — 서버(SQL 함수)에서 처리해 전체 스트로크 재전송을 피합니다.
+///
+/// 델타 프로토콜: 대기열 플러시(획 증분 반영) → 서버 구조 델타 → 메타 동기화.
+pub(crate) enum StructureOp {
+    /// 페이지 중간 삽입 — from 이상 획 인덱스 +1 (서버 이동, 재전송 없음).
+    Shift { from: i32, delta: i32 },
+    /// 페이지 삭제 — 해당 페이지 획 삭제 + 이후 인덱스 -1.
+    DeletePage { page: i32 },
+    /// 페이지 회전 — 해당 페이지 획 좌표를 서버에서 변환.
+    RotatePage {
+        page: i32,
+        clockwise: bool,
+        w: f32,
+        h: f32,
+    },
+    /// 전체 페이지 회전.
+    RotateAll {
+        clockwise: bool,
+        sizes: Vec<[f32; 2]>,
+    },
+}
+
 impl FreeDfApp {
     pub(crate) fn toggle_bookmark(&mut self, page: PageIndex) {
         self.store.toggle_bookmark(page);
@@ -625,13 +647,18 @@ impl FreeDfApp {
             self.status = Some(e);
             return;
         }
+        // 끝에 삽입이면 기존 획 인덱스 불변(메타만), 중간이면 서버에서 +1 이동.
+        let shift = (idx < total).then_some(StructureOp::Shift {
+            from: idx as i32,
+            delta: 1,
+        });
         self.store.insert_page(idx);
         self.store.set_paper(idx, paper);
         self.current_page = idx;
         let total = doc.page_count();
         self.logger.log(AppEvent::PageAdded { page: idx, total });
         self.on_page_changed();
-        self.flush_current_document();
+        self.flush_current_document_with(shift);
     }
 
     /// 현재 페이지를 시계/반시계 90° 회전합니다 (주석도 함께 회전).
@@ -665,7 +692,12 @@ impl FreeDfApp {
             if clockwise { "clockwise" } else { "counter-clockwise" }
         ));
         self.on_page_changed();
-        self.flush_current_document();
+        self.flush_current_document_with(Some(StructureOp::RotatePage {
+            page: idx as i32,
+            clockwise,
+            w,
+            h,
+        }));
     }
 
     /// 문서의 모든 페이지를 시계/반시계 90° 회전합니다 (주석도 함께).
@@ -702,7 +734,10 @@ impl FreeDfApp {
             if clockwise { "clockwise" } else { "counter-clockwise" }
         ));
         self.on_page_changed();
-        self.flush_current_document();
+        self.flush_current_document_with(Some(StructureOp::RotateAll {
+            clockwise,
+            sizes,
+        }));
     }
 
     pub(crate) fn delete_page_action(&mut self) {
@@ -728,7 +763,9 @@ impl FreeDfApp {
             total,
         });
         self.on_page_changed();
-        self.flush_current_document();
+        self.flush_current_document_with(Some(StructureOp::DeletePage {
+            page: idx as i32,
+        }));
     }
 
     // ---------- Zoom / fit ----------
@@ -900,13 +937,20 @@ impl FreeDfApp {
 
     // ---------- Persistence (PostgreSQL) ----------
 
-    /// 현재 문서를 전부 DB로 플러시합니다: 스트로크 전체 재동기화 + pages 테이블
-    /// (용지/북마크) + 페이지 수 + PDF 본문 바이트.
-    /// (페이지 CRUD/회전 등 구조 연산과 저장/종료 시 호출)
+    /// 현재 문서를 DB로 플러시합니다 — **델타 프로토콜**:
+    ///   1) write-behind 대기열 플러시 (획은 이미 증분 반영 중 — 재전송 없음)
+    ///   2) 서버 구조 델타 (페이지 인덱스 이동/삭제/회전 — 선택)
+    ///   3) 메타 동기화 (페이지/문서 정보/PDF — migration 0008)
+    /// 전체 스트로크 재동기화는 하지 않습니다 (repair용 `document_sync`는 별도).
     ///
     /// PDF 직렬화(pdfium)만 UI 스레드에서 하고, **DB 반영은 백그라운드**로
     /// 단계별 진행 메시지(SaveMsg::Stage)를 보냅니다.
     pub(crate) fn flush_current_document(&mut self) {
+        self.flush_current_document_with(None);
+    }
+
+    /// 구조 연산 델타와 함께 플러시합니다 (`None` = 일반 저장).
+    pub(crate) fn flush_current_document_with(&mut self, op: Option<StructureOp>) {
         let Some(doc_id) = self.doc_id else {
             return;
         };
@@ -938,29 +982,47 @@ impl FreeDfApp {
             },
             None => None,
         };
-        let store = self.store.clone();
         let db = self.db.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.save_rx = Some(rx);
         self.begin_loading("Preparing save…");
         std::thread::spawn(move || {
             let res = (|| -> Result<(), String> {
-                // 문서 전체(획+페이지+문서 정보+PDF)를 **한 번의 왕복**으로
-                // 서버 함수(document_sync, migration 0006)가 원자 반영 —
-                // 함수가 없는 구형 스키마면 내부에서 단계별 경로로 폴백합니다.
+                // 1) 획 증분 반영 (대기열에 남은 것까지 지금 전송).
+                let _ = tx.send(SaveMsg::Stage("Flushing pending strokes…".into()));
+                db.flush_pending();
+                // 2) 서버 구조 델타 — 재전송 없이 인덱스 이동/삭제/회전.
+                match op {
+                    Some(StructureOp::Shift { from, delta }) => {
+                        let _ = tx.send(SaveMsg::Stage("Shifting page indices…".into()));
+                        db.shift_strokes(doc_id, from, delta);
+                    }
+                    Some(StructureOp::DeletePage { page }) => {
+                        let _ = tx.send(SaveMsg::Stage("Deleting page data…".into()));
+                        db.delete_page_data(doc_id, page);
+                    }
+                    Some(StructureOp::RotatePage {
+                        page,
+                        clockwise,
+                        w,
+                        h,
+                    }) => {
+                        let _ = tx.send(SaveMsg::Stage("Rotating strokes on server…".into()));
+                        db.rotate_page_data(doc_id, page, clockwise, w, h);
+                    }
+                    Some(StructureOp::RotateAll { clockwise, sizes }) => {
+                        let _ = tx.send(SaveMsg::Stage("Rotating all strokes on server…".into()));
+                        db.rotate_all_data(doc_id, clockwise, &sizes);
+                    }
+                    None => {}
+                }
+                // 3) 메타 동기화 (페이지/문서 정보/PDF — 획 불변).
                 let _ = tx.send(SaveMsg::Stage(format!(
-                    "Saving document ({} strokes / {} pages / {} KB PDF)…",
-                    store.total_stroke_count(),
+                    "Saving document info ({} pages / {} KB PDF)…",
                     entries.len(),
                     pdf_bytes.as_ref().map(|b| b.len() / 1024).unwrap_or(0)
                 )));
-                db.sync_document(
-                    doc_id,
-                    page_count as i32,
-                    &store,
-                    &entries,
-                    pdf_bytes.as_deref(),
-                )
+                db.sync_meta(doc_id, page_count as i32, &entries, pdf_bytes.as_deref())
             })();
             let _ = tx.send(SaveMsg::Done(res));
         });

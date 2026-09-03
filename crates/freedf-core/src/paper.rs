@@ -296,9 +296,82 @@ pub fn paper_dots(w: f32, h: f32, style: PaperStyle, spacing: f32) -> Vec<[f32; 
     out
 }
 
+/// 페이지 **표시 회전**을 반영한 줄을 반환합니다 (화면에 그리는 용).
+///
+/// 회전은 줄을 종이와 함께 돌립니다: Ruled는 90/270°에서 세로줄로,
+/// 0/180°에서는 가로줄로 그립니다. Grid/점은 90° 회전에 불변이라 그대로입니다.
+/// (균일 간격이라 위상 이동은 보이지 않음 — 스트로크는 앱이 같은 회전 변환으로
+/// 회전하므로 줄과 정렬이 유지됩니다.)
+pub fn paper_lines_rotated(
+    w: f32,
+    h: f32,
+    style: PaperStyle,
+    spacing: f32,
+    rotation: crate::text::PageRotation,
+) -> Vec<[f32; 4]> {
+    let vertical = style == PaperStyle::Ruled
+        && matches!(
+            rotation,
+            crate::text::PageRotation::Degrees90 | crate::text::PageRotation::Degrees270
+        );
+    if vertical {
+        // 가로줄을 그린 뒤 선분을 90° 회전한 것과 같은 집합 — 세로줄.
+        let gap = clamp_spacing(spacing);
+        let mut out = Vec::new();
+        let mut x = gap;
+        while x < w {
+            out.push([x, 0.0, x, h]);
+            x += gap;
+        }
+        out
+    } else {
+        paper_lines(w, h, style, spacing)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ruled_lines_follow_page_rotation() {
+        use crate::text::PageRotation;
+        // 0/180°: 가로줄 (y 고정), 90/270°: 세로줄 (x 고정).
+        let horiz = paper_lines_rotated(100.0, 200.0, PaperStyle::Ruled, 50.0, PageRotation::None);
+        assert_eq!(horiz.len(), 3, "h=200/50 → 3줄");
+        assert!(horiz.iter().all(|l| l[1] == l[3] && l[0] == 0.0 && l[2] == 100.0));
+        let vert = paper_lines_rotated(
+            100.0,
+            200.0,
+            PaperStyle::Ruled,
+            50.0,
+            PageRotation::Degrees90,
+        );
+        assert_eq!(vert.len(), 1, "w=100/50 → 1줄");
+        assert!(vert.iter().all(|l| l[0] == l[2] && l[1] == 0.0 && l[3] == 200.0));
+        let vert2 = paper_lines_rotated(
+            100.0,
+            200.0,
+            PaperStyle::Ruled,
+            50.0,
+            PageRotation::Degrees270,
+        );
+        assert_eq!(vert2, vert);
+        // 180°는 가로줄 집합 그대로 (위상 무관).
+        let horiz180 = paper_lines_rotated(
+            100.0,
+            200.0,
+            PaperStyle::Ruled,
+            50.0,
+            PageRotation::Degrees180,
+        );
+        assert_eq!(horiz180, horiz);
+        // Grid/Blank는 회전에 불변 (기존 함수와 동일).
+        assert_eq!(
+            paper_lines_rotated(100.0, 200.0, PaperStyle::Grid, 50.0, PageRotation::Degrees90),
+            paper_lines(100.0, 200.0, PaperStyle::Grid, 50.0)
+        );
+    }
 
     #[test]
     fn style_settings_are_independent_per_style() {

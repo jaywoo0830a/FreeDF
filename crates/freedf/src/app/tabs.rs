@@ -89,13 +89,9 @@ impl FreeDfApp {
             })
             .collect();
         std::thread::spawn(move || {
-            let _ = db.sync_document(
-                doc_id,
-                page_count as i32,
-                &store,
-                &entries,
-                pdf_bytes.as_deref(),
-            );
+            // 델타 프로토콜 — 대기열 플러시 후 메타 동기화 (획 재전송 없음).
+            db.flush_pending();
+            let _ = db.sync_meta(doc_id, page_count as i32, &entries, pdf_bytes.as_deref());
         });
         if idx == self.active {
             // 캡처로 옮겼으니 복원해 현재 상태 유지 (탭이 곧 닫혀도 안전).
