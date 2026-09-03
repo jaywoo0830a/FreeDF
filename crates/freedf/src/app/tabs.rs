@@ -119,6 +119,8 @@ impl FreeDfApp {
         tab.smoothing = self.smoothing;
         tab.smoothing_enabled = self.smoothing_enabled;
         tab.ink_bleed = self.ink_bleed;
+        tab.pen_grain = self.pen_grain;
+        tab.fountain_grain = self.fountain_grain;
         tab.fountain_profile = self.fountain_profile;
         tab.zoom_lock = self.zoom_lock;
     }
@@ -167,6 +169,8 @@ impl FreeDfApp {
             smoothing,
             smoothing_enabled,
             ink_bleed,
+            pen_grain,
+            fountain_grain,
             fountain_profile,
             zoom_lock,
         ) = {
@@ -213,6 +217,8 @@ impl FreeDfApp {
                 tab.smoothing,
                 tab.smoothing_enabled,
                 tab.ink_bleed,
+                tab.pen_grain,
+                tab.fountain_grain,
                 tab.fountain_profile,
                 tab.zoom_lock,
             )
@@ -272,6 +278,8 @@ impl FreeDfApp {
         self.smoothing = smoothing;
         self.smoothing_enabled = smoothing_enabled;
         self.ink_bleed = ink_bleed;
+        self.pen_grain = pen_grain;
+        self.fountain_grain = fountain_grain;
         self.fountain_profile = fountain_profile;
         self.zoom_lock = zoom_lock;
         self.search_runs = Vec::new();
@@ -359,6 +367,8 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            pen_grain: self.pen_grain,
+            fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,
             zoom_lock: self.zoom_lock,
         };

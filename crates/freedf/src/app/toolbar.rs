@@ -96,6 +96,50 @@ fn fountain_profile_preview(
     );
 }
 
+/// 잉크 질감(입체적 불균일) 커스텀 컨트롤 — 볼펜/만년필 공용.
+/// 변경이 있으면 `true`를 반환합니다 (호출자가 세션 저장).
+fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
+    let mut changed = ui
+        .checkbox(&mut grain.enabled, "Ink grain")
+        .on_hover_text(
+            "Real ink is never perfectly uniform — enable a subtle, stable \
+             texture: flow waves, fiber wicking, start blobs and darker edges.",
+        )
+        .changed();
+    if grain.enabled {
+        changed |= ui
+            .add(egui::Slider::new(&mut grain.flow_amp, 0.0..=0.4).text("Flow"))
+            .on_hover_text("Low-frequency ink-flow waves along the stroke (amplitude).")
+            .changed();
+        changed |= ui
+            .add(egui::Slider::new(&mut grain.wick_amp, 0.0..=0.4).text("Wick"))
+            .on_hover_text(
+                "Fine fiber-wicking speckle (amplitude) — typically bigger \
+                 for fountain ink than ballpen ink.",
+            )
+            .changed();
+        changed |= ui
+            .add(egui::Slider::new(&mut grain.pooling, 0.0..=0.6).text("Pooling"))
+            .on_hover_text(
+                "Ink pooling strength: start blob / end bead (ballpen), \
+                 start & end pools (fountain).",
+            )
+            .changed();
+        changed |= ui
+            .add(egui::Slider::new(&mut grain.starvation, 0.0..=0.6).text("Starvation"))
+            .on_hover_text("How much fast writing lightens the ink (mainly fountain).")
+            .changed();
+        changed |= ui
+            .add(egui::DragValue::new(&mut grain.seed).range(0..=65535))
+            .on_hover_text(
+                "Grain seed — reshuffles the texture pattern of new strokes. \
+                 Each stroke gets its own texture derived from this seed.",
+            )
+            .changed();
+    }
+    changed
+}
+
 impl FreeDfApp {
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
@@ -767,6 +811,16 @@ impl FreeDfApp {
                             self.save_default_session();
                             self.save_session();
                         }
+                        // 잉크 질감 — 입체적 불균일 (흐름/위킹/뭉침/레일로드).
+                        egui::CollapsingHeader::new("Ink grain")
+                            .id_salt("pen_ink_grain")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if ink_grain_controls(ui, &mut self.pen_grain) {
+                                    self.save_default_session();
+                                    self.save_session();
+                                }
+                            });
                         // 필기 스무딩(안정화): 선택 기능. OTD(OpenTabletDriver) 등
                         // 드라이버가 이미 안정화하는 환경에서는 꺼두면 됩니다.
                         if ui
@@ -879,6 +933,16 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
+                        // 잉크 질감 — 입체적 불균일 (흐름/위킹/고임/레일로드).
+                        egui::CollapsingHeader::new("Ink grain")
+                            .id_salt("fountain_ink_grain")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                if ink_grain_controls(ui, &mut self.fountain_grain) {
+                                    self.save_default_session();
+                                    self.save_session();
+                                }
+                            });
                         // 모델 파라미터는 `self.fountain_profile`을 직접 수정합니다
                         // (장시간 borrow를 피해 저장 호출과 충돌하지 않게).
                         let any_changed = ui

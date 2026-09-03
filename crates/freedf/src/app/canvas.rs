@@ -171,6 +171,15 @@ fn stroke_halves(
     halves
 }
 
+/// 획별 질감 시드 — 획 시작 시각에서 유도해 **같은 획은 항상 같은 질감**,
+/// 다른 획은 거의 항상 다른 질감을 갖습니다 (질감이 프레임마다 깜빡이지 않음).
+fn ink_seed(grain: InkGrain, created_ms: u64) -> InkGrain {
+    InkGrain {
+        seed: grain.seed ^ created_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        ..grain
+    }
+}
+
 
 impl FreeDfApp {
     pub(crate) fn current_drawing_style(&self) -> ([u8; 4], f32) {
@@ -816,6 +825,8 @@ impl FreeDfApp {
                     self.ink_bleed,
                     self.pen_profile,
                     self.fountain_profile,
+                    self.pen_grain,
+                    self.fountain_grain,
                 );
                 self.ink_built_at = now;
             }
@@ -1789,9 +1800,11 @@ impl FreeDfApp {
             self.ink_bleed,
             self.pen_profile,
             self.fountain_profile,
+            self.pen_grain,
+            self.fountain_grain,
         );
-        let key_eq = |a: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile),
-                      b: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile)| {
+        let key_eq = |a: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile, InkGrain, InkGrain),
+                      b: &(f32, f32, f32, f32, f32, InkBleed, BallPenProfile, FountainProfile, InkGrain, InkGrain)| {
             a.0 == b.0
                 && a.1 == b.1
                 && a.2 == b.2
@@ -1800,6 +1813,8 @@ impl FreeDfApp {
                 && a.5 == b.5
                 && a.6 == b.6
                 && a.7 == b.7
+                && a.8 == b.8
+                && a.9 == b.9
         };
         if let Some((built_ms, n0, k0, mesh)) = &self.active_mesh {
             if *n0 == n && key_eq(k0, &view_key) {
@@ -1838,34 +1853,53 @@ impl FreeDfApp {
         };
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
         let mut mesh = egui::Mesh::default();
-        // 잉크 스밈: **굵기는 쓴 그대로**, 색만 점별 나이에 따라 옅게(35%) →
-        // 포화(원색)로 진해집니다. 닙 근처는 옅고 뒤로 갈수록 진해짐.
-        let body_sat: Option<Vec<f32>> = if bleed_active {
-            let now = now_ms();
-            let sat_sec = self.ink_bleed.saturate_sec.max(1e-3);
-            Some(
-                pts.iter()
-                    .map(|p| {
-                        let age = if p.t_ms == 0 {
-                            age_sec
-                        } else {
-                            (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                        };
-                        INK_SAT_INITIAL + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        // 잉크 스밈(만년필, 옅게→진해짐) + 잉크 질감(입체적 불균일) 합성:
+        // **굵기는 쓴 그대로**, 좌우 정점 알파에 [포화 램프 × 질감 밀도]를 곱합니다.
+        // 질감은 획 공간의 결정적 노이즈라 같은 획은 항상 같은 모양입니다.
+        let alphas: Option<Vec<[f32; 2]>> =
+            if matches!(tool, ToolType::Pen | ToolType::Fountain) {
+                let grain = if tool == ToolType::Fountain {
+                    self.fountain_grain
+                } else {
+                    self.pen_grain
+                };
+                let grain = ink_seed(grain, created_ms);
+                let dens = stroke_ink_lr(tool, pts, grain);
+                let now = now_ms();
+                let sat_sec = self.ink_bleed.saturate_sec.max(1e-3);
+                Some(
+                    pts.iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let sat = if bleed_active {
+                                let age = if p.t_ms == 0 {
+                                    age_sec
+                                } else {
+                                    (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                                };
+                                INK_SAT_INITIAL
+                                    + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
+                            } else {
+                                1.0
+                            };
+                            [
+                                combine_saturation(sat, dens[i][0]),
+                                combine_saturation(sat, dens[i][1]),
+                            ]
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
         append_ribbon(
             &mut mesh,
-            &freedf_core::pen::stroke_ribbon(
+            &freedf_core::pen::stroke_ribbon_lr(
                 &pts_pt,
                 &halves_pt,
                 feather_pt,
                 round_caps,
-                body_sat.as_deref(),
+                alphas.as_deref(),
             ),
             &to_view,
             color,
@@ -1894,6 +1928,8 @@ impl FreeDfApp {
         let sat_deadline = bleed.saturate_sec.max(1e-3);
         let ball = self.pen_profile;
         let fountain = self.fountain_profile;
+        let pen_grain = self.pen_grain;
+        let fountain_grain = self.fountain_grain;
         let tilt = tilt_magnitude(&self.pen_tilt);
         let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
 
@@ -1962,35 +1998,54 @@ impl FreeDfApp {
                 }
             }
             let bleed_on = s.tool == ToolType::Fountain && bleed.enabled;
-            // 잉크 스밈: **굵기는 쓴 그대로**, 색만 점별 나이에 따라 진해짐
-            // (옅게 → 포화, saturate_sec에서 멈춤).
-            let body_sat: Option<Vec<f32>> = if bleed_on {
-                let sat_sec = bleed.saturate_sec.max(1e-3);
-                Some(
-                    s.points
-                        .iter()
-                        .map(|p| {
-                            let age = if p.t_ms == 0 {
-                                sat_deadline
-                            } else {
-                                (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                            };
-                            INK_SAT_INITIAL
-                                + (1.0 - INK_SAT_INITIAL) * (age / sat_sec).clamp(0.0, 1.0)
-                        })
-                        .collect(),
-                )
-            } else {
-                None
-            };
+            // 잉크 스밈(만년필) + 질감 불균일 합성 — 좌우 정점 알파에
+            // [포화 램프 × 밀도]를 곱합니다. 굵기는 쓴 그대로.
+            let alphas: Option<Vec<[f32; 2]>> =
+                if matches!(s.tool, ToolType::Pen | ToolType::Fountain) {
+                    let grain = if s.tool == ToolType::Fountain {
+                        fountain_grain
+                    } else {
+                        pen_grain
+                    };
+                    let created = if s.created_ms > 0 { s.created_ms } else { s.id };
+                    let grain = ink_seed(grain, created);
+                    let dens = stroke_ink_lr(s.tool, &s.points, grain);
+                    let sat_sec = bleed.saturate_sec.max(1e-3);
+                    Some(
+                        s.points
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| {
+                                let sat = if bleed_on {
+                                    let age = if p.t_ms == 0 {
+                                        sat_deadline
+                                    } else {
+                                        (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                                    };
+                                    INK_SAT_INITIAL
+                                        + (1.0 - INK_SAT_INITIAL)
+                                            * (age / sat_sec).clamp(0.0, 1.0)
+                                } else {
+                                    1.0
+                                };
+                                [
+                                    combine_saturation(sat, dens[i][0]),
+                                    combine_saturation(sat, dens[i][1]),
+                                ]
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
             append_ribbon(
                 &mut mesh,
-                &freedf_core::pen::stroke_ribbon(
+                &freedf_core::pen::stroke_ribbon_lr(
                     &pts_pt,
                     &halves,
                     feather_pt,
                     round_caps,
-                    body_sat.as_deref(),
+                    alphas.as_deref(),
                 ),
                 &to_view,
                 color,
@@ -2016,6 +2071,8 @@ impl FreeDfApp {
             self.ink_bleed,
             self.pen_profile,
             self.fountain_profile,
+            self.pen_grain,
+            self.fountain_grain,
         );
         if key != self.ink_key {
             return true;
@@ -2377,6 +2434,37 @@ mod tests {
             assert!(bounds.min.x > 50.0 && bounds.max.x < 150.0, "x: {bounds:?}");
             assert!(bounds.min.y > 50.0 && bounds.max.y < 150.0, "y: {bounds:?}");
         }
+    }
+
+    #[test]
+    fn ink_grain_alphas_stay_bounded_for_ribbon() {
+        // 통합 경로: 질감 밀도 × 포화 램프를 좌우 알파로 합성해 리본에 넣어도
+        // 모든 정점 알파가 0..1 안에 머물고 정점/알파 수가 일치합니다.
+        let pts: Vec<StrokePoint> = (0..64)
+            .map(|i| StrokePoint::with_time(i as f32 * 3.0, 50.0, 0.5, i as u64 * 5))
+            .collect();
+        let g = freedf_core::ink::InkGrain::default();
+        let dens = freedf_core::ink::stroke_ink_lr(ToolType::Fountain, &pts, g);
+        let alphas: Vec<[f32; 2]> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                let sat = 0.35 + 0.65 * (i as f32 / pts.len() as f32);
+                [
+                    freedf_core::ink::combine_saturation(sat, dens[i][0]),
+                    freedf_core::ink::combine_saturation(sat, dens[i][1]),
+                ]
+            })
+            .collect();
+        assert!(alphas
+            .iter()
+            .flatten()
+            .all(|a| a.is_finite() && (0.0..=1.0).contains(a)));
+        let p: Vec<[f32; 2]> = pts.iter().map(|q| [q.x, q.y]).collect();
+        let halves = vec![1.0f32; pts.len()];
+        let rb = freedf_core::pen::stroke_ribbon_lr(&p, &halves, 0.5, true, Some(&alphas));
+        assert_eq!(rb.verts.len(), rb.alphas.len());
+        assert!(rb.alphas.iter().all(|a| *a >= 0.0 && *a <= 1.0));
     }
 
     #[test]

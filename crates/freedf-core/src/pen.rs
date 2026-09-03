@@ -503,6 +503,7 @@ fn push_ribbon_cap(
 }
 
 /// 리본 지오메트리를 계산합니다. `feather`는 pt 공간 페더 폭(0이면 본체만).
+/// `alphas`는 **점별** 알파(좌우 동일) — 잉크 포화도/질감용. None이면 전부 1.0.
 pub fn stroke_ribbon(
     points: &[[f32; 2]],
     half_widths: &[f32],
@@ -510,10 +511,41 @@ pub fn stroke_ribbon(
     round_caps: bool,
     alphas: Option<&[f32]>,
 ) -> StrokeRibbon {
+    let pair = |i: usize| -> [f32; 2] {
+        let a = alphas.map_or(1.0, |v| v[i].clamp(0.0, 1.0));
+        [a, a]
+    };
+    stroke_ribbon_pairs(points, half_widths, feather, round_caps, pair)
+}
+
+/// 좌우 알파가 **다를 수 있는** 리본 — 단면(레일로드) 잉크 효과용.
+/// `alphas[i] = [왼쪽, 오른쪽]` (0..1). None이면 전부 1.0.
+pub fn stroke_ribbon_lr(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    feather: f32,
+    round_caps: bool,
+    alphas: Option<&[[f32; 2]]>,
+) -> StrokeRibbon {
+    let pair = |i: usize| -> [f32; 2] {
+        alphas.map_or([1.0, 1.0], |v| {
+            [v[i][0].clamp(0.0, 1.0), v[i][1].clamp(0.0, 1.0)]
+        })
+    };
+    stroke_ribbon_pairs(points, half_widths, feather, round_caps, pair)
+}
+
+/// 리본 공통 구현 — 점별 (왼쪽, 오른쪽) 알파 쌍을 받습니다.
+/// 단일점 원판/캡은 양쪽의 평균을 사용합니다.
+fn stroke_ribbon_pairs(
+    points: &[[f32; 2]],
+    half_widths: &[f32],
+    feather: f32,
+    round_caps: bool,
+    alpha_pair: impl Fn(usize) -> [f32; 2],
+) -> StrokeRibbon {
     let n = points.len().min(half_widths.len());
     let feather = feather.max(0.0);
-    // 점별 알파(잉크 포화도) — None이면 전부 1.0.
-    let alpha_at = |i: usize| -> f32 { alphas.map_or(1.0, |v| v[i].clamp(0.0, 1.0)) };
     let mut out = StrokeRibbon {
         verts: Vec::new(),
         alphas: Vec::new(),
@@ -532,7 +564,8 @@ pub fn stroke_ribbon(
     if n == 1 {
         // 점 하나: 원판 + 페더 링.
         let h = half_widths[0].max(0.0);
-        let a0 = alpha_at(0);
+        let [al, ar] = alpha_pair(0);
+        let a0 = (al + ar) * 0.5;
         let steps = 12usize;
         let center = push_ribbon_vert(&mut out, points[0], a0);
         let mut inner = Vec::with_capacity(steps);
@@ -560,17 +593,17 @@ pub fn stroke_ribbon(
         return out;
     }
     let norms = miter_normals(points);
-    // 점별 단면 버텍스.
+    // 점별 단면 버텍스 — 왼쪽/오른쪽 알파를 따로 적용 (단면 불균일).
     for i in 0..n {
         let p = points[i];
         let h = half_widths[i].max(0.0);
         let nrm = norms[i];
-        let a = alpha_at(i);
-        push_ribbon_vert(&mut out, add_mul(p, nrm, h), a); // L
+        let [al, ar] = alpha_pair(i);
+        push_ribbon_vert(&mut out, add_mul(p, nrm, h), al); // L
         if has_feather {
             push_ribbon_vert(&mut out, add_mul(p, nrm, h + feather), 0.0); // OL
         }
-        push_ribbon_vert(&mut out, sub_mul(p, nrm, h), a); // R
+        push_ribbon_vert(&mut out, sub_mul(p, nrm, h), ar); // R
         if has_feather {
             push_ribbon_vert(&mut out, sub_mul(p, nrm, h + feather), 0.0); // OR
         }
@@ -600,6 +633,8 @@ pub fn stroke_ribbon(
     if round_caps {
         let t0 = unit2(sub(points[1], points[0]));
         let t1 = unit2(sub(points[n - 1], points[n - 2]));
+        let [al0, ar0] = alpha_pair(0);
+        let [al1, ar1] = alpha_pair(n - 1);
         push_ribbon_cap(
             &mut out,
             points[0],
@@ -607,7 +642,7 @@ pub fn stroke_ribbon(
             half_widths[0].max(0.0),
             feather,
             t0,
-            alpha_at(0),
+            (al0 + ar0) * 0.5,
         );
         push_ribbon_cap(
             &mut out,
@@ -616,7 +651,7 @@ pub fn stroke_ribbon(
             half_widths[n - 1].max(0.0),
             feather,
             neg(t1),
-            alpha_at(n - 1),
+            (al1 + ar1) * 0.5,
         );
     }
     out
@@ -2186,6 +2221,34 @@ mod tests {
         assert!(
             rb2.alphas.iter().any(|&a| (a - 0.2).abs() < 1e-4),
             "시작 캡은 첫 점 알파"
+        );
+    }
+
+    #[test]
+    fn ribbon_lr_applies_per_side_alphas() {
+        // 단면(레일로드) 효과: 왼쪽/오른쪽 정점에 서로 다른 알파.
+        let pts = [[0.0f32, 0.0], [10.0, 0.0]];
+        let halves = [1.0f32, 1.0];
+        let rb = stroke_ribbon_lr(
+            &pts,
+            &halves,
+            0.0,
+            false,
+            Some(&[[0.4, 0.8], [1.0, 0.5]]),
+        );
+        // feather=0 → per=2, 정점 순서 [L0, R0, L1, R1].
+        assert!((rb.alphas[0] - 0.4).abs() < 1e-4, "L0");
+        assert!((rb.alphas[1] - 0.8).abs() < 1e-4, "R0");
+        assert!((rb.alphas[2] - 1.0).abs() < 1e-4, "L1");
+        assert!((rb.alphas[3] - 0.5).abs() < 1e-4, "R1");
+        // None → 전부 1.0 (기존 동작과 동일).
+        let rb2 = stroke_ribbon_lr(&pts, &halves, 0.0, false, None);
+        assert!(rb2.alphas.iter().all(|&a| a == 1.0));
+        // 캡은 양쪽 평균.
+        let rb3 = stroke_ribbon_lr(&pts, &halves, 0.0, true, Some(&[[0.2, 0.8], [0.0, 1.0]]));
+        assert!(
+            rb3.alphas.iter().any(|&a| (a - 0.5).abs() < 1e-4),
+            "시작 캡 = (0.2+0.8)/2"
         );
     }
 

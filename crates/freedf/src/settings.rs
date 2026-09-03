@@ -6,6 +6,7 @@
 //!
 //! 이 모듈은 상태 구조체와 기본값만 정의하고, JSONB 변환은 `serde_json`으로 앱이 처리합니다.
 
+use freedf_core::ink::InkGrain;
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PAPER_LINE, PAPER_LINE_WIDTH_PT};
 use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkBleed};
@@ -100,6 +101,12 @@ pub struct SessionState {
     /// 잉크 번짐(블리드) 설정 (기본 off, 구간별 속도 커스텀 가능)
     #[serde(default)]
     pub ink_bleed: InkBleed,
+    /// 일반 펜(볼펜) 잉크 질감 — 입체적 불균일(흐름/위킹/뭉침/레일로드)
+    #[serde(default)]
+    pub pen_grain: InkGrain,
+    /// 만년필 잉크 질감 — 볼펜과 완전히 독립
+    #[serde(default)]
+    pub fountain_grain: InkGrain,
     /// 만년필 물리 모델 프로파일
     #[serde(default)]
     pub fountain_profile: FountainProfile,
@@ -207,6 +214,8 @@ impl Default for SessionState {
             smoothing: 0.4,
             smoothing_enabled: false,
             ink_bleed: InkBleed::default(),
+            pen_grain: InkGrain::default(),
+            fountain_grain: InkGrain::default(),
             fountain_profile: FountainProfile::default(),
             custom_paper_size: None,
             mouse_draws: false,

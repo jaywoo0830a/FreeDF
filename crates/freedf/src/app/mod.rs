@@ -48,6 +48,7 @@ pub(crate) use freedf_core::paper::{
 pub(crate) use freedf_core::pen::{
     BallPenProfile, ColorFamily, FountainProfile, InkBleed, OneEuroFilter, Palette,
 };
+pub(crate) use freedf_core::ink::{combine_saturation, stroke_ink_lr, InkGrain};
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::text::char_line_highlights;
 
@@ -472,6 +473,10 @@ pub struct TabEntry {
     smoothing_enabled: bool,
     /// 잉크 번짐 설정
     ink_bleed: InkBleed,
+    /// 일반 펜(볼펜) 잉크 질감
+    pen_grain: InkGrain,
+    /// 만년필 잉크 질감
+    fountain_grain: InkGrain,
     /// 만년필 물리 모델 프로파일
     fountain_profile: FountainProfile,
     /// 줌 잠금 (휠/핀치/단축키 줌 무시)
@@ -582,6 +587,10 @@ pub struct FreeDfApp {
     smoothing_enabled: bool,
     /// 잉크 번짐(블리드) 설정 — 선택 기능, 구간별 속도 커스텀 가능.
     ink_bleed: InkBleed,
+    /// 일반 펜(볼펜) 잉크 질감 (입체적 불균일 — 흐름/위킹/뭉침/레일로드)
+    pen_grain: InkGrain,
+    /// 만년필 잉크 질감 — 볼펜과 완전히 독립
+    fountain_grain: InkGrain,
     /// 만년필 물리 모델 프로파일 (필압 × 속도 × 기울기).
     fountain_profile: FountainProfile,
     /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
@@ -619,6 +628,8 @@ pub struct FreeDfApp {
         InkBleed,
         BallPenProfile,
         FountainProfile,
+        InkGrain,
+        InkGrain,
     ),
     /// 병합 메시를 만든 시각 (ms).
     ink_built_at: u64,
@@ -641,6 +652,8 @@ pub struct FreeDfApp {
             InkBleed,
             BallPenProfile,
             FountainProfile,
+            InkGrain,
+            InkGrain,
         ),
         std::sync::Arc<egui::Mesh>,
     )>,
@@ -860,6 +873,12 @@ impl FreeDfApp {
         } else {
             InkBleed::default()
         };
+        let pen_grain = if has { s.pen_grain } else { InkGrain::default() };
+        let fountain_grain = if has {
+            s.fountain_grain
+        } else {
+            InkGrain::default()
+        };
         let fountain_profile = if has && s.profile_version >= 1 {
             s.fountain_profile
         } else {
@@ -957,6 +976,8 @@ impl FreeDfApp {
             mouse_draws,
             smoothing_enabled,
             ink_bleed,
+            pen_grain,
+            fountain_grain,
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
@@ -980,6 +1001,8 @@ impl FreeDfApp {
                 InkBleed::default(),
                 BallPenProfile::default(),
                 FountainProfile::default(),
+                InkGrain::default(),
+                InkGrain::default(),
             ),
             ink_built_at: 0,
             ink_next_settle_ms: u64::MAX,
@@ -1098,6 +1121,8 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            pen_grain: self.pen_grain,
+            fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
@@ -1199,6 +1224,8 @@ impl FreeDfApp {
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: self.ink_bleed,
+            pen_grain: self.pen_grain,
+            fountain_grain: self.fountain_grain,
             fountain_profile: self.fountain_profile,
             custom_paper_size: Some(self.custom_paper_size),
             mouse_draws: self.mouse_draws,
@@ -1274,6 +1301,8 @@ impl FreeDfApp {
         } else {
             self.ink_bleed = InkBleed::default();
         }
+        self.pen_grain = s.pen_grain;
+        self.fountain_grain = s.fountain_grain;
         self.mouse_draws = s.mouse_draws;
         self.dictionary.enabled = s.dictionary_enabled;
         if let Some(c) = s.custom_paper_size {
