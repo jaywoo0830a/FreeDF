@@ -672,6 +672,13 @@ impl FreeDfApp {
                             if changed {
                                 self.save_default_session();
                                 self.save_session();
+                                let pts = self.new_page_size_pts();
+                                self.status = Some(format!(
+                                    "New pages & notes will use {} ({:.0} × {:.0} pt) — insert a page at the very back to verify",
+                                    size.label(),
+                                    pts[0],
+                                    pts[1]
+                                ));
                             }
                         }
                     })
@@ -679,6 +686,19 @@ impl FreeDfApp {
                     .on_hover_text(
                         "Size of new pages & new notes (existing pages keep their size).",
                     );
+                let pts = self.new_page_size_pts();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} — {:.0} × {:.0} pt\n\
+                         Applies to NEW pages & notes only; existing pages\n\
+                         keep their physical size.",
+                        self.paper_size.label(),
+                        pts[0],
+                        pts[1]
+                    ))
+                    .weak()
+                    .small(),
+                );
                 // 사용자 정의 크기: mm 단위 숫자 입력.
                 if self.paper_size == PaperSize::Custom {
                     let mut w_mm = self.custom_paper_size[0] / MM_TO_PT;
@@ -708,6 +728,11 @@ impl FreeDfApp {
                         ];
                         self.save_default_session();
                         self.save_session();
+                        self.status = Some(format!(
+                            "New pages & notes will use {:.0} × {:.0} pt",
+                            self.custom_paper_size[0],
+                            self.custom_paper_size[1]
+                        ));
                     }
                 }
             });
@@ -916,7 +941,7 @@ impl FreeDfApp {
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 ui.menu_button(icon_text(ui, "Insert Page", icons::PLUS_SQUARE), |ui| {
                     let insert = [
-                        (InsertTarget::FromCurrent, "From current page"),
+                        (InsertTarget::FromCurrent, "From current page (copies size & paper)"),
                         (InsertTarget::AtVeryFront, "At the very front"),
                         (InsertTarget::AtVeryBack, "At the very back"),
                         (InsertTarget::BeforeCurrent, "Before current page"),

@@ -807,11 +807,14 @@ impl FreeDfApp {
         self.paint_search_highlights(&painter, draw_origin);
 
         // Annotation strokes — 완성 획 전부를 병합 잉크 메시 하나로.
+        // 주의: 메시는 **오프셋 없는 origin 기준**으로 구워야 합니다.
+        // 과거에 draw_origin(페이지 전환 오프셋 포함)으로 구웠다가, 애니메이션
+        // 종료 후에도 오프셋이 구워진 메시가 캐시에 남아 스트로크가 페이지
+        // 옆으로 어긋나는 버그가 있었습니다 (Fit Width로 키가 바뀌면 복귀).
         let now = now_ms();
         if self.ink_needs_rebuild(now) {
             let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
-            if let Some(mesh) = self.build_ink_mesh(&strokes, draw_origin, painter.clip_rect(), now)
-            {
+            if let Some(mesh) = self.build_ink_mesh(&strokes, origin, painter.clip_rect(), now) {
                 self.ink_mesh = Some(mesh);
                 self.ink_key = (
                     self.current_page,
@@ -831,7 +834,19 @@ impl FreeDfApp {
             }
         }
         if let Some(mesh) = &self.ink_mesh {
-            painter.add(egui::Shape::mesh(mesh.clone()));
+            let shifted = anim_dx.abs() > 0.5 || anim_dy.abs() > 0.5;
+            if shifted {
+                // 페이지 전환 애니메이션 중 — 재구성 없이 정점만 평행 이동한
+                // 사본(O(V))을 그려 잉크가 페이지와 함께 미끄러지게 합니다.
+                let mut m = (**mesh).clone();
+                let shift = egui::vec2(anim_dx, anim_dy);
+                for v in &mut m.vertices {
+                    v.pos += shift;
+                }
+                painter.add(egui::Shape::mesh(std::sync::Arc::new(m)));
+            } else {
+                painter.add(egui::Shape::mesh(mesh.clone()));
+            }
         }
         if let Some(active) = self.active_stroke.clone() {
             self.paint_active(&painter, &active, draw_origin);

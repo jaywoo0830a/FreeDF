@@ -246,12 +246,19 @@ impl DocumentView {
         // 비트맵을 만들어 회전 페이지가 찌그러집니다.
         let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, 65_000.0)) as Pixels;
         let m = (max_dimension.round().clamp(1.0, 65_000.0)) as Pixels;
+        // ── 회전 렌더링 (중요) ── pdfium의 FPDF_RenderPageBitmap은 페이지의
+        // 내장 /Rotate를 **자동으로 적용하지 않습니다** — 호출자가 rotate 플래그를
+        // 넘겨야 합니다. pdfium-render에서 그 플래그는 config의 `.rotate()`로만
+        // 정해지므로, 페이지에 저장된 회전을 읽어 명시적으로 지정합니다.
+        // 이걸 빼먹으면 Rotate CW/CCW 후에도 내용이 회전되지 않고 그대로 보입니다.
+        let rotation = page.rotation().unwrap_or(PdfPageRenderRotation::None);
 
         let config = PdfRenderConfig::new()
             .set_target_width(w)
             .set_target_height(h)
             .set_maximum_width(m)
             .set_maximum_height(m)
+            .rotate(rotation, true)
             .render_annotations(true)
             .use_lcd_text_rendering(true);
 
