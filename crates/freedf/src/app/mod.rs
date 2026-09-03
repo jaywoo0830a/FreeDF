@@ -748,6 +748,14 @@ pub struct FreeDfApp {
     /// Paper 설정 창 "범위 적용" 임시 입력 (1-based 페이지 번호).
     paper_range_from: usize,
     paper_range_to: usize,
+    /// Insert Page 메뉴의 페이지 개수 입력 (임시 — 입력이 유지되도록 필드에 둠).
+    insert_page_count: usize,
+    /// 펜 사이드 버튼 1로 여는 원형 색상 팔레트(굿노트식) 표시 여부 (임시).
+    color_wheel_open: bool,
+    /// 원형 팔레트가 열린 위치 (캔버스 좌표).
+    color_wheel_anchor: [f32; 2],
+    /// 원형 팔레트를 닫은 바깥 탭의 릴리스(점)를 한 번만 무시하는 표식.
+    wheel_swallow_click: bool,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
     custom_paper_size: [f32; 2],
     /// 펜 입력 스무딩 강도 0..1
@@ -1154,6 +1162,10 @@ impl FreeDfApp {
             paper_style_settings,
             paper_range_from: 0,
             paper_range_to: 0,
+            insert_page_count: 1,
+            color_wheel_open: false,
+            color_wheel_anchor: [0.0, 0.0],
+            wheel_swallow_click: false,
             custom_paper_size,
             smoothing,
             zoom_lock,

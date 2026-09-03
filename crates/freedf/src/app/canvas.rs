@@ -28,6 +28,12 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
 /// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
 const DEFAULT_PEN_AZ: f32 = -0.6;
 
+/// 펜 사이드 버튼으로 여는 굿노트식 **원형 색상 팔레트** 기하 (캔버스 픽셀).
+const WHEEL_RING_R: f32 = 34.0;
+const WHEEL_SWATCH_R: f32 = 12.0;
+const WHEEL_CENTER_R: f32 = 15.0;
+const WHEEL_BACK_R: f32 = 56.0;
+
 /// 틸트 노이즈 필터 — 패드 진입 시(호버 시작) 격렬하게 떨리는 틸트 리포트를
 /// 무시합니다. 리포트당 최대 변화를 제한하고 EMA로 부드럽게 수렴시킵니다.
 fn smooth_tilt(prev: [f32; 2], next: [f32; 2]) -> [f32; 2] {
@@ -192,17 +198,17 @@ impl FreeDfApp {
     /// 펜 사이드 버튼 훅 — OTD/evdev 스트림에서 눌림 에지를 감지하면 호출됩니다.
     ///
     /// **새 액션을 연결하는 방법**: 이 match에 arm을 추가하면 됩니다.
-    /// (기본 배선: 버튼 1 = 필기구/색상 팔레트 토글, 버튼 2 = 예약)
+    /// (기본 배선: 버튼 1 = 굿노트식 원형 색상 팔레트 토글, 버튼 2 = 예약)
     pub(crate) fn on_pen_button(&mut self, button: u8, _pressed: bool) {
         match button {
             1 => {
-                // 계획된 기본 동작: 펜 색상 변경 팔레트를 펜 버튼으로 켜고 끕니다.
-                self.show_palette = !self.show_palette;
-                self.save_default_session();
-                self.status = Some(if self.show_palette {
-                    "Palette shown (pen button)".into()
+                // 버튼 1: 원형 색상 팔레트를 펜 위치에 열고 닫습니다
+                // (열기 위치는 canvas()의 폴링에서 펜 위치로 설정).
+                self.color_wheel_open = !self.color_wheel_open;
+                self.status = Some(if self.color_wheel_open {
+                    "Color wheel open — tap a color".into()
                 } else {
-                    "Palette hidden (pen button)".into()
+                    "Color wheel closed".into()
                 });
             }
             2 => {
@@ -210,6 +216,127 @@ impl FreeDfApp {
             }
             _ => {}
         }
+    }
+
+    /// 원형 팔레트에서 고른 색을 **현재 잉크 도구**에 적용합니다.
+    /// (팬/지우개 상태에서 고르면 펜 도구로 전환 — 굿노트 관례)
+    fn apply_wheel_color(&mut self, color: [u8; 4]) {
+        match self.tool {
+            ToolType::Pen => self.pen_color = color,
+            ToolType::Fountain => self.fountain_color = color,
+            ToolType::Highlighter => self.hi_color = color,
+            _ => {
+                self.tool = ToolType::Pen;
+                self.pen_color = color;
+            }
+        }
+        self.save_default_session();
+        self.save_session();
+    }
+
+    /// 굿노트식 **원형 색상 팔레트** 오버레이 — 펜 사이드 버튼으로 열립니다.
+    /// 중앙 = 현재 색, 둘레 = 즐겨찾기 + 현재 계열 스와치. 탭하면 적용+닫힘.
+    pub(crate) fn color_wheel_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
+        if !self.color_wheel_open {
+            return;
+        }
+        // 펜 위치에 열리되 캔버스 안에 들어오도록 클램프.
+        let cx = (canvas.min.x + self.color_wheel_anchor[0])
+            .clamp(canvas.min.x + WHEEL_BACK_R, canvas.max.x - WHEEL_BACK_R);
+        let cy = (canvas.min.y + self.color_wheel_anchor[1])
+            .clamp(canvas.min.y + WHEEL_BACK_R, canvas.max.y - WHEEL_BACK_R);
+        let center = egui::pos2(cx, cy);
+
+        // 둘레 색: 즐겨찾기(전역) + 현재 계열 스와치 (중복 제거, 최대 8개).
+        let mut ring = self.favorite_colors.clone();
+        for c in Palette::swatches(self.color_family) {
+            if !ring.contains(&c) {
+                ring.push(c);
+            }
+        }
+        ring.truncate(8);
+        let current = self.current_drawing_style().0;
+
+        egui::Area::new(egui::Id::new("color_wheel"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(center - egui::vec2(WHEEL_BACK_R, WHEEL_BACK_R))
+            .show(ctx, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0),
+                );
+                let painter = ui.painter_at(rect);
+                let c = rect.center();
+                let fill = crate::theme::nord::semantic::overlay_bg();
+                let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+                painter.circle_filled(c, WHEEL_BACK_R, fill);
+                painter.circle_stroke(c, WHEEL_BACK_R, Stroke::new(1.0, stroke));
+                use std::f32::consts::TAU;
+                // 둘레 스와치 — 12시 방향부터 시계 방향.
+                for (i, color) in ring.iter().enumerate() {
+                    let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
+                    let sc = c + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
+                    let col = Color32::from_rgba_unmultiplied(
+                        color[0],
+                        color[1],
+                        color[2],
+                        color[3],
+                    );
+                    painter.circle_filled(sc, WHEEL_SWATCH_R, col);
+                    painter.circle_stroke(
+                        sc,
+                        WHEEL_SWATCH_R,
+                        Stroke::new(1.0, Color32::from_gray(180)),
+                    );
+                    if *color == current {
+                        painter.circle_stroke(
+                            sc,
+                            WHEEL_SWATCH_R + 3.0,
+                            Stroke::new(
+                                2.0,
+                                crate::theme::nord::semantic::ACCENT_ACTIVE,
+                            ),
+                        );
+                    }
+                }
+                // 중앙 = 현재 색 (탭하면 그냥 닫힘).
+                let cc = Color32::from_rgba_unmultiplied(
+                    current[0],
+                    current[1],
+                    current[2],
+                    current[3],
+                );
+                painter.circle_filled(c, WHEEL_CENTER_R, cc);
+                painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
+            });
+
+        // 탭 판정 — 클릭 위치로 스와치/중앙/바깥을 구분합니다.
+        let pressed = ctx.input(|i| i.pointer.primary_pressed());
+        if !pressed {
+            return;
+        }
+        let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else {
+            return;
+        };
+        if pos.distance(center) <= WHEEL_CENTER_R {
+            self.color_wheel_open = false; // 중앙 탭 = 변경 없이 닫기.
+            return;
+        }
+        if pos.distance(center) > WHEEL_BACK_R {
+            return; // 바깥 클릭은 handle_canvas_input 가드가 닫습니다.
+        }
+        use std::f32::consts::TAU;
+        for (i, color) in ring.iter().enumerate() {
+            let ang = -TAU / 4.0 + TAU * (i as f32) / (ring.len() as f32);
+            let sc = center + egui::vec2(ang.cos(), ang.sin()) * WHEEL_RING_R;
+            if pos.distance(sc) <= WHEEL_SWATCH_R + 3.0 {
+                self.apply_wheel_color(*color);
+                self.color_wheel_open = false;
+                return;
+            }
+        }
+        // 뒷판의 빈 곳 탭 → 그냥 닫기.
+        self.color_wheel_open = false;
     }
 
     /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
@@ -737,6 +864,13 @@ impl FreeDfApp {
             let prev = self.pen_buttons;
             self.pen_buttons = st.buttons;
             if st.buttons.button1 && !prev.button1 {
+                // 굿노트식 원형 팔레트 토글 — 펜 위치(없으면 캔버스 중심)에 엽니다.
+                if !self.color_wheel_open {
+                    self.color_wheel_anchor = ctx
+                        .input(|i| i.pointer.hover_pos())
+                        .map(|p| [p.x - origin.x, p.y - origin.y])
+                        .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+                }
                 self.on_pen_button(1, true);
             }
             if st.buttons.button2 && !prev.button2 {
@@ -997,6 +1131,8 @@ impl FreeDfApp {
         self.canvas_nav_overlay(&ctx, canvas);
         // Floating writing-tool / color palette (right-center of the canvas).
         self.canvas_palette_overlay(&ctx, canvas);
+        // 펜 사이드 버튼으로 여는 굿노트식 원형 색상 팔레트.
+        self.color_wheel_overlay(&ctx, canvas);
         // 사전 오버레이 (단어 탭 조회 결과).
         self.dict_overlay(&ctx);
     }
@@ -1385,6 +1521,21 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
+        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 바깥 프레스는 닫고 삼킴.
+        // 휠 안 프레스는 여기서 무시하고 color_wheel_overlay가 처리합니다.
+        if self.color_wheel_open && ctx.input(|i| i.pointer.primary_pressed()) {
+            let wheel_center = origin
+                + egui::vec2(self.color_wheel_anchor[0], self.color_wheel_anchor[1]);
+            if let Some(abs) = ctx.input(|i| i.pointer.latest_pos()) {
+                let on_wheel = abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0;
+                if !on_wheel {
+                    self.color_wheel_open = false;
+                    self.wheel_swallow_click = true;
+                    return;
+                }
+            }
+        }
+
         // Zoom (pinch / trackpad pinch / Ctrl+wheel / Ctrl+two-finger scroll)
         let (zoom_delta, scroll) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta));
         let scroll_x = scroll.x;
@@ -1711,6 +1862,10 @@ impl FreeDfApp {
                         self.focus_swallow_next_click = false;
                         return;
                     }
+                    if self.wheel_swallow_click {
+                        self.wheel_swallow_click = false;
+                        return;
+                    }
                     if self.focus_grace_until_ms.is_some_and(|t| now_ms() < t) {
                         return;
                     }
@@ -1731,6 +1886,7 @@ impl FreeDfApp {
                 } else if !primary_down {
                     // 클릭이 완성되지 않았으면 삼킴 표식을 폐기합니다.
                     self.focus_swallow_next_click = false;
+                    self.wheel_swallow_click = false;
                 }
             }
             ToolType::Eraser => {
