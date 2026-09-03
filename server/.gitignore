@@ -3,3 +3,4 @@ media/*
 certs/*
 !certs/.gitkeep
 backend/target/
+.env

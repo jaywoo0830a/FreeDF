@@ -1,9 +1,10 @@
 //! FreeDF — lightweight PDF viewer + drawing pad.
 //!
-//! FreeDF v2: 모든 데이터(노트/PDF/주석/세션/로그)는 PostgreSQL(Docker)에
+//! FreeDF v2: 모든 데이터(노트/PDF/주석/세션/로그)는 PostgreSQL(18.6, Docker)에
 //! 저장됩니다. 연결은 `FREEDF_DATABASE_URL`(기본
-//! `postgres://freedf:freedf@localhost:5432/freedf`)로 결정되며,
-//! `docker compose up -d db`로 띄우면 바로 사용할 수 있습니다.
+//! `postgres://freedf:freedf@localhost:5432/freedf`)로 결정됩니다.
+//! **스키마는 앱이 만들지 않습니다** — DB 호스트에서 `server/db/up.sh`를
+//! 먼저 실행하세요 (컨테이너 기동 + 마이그레이션 자동 적용).
 //! PDFium 라이브러리는 여전히 실행 파일 옆에 필요합니다.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -48,7 +49,7 @@ fn main() -> eframe::Result<()> {
         Ok(db) => db,
         Err(e) => {
             eprintln!("FreeDF storage error: {e}");
-            eprintln!("Start the database with: docker compose up -d db");
+            eprintln!("Start the database on the DB host with: cd server/db && ./up.sh");
             std::process::exit(1);
         }
     };

@@ -522,8 +522,9 @@ mod tests {
         if std::env::var("FREEDF_TEST_DB").as_deref() != Ok("1") {
             return;
         }
-        let url = crate::db::DEFAULT_DATABASE_URL;
-        let db = Arc::new(crate::db::Db::connect(url).expect("connect"));
+        let url = std::env::var("FREEDF_DATABASE_URL")
+            .unwrap_or_else(|_| crate::db::DEFAULT_DATABASE_URL.to_string());
+        let db = Arc::new(crate::db::Db::connect(&url).expect("connect"));
         let dir = std::env::temp_dir().join(format!("freedf-cache-live-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let cached = CachingBackend::new(db.clone(), LocalCache::new(dir.clone()));

@@ -5,8 +5,9 @@
 //! PostgreSQL에 저장됩니다. 파일 I/O는 더 이상 존재하지 않습니다.
 //!
 //! 연결은 `FREEDF_DATABASE_URL` 환경 변수(기본 `postgres://freedf:freedf@
-//! localhost:5432/freedf`)로 결정되고, 시작 시 `migrations/`의 SQL이
-//! `schema_migrations` 테이블을 기준으로 순차 적용됩니다.
+//! localhost:5432/freedf`)로 결정됩니다. **스키마는 앱이 만들지 않습니다** —
+//! DB 호스트에서 `server/db/up.sh`(PostgreSQL 18.6 + 마이그레이션)를
+//! 먼저 실행해야 합니다. 앱은 `schema_migrations` 존재 여부만 확인합니다.
 
 use freedf_core::model::{Stroke, StrokePoint};
 use freedf_core::paper::{PagePaper, PaperStyle};
@@ -19,15 +20,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::storage::StorageBackend;
 
-/// 기본 연결 문자열 (docker-compose.yml과 일치).
+/// 기본 연결 문자열 (server/db/docker-compose.yml과 일치).
 pub const DEFAULT_DATABASE_URL: &str = "postgres://freedf:freedf@localhost:5432/freedf";
-
-const MIGRATIONS: &[(&str, &str)] = &[
-    ("0001_init", include_str!("../migrations/0001_init.sql")),
-    ("0002_extensions", include_str!("../migrations/0002_extensions.sql")),
-    ("0003_word_cache", include_str!("../migrations/0003_word_cache.sql")),
-    ("0004_paper_presets", include_str!("../migrations/0004_paper_presets.sql")),
-];
 
 /// 문서 행 (documents 테이블).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,48 +97,29 @@ fn color_from_i32(v: &[i32]) -> [u8; 4] {
 }
 
 impl Db {
-    /// 연결 + 마이그레이션 적용.
+    /// 연결 + 스키마 존재 확인. 스키마 생성/마이그레이션은 서버 측
+    /// (`server/db/up.sh`)이 담당합니다.
     pub fn connect(url: &str) -> Result<Self, String> {
         let mut client = Client::connect(url, NoTls)
             .map_err(|e| format!("Could not connect to PostgreSQL at {url}: {e}"))?;
-        Self::migrate(&mut client)?;
+        let has_schema: Option<i32> = client
+            .query_opt(
+                "SELECT 1 FROM pg_tables WHERE schemaname = 'public' \
+                 AND tablename = 'schema_migrations'",
+                &[],
+            )
+            .ok()
+            .flatten()
+            .map(|r| r.get(0));
+        if has_schema.is_none() {
+            return Err(
+                "FreeDF schema is not initialized — run server/db/up.sh on the database host"
+                    .to_string(),
+            );
+        }
         Ok(Self {
             conn: Arc::new(Mutex::new(client)),
         })
-    }
-
-    /// 미적용 마이그레이션을 순서대로 적용합니다.
-    fn migrate(client: &mut Client) -> Result<(), String> {
-        client
-            .batch_execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)",
-            )
-            .map_err(|e| format!("Migration setup failed: {e}"))?;
-        for (version, sql) in MIGRATIONS {
-            let applied: Option<String> = client
-                .query_opt(
-                    "SELECT version FROM schema_migrations WHERE version = $1",
-                    &[version],
-                )
-                .map_err(|e| format!("Migration check failed: {e}"))?
-                .map(|r| r.get(0));
-            if applied.is_some() {
-                continue;
-            }
-            let mut tx = client
-                .transaction()
-                .map_err(|e| format!("Migration transaction failed: {e}"))?;
-            tx.batch_execute(sql)
-                .map_err(|e| format!("Migration {version} failed: {e}"))?;
-            tx.execute(
-                "INSERT INTO schema_migrations (version) VALUES ($1)",
-                &[version],
-            )
-            .map_err(|e| format!("Migration {version} bookmark failed: {e}"))?;
-            tx.commit()
-                .map_err(|e| format!("Migration {version} commit failed: {e}"))?;
-        }
-        Ok(())
     }
 
     // ---------- documents ----------
@@ -855,11 +830,11 @@ mod tests {
         assert!(matches!(edits[0], Edit::AddStrokes { .. }));
         assert!(matches!(edits[1], Edit::RemoveStrokes { .. }));
 
-        // ── media 테이블 존재 (스키마 준비 확인) ──
+        // ── media_objects 테이블 존재 (서버 측 마이그레이션 0004 확인) ──
         {
             let mut c = conn_guard(&db.conn);
             let n: i64 = c
-                .query_one("SELECT count(*) FROM media", &[])
+                .query_one("SELECT count(*) FROM media_objects", &[])
                 .map(|r| r.get(0))
                 .unwrap_or(-1);
             assert_eq!(n, 0);

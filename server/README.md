@@ -12,6 +12,7 @@
 - **다운로드/재생**은 nginx가 파일을 직접 서빙 → 오디오 앞/뒤 탐색(Range)이 무료로 동작
 - **업로드/목록/삭제**만 백엔드 API 경유
 - 메타데이터는 FreeDF와 **같은 PostgreSQL**의 `media_objects` 테이블 사용
+  (스키마는 `server/db/up.sh` 마이그레이션 `0004_media_objects.sql`이 생성)
 - FreeDF의 획/세션/문서는 기존처럼 Postgres 직접 연결 (이 서버와 무관)
 
 ## 배포
@@ -20,9 +21,22 @@
 sudo mkdir -p /srv/freedf-server/media
 # 이 저장소의 server/ 내용을 /srv/freedf-server 에 복사 후
 cd /srv/freedf-server
-# 환경값 수정: docker-compose.yml 의 DATABASE_URL / PUBLIC_BASE_URL / FREEDF_API_KEY
-docker compose up -d --build
+
+# 1) DB (PostgreSQL 18.6 + 스키마)
+cd db && ./init.sh && ./up.sh && cd ..
+
+# 2) 백엔드 (업로드/목록/삭제 API)
+cd backend && ./init.sh && ./up.sh && cd ..
+
+# 3) nginx (정적 서빙 + API 프록시)
+docker compose up -d nginx
 ```
+
+- `db/init.sh` → `db/.env` 생성 (비밀번호 자동 생성, 연결 문자열 출력)
+- `backend/init.sh` → `backend/.env` 생성 (API 키 자동 생성, FreeDF 앱 server.json에 입력)
+- `db/up.sh`는 PostgreSQL 18.6 기동 후 `migrations/`를 순서대로 적용
+- `backend/up.sh`는 backend 컨테이너만 빌드/기동, `backend/down.sh`로 중지
+- PostgreSQL 튜닝: `db/postgresql.conf` (SSD 전용 — PG18 내장 비동기 I/O, WAL zstd 등)
 
 필수 환경 변수 (backend):
 | 변수 | 기본값 | 설명 |

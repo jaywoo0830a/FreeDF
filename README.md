@@ -5,13 +5,12 @@ An ultra-lightweight PDF viewer with a drawing-pad annotation layer, built on
 notes on a tablet / drawing pad and is Windows 11-friendly (system theme, HiDPI,
 native file dialogs, Windows Ink pressure).
 
-**FreeDF v2 stores everything in PostgreSQL** — notes, PDF binaries, strokes,
+**FreeDF v2 stores everything in PostgreSQL 18.6** — notes, PDF binaries, strokes,
 paper settings, sessions, recents and the event log all live in the database
-(JSON files are legacy and gone). Run the DB with Docker (Mac / Linux /
-Windows 11 WSL2):
+(JSON files are legacy and gone). The DB (and its schema) is managed server-side:
 
 ```bash
-docker compose up -d db
+cd server/db && ./init.sh && ./up.sh
 ```
 
 ```
@@ -19,8 +18,11 @@ docker compose up -d db
 │  ├─ freedf-core/   # Pure-Rust, GUI-free core (model, store, transform, history,
 │  │                 #   notes, pages, outline, search, pen, logging) + unit/integration tests
 │  └─ freedf/        # egui + pdfium-render + PostgreSQL desktop app
-├─ migrations/       # SQL schema (applied automatically on startup)
-└─ docker-compose.yml
+└─ server/           # 서버 측 (외부 서비스 0, VPS 자체 호스팅)
+   ├─ db/            # PostgreSQL 18.6 + 마이그레이션(스키마 단일 진실 공급원) + 스크립트
+   ├─ backend/       # 미디어 API (axum): 업로드/목록/삭제
+   ├─ nginx/         # 미디어 정적 서빙(Range 스트리밍) + API 프록시
+   └─ docker-compose.yml
 ```
 
 ## Features
@@ -203,10 +205,11 @@ docker compose up -d db
 ## Requirements
 
 - Rust 1.75+ (MSRV follows egui 0.36)
-- **PostgreSQL** (Docker 권장 — 위 `docker compose up -d db`)
+- **PostgreSQL 18.6** (Docker 권장 — 위 `cd server/db && ./up.sh`)
   - 연결은 `FREEDF_DATABASE_URL`(기본 `postgres://freedf:freedf@localhost:5432/freedf`)
   - 원격 DB도 가능: `FREEDF_DATABASE_URL=postgres://user:pass@host:5432/freedf`
-  - 앱 시작 시 스키마 마이그레이션이 자동 적용됨
+  - **스키마는 앱이 만들지 않습니다** — DB 호스트에서 `server/db/up.sh`가
+    마이그레이션을 적용합니다 (앱은 `schema_migrations` 존재만 확인)
   - **로컬 캐시 + write-behind** (기본 켜짐): 무거운 데이터(PDF 본문/주석)는
     앱 데이터 폴더 `cache/`에 보관되어 원격 DB 왕복 없이 문서가 열리고,
     스트로크 저장은 백그라운드에서 순서대로 동기화됩니다 (오프라인 필기 보존).
@@ -260,16 +263,19 @@ cargo build --release -p freedf
 ### 데이터베이스 시작 (운영)
 
 ```bash
-docker compose up -d db     # 시작 (Mac / Linux / Windows WSL2 동일)
-./scripts/up.sh             # 시작 + 준비 대기 (docker/docker.exe 자동 감지)
-./scripts/down.sh           # 중지 (데이터 유지)
-./scripts/down.sh --wipe    # 중지 + 데이터 완전 삭제
-docker compose logs -f db   # 로그 확인
+cd server/db
+./init.sh                  # .env 생성 (비밀번호 자동 생성, 편집 가능)
+./up.sh                    # PostgreSQL 18.6 시작 + 마이그레이션 자동 적용
+./down.sh                  # 중지 (데이터 유지)
+./down.sh --wipe           # 중지 + 데이터 완전 삭제
 ```
 
-- **Win 11 (WSL2)**: Docker Desktop의 WSL Integration을 켜고 WSL 터미널에서 실행.
+- **Win 11 (WSL2)**: Docker Desktop의 WSL Integration을 켜고 WSL 터미널에서 실행
+  (`docker.exe` 자동 감지).
 - **Mac / Linux**: Docker Desktop 또는 Docker Engine 그대로.
-- 백업: `docker compose exec db pg_dump -U freedf freedf > backup.sql`
+- PostgreSQL 튜닝은 `server/db/postgresql.conf` (SSD 전용 — PG18 내장 비동기
+  I/O, WAL zstd 압축 등). 호스트 RAM에 맞춰 `shared_buffers` 조정.
+- 백업: `docker compose -f server/db/docker-compose.yml exec db pg_dump -U freedf freedf > backup.sql`
 
 ### 데이터 저장 구조 (전부 DB)
 

@@ -69,14 +69,14 @@ async fn main() {
 
     let (client, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
         .await
-        .expect("PostgreSQL 연결 실패");
+        .expect("PostgreSQL 연결 실패 — server/db/up.sh로 DB를 먼저 띄우세요");
     tokio::spawn(async move {
         if let Err(e) = connection.await {
             eprintln!("DB connection lost: {e}");
         }
     });
 
-    init_db(&client).await;
+    // 스키마(media_objects 포함)는 server/db/up.sh의 마이그레이션이 담당합니다.
 
     let state = AppState {
         db: Arc::new(Mutex::new(client)),
@@ -101,13 +101,6 @@ async fn main() {
 
 fn env(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
-}
-
-async fn init_db(client: &Client) {
-    client
-        .batch_execute(include_str!("../migrations/0001_media.sql"))
-        .await
-        .expect("media 테이블 마이그레이션 실패");
 }
 
 // ── 인증 ─────────────────────────────────────────────────────────────────────

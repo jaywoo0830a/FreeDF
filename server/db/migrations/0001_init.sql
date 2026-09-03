@@ -1,5 +1,7 @@
--- FreeDF v2 — PostgreSQL 스키마 (JSON 파일 저장소의 완전 대체)
--- 모든 데이터(노트/PDF 본문/주석/용지/세션/최근/로그)가 이 스키마에 저장됩니다.
+-- FreeDF — 0001: 핵심 스키마 (PostgreSQL 18.6, SSD 튜닝 반영)
+-- 모든 데이터(노트/PDF 본문/주석/용지/세션/최근/로그)가 여기 저장됩니다.
+-- 캐시성/재생성 가능한 테이블(recents, event_log)은 UNLOGGED —
+-- WAL 쓰기를 건너뛰어 SSD 쓰기 증폭을 줄입니다 (크래시 시 해당 테이블만 비워짐).
 
 -- ── 문서 (노트 + 외부 PDF 공통) ────────────────────────────────────────────
 CREATE TABLE documents (
@@ -13,21 +15,22 @@ CREATE TABLE documents (
     updated_at  BIGINT NOT NULL
 );
 
+-- 노트 목록은 updated_at DESC 정렬이 메인 경로.
+CREATE INDEX documents_kind_updated_idx ON documents (kind, updated_at DESC);
+
 -- ── 페이지별 용지 + 북마크 ──────────────────────────────────────────────────
 CREATE TABLE pages (
     doc_id      BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     page_index  INT NOT NULL,
     style       TEXT NOT NULL DEFAULT 'Blank',
     color       INT[] NOT NULL,       -- [r, g, b, a]
-    spacing     REAL NOT NULL DEFAULT 24,
-    line_color  INT[] NOT NULL,       -- [r, g, b, a]
-    line_width  REAL NOT NULL DEFAULT 1.2,
     bookmarked  BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (doc_id, page_index)
 );
 
 -- ── 스트로크 (전역 시퀀스로 id 부여 → 스토어/히스토리 id와 일치) ──────────
-CREATE SEQUENCE stroke_id_seq;
+-- CACHE 100: 여러 클라이언트가 nextval을 자주 호출해도 락 경합이 적음.
+CREATE SEQUENCE stroke_id_seq CACHE 100;
 
 CREATE TABLE strokes (
     id          BIGINT PRIMARY KEY DEFAULT nextval('stroke_id_seq'),
@@ -36,9 +39,12 @@ CREATE TABLE strokes (
     tool        TEXT NOT NULL,
     color       INT[] NOT NULL,       -- [r, g, b, a]
     width       REAL NOT NULL,
-    points      JSONB NOT NULL,       -- [{x, y, pressure}, ...]
+    points      JSONB NOT NULL,       -- [{x, y, pressure, ...}, ...]
     created_at  BIGINT NOT NULL
 );
+-- load_store: WHERE doc_id ORDER BY id → 이 인덱스로 그룹 스캔.
+CREATE INDEX strokes_doc_id_idx ON strokes (doc_id, id);
+-- 페이지 단위 조회/카운트.
 CREATE INDEX strokes_doc_page_idx ON strokes (doc_id, page_index);
 
 -- ── 문서별 GUI 세션 ─────────────────────────────────────────────────────────
@@ -54,8 +60,8 @@ CREATE TABLE app_state (
     value       JSONB NOT NULL
 );
 
--- ── 최근 항목 ───────────────────────────────────────────────────────────────
-CREATE TABLE recents (
+-- ── 최근 항목 (UNLOGGED — documents에서 재구성 가능한 캐시) ───────────────
+CREATE UNLOGGED TABLE recents (
     kind        TEXT NOT NULL CHECK (kind IN ('note', 'pdf')),
     doc_id      BIGINT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     title       TEXT NOT NULL,
@@ -64,9 +70,11 @@ CREATE TABLE recents (
 );
 CREATE INDEX recents_opened_idx ON recents (opened_at DESC);
 
--- ── 분석 이벤트 로그 ────────────────────────────────────────────────────────
-CREATE TABLE event_log (
+-- ── 분석 이벤트 로그 (UNLOGGED + BRIN) ──────────────────────────────────────
+-- append-only라 BRIN이 B-tree보다 훨씬 작고 빠릅니다.
+CREATE UNLOGGED TABLE event_log (
     seq         BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     epoch_ms    BIGINT NOT NULL,
     event       JSONB NOT NULL
 );
+CREATE INDEX event_log_epoch_brin ON event_log USING brin (epoch_ms);

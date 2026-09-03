@@ -1,0 +1,33 @@
+# FreeDF 데이터베이스 — PostgreSQL 18.6 (Ubuntu + SSD 튜닝)
+# 설정: ./init.sh  →  .env 생성
+# 시작: ./up.sh     (컨테이너 시작 + 마이그레이션 자동 적용)
+# 종료: ./down.sh   /  ./down.sh --wipe  (데이터 볼륨까지 삭제)
+
+services:
+  db:
+    image: postgres:18.6-alpine
+    container_name: freedf-db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-freedf}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-freedf}
+      POSTGRES_DB: ${POSTGRES_DB:-freedf}
+    ports:
+      - "${FREEDF_DB_PORT:-5432}:5432"
+    volumes:
+      # PG 18+ 공식 이미지는 데이터를 버전별 하위 폴더(/var/lib/postgresql/18/docker)에
+      # 저장하므로 /var/lib/postgresql 전체를 마운트합니다 (pg_upgrade --link 호환).
+      - freedf_pgdata:/var/lib/postgresql
+      # SSD 전용 튜닝 설정 (PG18 내장 비동기 I/O, WAL zstd 등)
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  freedf_pgdata:
