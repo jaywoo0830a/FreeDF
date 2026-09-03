@@ -32,11 +32,22 @@ cd backend && ./init.sh && ./up.sh && cd ..
 docker compose up -d nginx
 ```
 
-- `db/init.sh` → `db/.env` 생성 (비밀번호 자동 생성, 연결 문자열 출력)
-- `backend/init.sh` → `backend/.env` 생성 (API 키 자동 생성, FreeDF 앱 server.json에 입력)
+- `db/init.sh` → `db/.env` 생성 (비밀번호 자동 생성).
+  - **원격 접속(FreeDF 앱이 VPS 밖에서 직접 연결)**: `db/.env`의
+    `FREEDF_DB_BIND=0.0.0.0` + `FREEDF_DB_HOST=<VPS IP/도메인>`으로 설정 후
+    `db/up.sh` 재실행. 방화벽으로 앱 IP만 허용 권장: `sudo ufw allow from <앱IP> to any port 5432 proto tcp`
+- `backend/init.sh` → `backend/.env` 생성 (API 키 자동 생성, FreeDF 앱 server.json에 입력).
+  **같은 호스트의 `db/.env`를 자동으로 읽어 `DATABASE_URL`을 조립**하므로
+  DB 비밀번호를 직접 복사할 필요가 없습니다.
 - `db/up.sh`는 PostgreSQL 18.6 기동 후 `migrations/`를 순서대로 적용
 - `backend/up.sh`는 backend 컨테이너만 빌드/기동, `backend/down.sh`로 중지
 - PostgreSQL 튜닝: `db/postgresql.conf` (SSD 전용 — PG18 내장 비동기 I/O, WAL zstd 등)
+
+> **Docker Desktop(Win/Mac)에서 개발할 때**: `network_mode: host`는 Docker
+> VM 내부 네트워크라 호스트의 `127.0.0.1`과 다릅니다. 백엔드를 직접 테스트하려면
+> `BIND=0.0.0.0:8080`으로 바꾸고 VM IP로 접근하거나, 컨테이너 없이
+> `cargo run`으로 띄우세요. Ubuntu VPS(Docker Engine)에서는 호스트 네트워크가
+> 그대로 동작해 `127.0.0.1` 바인딩이 맞습니다.
 
 필수 환경 변수 (backend):
 | 변수 | 기본값 | 설명 |

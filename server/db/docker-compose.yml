@@ -14,7 +14,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-freedf}
       POSTGRES_DB: ${POSTGRES_DB:-freedf}
     ports:
-      - "${FREEDF_DB_PORT:-5432}:5432"
+      # FREEDF_DB_BIND: 127.0.0.1(기본, 보안) / 0.0.0.0(FreeDF 앱 원격 접속)
+      - "${FREEDF_DB_BIND:-127.0.0.1}:${FREEDF_DB_PORT:-5432}:5432"
     volumes:
       # PG 18+ 공식 이미지는 데이터를 버전별 하위 폴더(/var/lib/postgresql/18/docker)에
       # 저장하므로 /var/lib/postgresql 전체를 마운트합니다 (pg_upgrade --link 호환).

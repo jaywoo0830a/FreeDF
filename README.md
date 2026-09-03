@@ -208,6 +208,7 @@ cd server/db && ./init.sh && ./up.sh
 - **PostgreSQL 18.6** (Docker 권장 — 위 `cd server/db && ./up.sh`)
   - 연결은 `FREEDF_DATABASE_URL`(기본 `postgres://freedf:freedf@localhost:5432/freedf`)
   - 원격 DB도 가능: `FREEDF_DATABASE_URL=postgres://user:pass@host:5432/freedf`
+    (VPS에선 `server/db/.env`의 `FREEDF_DB_BIND=0.0.0.0`, `FREEDF_DB_HOST=<VPS IP>` 설정)
   - **스키마는 앱이 만들지 않습니다** — DB 호스트에서 `server/db/up.sh`가
     마이그레이션을 적용합니다 (앱은 `schema_migrations` 존재만 확인)
   - **로컬 캐시 + write-behind** (기본 켜짐): 무거운 데이터(PDF 본문/주석)는
