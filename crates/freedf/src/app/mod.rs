@@ -365,6 +365,26 @@ pub(crate) fn dwell_focus_due(now_ms: u64, since_ms: u64, dwell_sec: f32) -> boo
     since_ms != 0 && now_ms.saturating_sub(since_ms) >= (dwell_sec.clamp(0.0, 5.0) * 1000.0) as u64
 }
 
+/// 커서 표시 히스테리시스 1프레임 — (새 카운터, 새 표시 상태) 반환.
+/// 같은 `want`가 `stable_frames` 연속일 때만 표시 상태가 want를 따라갑니다
+/// (상태가 프레임마다 뒤집혀도 깜빡임/시스템 커서와의 겹침이 없음).
+pub(crate) fn cursor_hysteresis(
+    prev_want: bool,
+    want: bool,
+    counter: u32,
+    shown: bool,
+    stable_frames: u32,
+) -> (u32, bool) {
+    // 같은 want면 누적, 바뀌면 새 실행의 1번째 프레임으로 시작.
+    let counter = if want == prev_want {
+        (counter + 1).min(stable_frames)
+    } else {
+        1
+    };
+    let shown = if counter >= stable_frames { want } else { shown };
+    (counter, shown)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
@@ -868,6 +888,8 @@ pub struct FreeDfApp {
     edge_glow: [f32; 4],
     /// 커스텀 커서 표시 여부 (히스테리시스 — 상태 깜빡임 방지)
     cursor_custom_shown: bool,
+    /// 이전 프레임의 표시 희망(want) — 히스테리시스 비교 기준
+    cursor_prev_want: bool,
     /// 커스텀 커서 상태 연속 프레임 카운터
     cursor_custom_counter: u32,
 
@@ -1339,6 +1361,7 @@ impl FreeDfApp {
             edge_zone_enter_ms: [0; 4],
             edge_glow: [0.0; 4],
             cursor_custom_shown: false,
+            cursor_prev_want: false,
             cursor_custom_counter: 0,
             active_stroke: None,
             pan_last: None,
@@ -3034,5 +3057,32 @@ mod window_isolation_tests {
     fn dwell_not_hovering_never_focuses() {
         // since_ms == 0 (아직 머물지 않음) → 항상 false.
         assert!(!dwell_focus_due(9999, 0, 0.0));
+    }
+
+    #[test]
+    fn cursor_appears_after_three_stable_frames() {
+        // want=true가 3프레임 연속이면 커서가 나타납니다.
+        let (c1, s1) = cursor_hysteresis(false, true, 0, false, 3);
+        assert_eq!((c1, s1), (1, false));
+        let (c2, s2) = cursor_hysteresis(true, true, 1, false, 3);
+        assert_eq!((c2, s2), (2, false));
+        let (c3, s3) = cursor_hysteresis(true, true, 2, false, 3);
+        assert_eq!((c3, s3), (3, true));
+    }
+
+    #[test]
+    fn cursor_flip_resets_counter_and_keeps_state() {
+        // want가 뒤집히면 새 실행의 1번째 프레임, 표시 상태는 유지.
+        let (c, s) = cursor_hysteresis(true, false, 3, true, 3);
+        assert_eq!((c, s), (1, true));
+    }
+
+    #[test]
+    fn cursor_hides_after_three_stable_frames() {
+        // want=false가 3프레임 연속이면 커서가 사라집니다.
+        let (c1, s1) = cursor_hysteresis(true, false, 3, true, 3);
+        let (c2, s2) = cursor_hysteresis(false, false, c1, s1, 3);
+        let (c3, s3) = cursor_hysteresis(false, false, c2, s2, 3);
+        assert_eq!((c3, s3), (3, false));
     }
 }

@@ -25,28 +25,17 @@ impl FreeDfApp {
                         self.show_palette = true;
                         self.save_default_session();
                     }
-                    if ui
-                        .toggle_value(
-                            &mut self.window_focus_on_move,
-                            icon_text(ui, "Window Focus", icons::CROSSHAIR),
-                        )
-                        .on_hover_text(
-                            "Focus this window when the cursor stays over it for the dwell time\n\
-                             (set with the Focus Delay button). Turn off for windows that\n\
-                             should not grab focus in split view.",
-                        )
-                        .changed()
-                    {
-                        self.save_default_session();
-                    }
+                    // Window Focus — 단일 라벨 버튼 (상태는 선택 하이라이트).
+                    // 클릭하면 설정 창(켜기/끄기 + 머무름 시간)이 열립니다.
                     if ui
                         .add(
-                            egui::Button::new(icon_text(ui, "Focus Delay", icons::TIMER))
-                                .frame(false),
+                            egui::Button::new(icon_text(ui, "Window Focus", icons::CROSSHAIR))
+                                .selected(self.window_focus_on_move),
                         )
                         .on_hover_text(
-                            "Window Focus settings — how long the cursor must stay\n\
-                             over this window before it is focused (0 = instantly).",
+                            "Focus this window when the cursor stays over it for the dwell time.\n\
+                             Click to open its settings (enable + dwell time).\n\
+                             Turn off for windows that should not grab focus in split view.",
                         )
                         .clicked()
                     {

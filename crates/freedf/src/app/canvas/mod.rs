@@ -660,15 +660,18 @@ impl FreeDfApp {
         let over_page = pointer_pos
             .is_some_and(|pos| canvas.contains(pos) && draw_rect.contains(pos));
         // 히스테리시스: 커서 상태가 무한히 바뀌어도 커스텀 커서가 시스템 커서
-        // 위에 겹쳐 깜빡이지 않도록, 같은 상태가 3프레임 연속일 때만 전환.
+        // 위에 겹쳐 깜빡이지 않도록, 같은 want가 3프레임 연속일 때만 전환
+        // (순수 판정: cursor_hysteresis — 테스트로 검증).
         let want_custom = response.hovered() && over_page;
-        let same = want_custom == self.cursor_custom_shown;
-        self.cursor_custom_counter = if same { (self.cursor_custom_counter + 1).min(3) } else { 0 };
-        let show = if self.cursor_custom_counter >= 3 {
-            want_custom
-        } else {
-            self.cursor_custom_shown
-        };
+        let (counter, show) = cursor_hysteresis(
+            self.cursor_prev_want,
+            want_custom,
+            self.cursor_custom_counter,
+            self.cursor_custom_shown,
+            3,
+        );
+        self.cursor_prev_want = want_custom;
+        self.cursor_custom_counter = counter;
         self.cursor_custom_shown = show;
         if show {
             ctx.set_cursor_icon(egui::CursorIcon::None);
