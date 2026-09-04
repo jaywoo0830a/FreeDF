@@ -278,6 +278,30 @@ mod tests {
     }
 
     #[test]
+    fn clamp_pan_margin_is_the_overscroll_limit() {
+        // margin이 클수록 페이지가 캔버스 밖으로 더 멀리 나갈 수 있습니다
+        // (오버스크롤 — 모든 UI 모드에서 동일한 clamp 경로를 사용).
+        let page = [595.0, 842.0];
+        let canvas = [800.0, 600.0];
+        let mut big = ViewTransform {
+            zoom: 2.0,
+            pan_x: 0.0,
+            pan_y: -9999.0,
+        };
+        big.clamp_pan(page, canvas, 64.0);
+        let mut small = ViewTransform {
+            zoom: 2.0,
+            pan_x: 0.0,
+            pan_y: -9999.0,
+        };
+        small.clamp_pan(page, canvas, 16.0);
+        // 아래쪽 한계 = canvas_h - view_h - margin → margin 64가 16보다 48 더 내려감
+        // (pan_y는 더 음수).
+        assert!((small.pan_y - big.pan_y - 48.0).abs() < 1e-3);
+        assert!(big.pan_y < small.pan_y, "margin이 크면 더 아래까지 스크롤");
+    }
+
+    #[test]
     fn clamp_pan_keeps_large_page_inside_canvas() {
         // 페이지가 캔버스보다 크면 양 끝을 여백 안으로 제한
         let mut t = ViewTransform {

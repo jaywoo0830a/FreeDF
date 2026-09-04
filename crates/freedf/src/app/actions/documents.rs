@@ -82,6 +82,10 @@ impl FreeDfApp {
                 self.current_note = if is_note { Some(doc_id) } else { None };
                 self.current_page = 0;
                 self.page_size_pts = doc.page_size_pts(0);
+                // 이전 문서의 줌/팬/텍스처가 새 문서에 남지 않도록 초기화 —
+                // fit-width가 다음 프레임에 적용됩니다 (새 문서 = 새 상태).
+                self.view = ViewTransform::default();
+                self.texture = None;
                 self.file_name = row.title.clone();
                 self.document = Some(doc);
                 self.set_store(store);

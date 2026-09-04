@@ -2503,11 +2503,11 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(320.0);
+                ui.set_width(400.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .button("✕")
+                            .button(icon_text(ui, "", icons::X))
                             .on_hover_text("Close Library")
                             .clicked()
                         {
@@ -2539,11 +2539,11 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(320.0);
+                ui.set_width(400.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .button("✕")
+                            .button(icon_text(ui, "", icons::X))
                             .on_hover_text("Close Outline")
                             .clicked()
                         {
@@ -2576,12 +2576,12 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(280.0);
+                ui.set_width(340.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Bookmarks").strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
-                            .button("✕")
+                            .button(icon_text(ui, "", icons::X))
                             .on_hover_text("Close Bookmarks")
                             .clicked()
                         {
@@ -2657,6 +2657,20 @@ impl FreeDfApp {
                         .clicked()
                     {
                         self.show_palette = !self.show_palette;
+                        self.save_default_session();
+                    }
+                    if ui
+                        .selectable_label(
+                            self.edge_autoscroll,
+                            icon_text(ui, "Auto Scroll", icons::ARROWS_OUT_CARDINAL),
+                        )
+                        .on_hover_text(
+                            "Edge auto-scroll — cursor near the canvas edge pans the view.\n\
+                             (zone / speeds / overscroll: Edge Auto Scroll settings in the toolbar)",
+                        )
+                        .clicked()
+                    {
+                        self.edge_autoscroll = !self.edge_autoscroll;
                         self.save_default_session();
                     }
                     if ui
