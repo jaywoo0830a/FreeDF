@@ -14,5 +14,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
-sha2 = "0.10"
+# Sync v3 프로토콜 타입·ZIP 코덱을 클라이언트(freedf-sync)와 공유.
+freedf-sync = { path = "../../crates/freedf-sync", default-features = false }

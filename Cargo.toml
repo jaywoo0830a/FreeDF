@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/freedf-core",
     "crates/freedf",
+    "crates/freedf-sync",
     "tools/hidprobe",
 ]
 

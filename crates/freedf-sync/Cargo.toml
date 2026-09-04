@@ -1,0 +1,19 @@
+[package]
+name = "freedf-sync"
+version = "0.1.0"
+edition = "2021"
+description = "FreeDF Sync v3 프로토콜 전용 타입·ZIP 코덱·HTTP 클라이언트 (docs/sync-protocol-v3.md)"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+# client 피처: API 서버 HTTP 통신 (블로킹 ureq — 앱은 백그라운드 스레드에서 사용).
+ureq = { version = "2.12", optional = true }
+
+[features]
+default = ["client"]
+client = ["dep:ureq"]
