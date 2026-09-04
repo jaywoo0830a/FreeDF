@@ -9,8 +9,10 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
-tokio-postgres = "0.7"
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-uuid-1"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

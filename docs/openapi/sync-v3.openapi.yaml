@@ -1,0 +1,578 @@
+# FreeDF Sync v3 — 스냅샷 중심 ("클라이언트는 ZIP만, 나머지는 서버가")
+# OpenAPI Specification 3.2.0 — https://spec.openapis.org/oas/v3.2.0.html
+# 설계 문서: docs/sync-protocol-v3.md
+openapi: 3.2.0
+$self: https://freedf.example/schemas/sync-v3.openapi.yaml
+jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
+info:
+  title: FreeDF Sync API v3
+  summary: "저장은 ZIP 때려박기, 로딩은 서버가 ZIP 조립, 싱크는 서버 계산 패치."
+  version: 3.1.0
+  description: |
+    클라이언트가 아는 것은 셋뿐입니다.
+      1) 임계 초과 시 백그라운드 스레드로 전체 문서를 ZIP으로 만들어 PUT
+      2) 로딩 시 GET 한 번으로 서버가 조립한 ZIP을 받아 압축해제 후 렌더
+      3) base_revision 불일치 시 서버가 계산한 패치를 병합 후 재전송
+    복잡한 로직(내부 쿼리·diff·변경 로그)은 전부 서버 책임입니다.
+  contact:
+    name: FreeDF
+    email: dev@freedf.example
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://api.freedf.example/v3
+    description: FreeDF Sync v3
+tags:
+  - name: documents
+    description: 문서 스냅샷 (업로드/다운로드)
+    kind: nav
+  - name: uploads
+    description: 비동기 업로드 결과 조회
+    kind: nav
+  - name: objects
+    description: 콘텐츠 주소 저장(CAS)
+    kind: nav
+
+security:
+  - bearerAuth: []
+
+paths:
+  /documents/{documentId}/snapshot:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    put:
+      tags: [documents]
+      summary: 전체 문서 스냅샷 업로드 (비동기)
+      description: |
+        임계 초과 시 백그라운드 스레드가 호출합니다. 서버는 즉시 202로
+        응답하고 처리는 큐에서 진행됩니다. `upload_id` 멱등 — 같은 ZIP을
+        다시 보내면 no-op입니다. ZIP에는 `base_revision`이 포함되며,
+        불일치 시 결과 조회에서 서버가 계산한 패치가 동봉됩니다.
+      operationId: uploadSnapshot
+      requestBody:
+        required: true
+        description: |
+          문서 스냅샷 ZIP: meta.json(base_revision 포함) + strokes.jsonl +
+          pages.json + pdf.digest(CAS 참조).
+        content:
+          application/vnd.freedf.snapshot+zip:
+            $ref: '#/components/mediaTypes/SyncSnapshot'
+      responses:
+        '202':
+          description: 접수됨 — 결과는 GET /uploads/{uploadId}로.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadReceipt'
+        '413':
+          description: 스냅샷 크기 상한 초과.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /uploads/{uploadId}:
+    parameters:
+      - $ref: '#/components/parameters/UploadId'
+    get:
+      tags: [uploads]
+      summary: 업로드 처리 결과 조회
+      description: |
+        `state=conflict`면 응답에 `conflict.latest_revision`과 서버가 계산한
+        `patch`가 동봉됩니다. 클라이언트는 패치를 병합한 뒤 재전송합니다.
+      operationId: getUploadStatus
+      responses:
+        '200':
+          description: 현재 상태 (conflict면 패치 동봉).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatus'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /documents/{documentId}:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: 문서 전체 ZIP 다운로드 (서버가 조립)
+      description: |
+        서버가 내부 쿼리(strokes/pages/meta)를 전부 조회해 ZIP으로 조립해
+        스트리밍합니다. 클라이언트는 압축해제 후 바로 렌더 — 단일 왕복.
+        리비전별 ETag 캐시로 304 응답 가능합니다.
+      operationId: downloadSnapshot
+      responses:
+        '200':
+          description: 스냅샷 ZIP.
+          headers:
+            ETag:
+              description: 리비전 기반 캐시 검증 키.
+              schema:
+                type: string
+          content:
+            application/vnd.freedf.snapshot+zip:
+              $ref: '#/components/mediaTypes/SyncSnapshot'
+        '304':
+          description: If-None-Match 일치 — 변경 없음.
+        '404':
+          description: 문서 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /documents/{documentId}/revision:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: 현재 revision 조회
+      operationId: getRevision
+      responses:
+        '200':
+          description: 현재 revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevisionInfo'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /documents/{documentId}/changes:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+      - name: since_revision
+        in: query
+        required: true
+        description: 이 revision **이후**의 변경만.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: format
+        in: query
+        required: false
+        description: '`jsonl` = 스트리밍 변경 레코드(기본), `zip` = 스냅샷 ZIP 전체.'
+        schema:
+          type: string
+          enum: [jsonl, zip]
+    get:
+      tags: [documents]
+      summary: 변경분 pull (다중 창 동기화)
+      description: |
+        서버가 내부 변경 로그에서 since_revision 이후만 골라 반환합니다.
+        webhook(documentChanged)으로 "바뀌었음"만 알리고 내용은 여기서 pull.
+      operationId: pullChanges
+      responses:
+        '200':
+          description: since_revision 이후 변경분.
+          content:
+            application/jsonl:
+              itemSchema:
+                $ref: '#/components/schemas/ChangeRecord'
+            application/vnd.freedf.snapshot+zip:
+              $ref: '#/components/mediaTypes/SyncSnapshot'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /objects/query:
+    post:
+      tags: [objects]
+      summary: CAS 보유 여부 probe
+      description: |
+        PDF 등 대용량 객체를 "서버에 없는 것만" 골라 보냅니다.
+      operationId: probeObjects
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DigestProbe'
+      responses:
+        '200':
+          description: 서버에 없는 다이제스트 목록.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DigestProbeResult'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /objects/{digest}:
+    parameters:
+      - name: digest
+        in: path
+        required: true
+        description: '`sha256:<hex>` 형식.'
+        schema:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+    put:
+      tags: [objects]
+      summary: CAS 객체 업로드 (멱등)
+      description: |
+        본문이 다이제스트와 일치할 때만 저장합니다. 같은 다이제스트의
+        재전송은 no-op입니다. PDF는 여기에 먼저 올린 뒤 스냅샷의
+        `pdf.digest`로 참조합니다.
+      operationId: putObject
+      requestBody:
+        required: true
+        content:
+          application/octet-stream: {}
+      responses:
+        '200':
+          description: 저장됨 (기존 객체면 그대로).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [digest, size]
+                properties:
+                  digest:
+                    type: string
+                  size:
+                    type: integer
+                    format: int64
+        '400':
+          description: 다이제스트 형식 오류 또는 본문-다이제스트 불일치.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [objects]
+      summary: CAS 객체 fetch
+      operationId: getObject
+      responses:
+        '200':
+          description: 객체 바이트.
+          content:
+            application/octet-stream: {}
+        '404':
+          description: 객체 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+webhooks:
+  documentChanged:
+    post:
+      summary: 문서 revision 변경 push 알림
+      description: |
+        다른 창이 커밋하면 서버가 이 창에 알립니다. 내용은 클라이언트가
+        /changes?since_revision= 로 pull합니다.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionInfo'
+      responses:
+        '204':
+          description: 수신 완료.
+
+components:
+  parameters:
+    DocumentId:
+      name: documentId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    UploadId:
+      name: uploadId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  mediaTypes:
+    SyncSnapshot:
+      description: |
+        문서 스냅샷 ZIP:
+        - meta.json      (base_revision, page_count, updated_at)
+        - strokes.jsonl  (획 전체 — id, page, points, width, color, tool)
+        - pages.json     (페이지 목록 — paper, rotation)
+        - pdf.digest     (sha256 참조 — 바이트는 CAS에)
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    ServerError:
+      description: 예기치 않은 오류.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    UploadReceipt:
+      type: object
+      required: [upload_id, state]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          const: queued
+
+    UploadStatus:
+      type: object
+      required: [upload_id, state]
+      properties:
+        upload_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum: [queued, processing, applied, conflict, failed]
+        revision:
+          type: integer
+          format: int64
+          description: applied일 때의 새 revision.
+        conflict:
+          type: object
+          required: [latest_revision, patch]
+          description: state=conflict일 때만 존재.
+          properties:
+            latest_revision:
+              type: integer
+              format: int64
+            patch:
+              $ref: '#/components/schemas/Patch'
+        error:
+          $ref: '#/components/schemas/Error'
+
+    RevisionInfo:
+      type: object
+      required: [document_id, revision]
+      properties:
+        document_id:
+          type: integer
+          format: int64
+        revision:
+          type: integer
+          format: int64
+
+    # ── 서버가 계산하는 두 상태 간 diff ──
+    Patch:
+      type: object
+      required: [from_revision, to_revision]
+      description: |
+        서버가 "클라이언트가 보낸 전체 상태"와 "서버 현재 상태"를 비교해
+        계산합니다. 클라이언트는 이걸 로컬에 병합 후 재전송하면 됩니다.
+      properties:
+        from_revision:
+          type: integer
+          format: int64
+        to_revision:
+          type: integer
+          format: int64
+        strokes_added:
+          type: array
+          items:
+            $ref: '#/components/schemas/Stroke'
+        stroke_ids_removed:
+          type: array
+          items:
+            type: integer
+            format: int64
+        pages_changed:
+          type: boolean
+          description: true면 pages가 서버 기준 전체 목록.
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PageMeta'
+        meta:
+          type: object
+          nullable: true
+          additionalProperties: true
+        pdf:
+          $ref: '#/components/schemas/DigestRef'
+          nullable: true
+
+    Stroke:
+      type: object
+      required: [id, page, points]
+      properties:
+        id:
+          type: integer
+          format: int64
+        page:
+          type: integer
+          minimum: 0
+        points:
+          type: array
+          description: '점 배열 [{x, y, pressure, t_ms, width}, ...].'
+          items:
+            type: object
+            properties:
+              x:
+                type: number
+              y:
+                type: number
+              pressure:
+                type: number
+              t_ms:
+                type: integer
+              width:
+                type: number
+        widths:
+          type: array
+          items:
+            type: number
+        color:
+          type: array
+          items:
+            type: integer
+          minItems: 4
+          maxItems: 4
+        tool:
+          type: string
+          enum: [pen, fountain, highlighter, eraser]
+
+    PageMeta:
+      type: object
+      required: [index]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        paper:
+          type: object
+          additionalProperties: true
+        rotation:
+          type: integer
+          multipleOf: 90
+
+    DigestRef:
+      type: object
+      required: [digest]
+      properties:
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 0이면 CAS 재사용.
+
+    DigestProbe:
+      type: object
+      required: [digests]
+      properties:
+        digests:
+          type: array
+          items:
+            type: string
+            pattern: '^sha256:[0-9a-f]{64}$'
+
+    DigestProbeResult:
+      type: object
+      required: [missing]
+      properties:
+        missing:
+          type: array
+          items:
+            type: string
+            pattern: '^sha256:[0-9a-f]{64}$'
+
+    # ── /changes JSONL 한 줄 (op 판별) ──
+    ChangeRecord:
+      type: object
+      required: [op]
+      properties:
+        op:
+          type: string
+      discriminator:
+        propertyName: op
+        mapping:
+          add: '#/components/schemas/StrokeAdded'
+          remove: '#/components/schemas/StrokeRemoved'
+          pages: '#/components/schemas/PagesChanged'
+          meta: '#/components/schemas/MetaChanged'
+          pdf: '#/components/schemas/PdfChanged'
+      oneOf:
+        - $ref: '#/components/schemas/StrokeAdded'
+        - $ref: '#/components/schemas/StrokeRemoved'
+        - $ref: '#/components/schemas/PagesChanged'
+        - $ref: '#/components/schemas/MetaChanged'
+        - $ref: '#/components/schemas/PdfChanged'
+
+    StrokeAdded:
+      type: object
+      required: [op, stroke]
+      properties:
+        op:
+          const: add
+        stroke:
+          $ref: '#/components/schemas/Stroke'
+
+    StrokeRemoved:
+      type: object
+      required: [op, id]
+      properties:
+        op:
+          const: remove
+        id:
+          type: integer
+          format: int64
+
+    PagesChanged:
+      type: object
+      required: [op, pages]
+      properties:
+        op:
+          const: pages
+        pages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PageMeta'
+
+    MetaChanged:
+      type: object
+      required: [op, meta]
+      properties:
+        op:
+          const: meta
+        meta:
+          type: object
+          additionalProperties: true
+
+    PdfChanged:
+      type: object
+      required: [op, pdf]
+      properties:
+        op:
+          const: pdf
+        pdf:
+          $ref: '#/components/schemas/DigestRef'

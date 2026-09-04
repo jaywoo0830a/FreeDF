@@ -6,10 +6,10 @@
 //! 모든 API 호출에는 `X-Api-Key: <FREEDF_API_KEY>` 헤더가 필요합니다.
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_postgres::Client;
+
+mod sync_v3;
 
 // ── 앱 상태 ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +92,18 @@ async fn main() {
         .route("/api/media", post(upload).get(list))
         // axum 0.7은 matchit 0.7 — 경로 파라미터는 `:id` 문법 ({}는 0.8+).
         .route("/api/media/:id", delete(remove))
+        // ── Sync v3 (docs/sync-protocol-v3.md) — 클라이언트는 ZIP만 ──
+        .route("/v3/documents/:id/snapshot", put(sync_v3::put_snapshot))
+        .route("/v3/uploads/:upload_id", get(sync_v3::get_upload_status))
+        .route("/v3/documents/:id", get(sync_v3::download_snapshot))
+        .route("/v3/documents/:id/revision", get(sync_v3::get_revision))
+        .route("/v3/documents/:id/changes", get(sync_v3::get_changes))
+        .route("/v3/objects/query", post(sync_v3::probe_objects))
+        .route(
+            "/v3/objects/:digest",
+            put(sync_v3::put_object).get(sync_v3::get_object),
+        )
+        .layer(DefaultBodyLimit::max(512 * 1024 * 1024))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind)
