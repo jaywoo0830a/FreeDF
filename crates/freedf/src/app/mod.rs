@@ -612,6 +612,8 @@ pub struct FreeDfApp {
     last_canvas: [f32; 2],
     /// Canvas size from the previous frame (detects panel toggles / resizes).
     prev_canvas: [f32; 2],
+    /// Canvas 좌상단(origin) 직전 프레임 좌표 — 리사이즈 시 화면 고정 보정용.
+    prev_canvas_origin: egui::Pos2,
     pending_fit: Option<FitMode>,
     texture: Option<egui::TextureHandle>,
     render_dirty: bool,
@@ -1148,6 +1150,7 @@ impl FreeDfApp {
             page_align: PageAlign::Center,
             last_canvas: [1280.0, 600.0],
             prev_canvas: [1280.0, 600.0],
+            prev_canvas_origin: egui::Pos2::ZERO,
             pending_fit: None,
             texture: None,
             render_dirty: true,
@@ -2275,6 +2278,18 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(6)),
             )
             .show(ctx, |ui| {
+                if self.minimal_sections_collapsed {
+                    // 접힘: 작은 ▤ 버튼 하나만 남습니다.
+                    if ui
+                        .button("▤")
+                        .on_hover_text("Expand — Library / Outline / Bookmarks")
+                        .clicked()
+                    {
+                        self.minimal_sections_collapsed = false;
+                    }
+                    return;
+                }
+                ui.set_width(330.0);
                 ui.horizontal(|ui| {
                     if ui
                         .selectable_label(
@@ -2315,32 +2330,26 @@ impl FreeDfApp {
                         self.show_outline = false;
                     }
                     if ui
-                        .button(if self.minimal_sections_collapsed { "▤" } else { "—" })
-                        .on_hover_text(if self.minimal_sections_collapsed {
-                            "Expand panel sections"
-                        } else {
-                            "Collapse panel sections"
-                        })
+                        .button("—")
+                        .on_hover_text("Collapse to a small button")
                         .clicked()
                     {
-                        self.minimal_sections_collapsed = !self.minimal_sections_collapsed;
+                        self.minimal_sections_collapsed = true;
                     }
                 });
-                if self.minimal_sections_collapsed {
-                    return;
-                }
-                // 본문이 펼쳐질 때만 폭을 강제 — 접힌 상태에서 창이 330pt로
-                // 남아 "접히지 않는 것처럼" 보이던 버그 수정.
-                ui.set_width(330.0);
                 if self.show_library {
                     ui.separator();
+                    // 안쪽(library_panel) 자체 ScrollArea와 ID가 충돌하지 않도록
+                    // 바깥 래퍼에 고유 id_salt를 부여합니다.
                     egui::ScrollArea::vertical()
+                        .id_salt("minimal_library_scroll")
                         .max_height(320.0)
                         .show(ui, |ui| self.library_panel(ui));
                 }
                 if self.show_outline {
                     ui.separator();
                     egui::ScrollArea::vertical()
+                        .id_salt("minimal_outline_scroll")
                         .max_height(320.0)
                         .show(ui, |ui| self.outline_panel(ui));
                 }
@@ -2388,14 +2397,32 @@ impl FreeDfApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if !self.minimal_chrome_collapsed
-                        && ui
-                            .selectable_label(
-                                self.show_palette,
-                                icon_text(ui, "Palette", icons::PALETTE),
-                            )
-                            .on_hover_text("Writing-tool color palette (right side of canvas)")
+                    if self.minimal_chrome_collapsed {
+                        // 접힘: 작은 ☰(Show UI)와 ▤(펼치기)만 남습니다.
+                        if ui
+                            .button("☰")
+                            .on_hover_text("Show all toolbars again (Ctrl+Shift+M)")
                             .clicked()
+                        {
+                            self.manual_minimal = false;
+                            self.narrow_chrome_expanded = true;
+                        }
+                        if ui
+                            .button("▤")
+                            .on_hover_text("Show the Palette toggle")
+                            .clicked()
+                        {
+                            self.minimal_chrome_collapsed = false;
+                        }
+                        return;
+                    }
+                    if ui
+                        .selectable_label(
+                            self.show_palette,
+                            icon_text(ui, "Palette", icons::PALETTE),
+                        )
+                        .on_hover_text("Writing-tool color palette (right side of canvas)")
+                        .clicked()
                     {
                         self.show_palette = !self.show_palette;
                         self.save_default_session();
@@ -2412,15 +2439,11 @@ impl FreeDfApp {
                         self.narrow_chrome_expanded = true;
                     }
                     if ui
-                        .button(if self.minimal_chrome_collapsed { "▤" } else { "—" })
-                        .on_hover_text(if self.minimal_chrome_collapsed {
-                            "Show the Palette toggle"
-                        } else {
-                            "Hide the Palette toggle"
-                        })
+                        .button("—")
+                        .on_hover_text("Collapse to a small button")
                         .clicked()
                     {
-                        self.minimal_chrome_collapsed = !self.minimal_chrome_collapsed;
+                        self.minimal_chrome_collapsed = true;
                     }
                 });
             });

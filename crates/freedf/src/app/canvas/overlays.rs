@@ -14,15 +14,12 @@ impl FreeDfApp {
                 // 버튼 1: 원형 색상 팔레트를 **캔버스 중앙**에 열고 닫습니다.
                 // (OTD 전용 모드에서는 펜의 화면 좌표를 egui가 알 수 없어서
                 // 포인터 위치 대신 중앙 고정 — 좌측 끝에 뜨던 문제 방지)
+                // 상태바 메시지는 띄우지 않습니다 (상태바가 나타나 캔버스가
+                // 리사이즈되며 화면이 튀는 것을 방지).
                 self.color_wheel_open = !self.color_wheel_open;
                 if self.color_wheel_open {
                     self.color_wheel_opened_at = now_ms();
                 }
-                self.status = Some(if self.color_wheel_open {
-                    "Color wheel open — tap a color".into()
-                } else {
-                    "Color wheel closed".into()
-                });
             }
             2 => {
                 // 예약 — 펜 색 변경 등 추가 액션을 여기에 연결합니다.
@@ -98,12 +95,6 @@ impl FreeDfApp {
                 );
                 let painter = ui.painter_at(rect);
                 let c = rect.center();
-                // 드롭 섀도우 — 살짝 아래로 떨어진 어두운 원 (입체감).
-                painter.circle_filled(
-                    c + egui::vec2(2.0, 4.0),
-                    WHEEL_BACK_R,
-                    Color32::from_black_alpha(90),
-                );
                 let fill = crate::theme::nord::semantic::overlay_bg();
                 let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
                 // 유리(반투명) 백플레이트 — 뒤의 페이지/캔버스가 은은하게 비칩니다.

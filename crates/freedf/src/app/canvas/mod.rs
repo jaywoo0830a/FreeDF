@@ -300,11 +300,16 @@ impl FreeDfApp {
         let resized = (self.prev_canvas[0] - canvas_size[0]).abs() > 2.0
             || (self.prev_canvas[1] - canvas_size[1]).abs() > 2.0;
         if self.document.is_some() && self.pending_fit.is_none() && resized {
-            self.view
-                .align_page(self.page_size_pts, canvas_size, TOP_MARGIN, self.page_align);
-            self.render_dirty = true;
+            // 캔버스 크기가 바뀌어도(패널/툴바/상태바 펼침·접힘, Hide/Show UI)
+            // 페이지가 **화면상 같은 자리**에 남도록 origin 이동분만큼 pan을
+            // 보정합니다. (이전의 중앙 재정렬은 필기 중 화면이 슥 튀어나가
+            // 매우 성가셨음 — 정렬은 Fit Width/Height나 realign으로만.)
+            let origin_delta = canvas.min - self.prev_canvas_origin;
+            self.view.pan_x -= origin_delta.x;
+            self.view.pan_y -= origin_delta.y;
         }
         self.prev_canvas = canvas_size;
+        self.prev_canvas_origin = canvas.min;
         self.last_canvas = canvas_size;
 
         // Background behind the page (canvas surround — 사용자 지정 색)
