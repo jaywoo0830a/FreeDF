@@ -575,8 +575,6 @@ impl FreeDfApp {
             self.current_page,
             self.store.rev(),
             self.store_generation,
-            self.view.pan_x,
-            self.view.pan_y,
             self.view.zoom,
             self.pen_soak,
             self.fountain_soak,

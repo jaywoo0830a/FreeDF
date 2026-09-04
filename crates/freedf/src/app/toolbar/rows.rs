@@ -15,7 +15,7 @@ impl FreeDfApp {
                         .button(icon_text(ui, "Hide UI", icons::CORNERS_OUT))
                         .on_hover_text(
                             "Hide toolbars & panels — canvas + palette only.\n\
-                             Bring them back with the floating ☰ pill (top-right)\n\
+                             Bring them back with the floating Show UI button (top-right)\n\
                              or Ctrl+Shift+M.",
                         )
                         .clicked()

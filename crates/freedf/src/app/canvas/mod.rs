@@ -617,8 +617,6 @@ impl FreeDfApp {
                     self.current_page,
                     self.store.rev(),
                     self.store_generation,
-                    self.view.pan_x,
-                    self.view.pan_y,
                     self.view.zoom,
                     self.pen_soak,
                     self.fountain_soak,
@@ -627,16 +625,23 @@ impl FreeDfApp {
                     self.pen_grain,
                     self.fountain_grain,
                 );
+                self.ink_baked_pan = (self.view.pan_x, self.view.pan_y);
                 self.ink_built_at = now;
             }
         }
         if let Some(mesh) = &self.ink_mesh {
-            let shifted = anim_dx.abs() > 0.5 || anim_dy.abs() > 0.5;
+            // 팬/페이지 전환 오프셋은 **재구성 없이** 정점만 평행 이동한 사본
+            // (O(V) 복사)으로 그립니다 — 획이 많이 쌓여도 팬/엣지 스크롤 중
+            // 전체 테셀레이션을 피해 프레임 비용이 스트로크 수와 무관해집니다.
+            let pan_dx = self.view.pan_x - self.ink_baked_pan.0;
+            let pan_dy = self.view.pan_y - self.ink_baked_pan.1;
+            let shifted = anim_dx.abs() > 0.5
+                || anim_dy.abs() > 0.5
+                || pan_dx.abs() > 0.5
+                || pan_dy.abs() > 0.5;
             if shifted {
-                // 페이지 전환 애니메이션 중 — 재구성 없이 정점만 평행 이동한
-                // 사본(O(V))을 그려 잉크가 페이지와 함께 미끄러지게 합니다.
                 let mut m = (**mesh).clone();
-                let shift = egui::vec2(anim_dx, anim_dy);
+                let shift = egui::vec2(anim_dx + pan_dx, anim_dy + pan_dy);
                 for v in &mut m.vertices {
                     v.pos += shift;
                 }

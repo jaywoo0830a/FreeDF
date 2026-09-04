@@ -796,15 +796,14 @@ pub struct FreeDfApp {
     lift_cut_logged: bool,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
-    /// 병합 메시가 만들어진 시점의 (페이지, 스토어 버전, 세대, 뷰, 잉크 설정).
+    /// 병합 메시가 만들어진 시점의 (페이지, 스토어 버전, 세대, 줌, 잉크 설정).
     /// 메시는 **항상 애니메이션 오프셋 없이**(origin 기준) 구워지고,
-    /// 페이지 전환 중에는 그리기 시점에 정점만 평행 이동한 사본을 씁니다.
+    /// 페이지 전환/팬 중에는 그리기 시점에 정점만 평행 이동한 사본을 씁니다.
+    /// (pan은 키에 없음 — 팬만 바뀌면 재구성 대신 정점 이동으로 처리)
     ink_key: (
         usize,
         u64,
         u64,
-        f32,
-        f32,
         f32,
         InkSoak,
         InkSoak,
@@ -813,6 +812,8 @@ pub struct FreeDfApp {
         InkGrain,
         InkGrain,
     ),
+    /// 병합 메시가 구워진 시점의 pan — 팬만 바뀌면 재구성 없이 정점 이동.
+    ink_baked_pan: (f32, f32),
     /// 병합 메시를 만든 시각 (ms).
     ink_built_at: u64,
     /// 다음 블리드 정착 시각 (젊은 후광 동안 매 프레임 재구성).
@@ -1333,8 +1334,6 @@ impl FreeDfApp {
                 0,
                 0,
                 0.0,
-                0.0,
-                0.0,
                 InkSoak::default(),
                 InkSoak::default(),
                 BallPenProfile::default(),
@@ -1342,6 +1341,7 @@ impl FreeDfApp {
                 InkGrain::default(),
                 InkGrain::default(),
             ),
+            ink_baked_pan: (0.0, 0.0),
             ink_built_at: 0,
             ink_next_settle_ms: u64::MAX,
             store_generation: 0,
@@ -2445,9 +2445,9 @@ impl FreeDfApp {
             )
             .show(ctx, |ui| {
                 if self.minimal_sections_collapsed {
-                    // 접힘: 작은 ▤ 버튼 하나만 남습니다.
+                    // 접힘: 작은 펼치기 아이콘 버튼 하나만 남습니다.
                     if ui
-                        .button("▤")
+                        .button(icon_text(ui, "", icons::ARROWS_OUT))
                         .on_hover_text("Expand — Library / Outline / Bookmarks")
                         .clicked()
                     {
@@ -2501,7 +2501,7 @@ impl FreeDfApp {
                         }
                     }
                     if ui
-                        .button("—")
+                        .button(icon_text(ui, "", icons::MINUS))
                         .on_hover_text("Collapse to a small button")
                         .clicked()
                     {
@@ -2657,9 +2657,9 @@ impl FreeDfApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if self.minimal_chrome_collapsed {
-                        // 접힘: 작은 ☰(Show UI)와 ▤(펼치기)만 남습니다.
+                        // 접힘: 작은 Show UI(모서리 모으기)와 펼치기 아이콘만 남습니다.
                         if ui
-                            .button("☰")
+                            .button(icon_text(ui, "", icons::CORNERS_IN))
                             .on_hover_text("Show all toolbars again (Ctrl+Shift+M)")
                             .clicked()
                         {
@@ -2667,7 +2667,7 @@ impl FreeDfApp {
                             self.narrow_chrome_expanded = true;
                         }
                         if ui
-                            .button("▤")
+                            .button(icon_text(ui, "", icons::ARROWS_OUT))
                             .on_hover_text("Show the Palette toggle")
                             .clicked()
                         {
@@ -2701,7 +2701,7 @@ impl FreeDfApp {
                         self.save_default_session();
                     }
                     if ui
-                        .button("☰  Show UI")
+                        .button(icon_text(ui, "Show UI", icons::CORNERS_IN))
                         .on_hover_text(
                             "Show all toolbars again.\n\
                              Shortcut: Ctrl+Shift+M",
@@ -2712,7 +2712,7 @@ impl FreeDfApp {
                         self.narrow_chrome_expanded = true;
                     }
                     if ui
-                        .button("—")
+                        .button(icon_text(ui, "", icons::MINUS))
                         .on_hover_text("Collapse to a small button")
                         .clicked()
                     {
