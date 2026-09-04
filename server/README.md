@@ -49,7 +49,7 @@ cd backend && ./init.sh && ./up.sh && cd ..
 |---|---|---|
 | `DATABASE_URL` | `postgres://freedf:freedf@localhost:5432/freedf` | FreeDF와 같은 Postgres |
 | `MEDIA_DIR` | `/srv/freedf-server/media` | 파일 저장 경로 (nginx도 같은 경로를 읽음) |
-| `PUBLIC_BASE_URL` | `https://freedf.rlawjddn00.inline` | 클라이언트에 알려줄 공개 URL (응답의 `url` 필드 생성용) |
+| `PUBLIC_BASE_URL` | `https://freedf.rlawjddn00.online` | 클라이언트에 알려줄 공개 URL (응답의 `url` 필드 생성용) |
 | `FREEDF_API_KEY` | (필수, 없으면 기동 거부) | API 호출 시 `X-Api-Key` 헤더 |
 | `BIND` | `127.0.0.1:8080` | 백엔드 바인딩 주소 |
 
@@ -68,7 +68,7 @@ cd backend && ./init.sh && ./up.sh && cd ..
 ## TLS / 도메인
 
 - TLS는 **Caddy**가 종료: 80/443을 받아 nginx(8081)로 포워딩.
-  예: `freedf.rlawjddn00.inline { reverse_proxy localhost:8081 }` (자동 HTTPS)
+  예: `freedf.rlawjddn00.online { reverse_proxy localhost:8081 }` (자동 HTTPS)
 - nginx는 8081에서 평문 HTTP (backend 127.0.0.1:8080 프록시 + /media 서빙).
 - 도메인을 바꾸려면 `nginx/freedf.conf`의 `server_name`과
   `backend/.env`의 `PUBLIC_BASE_URL`을 함께 수정하세요.
@@ -76,6 +76,6 @@ cd backend && ./init.sh && ./up.sh && cd ..
 ## FreeDF 클라이언트 연동
 
 - FreeDF 앱 첫 실행 대화상자(또는 Server 설정 창)에서
-  `https://freedf.rlawjddn00.inline` + `backend/.env`의 API 키를 입력하면
+  `https://freedf.rlawjddn00.online` + `backend/.env`의 API 키를 입력하면
   `server.json`에 저장됩니다 — Sync v3 동기화(/v3/*)와 녹음(/api/media)이
   같은 서버/키로 동작합니다.

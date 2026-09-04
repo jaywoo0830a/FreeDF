@@ -60,7 +60,7 @@ struct ListParams {
 async fn main() {
     let database_url = env("DATABASE_URL", "postgres://freedf:freedf@localhost:5432/freedf");
     let media_dir = env("MEDIA_DIR", "/srv/freedf-server/media");
-    let public_base = env("PUBLIC_BASE_URL", "https://media.example.com");
+    let public_base = env("PUBLIC_BASE_URL", "https://freedf.rlawjddn00.online");
     let api_key = env("FREEDF_API_KEY", "");
     let bind = env("BIND", "127.0.0.1:8080");
 

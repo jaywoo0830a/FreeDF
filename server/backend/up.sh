@@ -78,8 +78,10 @@ if command -v curl >/dev/null 2>&1; then
     if [[ $ok == 1 ]]; then
         echo "✓ 백엔드 준비 완료 — http://127.0.0.1:${FREEDF_BACKEND_PORT:-8080}"
     else
-        echo "⚠ /health 응답을 받지 못했습니다. 로그 확인:"
-        echo "  $DOCKER compose -f ../docker-compose.yml logs -f backend"
+        echo "⚠ /health 응답을 받지 못했습니다 — 컨테이너 상태와 최근 로그:"
+        "$DOCKER" compose -f ../docker-compose.yml ps backend
+        "$DOCKER" compose -f ../docker-compose.yml logs --tail 30 backend
+        echo "(전체 로그: $DOCKER compose -f ../docker-compose.yml logs -f backend)"
     fi
 else
     echo "완료 — 백엔드가 기동되었습니다 (curl이 없어 /health 확인 생략)."
