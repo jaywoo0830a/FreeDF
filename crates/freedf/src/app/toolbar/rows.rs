@@ -106,16 +106,16 @@ impl FreeDfApp {
                             icon_text(ui, "Media Server", icons::CLOUD),
                         )
                         .on_hover_text(
-                            "Media server connection settings — upload & play audio recordings\n\
-                             from your self-hosted VPS.",
+                            "Media server connection settings — upload & play audio, photos \
+                             and video from your self-hosted VPS.",
                         )
                         .changed()
                     {
                         self.server_msg = None;
                     }
                     if ui
-                        .toggle_value(&mut self.show_media, icon_text(ui, "Recordings", icons::MICROPHONE))
-                        .on_hover_text("Recordings for this document — upload / play / delete")
+                        .toggle_value(&mut self.show_media, icon_text(ui, "Media", icons::IMAGES))
+                        .on_hover_text("Media for this document — upload / play / preview / delete")
                         .changed()
                     {
                         // 열릴 때 목록 갱신.

@@ -1015,7 +1015,7 @@ impl FreeDfApp {
         ui.separator();
         ui.checkbox(
             &mut self.media_config.enabled,
-            "Enable media features (audio recordings)",
+            "Enable media features (audio, photos, video)",
         )
         .on_hover_text(
             "Playback streams straight from nginx; the API key guards uploads, lists and deletes.",
