@@ -13,6 +13,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -28,6 +29,10 @@ struct AppState {
     media_dir: PathBuf,
     public_base: String,
     api_key: String,
+    /// 조립 ZIP 캐시 — doc_id → (revision, bytes). revision 불일치 시 재조립.
+    zip_cache: Arc<std::sync::Mutex<HashMap<i64, (i64, Vec<u8>)>>>,
+    /// 무거운 업로드 적용 전용 연결 (일반 요청과 격리).
+    apply_db: Arc<Mutex<Client>>,
 }
 
 #[derive(Serialize)]
@@ -78,6 +83,18 @@ async fn main() {
         }
     });
 
+    // 무거운 적용(스냅샷 apply) 전용 두 번째 연결 — 대형 문서 반영 중에도
+    // 상태 폴링/다운로드 등 일반 요청이 대기하지 않습니다.
+    let (apply_client, apply_connection) =
+        tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
+            .await
+            .expect("PostgreSQL(apply) 연결 실패");
+    tokio::spawn(async move {
+        if let Err(e) = apply_connection.await {
+            eprintln!("DB apply connection lost: {e}");
+        }
+    });
+
     // 스키마(media_objects 포함)는 server/db/up.sh의 마이그레이션이 담당합니다.
 
     let state = AppState {
@@ -85,6 +102,8 @@ async fn main() {
         media_dir: PathBuf::from(media_dir),
         public_base: public_base.trim_end_matches('/').to_string(),
         api_key,
+        zip_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        apply_db: Arc::new(Mutex::new(apply_client)),
     };
 
     let app = Router::new()

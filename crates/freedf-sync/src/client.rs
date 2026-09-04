@@ -401,9 +401,13 @@ mod tests {
             tool: "pen".into(),
             color: vec![0, 0, 0, 255],
             width: 1.0,
-            points: serde_json::json!([
-                {"x": 0.0, "y": 0.0, "pressure": 0.5, "t_ms": 0, "width": 1.0}
-            ]),
+            points: vec![StrokePoint {
+                x: 0.0,
+                y: 0.0,
+                pressure: 0.5,
+                t_ms: 0,
+                width: 1.0,
+            }],
             created_at: 0,
         }
     }

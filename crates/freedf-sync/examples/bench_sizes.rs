@@ -6,7 +6,7 @@
 //! 일반 필기(1획 0.2~0.5초, 100~200Hz 샘플링)에 해당하는 밀도입니다.
 //! (참고: serde_json::Value 경유라 실제 앱의 직렬화 성능 하한에 가깝습니다)
 
-use freedf_sync::{Digest, Snapshot, SnapshotMeta, Stroke};
+use freedf_sync::{Digest, Snapshot, SnapshotMeta, Stroke, StrokePoint};
 use serde_json::json;
 use std::io::{Cursor, Write};
 use std::time::Instant;
@@ -22,13 +22,13 @@ fn make_strokes(count: usize) -> Vec<Stroke> {
             for k in 0..40 {
                 x += 1.8 + (k as f64 * 0.13).sin() * 0.6;
                 y += (k as f64 * 0.21).sin() * 1.4;
-                pts.push(json!({
-                    "x": (x * 100.0).round() / 100.0,
-                    "y": (y * 100.0).round() / 100.0,
-                    "pressure": 0.4 + ((k as f64 * 0.9).sin() * 0.5 + 0.5) * 0.6,
-                    "t_ms": k * 8,
-                    "width": 2.0,
-                }));
+                pts.push(StrokePoint {
+                    x: ((x * 100.0).round() / 100.0) as f32,
+                    y: ((y * 100.0).round() / 100.0) as f32,
+                    pressure: (0.4 + ((k as f64 * 0.9).sin() * 0.5 + 0.5) * 0.6) as f32,
+                    t_ms: (k * 8) as u64,
+                    width: 2.0,
+                });
             }
             Stroke {
                 id: i as i64 + 1,
@@ -36,7 +36,7 @@ fn make_strokes(count: usize) -> Vec<Stroke> {
                 tool: "Pen".into(),
                 color: vec![20, 20, 20, 255],
                 width: 2.0,
-                points: serde_json::Value::Array(pts),
+                points: pts,
                 created_at: 1_700_000_000_000 + i as i64,
             }
         })
@@ -85,10 +85,12 @@ fn zip_with_level(snap: &Snapshot, level: Option<i64>) -> (usize, f64) {
         w.start_file("meta.json", opts).expect("meta");
         serde_json::to_writer(&mut w, &snap.meta).expect("meta json");
         w.start_file("strokes.jsonl", opts).expect("strokes");
+        let mut buf: Vec<u8> = Vec::new();
         for s in &snap.strokes {
-            serde_json::to_writer(&mut w, s).expect("stroke json");
-            w.write_all(b"\n").expect("nl");
+            serde_json::to_writer(&mut buf, s).expect("stroke json");
+            buf.push(b'\n');
         }
+        w.write_all(&buf).expect("strokes write");
         w.start_file("pages.json", opts).expect("pages");
         serde_json::to_writer(&mut w, &snap.pages).expect("pages json");
         w.start_file("pdf.digest", opts).expect("digest");
@@ -101,7 +103,9 @@ fn zip_with_level(snap: &Snapshot, level: Option<i64>) -> (usize, f64) {
         )
         .expect("digest write");
         w.start_file("edits.json", opts).expect("edits");
-        serde_json::to_writer(&mut w, &snap.edits).expect("edits json");
+        let mut edits_buf: Vec<u8> = Vec::new();
+        serde_json::to_writer(&mut edits_buf, &snap.edits).expect("edits json");
+        w.write_all(&edits_buf).expect("edits write");
         w.finish().expect("finish");
     }
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -127,12 +131,54 @@ fn fmt_kb(b: usize) -> String {
     }
 }
 
+fn fmt_ms(ms: f64) -> String {
+    if ms < 1000.0 {
+        format!("{ms:.1} ms")
+    } else {
+        format!("{:.2} s", ms / 1000.0)
+    }
+}
+
+/// 직렬화만 (ZIP 없이 strokes.jsonl 바이트 생성).
+fn serialize_only(snap: &Snapshot) -> (Vec<u8>, f64) {
+    let t0 = Instant::now();
+    let mut buf: Vec<u8> = Vec::new();
+    for s in &snap.strokes {
+        serde_json::to_writer(&mut buf, s).expect("serialize");
+        buf.push(b'\n');
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    (buf, ms)
+}
+
+/// deflate만 (미리 직렬화한 바이트를 레벨 6으로 압축).
+fn deflate_only(bytes: &[u8]) -> (usize, f64) {
+    let t0 = Instant::now();
+    let mut out: Vec<u8> = Vec::new();
+    {
+        let cur = Cursor::new(&mut out);
+        let mut w = ZipWriter::new(cur);
+        let opts = SimpleFileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .compression_level(Some(6));
+        w.start_file("strokes.jsonl", opts).expect("start");
+        w.write_all(bytes).expect("write");
+        w.finish().expect("finish");
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    (out.len(), ms)
+}
+
 fn main() {
     println!("── 압축 레벨별 (레벨 1 = fast, 6 = 기본) ──");
     println!("획 수 | 원본 | L1 ZIP | L1 시간 | L6 ZIP | L6 시간");
     for n in [100usize, 1_000, 5_000, 50_000] {
         let snap = make_snapshot(make_strokes(n));
-        let raw: usize = snap.strokes.iter().map(|s| s.points.to_string().len() + 90).sum();
+        let raw: usize = snap
+            .strokes
+            .iter()
+            .map(|s| serde_json::to_string(&s.points).map(|v| v.len()).unwrap_or(0) + 90)
+            .sum();
         let (z1, t1) = zip_with_level(&snap, Some(1));
         let (z6, t6) = zip_with_level(&snap, Some(6));
         println!(
@@ -143,6 +189,21 @@ fn main() {
             t1,
             fmt_kb(z6),
             t6,
+        );
+    }
+
+    println!();
+    println!("── 50,000획 단계 분리 ──");
+    {
+        let snap = make_snapshot(make_strokes(50_000));
+        let (raw, t_ser) = serialize_only(&snap);
+        let (z, t_def) = deflate_only(&raw);
+        println!(
+            "직렬화만: {} / {} · deflate만: {} / {}",
+            fmt_kb(raw.len()),
+            fmt_ms(t_ser),
+            fmt_kb(z),
+            fmt_ms(t_def),
         );
     }
 

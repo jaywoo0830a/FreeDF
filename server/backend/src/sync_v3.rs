@@ -23,13 +23,14 @@ use axum::{
 use freedf_sync::{
     ChangeRecord, Conflict, CreateDocument, CreatedDocument, Digest, DigestProbe,
     DigestProbeResult, DocumentInfo, Page, Patch, RenameDocument, RevisionInfo,
-    Snapshot, SnapshotMeta, Stroke, UploadReceipt, UploadState, UploadStatus,
+    Snapshot, SnapshotMeta, Stroke, StrokePoint, UploadReceipt, UploadState, UploadStatus,
     SNAPSHOT_MIME,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use tokio_postgres::GenericClient;
+use tokio_postgres::types::Json as PgJson;
+use tokio_postgres::{Client, GenericClient};
 use uuid::Uuid;
 
 use crate::{check_auth, unauthorized, AppState};
@@ -98,8 +99,9 @@ enum ApplyOutcome {
 
 // ── ZIP 파싱/조립 (코덱은 freedf-sync 크레이트와 공유) ─────────────────────
 
-/// 서버가 DB에서 문서 전체를 조회해 ZIP으로 조립.
-async fn assemble_snapshot<C: GenericClient>(db: &C, doc_id: i64) -> Result<(Vec<u8>, i64), ApiError> {
+/// 서버가 DB에서 문서 전체를 조회해 Snapshot으로 구성 (ZIP 직렬화 전 단계).
+/// 무거운 직렬화(to_zip)는 이 함수 밖에서 — DB 락 없이 실행합니다.
+async fn load_full_snapshot<C: GenericClient>(db: &C, doc_id: i64) -> Result<(Snapshot, i64), ApiError> {
     let revision: i64 = db
         .query_opt("SELECT revision FROM doc_revisions WHERE doc_id=$1", &[&doc_id])
         .await
@@ -151,8 +153,33 @@ async fn assemble_snapshot<C: GenericClient>(db: &C, doc_id: i64) -> Result<(Vec
         pdf_digest: state.pdf_digest,
         edits,
     };
+    Ok((snap, revision))
+}
+
+/// 리비전 일치 시에만 유효한 조립 ZIP 캐시 조회.
+fn cached_zip(state: &AppState, doc_id: i64, revision: i64) -> Option<Vec<u8>> {
+    state
+        .zip_cache
+        .lock()
+        .unwrap()
+        .get(&doc_id)
+        .and_then(|(rev, bytes)| if *rev == revision { Some(bytes.clone()) } else { None })
+}
+
+/// 문서 전체 ZIP — 캐시 히트 시 즉시, 미스 시 조회(DB 락) + 조립(락 밖).
+/// 조립은 리비전별 1회만 실행됩니다 (이후 요청/304는 캐시 경로).
+async fn assemble_snapshot(state: &AppState, doc_id: i64, revision: i64) -> Result<Vec<u8>, ApiError> {
+    if let Some(bytes) = cached_zip(state, doc_id, revision) {
+        return Ok(bytes);
+    }
+    let (snap, rev) = {
+        let db = state.db.lock().await;
+        load_full_snapshot(&*db, doc_id).await?
+    };
+    // 직렬화·압축은 DB 연결을 점유하지 않습니다 (다른 요청이 계속 처리됨).
     let bytes = snap.to_zip().map_err(|e| sync_err(&e))?;
-    Ok((bytes, revision))
+    state.zip_cache.lock().unwrap().insert(doc_id, (rev, bytes.clone()));
+    Ok(bytes)
 }
 
 // ── 상태 조회/비교/적용 ──────────────────────────────────────────────────────
@@ -178,14 +205,17 @@ async fn load_state<C: GenericClient>(db: &C, doc_id: i64) -> Result<StateView, 
         .map_err(db_err)?;
     let strokes: Vec<Stroke> = stroke_rows
         .iter()
-        .map(|r| Stroke {
-            id: r.get(0),
-            page_index: r.get(1),
-            tool: r.get(2),
-            color: r.get(3),
-            width: r.get(4),
-            points: r.get(5),
-            created_at: r.get(6),
+        .map(|r| {
+            let pts: PgJson<Vec<StrokePoint>> = r.get(5);
+            Stroke {
+                id: r.get(0),
+                page_index: r.get(1),
+                tool: r.get(2),
+                color: r.get(3),
+                width: r.get(4),
+                points: pts.0,
+                created_at: r.get(6),
+            }
         })
         .collect();
 
@@ -290,25 +320,21 @@ fn conflict_patch(cur: i64, old: &StateView, snap: &Snapshot) -> Patch {
 
 /// 스냅샷을 DB에 반영 (트랜잭션 안에서 호출).
 async fn apply_to_db<C: GenericClient>(db: &C, doc_id: i64, snap: &Snapshot, old: &StateView) -> Result<(), ApiError> {
-    // 획 전체 교체
+    // 획 전체 교체 — f32 최단 표현으로 통째 직렬화해 $2::jsonb로 파싱
+    // (to_value는 f32→f64 확장으로 jsonb 256MB 한도를 넘을 수 있음).
     db.execute("DELETE FROM strokes WHERE doc_id=$1", &[&doc_id])
         .await
         .map_err(db_err)?;
     if !snap.strokes.is_empty() {
-        let arr = Value::Array(
-            snap.strokes
-                .iter()
-                .map(|s| serde_json::to_value(s).expect("stroke serialize"))
-                .collect(),
-        );
+        let arr_text: String = serde_json::to_string(&snap.strokes).expect("stroke serialize");
         db.execute(
             "INSERT INTO strokes (id, doc_id, page_index, tool, color, width, points, created_at) \
              SELECT (s->>'id')::bigint, $1, (s->>'page_index')::int, s->>'tool', \
                     ARRAY(SELECT jsonb_array_elements_text(s->'color')::int), \
                     COALESCE((s->>'width')::real, 0), s->'points', \
                     COALESCE((s->>'created_at')::bigint, 0) \
-             FROM jsonb_array_elements($2::jsonb) s",
-            &[&doc_id, &arr],
+             FROM jsonb_array_elements($2::text::jsonb) s",
+            &[&doc_id, &arr_text],
         )
         .await
         .map_err(db_err)?;
@@ -369,11 +395,11 @@ async fn apply_to_db<C: GenericClient>(db: &C, doc_id: i64, snap: &Snapshot, old
         .await
         .map_err(db_err)?;
     if !snap.edits.is_empty() {
-        let arr = Value::Array(snap.edits.clone());
+        let arr_text: String = serde_json::to_string(&snap.edits).expect("edits serialize");
         db.execute(
             "INSERT INTO doc_edits (doc_id, edit, created_at) \
-             SELECT $1, e, $2 FROM jsonb_array_elements($3::jsonb) e",
-            &[&doc_id, &now_ms(), &arr],
+             SELECT $1, e, $2 FROM jsonb_array_elements($3::text::jsonb) e",
+            &[&doc_id, &now_ms(), &arr_text],
         )
         .await
         .map_err(db_err)?;
@@ -393,13 +419,13 @@ async fn apply_to_db<C: GenericClient>(db: &C, doc_id: i64, snap: &Snapshot, old
     Ok(())
 }
 
-/// 업로드 적용 (백그라운드 태스크에서 실행).
+/// 업로드 적용 (백그라운드 태스크, apply 전용 연결에서 실행).
 async fn apply_snapshot(
     state: &AppState,
+    db: &mut Client,
     doc_id: i64,
     snap: Snapshot,
 ) -> Result<ApplyOutcome, ApiError> {
-    let mut db = state.db.lock().await;
     let tx = db.transaction().await.map_err(db_err)?;
 
     let cur: i64 = tx
@@ -453,6 +479,8 @@ async fn apply_snapshot(
     .map_err(db_err)?;
 
     tx.commit().await.map_err(db_err)?;
+    // 서버 상태가 바뀌었으므로 조립 ZIP 캐시 무효화.
+    state.zip_cache.lock().unwrap().remove(&doc_id);
     Ok(ApplyOutcome::Applied {
         revision: new_rev,
         patch: patch_val,
@@ -583,7 +611,10 @@ pub async fn delete_document(
         .await
     {
         Ok(0) => ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response(),
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => {
+            state.zip_cache.lock().unwrap().remove(&doc_id);
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => db_err(e).into_response(),
     }
 }
@@ -641,41 +672,42 @@ pub async fn put_snapshot(
         }
     }
 
-    // 무거운 작업(파싱·적용)은 백그라운드 태스크에서.
+    // 무거운 작업(파싱·적용)은 apply 전용 연결 + 백그라운드 태스크에서 —
+    // 일반 요청(상태 폴링/다운로드)은 메인 연결을 계속 씁니다.
     let state2 = state.clone();
     tokio::spawn(async move {
-        {
-            let db = state2.db.lock().await;
-            let _ = db
-                .execute("UPDATE sync_uploads SET state='processing' WHERE upload_id=$1", &[&upload_id])
-                .await;
-        }
+        let mut apply_db = state2.apply_db.lock().await;
+        let _ = apply_db
+            .execute("UPDATE sync_uploads SET state='processing' WHERE upload_id=$1", &[&upload_id])
+            .await;
         let outcome = match Snapshot::from_zip(&body) {
-            Ok(snap) => apply_snapshot(&state2, doc_id, snap).await,
+            Ok(snap) => apply_snapshot(&state2, &mut apply_db, doc_id, snap).await,
             Err(e) => Err(ApiError::bad(format!("snapshot: {e}"))),
         };
-        let db = state2.db.lock().await;
         let _ = match outcome {
             Ok(ApplyOutcome::Applied { revision, patch }) => {
-                db.execute(
-                    "UPDATE sync_uploads SET state='applied', revision=$1, patch=$2 WHERE upload_id=$3",
-                    &[&revision, &patch, &upload_id],
-                )
-                .await
+                apply_db
+                    .execute(
+                        "UPDATE sync_uploads SET state='applied', revision=$1, patch=$2 WHERE upload_id=$3",
+                        &[&revision, &patch, &upload_id],
+                    )
+                    .await
             }
             Ok(ApplyOutcome::Conflict { latest_revision, patch }) => {
-                db.execute(
-                    "UPDATE sync_uploads SET state='conflict', revision=$1, patch=$2 WHERE upload_id=$3",
-                    &[&latest_revision, &patch, &upload_id],
-                )
-                .await
+                apply_db
+                    .execute(
+                        "UPDATE sync_uploads SET state='conflict', revision=$1, patch=$2 WHERE upload_id=$3",
+                        &[&latest_revision, &patch, &upload_id],
+                    )
+                    .await
             }
             Err(e) => {
-                db.execute(
-                    "UPDATE sync_uploads SET state='failed', error=$1 WHERE upload_id=$2",
-                    &[&e.1, &upload_id],
-                )
-                .await
+                apply_db
+                    .execute(
+                        "UPDATE sync_uploads SET state='failed', error=$1 WHERE upload_id=$2",
+                        &[&e.1, &upload_id],
+                    )
+                    .await
             }
         };
     });
@@ -758,6 +790,9 @@ pub async fn get_upload_status(
 }
 
 /// GET /v3/documents/{id} — 서버가 조립한 전체 ZIP (ETag/304 지원).
+///
+/// 304 판정은 무거운 조립 **전에** — 리비전 조회 한 번으로 끝납니다.
+/// 이후 요청은 리비전별 ZIP 캐시(재조립 없음)를 사용합니다.
 pub async fn download_snapshot(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -766,13 +801,23 @@ pub async fn download_snapshot(
     if !check_auth(&state, &headers).await {
         return unauthorized();
     }
-    let result = {
+    // 1) 문서 존재 + 리비전만 조회 (조립 전 304 판정).
+    let revision = {
         let db = state.db.lock().await;
-        assemble_snapshot(&*db, doc_id).await
-    };
-    let (zip, revision) = match result {
-        Ok(v) => v,
-        Err(e) => return e.into_response(),
+        match db
+            .query_opt(
+                "SELECT d.id, COALESCE(r.revision, 0) FROM documents d \
+                 LEFT JOIN doc_revisions r ON r.doc_id = d.id WHERE d.id=$1",
+                &[&doc_id],
+            )
+            .await
+        {
+            Ok(Some(row)) => row.get::<_, i64>(1),
+            Ok(None) => {
+                return ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response()
+            }
+            Err(e) => return db_err(e).into_response(),
+        }
     };
     let etag = format!("\"rev-{revision}\"");
     if headers
@@ -782,6 +827,11 @@ pub async fn download_snapshot(
     {
         return StatusCode::NOT_MODIFIED.into_response();
     }
+    // 2) 캐시/조립 (ZIP 직렬화는 DB 락 밖).
+    let zip = match assemble_snapshot(&state, doc_id, revision).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
     let mut resp = ([(header::CONTENT_TYPE, SNAPSHOT_MIME)], zip).into_response();
     if let Ok(v) = etag.parse() {
         resp.headers_mut().insert(header::ETAG, v);
@@ -848,10 +898,19 @@ pub async fn get_changes(
         return ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response();
     }
 
-    // format=zip — 폴백: 전체 스냅샷.
+    // format=zip — 폴백: 전체 스냅샷 (다운로드와 같은 캐시 경로).
     if params.format.as_deref() == Some("zip") {
-        return match assemble_snapshot(&*db, doc_id).await {
-            Ok((zip, _)) => ([(header::CONTENT_TYPE, SNAPSHOT_MIME)], zip).into_response(),
+        let revision = match db
+            .query_opt("SELECT revision FROM doc_revisions WHERE doc_id=$1", &[&doc_id])
+            .await
+        {
+            Ok(Some(r)) => r.get(0),
+            Ok(None) => 0,
+            Err(e) => return db_err(e).into_response(),
+        };
+        drop(db); // 캐시/조립 경로가 필요할 때만 DB 락 재획득.
+        return match assemble_snapshot(&state, doc_id, revision).await {
+            Ok(zip) => ([(header::CONTENT_TYPE, SNAPSHOT_MIME)], zip).into_response(),
             Err(e) => e.into_response(),
         };
     }

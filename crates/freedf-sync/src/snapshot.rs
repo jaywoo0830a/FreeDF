@@ -77,10 +77,15 @@ impl Snapshot {
             serde_json::to_writer(&mut w, &self.meta)?;
 
             w.start_file("strokes.jsonl", opts)?;
+            // 스트로크별 소량 write를 deflate 스트림에 직접 흘리면
+            // 인코더 호출 오버헤드가 누적되어 매우 느림 (50k획: 18s).
+            // → 중간 버퍼에 전부 직렬화한 뒤 한 번에 write_all (≈2s).
+            let mut buf: Vec<u8> = Vec::new();
             for s in &self.strokes {
-                serde_json::to_writer(&mut w, s)?;
-                w.write_all(b"\n")?;
+                serde_json::to_writer(&mut buf, s)?;
+                buf.push(b'\n');
             }
+            w.write_all(&buf)?;
 
             w.start_file("pages.json", opts)?;
             serde_json::to_writer(&mut w, &self.pages)?;
@@ -90,7 +95,9 @@ impl Snapshot {
             w.write_all(digest.as_bytes())?;
 
             w.start_file("edits.json", opts)?;
-            serde_json::to_writer(&mut w, &self.edits)?;
+            let mut edits_buf: Vec<u8> = Vec::new();
+            serde_json::to_writer(&mut edits_buf, &self.edits)?;
+            w.write_all(&edits_buf)?;
 
             w.finish()?;
         }
@@ -239,7 +246,7 @@ impl Default for SnapshotMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{ChangeRecord, Patch, Page};
+    use crate::proto::{ChangeRecord, Page, Patch, StrokePoint};
 
     fn stroke(id: i64) -> Stroke {
         Stroke {
@@ -248,7 +255,13 @@ mod tests {
             tool: "pen".into(),
             color: vec![0, 0, 0, 255],
             width: 1.0,
-            points: serde_json::json!([{"x": 1.0, "y": 2.0, "pressure": 0.5, "t_ms": 100, "width": 1.0}]),
+            points: vec![StrokePoint {
+                x: 1.0,
+                y: 2.0,
+                pressure: 0.5,
+                t_ms: 100,
+                width: 1.0,
+            }],
             created_at: 0,
         }
     }

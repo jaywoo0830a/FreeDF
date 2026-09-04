@@ -5,6 +5,19 @@ use uuid::Uuid;
 
 use crate::digest::Digest;
 
+/// strokes.jsonl 한 줄의 점 — {x, y, pressure, t_ms, width} (OpenAPI와 1:1).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct StrokePoint {
+    pub x: f32,
+    pub y: f32,
+    #[serde(default)]
+    pub pressure: f32,
+    #[serde(default)]
+    pub t_ms: u64,
+    #[serde(default)]
+    pub width: f32,
+}
+
 /// strokes.jsonl 한 줄 (= DB strokes 행과 같은 모양).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Stroke {
@@ -16,7 +29,7 @@ pub struct Stroke {
     #[serde(default)]
     pub width: f32,
     /// [{x, y, pressure, t_ms, width}, ...]
-    pub points: serde_json::Value,
+    pub points: Vec<StrokePoint>,
     #[serde(default)]
     pub created_at: i64,
 }
@@ -236,7 +249,13 @@ mod tests {
             tool: "pen".into(),
             color: vec![10, 20, 30, 255],
             width: 2.0,
-            points: serde_json::json!([{"x": 1.0, "y": 2.0, "pressure": 0.5, "t_ms": 100, "width": 2.0}]),
+            points: vec![StrokePoint {
+                x: 1.0,
+                y: 2.0,
+                pressure: 0.5,
+                t_ms: 100,
+                width: 2.0,
+            }],
             created_at: 1000,
         }
     }

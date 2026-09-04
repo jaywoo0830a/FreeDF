@@ -94,7 +94,17 @@ fn wire_to_core(s: &freedf_sync::Stroke) -> Stroke {
         tool: ToolType::from_label(&s.tool),
         color: color_u8(&s.color),
         width: s.width,
-        points: serde_json::from_value::<Vec<StrokePoint>>(s.points.clone()).unwrap_or_default(),
+        points: s
+            .points
+            .iter()
+            .map(|p| StrokePoint {
+                x: p.x,
+                y: p.y,
+                pressure: p.pressure,
+                t_ms: p.t_ms,
+                width: p.width,
+            })
+            .collect(),
         created_ms: s.created_at.max(0) as u64,
     }
 }
@@ -106,7 +116,17 @@ fn core_to_wire(page_index: i32, s: &Stroke) -> freedf_sync::Stroke {
         tool: s.tool.label().to_lowercase(),
         color: color_i32(s.color),
         width: s.width,
-        points: serde_json::to_value(&s.points).unwrap_or(Value::Array(Vec::new())),
+        points: s
+            .points
+            .iter()
+            .map(|p| freedf_sync::StrokePoint {
+                x: p.x,
+                y: p.y,
+                pressure: p.pressure,
+                t_ms: p.t_ms,
+                width: p.width,
+            })
+            .collect(),
         created_at: s.created_ms as i64,
     }
 }
