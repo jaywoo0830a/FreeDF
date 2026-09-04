@@ -352,18 +352,23 @@ impl FreeDfApp {
             // 사이드 버튼 에지(눌림) 감지 → `on_pen_button` 훅으로 라우팅.
             let prev = self.pen_buttons;
             self.pen_buttons = st.buttons;
-            if st.buttons.button1 && !prev.button1 {
-                // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
-                if !self.color_wheel_open {
-                    self.color_wheel_anchor = ctx
-                        .input(|i| i.pointer.hover_pos())
-                        .map(|p| [p.x - origin.x, p.y - origin.y])
-                        .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+            // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
+            // **포커스된 창만** 사이드 버튼에 반응합니다 — 배경 창의 휠이
+            // 함께 열리는 버그를 막습니다 (순수 판정: wheel_toggle_allowed).
+            if wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
+                if st.buttons.button1 && !prev.button1 {
+                    // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
+                    if !self.color_wheel_open {
+                        self.color_wheel_anchor = ctx
+                            .input(|i| i.pointer.hover_pos())
+                            .map(|p| [p.x - origin.x, p.y - origin.y])
+                            .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+                    }
+                    self.on_pen_button(1, true);
                 }
-                self.on_pen_button(1, true);
-            }
-            if st.buttons.button2 && !prev.button2 {
-                self.on_pen_button(2, true);
+                if st.buttons.button2 && !prev.button2 {
+                    self.on_pen_button(2, true);
+                }
             }
         }
 

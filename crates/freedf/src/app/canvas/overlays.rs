@@ -370,6 +370,8 @@ impl FreeDfApp {
                     .corner_radius(8.0)
                     .inner_margin(egui::Margin::same(5))
                     .show(ui, |ui| {
+                        // 모든 요소(도구/스와치/버튼)를 세로 중앙 정렬합니다.
+                        ui.vertical_centered(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                         // 도구 선택 (세로, 설정된 순서를 따름).
                         let order = self.tool_order.clone();
@@ -458,6 +460,7 @@ impl FreeDfApp {
                                 to_remove = Some(i);
                             }
                         }
+                        });
                     });
             });
 

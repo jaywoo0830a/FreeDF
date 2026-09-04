@@ -317,6 +317,48 @@ fn color_circle_swatch(
 /// 새 노트 페이지 수 프리셋 (1장 ~ 대량 노트).
 const NOTE_PAGE_PRESETS: &[usize] = &[1, 100, 200, 300, 500, 1000];
 
+// ---------- 새 창(--doc) 시작 순서 (순수 상태 머신 — 테스트 대상) ----------
+
+/// `freedf --doc`으로 시작한 새 창이 DB 문서를 여는 순서 결정.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StartupOpenAction {
+    /// 저장된 URL로 자동 연결을 시작합니다.
+    Connect,
+    /// 대기 (연결 시도 중).
+    Wait,
+    /// 문서를 엽니다.
+    Open(i64),
+}
+
+/// (문서 요청 없음) → Wait. (연결 안 됨 + 시도 중 아님) → Connect,
+/// (시도 중) → Wait, (연결됨) → Open. 새 창 프로세스는 연결 없이 시작하므로
+/// 연결 전에 문서를 열면 "Document not found"가 나는 것을 막습니다.
+pub(crate) fn startup_open_step(
+    pending_doc: Option<i64>,
+    db_connected: bool,
+    connecting: bool,
+) -> StartupOpenAction {
+    match pending_doc {
+        None => StartupOpenAction::Wait,
+        Some(doc_id) => {
+            if db_connected {
+                StartupOpenAction::Open(doc_id)
+            } else if connecting {
+                StartupOpenAction::Wait
+            } else {
+                StartupOpenAction::Connect
+            }
+        }
+    }
+}
+
+/// 펜 사이드 버튼(휠 토글)의 **창 간 격리** — 두 창이 같은 펜 장치를
+/// 공유하므로, 포커스된 창만 반응합니다 (배경 창의 휠이 동시에 열리는 버그 방지).
+/// `focused == None`(미확인)이면 반응하지 않습니다.
+pub(crate) fn wheel_toggle_allowed(window_focused: Option<bool>) -> bool {
+    window_focused == Some(true)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
@@ -1491,6 +1533,25 @@ impl FreeDfApp {
         });
     }
 
+    /// `--doc` 새 창 전용: 저장된 URL로 **자동** 연결 — 성공하면 첫 실행
+    /// 대화상자도 닫습니다 (연결 완료 후 pending_doc이 열립니다).
+    fn try_connect_db_auto(&mut self) {
+        let url = self.connect_url.trim().to_string();
+        if url.is_empty() {
+            self.connect_status = Some((false, "Enter the database URL first.".into()));
+            return;
+        }
+        if self.pending_connect.is_some() {
+            return;
+        }
+        self.connect_status = None;
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pending_connect = Some((rx, true, url.clone()));
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::storage::connect(&url));
+        });
+    }
+
     /// 백그라운드 연결 결과 수신 (매 프레임 호출).
     fn poll_connect_result(&mut self) {
         let Some((rx, auto, url)) = self.pending_connect.take() else {
@@ -2590,8 +2651,21 @@ impl eframe::App for FreeDfApp {
         if let Some(path) = self.pending_open.take() {
             self.open_pdf(&path);
         }
-        if let Some(doc_id) = self.pending_doc.take() {
-            self.open_document(doc_id);
+        // 새 창 프로세스는 DB 연결 없이 시작하므로, 먼저 저장된 URL로
+        // **자동 연결**한 뒤 연결이 완료된 다음에만 문서를 엽니다
+        // (연결 전 열기 → "Document not found" 방지). 순수 판정은
+        // `startup_open_step` — 테스트로 검증.
+        match startup_open_step(
+            self.pending_doc,
+            self.db_connected,
+            self.pending_connect.is_some(),
+        ) {
+            StartupOpenAction::Connect => self.try_connect_db_auto(),
+            StartupOpenAction::Open(doc_id) => {
+                self.pending_doc = None;
+                self.open_document(doc_id);
+            }
+            StartupOpenAction::Wait => {}
         }
         self.handle_shortcuts(&ctx);
 
@@ -2734,5 +2808,53 @@ impl eframe::App for FreeDfApp {
         if self.document.is_some() || self.active_stroke.is_some() {
             ctx.request_repaint();
         }
+    }
+}
+
+#[cfg(test)]
+mod window_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn new_window_with_doc_connects_first() {
+        // 문서 요청 + 연결 안 됨 + 시도 중 아님 → 먼저 자동 연결.
+        assert_eq!(
+            startup_open_step(Some(7), false, false),
+            StartupOpenAction::Connect
+        );
+    }
+
+    #[test]
+    fn new_window_waits_while_connecting() {
+        // 연결 시도 중에는 기다렸다가 연결 완료 후 열립니다.
+        assert_eq!(
+            startup_open_step(Some(7), false, true),
+            StartupOpenAction::Wait
+        );
+    }
+
+    #[test]
+    fn new_window_opens_once_connected() {
+        // 연결 완료 → 문서 id 7 열기.
+        assert_eq!(
+            startup_open_step(Some(7), true, false),
+            StartupOpenAction::Open(7)
+        );
+    }
+
+    #[test]
+    fn no_request_does_nothing() {
+        // --doc 없이 시작한 창은 아무것도 하지 않습니다.
+        assert_eq!(startup_open_step(None, true, false), StartupOpenAction::Wait);
+        assert_eq!(startup_open_step(None, false, false), StartupOpenAction::Wait);
+    }
+
+    #[test]
+    fn unfocused_window_ignores_pen_button() {
+        // 배경 창은 휠을 열지 않습니다 (같은 펜 장치를 공유해도).
+        assert!(!wheel_toggle_allowed(None));
+        assert!(!wheel_toggle_allowed(Some(false)));
+        // 포커스된 창만 반응.
+        assert!(wheel_toggle_allowed(Some(true)));
     }
 }
