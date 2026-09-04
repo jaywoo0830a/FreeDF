@@ -333,7 +333,8 @@ async fn apply_to_db<C: GenericClient>(db: &C, doc_id: i64, snap: &Snapshot, old
                     ARRAY(SELECT jsonb_array_elements_text(s->'color')::int), \
                     COALESCE((s->>'width')::real, 0), s->'points', \
                     COALESCE((s->>'created_at')::bigint, 0) \
-             FROM jsonb_array_elements($2::text::jsonb) s",
+             FROM jsonb_array_elements($2::text::jsonb) s \
+             ON CONFLICT (doc_id, id) DO NOTHING",
             &[&doc_id, &arr_text],
         )
         .await

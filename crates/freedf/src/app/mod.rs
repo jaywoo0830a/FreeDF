@@ -1660,8 +1660,16 @@ impl FreeDfApp {
                 }
             }
             if self.stroke_id_pool.0 >= self.stroke_id_pool.1 {
-                // 동기 폴백 없음 — UI 멈춤 방지가 우선. 연결이 늦거나 끊긴
-                // 경우 호출자가 로컬 id(add_stroke)로 그립니다.
+                // 풀 소진 — v3 백엔드는 **로컬 원자 카운터**에서 즉시 발급
+                // (네트워크 없음, O(1)). 스토어 카운터와 같은 소스라 id 충돌이
+                // 원천적으로 없습니다. (옛 동기 폴백은 store.next_stroke_id와
+                // 같은 베이스에서 시작해 풀 id와 충돌했던 버그의 원인)
+                let ids = self.db.alloc_stroke_ids(n);
+                if !ids.is_empty() {
+                    return ids;
+                }
+                // 연결 전(disconnected) — 서버가 없으니 로컬 id(add_stroke)로
+                // 그려도 충돌이 불가능합니다.
                 break;
             }
             let take = (n - out.len())
