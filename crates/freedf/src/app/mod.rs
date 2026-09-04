@@ -385,6 +385,25 @@ pub(crate) fn cursor_hysteresis(
     (counter, shown)
 }
 
+/// 사이드 패널 종류 — Library / Outline / Bookmarks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelKind {
+    Library,
+    Outline,
+    Bookmarks,
+}
+
+/// Library / Outline / Bookmarks의 **상호 베타성** — `panel`을 켜면 나머지는
+/// 꺼집니다. Hide UI 트리거와 툴바 Row1 토글 양쪽에서 동일하게 사용합니다.
+/// 반환: [library, outline, bookmarks].
+pub(crate) fn exclusive_panel_on(panel: PanelKind) -> [bool; 3] {
+    match panel {
+        PanelKind::Library => [true, false, false],
+        PanelKind::Outline => [false, true, false],
+        PanelKind::Bookmarks => [false, false, true],
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
@@ -2446,8 +2465,10 @@ impl FreeDfApp {
                         .clicked()
                     {
                         self.show_library = !self.show_library;
-                        self.show_outline = false;
-                        self.show_bookmarks = false;
+                        if self.show_library {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Library);
+                        }
                         self.save_session();
                     }
                     if ui
@@ -2459,8 +2480,10 @@ impl FreeDfApp {
                         .clicked()
                     {
                         self.show_outline = !self.show_outline;
-                        self.show_library = false;
-                        self.show_bookmarks = false;
+                        if self.show_outline {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Outline);
+                        }
                         self.save_session();
                     }
                     if ui
@@ -2472,8 +2495,10 @@ impl FreeDfApp {
                         .clicked()
                     {
                         self.show_bookmarks = !self.show_bookmarks;
-                        self.show_library = false;
-                        self.show_outline = false;
+                        if self.show_bookmarks {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Bookmarks);
+                        }
                     }
                     if ui
                         .button("—")
@@ -3083,5 +3108,22 @@ mod window_isolation_tests {
         let (c2, s2) = cursor_hysteresis(false, false, c1, s1, 3);
         let (c3, s3) = cursor_hysteresis(false, false, c2, s2, 3);
         assert_eq!((c3, s3), (3, false));
+    }
+
+    #[test]
+    fn panels_are_mutually_exclusive() {
+        // 어디서든 Library/Outline/Bookmarks 중 하나만 켜집니다.
+        assert_eq!(
+            exclusive_panel_on(PanelKind::Library),
+            [true, false, false]
+        );
+        assert_eq!(
+            exclusive_panel_on(PanelKind::Outline),
+            [false, true, false]
+        );
+        assert_eq!(
+            exclusive_panel_on(PanelKind::Bookmarks),
+            [false, false, true]
+        );
     }
 }

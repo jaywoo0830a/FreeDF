@@ -44,18 +44,26 @@ impl FreeDfApp {
                     ui.separator();
                     if ui
                         .toggle_value(&mut self.show_library, icon_text(ui, "Library", icons::NOTEBOOK))
-                        .on_hover_text("Library (notes, PDFs, recents)")
+                        .on_hover_text("Library (notes, PDFs, recents) — exclusive")
                         .changed()
                     {
-                        // Zoom is preserved; the canvas re-centers on resize.
+                        // Library / Outline / Bookmarks는 어디서든 상호 베타적.
+                        if self.show_library {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Library);
+                        }
                         self.save_session();
                     }
                     if ui
                         .toggle_value(&mut self.show_outline, icon_text(ui, "Outline", icons::LIST_BULLETS))
-                        .on_hover_text("Outline")
+                        .on_hover_text("Outline — exclusive")
                         .changed()
                     {
-                        // Zoom is preserved; the canvas re-centers on resize.
+                        // Library / Outline / Bookmarks는 어디서든 상호 베타적.
+                        if self.show_outline {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Outline);
+                        }
                         self.save_session();
                     }
                     if ui
