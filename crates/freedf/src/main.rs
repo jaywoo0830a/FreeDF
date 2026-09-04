@@ -10,6 +10,7 @@
 mod app;
 mod fonts;
 mod pdf;
+mod player;
 mod recent;
 mod recording;
 mod server;

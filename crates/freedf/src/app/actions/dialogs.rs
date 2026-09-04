@@ -16,6 +16,9 @@ impl FreeDfApp {
             TextAction::DownloadPdf { doc_id, title } => {
                 self.download_pdf_action(doc_id, title, PathBuf::from(text.trim()));
             }
+            TextAction::DownloadMedia { url, name } => {
+                self.download_media_action(url, name, PathBuf::from(text.trim()));
+            }
         }
     }
 

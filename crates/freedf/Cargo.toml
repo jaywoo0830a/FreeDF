@@ -33,3 +33,5 @@ rfd = "0.15"
 # Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 cpal = "0.15"
+# 인앱 오디오 재생 (rodio — 내부적으로 cpal 사용).
+rodio = "0.18"

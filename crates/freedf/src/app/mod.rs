@@ -482,6 +482,9 @@ pub(crate) enum TextAction {
     /// 서버의 문서 PDF 다운로드 — 비 Windows에서 저장 경로 입력 폴백.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     DownloadPdf { doc_id: i64, title: String },
+    /// 녹음(미디어) 다운로드 — 비 Windows에서 저장 경로 입력 폴백.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    DownloadMedia { url: String, name: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1133,6 +1136,10 @@ pub struct FreeDfApp {
     last_pen_up_ms: u64,
     /// 진행 중인 마이크 녹음 (없으면 None).
     recording: Option<crate::recording::Recorder>,
+    /// 인앱 재생 중인 녹음 (없으면 None).
+    player: Option<crate::player::PlayerState>,
+    /// 스트리밍 다운로드 진행 중 상태.
+    streaming_dl: Option<crate::player::StreamDownload>,
     /// 백그라운드 저장 진행 채널 (단계/완료).
     save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
     /// 라이브러리 삭제(노트/PDF) 백그라운드 작업 채널 — 여러 배치가 동시에
@@ -1545,6 +1552,8 @@ impl FreeDfApp {
             pdf_dl_rx: None,
             last_pen_up_ms: 0,
             recording: None,
+            player: None,
+            streaming_dl: None,
             save_rx: None,
             library_rx: Vec::new(),
             pdf_import_rx: None,
@@ -2978,6 +2987,7 @@ impl eframe::App for FreeDfApp {
         self.poll_loader();
         self.poll_media();
         self.poll_pdf_download();
+        self.poll_player();
         self.maybe_auto_flush(ui.ctx());
         self.poll_library();
         self.poll_pdf_import();
@@ -3149,7 +3159,12 @@ impl eframe::App for FreeDfApp {
 
         // High-refresh support: keep repainting while a document is open so
         // pen input and ink rendering stay smooth (120Hz+ displays).
-        if self.document.is_some() || self.active_stroke.is_some() || self.recording.is_some() {
+        if self.document.is_some()
+            || self.active_stroke.is_some()
+            || self.recording.is_some()
+            || self.player.is_some()
+            || self.streaming_dl.is_some()
+        {
             ctx.request_repaint();
         }
     }

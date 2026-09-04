@@ -1,6 +1,11 @@
-//! Media 패널 — 문서의 녹음 목록(업로드/재생/삭제).
+//! Media 패널 — 문서의 녹음 목록(스트리밍 재생/다운로드/삭제).
 
 use super::*;
+
+fn fmt_secs(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    format!("{:02}:{:02}", s / 60, s % 60)
+}
 
 impl FreeDfApp {
     /// 녹음(미디어) 패널 — 현재 문서의 녹음 업로드/목록/재생/삭제.
@@ -51,6 +56,61 @@ impl FreeDfApp {
         });
         ui.separator();
 
+        // ── 인앱 스트리밍 재생기 (버퍼링/재생 상태) ──
+        if self.streaming_dl.is_some() {
+            ui.horizontal(|ui| {
+                ui.add(egui::Spinner::new());
+                ui.label("Buffering…");
+            });
+            ui.separator();
+        }
+        if let Some(p) = &self.player {
+            let mut stop = false;
+            let mut seek = None;
+            ui.horizontal(|ui| {
+                if ui
+                    .small_button(icon_text(
+                        ui,
+                        "",
+                        if p.is_paused() { icons::PLAY } else { icons::PAUSE },
+                    ))
+                    .on_hover_text("Play / Pause")
+                    .clicked()
+                {
+                    p.toggle();
+                }
+                let total = p.total().map(|d| d.as_secs_f32()).unwrap_or(0.0).max(0.001);
+                let mut pos = p.elapsed().as_secs_f32().min(total);
+                let resp = ui.add(
+                    egui::Slider::new(&mut pos, 0.0..=total)
+                        .show_value(false)
+                        .trailing_fill(true),
+                );
+                if resp.changed() {
+                    seek = Some(std::time::Duration::from_secs_f32(pos));
+                }
+                ui.label(format!(
+                    "{} / {}",
+                    fmt_secs(p.elapsed()),
+                    fmt_secs(p.total().unwrap_or_default())
+                ));
+                if ui
+                    .small_button(icon_text(ui, "", icons::X))
+                    .on_hover_text("Stop playback")
+                    .clicked()
+                {
+                    stop = true;
+                }
+            });
+            if let Some(d) = seek {
+                p.seek(d);
+            }
+            if stop {
+                self.stop_player();
+            }
+            ui.separator();
+        }
+
         if !self.media_config.enabled {
             ui.label("Media server is not configured yet.");
             if ui.button("Server settings").clicked() {
@@ -81,10 +141,17 @@ impl FreeDfApp {
                 ui.horizontal(|ui| {
                     if ui
                         .small_button(icon_text(ui, "", icons::PLAY))
-                        .on_hover_text("Play in your default media player")
+                        .on_hover_text("Stream and play inside the app")
                         .clicked()
                     {
-                        self.play_media_item(item.url.clone());
+                        self.stream_media_item(item.clone());
+                    }
+                    if ui
+                        .small_button(icon_text(ui, "", icons::DOWNLOAD_SIMPLE))
+                        .on_hover_text("Download to disk")
+                        .clicked()
+                    {
+                        self.download_media_dialog(item.clone());
                     }
                     let _ = ui
                         .add_sized(

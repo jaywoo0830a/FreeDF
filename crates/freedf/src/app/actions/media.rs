@@ -112,34 +112,126 @@ impl FreeDfApp {
         });
     }
 
-    /// 녹음 URL을 OS 기본 미디어 플레이어로 엽니다 (nginx가 스트리밍).
-    pub(crate) fn play_media_item(&mut self, url: String) {
-        if let Err(e) = open_in_system_player(&url) {
-            self.media_status = Some(format!("Could not open player: {e}"));
+    /// 녹음을 서버에서 스트리밍 다운로드한 뒤 앱 안에서 재생합니다.
+    pub(crate) fn stream_media_item(&mut self, item: MediaObject) {
+        if self.player.is_some() || self.streaming_dl.is_some() {
+            self.show_error("A recording is already playing.".into());
+            return;
+        }
+        let dir = std::env::temp_dir().join("freedf-stream");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("stream-{}-{}.wav", std::process::id(), now_ms()));
+        let state_path = path.clone();
+        let url = item.url.clone();
+        let name = item.name.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let res = ureq::get(&url)
+                .call()
+                .map_err(|e| format!("Stream failed: {e}"))
+                .and_then(|resp| {
+                    let mut reader = resp.into_reader();
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut bytes)
+                        .map_err(|e| format!("Stream failed: {e}"))?;
+                    std::fs::write(&path, &bytes).map_err(|e| e.to_string())
+                });
+            let _ = tx.send(res);
+        });
+        self.streaming_dl = Some(crate::player::StreamDownload {
+            name,
+            path: state_path,
+            rx,
+        });
+        self.media_status = Some("Buffering…".into());
+    }
+
+    /// 스트리밍 다운로드 완료/재생 종료 폴링 (매 프레임).
+    pub(crate) fn poll_player(&mut self) {
+        if let Some(dl) = self.streaming_dl.take() {
+            match dl.rx.try_recv() {
+                Ok(Ok(())) => match crate::player::open_player(&dl.path, &dl.name) {
+                    Ok(p) => {
+                        self.media_status = None;
+                        self.player = Some(p);
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&dl.path);
+                        self.show_error(e);
+                    }
+                },
+                Ok(Err(e)) => {
+                    let _ = std::fs::remove_file(&dl.path);
+                    self.show_error(e);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => self.streaming_dl = Some(dl),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+            }
+        }
+        if let Some(p) = &self.player {
+            if p.is_finished() {
+                let p = self.player.take().expect("player");
+                let path = p.finish();
+                let _ = std::fs::remove_file(&path);
+                self.media_status = Some("Playback finished.".into());
+            }
         }
     }
-}
 
+    /// 재생 중단 (Stop 버튼).
+    pub(crate) fn stop_player(&mut self) {
+        if let Some(p) = self.player.take() {
+            let path = p.finish();
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 
-#[cfg(target_os = "windows")]
-fn open_in_system_player(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn()
-        .map(|_| ())
-}
+    /// 녹음 다운로드 경로 선택 — Windows는 네이티브 대화상자, 그 외엔 입력 모달.
+    pub(crate) fn download_media_dialog(&mut self, item: MediaObject) {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name(&item.name)
+                .add_filter("Audio", &["wav", "m4a", "mp3", "ogg", "webm", "aac"])
+                .save_file()
+            {
+                self.download_media_action(item.url, item.name, path);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.modal = Some(ModalState::ask_text_prefilled(
+                "Download recording",
+                "Enter the save path (e.g. /home/me/Downloads/rec.wav)",
+                TextAction::DownloadMedia {
+                    url: item.url,
+                    name: item.name.clone(),
+                },
+                item.name,
+            ));
+        }
+    }
 
-#[cfg(target_os = "macos")]
-fn open_in_system_player(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(url).spawn().map(|_| ())
-}
-
-#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
-fn open_in_system_player(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
+    /// 녹음 파일을 로컬에 저장 (비동기 — UI를 막지 않음).
+    pub(crate) fn download_media_action(&mut self, url: String, name: String, path: PathBuf) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pdf_dl_rx = Some(rx);
+        std::thread::spawn(move || {
+            let res = ureq::get(&url)
+                .call()
+                .map_err(|e| format!("Download failed for {name}: {e}"))
+                .and_then(|resp| {
+                    let mut reader = resp.into_reader();
+                    let mut bytes = Vec::new();
+                    std::io::Read::read_to_end(&mut reader, &mut bytes)
+                        .map_err(|e| e.to_string())?;
+                    std::fs::write(&path, &bytes)
+                        .map_err(|e| format!("Could not write {}: {e}", path.display()))
+                })
+                .map(|_| format!("Saved recording to {}", path.display()));
+            let _ = tx.send(res);
+        });
+    }
 }
 
 impl FreeDfApp {
