@@ -97,6 +97,8 @@ const TOP_MARGIN: f32 = 16.0;
 const STROKE_ID_POOL_BATCH: usize = 256;
 /// pen-up 후 이 시간(ms) 동안 무입력이면 백그라운드 자동 저장.
 const AUTO_FLUSH_IDLE_MS: u64 = 2_000;
+/// 서버의 새 PDF를 자동으로 내려받는 주기 (ms).
+const PDF_SYNC_INTERVAL_MS: u64 = 20_000;
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
 /// Window width (points) below which the UI collapses to canvas + palette
@@ -1140,6 +1142,10 @@ pub struct FreeDfApp {
     player: Option<crate::player::PlayerState>,
     /// 스트리밍 다운로드 진행 중 상태.
     streaming_dl: Option<crate::player::StreamDownload>,
+    /// PDF 자동 동기화 결과 (백그라운드 스레드 → UI).
+    pdf_sync_rx: Option<std::sync::mpsc::Receiver<Result<usize, String>>>,
+    /// 마지막 PDF 자동 동기화 시각.
+    pdf_sync_last_ms: u64,
     /// 백그라운드 저장 진행 채널 (단계/완료).
     save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
     /// 라이브러리 삭제(노트/PDF) 백그라운드 작업 채널 — 여러 배치가 동시에
@@ -1554,6 +1560,8 @@ impl FreeDfApp {
             recording: None,
             player: None,
             streaming_dl: None,
+            pdf_sync_rx: None,
+            pdf_sync_last_ms: 0,
             save_rx: None,
             library_rx: Vec::new(),
             pdf_import_rx: None,
@@ -1777,6 +1785,8 @@ impl FreeDfApp {
                 }
                 self.reload_library_from_db();
                 self.request_stroke_pool_refill();
+                // 연결 즉시 서버 PDF들을 로컬 캐시로 받아옵니다 (다음 프레임).
+                self.pdf_sync_last_ms = 0;
                 if auto {
                     self.setup_open = false;
                 }
@@ -2196,8 +2206,7 @@ impl FreeDfApp {
         }
     }
 
-    /// pen-up 후 일정 시간 무입력이면 백그라운드로 자동 저장합니다.
-    /// (필기 중 네트워크 0 원칙 유지 — 포인터가 내려간 동안은 절대 플러시 금지)
+    /// pen-up 후 일정 시간 무입력이면 백그라운드로 자동 저장합니다.    /// (필기 중 네트워크 0 원칙 유지 — 포인터가 내려간 동안은 절대 플러시 금지)
     fn maybe_auto_flush(&mut self, ctx: &egui::Context) {
         if !auto_flush_due(
             self.last_pen_up_ms,
@@ -2215,6 +2224,43 @@ impl FreeDfApp {
         std::thread::spawn(move || {
             db.flush_pending();
         });
+    }
+
+    /// 서버의 새 PDF를 자동으로 내려받습니다 (연결 직후 + 주기적).
+    fn maybe_sync_pdfs(&mut self) {
+        if !self.db_connected || self.pdf_sync_rx.is_some() {
+            return;
+        }
+        if now_ms().saturating_sub(self.pdf_sync_last_ms) < PDF_SYNC_INTERVAL_MS {
+            return;
+        }
+        self.pdf_sync_last_ms = now_ms();
+        let db = self.db.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pdf_sync_rx = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(db.prefetch_pdfs());
+        });
+    }
+
+    /// PDF 자동 동기화 결과 수신 (매 프레임 호출).
+    fn poll_pdf_sync(&mut self) {
+        let Some(rx) = self.pdf_sync_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(0)) => {}
+            Ok(Ok(n)) => {
+                self.status = Some(format!("PDF sync: downloaded {n} file(s)."));
+            }
+            Ok(Err(e)) => {
+                self.status = Some(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.pdf_sync_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
     }
 
     /// 라이브러리 삭제(원격 DB 왕복)를 백그라운드 스레드로 보냅니다.
@@ -2988,6 +3034,8 @@ impl eframe::App for FreeDfApp {
         self.poll_media();
         self.poll_pdf_download();
         self.poll_player();
+        self.maybe_sync_pdfs();
+        self.poll_pdf_sync();
         self.maybe_auto_flush(ui.ctx());
         self.poll_library();
         self.poll_pdf_import();

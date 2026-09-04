@@ -271,9 +271,40 @@ impl SyncStorage {
         })
     }
 
+    /// 다이제스트 기반 PDF 캐시 경로 — <v3_cache>/pdfs/<hex>.pdf.
+    fn pdf_cache_path(&self, digest: &Digest) -> PathBuf {
+        let g = self.inner.lock().unwrap();
+        g.dir
+            .join("pdfs")
+            .join(format!("{}.pdf", &digest.as_str()[7..]))
+    }
+
+    /// 서버에 있고 로컬 캐시에 없는 문서 PDF를 전부 내려받습니다.
+    /// (다른 기기에서 업로드된 PDF를 자동 수신 — 백그라운드 주기 실행)
+    fn prefetch_pdfs(&self) -> Result<usize, String> {
+        let infos = self.client.list_documents().map_err(err)?;
+        let mut n = 0;
+        for info in infos {
+            let Some(digest) = info.pdf_digest else { continue };
+            let path = self.pdf_cache_path(&digest);
+            if path.is_file() {
+                continue;
+            }
+            if let Ok(bytes) = self.client.get_object(&digest) {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::write(&path, &bytes).is_ok() {
+                    n += 1;
+                }
+            }
+            // 실패한 항목은 다음 주기에 재시도.
+        }
+        Ok(n)
+    }
+
     /// 미러 → 업로드 스냅샷.
-    fn build_snapshot(m: &DocMirror) -> Snapshot {
-        let mut strokes: Vec<freedf_sync::Stroke> = Vec::new();
+    fn build_snapshot(m: &DocMirror) -> Snapshot {        let mut strokes: Vec<freedf_sync::Stroke> = Vec::new();
         for page in m.store.pages() {
             let idx = page.page_index as i32;
             for s in &page.strokes {
@@ -479,7 +510,17 @@ impl StorageBackend for SyncStorage {
             }
         }
         let digest = self.info_of(id)?.pdf_digest?;
-        self.client.get_object(&digest).ok()
+        // 로컬 캐시 우선 — prefetch/이전 다운로드가 있으면 네트워크 없이 열림.
+        let path = self.pdf_cache_path(&digest);
+        if let Ok(bytes) = std::fs::read(&path) {
+            return Some(bytes);
+        }
+        let bytes = self.client.get_object(&digest).ok()?;
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, &bytes);
+        Some(bytes)
     }
 
     fn update_title(&self, id: i64, title: &str) -> Result<(), String> {
@@ -794,6 +835,10 @@ impl StorageBackend for SyncStorage {
             .any(|m| m.dirty)
     }
 
+    fn prefetch_pdfs(&self) -> Result<usize, String> {
+        SyncStorage::prefetch_pdfs(self)
+    }
+
     fn invalidate_document(&self, doc_id: i64) {
         self.inner.lock().unwrap().docs.remove(&doc_id);
     }
@@ -847,6 +892,23 @@ mod tests {
         }
         let storage = SyncStorage::new(&config()).expect("storage");
         assert!(storage.ping());
+
+        // PDF 자동 수신 — 서버에 PDF 문서가 있으면 로컬 캐시로 내려와야 함
+        // (freedf-sync 라이브 테스트가 doc에 PDF를 올려둠 — 없으면 스킵).
+        if let Some(doc) = storage
+            .client
+            .list_documents()
+            .expect("docs")
+            .into_iter()
+            .find(|d| d.pdf_digest.is_some())
+        {
+            let n = storage.prefetch_pdfs().expect("prefetch");
+            assert!(n >= 1, "prefetch가 서버 PDF를 내려받아야 함");
+            let bytes = storage.load_pdf(doc.id).expect("cached pdf");
+            assert!(!bytes.is_empty());
+            // 두 번째 주기는 전부 캐시 적중 — 다운로드 0.
+            assert_eq!(storage.prefetch_pdfs().expect("prefetch 2"), 0);
+        }
 
         // 생성
         let id = storage

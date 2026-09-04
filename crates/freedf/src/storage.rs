@@ -147,6 +147,11 @@ pub trait StorageBackend: Send + Sync {
         false
     }
 
+    /// 서버의 문서 PDF들을 로컬 캐시로 미리 내려받기 (백그라운드용 — 기본 no-op).
+    fn prefetch_pdfs(&self) -> Result<usize, String> {
+        Ok(0)
+    }
+
     /// 로컬 캐시 무효화 (강제 새로고침 시 호출). 기본은 no-op.
     fn invalidate_document(&self, _doc_id: i64) {}
 }

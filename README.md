@@ -201,6 +201,9 @@ cd server/db && ./init.sh && ./up.sh
   quitting asks whether to save first
 - 🎙️ **Microphone recording** — the Recordings panel records audio from your
   microphone (WAV) and uploads it to the server automatically (Windows/macOS)
+- ☁️ **Cloud PDF sync** — PDFs uploaded on another device are downloaded
+  automatically in the background and cached locally, so opening them is
+  instant (manual download still available in the Library)
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
   integration tests, all runnable without a GUI or PDFium
 
