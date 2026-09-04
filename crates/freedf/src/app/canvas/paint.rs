@@ -822,17 +822,11 @@ impl FreeDfApp {
                 );
             }
             ToolType::Eraser => {
-                // White translucent circle with a soft dark drop shadow so it
-                // reads clearly even on white paper.
+                // 그림자 없는 깔끔한 반투명 지우개 — 흰 원 + 테두리 + 중심점.
                 let r = self.eraser_radius.max(6.0);
-                painter.circle_filled(
-                    pos + Vec2::new(2.5, 2.5),
-                    r,
-                    Color32::from_black_alpha(40),
-                );
                 painter.circle_filled(pos, r, Color32::from_white_alpha(85));
                 painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(215)));
-                painter.circle_filled(pos, 2.0, Color32::from_black_alpha(110));
+                painter.circle_filled(pos, 2.0, Color32::from_gray(140));
             }
             ToolType::Pan => {
                 // Small, compact "move" crosshair (much smaller than the OS grab hand).

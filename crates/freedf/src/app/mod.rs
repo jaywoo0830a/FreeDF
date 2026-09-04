@@ -2486,15 +2486,17 @@ impl FreeDfApp {
             });
     }
 
-    /// Library 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
-    fn minimal_library_overlay(&mut self, ctx: &egui::Context) {
+    /// Library 콘텐츠 오버레이 — **절대 폭(520pt)의 독립 플로팅 창**.
+    /// Hide UI / Show UI 공용. `x, top`은 첫 표시 위치이며, 이후에는
+    /// 사용자가 드래그한 위치가 기억됩니다.
+    fn library_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Window::new("minimal_library_overlay")
+        egui::Window::new("library_overlay")
             .title_bar(false)
             .movable(true)
             .resizable(false)
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .default_pos(egui::pos2(x, top))
             .frame(
                 egui::Frame::new()
                     .fill(fill)
@@ -2503,7 +2505,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(400.0);
+                ui.set_width(520.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -2516,21 +2518,21 @@ impl FreeDfApp {
                     });
                 });
                 egui::ScrollArea::vertical()
-                    .id_salt("minimal_library_scroll")
-                    .max_height(360.0)
+                    .id_salt("library_overlay_scroll")
+                    .max_height(520.0)
                     .show(ui, |ui| self.library_panel(ui));
             });
     }
 
-    /// Outline 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
-    fn minimal_outline_overlay(&mut self, ctx: &egui::Context) {
+    /// Outline 콘텐츠 오버레이 — 절대 폭(460pt)의 독립 플로팅 창. Hide UI/Show UI 공용.
+    fn outline_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Window::new("minimal_outline_overlay")
+        egui::Window::new("outline_overlay")
             .title_bar(false)
             .movable(true)
             .resizable(false)
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .default_pos(egui::pos2(x, top))
             .frame(
                 egui::Frame::new()
                     .fill(fill)
@@ -2539,7 +2541,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(400.0);
+                ui.set_width(460.0);
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
@@ -2552,22 +2554,22 @@ impl FreeDfApp {
                     });
                 });
                 egui::ScrollArea::vertical()
-                    .id_salt("minimal_outline_scroll")
-                    .max_height(360.0)
+                    .id_salt("outline_overlay_scroll")
+                    .max_height(520.0)
                     .show(ui, |ui| self.outline_panel(ui));
             });
     }
 
-    /// Bookmarks 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
-    fn minimal_bookmarks_overlay(&mut self, ctx: &egui::Context) {
+    /// Bookmarks 콘텐츠 오버레이 — 절대 폭(420pt)의 독립 플로팅 창. Hide UI/Show UI 공용.
+    fn bookmarks_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
         let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
-        egui::Window::new("minimal_bookmarks_overlay")
+        egui::Window::new("bookmarks_overlay")
             .title_bar(false)
             .movable(true)
             .resizable(false)
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .default_pos(egui::pos2(x, top))
             .frame(
                 egui::Frame::new()
                     .fill(fill)
@@ -2576,7 +2578,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(340.0);
+                ui.set_width(420.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Bookmarks").strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2591,8 +2593,8 @@ impl FreeDfApp {
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
-                    .id_salt("minimal_bookmarks_scroll")
-                    .max_height(300.0)
+                    .id_salt("bookmarks_overlay_scroll")
+                    .max_height(420.0)
                     .show(ui, |ui| {
                         if pages.is_empty() {
                             ui.label(egui::RichText::new("No bookmarks yet").weak().small());
@@ -2894,28 +2896,21 @@ impl eframe::App for FreeDfApp {
             self.status_bar(ui);
         }
 
-        if !minimal && self.show_library {
-            // Per-tab panel id: each tab keeps its own width in egui memory,
-            // and the width is read back each frame into `self.library_width`
-            // so it survives tab switches and app restarts (via session.json).
-            let panel_id = egui::Id::new(("library_panel", self.active));
-            let resp = egui::Panel::left(panel_id)
-                .resizable(true)
-                .default_size(self.library_width)
-                .min_size(160.0)
-                .max_size(460.0)
-                .show(ui, |ui| self.library_panel(ui));
-            self.library_width = resp.response.rect.width().clamp(160.0, 460.0);
+        // ── Library / Outline / Bookmarks — 절대적 사이드 오버레이 ──
+        // 패널 레이아웃(폭 비율)을 차지하지 않는 플로팅 창. Hide UI와
+        // Show UI 모두에서 동일하게 사용하며, 드래그로 자유 배치 + ✕로 닫기.
+        let overlay_top = ui.available_rect_before_wrap().top().max(8.0);
+        let mut ox = 8.0f32;
+        if self.show_library {
+            self.library_overlay(&ctx, ox, overlay_top);
+            ox += 528.0;
         }
-        if !minimal && self.show_outline {
-            let panel_id = egui::Id::new(("outline_panel", self.active));
-            let resp = egui::Panel::left(panel_id)
-                .resizable(true)
-                .default_size(self.outline_width)
-                .min_size(160.0)
-                .max_size(460.0)
-                .show(ui, |ui| self.outline_panel(ui));
-            self.outline_width = resp.response.rect.width().clamp(160.0, 460.0);
+        if self.show_outline {
+            self.outline_overlay(&ctx, ox, overlay_top);
+            ox += 468.0;
+        }
+        if self.show_bookmarks {
+            self.bookmarks_overlay(&ctx, ox, overlay_top);
         }
         if !minimal && self.show_media {
             let panel_id = egui::Id::new(("media_panel", self.active));
@@ -2936,16 +2931,6 @@ impl eframe::App for FreeDfApp {
         if minimal {
             self.minimal_sections(&ctx);
             self.minimal_chrome_controls(&ctx);
-            // 콘텐츠는 컨테이너 바깥의 **독립 오버레이**로 표시됩니다.
-            if self.show_library {
-                self.minimal_library_overlay(&ctx);
-            }
-            if self.show_outline {
-                self.minimal_outline_overlay(&ctx);
-            }
-            if self.show_bookmarks {
-                self.minimal_bookmarks_overlay(&ctx);
-            }
         }
 
         self.connection_dialog(&ctx);
