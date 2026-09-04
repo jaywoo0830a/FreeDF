@@ -61,7 +61,7 @@ const INK_SPEED_REF: f32 = 150.0;
 
 /// 2D 정수 격자 해시 — (ix, iy, seed) → 균일 분포 0..1 값.
 /// splitmix64 계열 파이널라이저로 음수 좌표도 안전하게 섞입니다.
-fn hash2(ix: i32, iy: i32, seed: u64) -> f32 {
+pub(crate) fn hash2(ix: i32, iy: i32, seed: u64) -> f32 {
     let mut h = seed;
     h ^= (ix as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     h = h.wrapping_mul(0xD1B5_4A32_D192_ED03);

@@ -127,7 +127,7 @@ impl FreeDfApp {
         if !self.paper_texture || self.paper_texture_strength <= 0.001 {
             return;
         }
-        const TEX_SIZE: usize = 128;
+        const TEX_SIZE: usize = 256;
         const NOISE_SEED: u64 = 0x0B5E_E5ED;
         let strength = self.paper_texture_strength;
         let stale = self
@@ -154,16 +154,21 @@ impl FreeDfApp {
         let Some(tex) = &self.paper_noise_tex else {
             return;
         };
-        // 128px 타일이 페이지 36pt에 해당 → 줌해도 질감이 페이지와 함께 확대.
-        let tile_pt = 36.0;
+        // 256px 타일이 페이지 72pt(1인치)에 해당 → 줌해도 질감이 페이지와
+        // 함께 확대되고, 반복 주기가 넓어 규칙성이 눈에 띄지 않습니다.
+        let tile_pt = 72.0;
         let reps = egui::vec2(
             page_rect.width() / (tile_pt * self.view.zoom),
             page_rect.height() / (tile_pt * self.view.zoom),
         );
+        // 페이지별 위상 오프셋(황금비 무리수) — 같은 타일이어도 페이지마다
+        // 다른 부분이 보여 반복 패턴이 눈에 띄지 않습니다.
+        let phase = (self.current_page as f32 * 0.6180339).fract();
+        let uv0 = Pos2::new(phase * 0.71, phase * 1.31);
         painter.image(
             tex.id(),
             page_rect,
-            Rect::from_min_max(Pos2::ZERO, Pos2::new(reps.x, reps.y)),
+            Rect::from_min_max(uv0, uv0 + egui::vec2(reps.x, reps.y)),
             Color32::WHITE,
         );
     }

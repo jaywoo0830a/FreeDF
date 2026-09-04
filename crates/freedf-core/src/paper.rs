@@ -329,13 +329,86 @@ pub fn paper_lines_rotated(
     }
 }
 
+/// 타일 가능한 값 노이즈 — 격자 인덱스를 셀 수(cu, cv)로 **나머지 연산**해
+/// 타일 경계(u=0 ↔ u=1, v=0 ↔ v=1)에서 정확히 이어지게 합니다.
+/// 일반 `value_noise`는 정수 주기가 없어(격자 해시가 매 셀 다름) 이음새가 생깁니다.
+fn tile_noise(u: f32, v: f32, seed: u64, cu: u32, cv: u32) -> f32 {
+    let x = u * cu as f32;
+    let y = v * cv as f32;
+    let mut ix = x.floor() as i32;
+    let mut iy = y.floor() as i32;
+    let fx = x - ix as f32;
+    let fy = y - iy as f32;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let (cu, cv) = (cu as i32, cv as i32);
+    let wrap = |i: i32, n: i32| ((i % n) + n) % n;
+    ix = wrap(ix, cu);
+    iy = wrap(iy, cv);
+    let h = crate::ink::hash2;
+    let a = h(ix, iy, seed);
+    let b = h(wrap(ix + 1, cu), iy, seed);
+    let c = h(ix, wrap(iy + 1, cv), seed);
+    let d = h(wrap(ix + 1, cu), wrap(iy + 1, cv), seed);
+    let lo = a + (b - a) * sx;
+    let hi = c + (d - c) * sx;
+    lo + (hi - lo) * sy
+}
+
+/// 종이 질감 필드 (−1..1, 편차 부호 포함) — 픽셀 생성의 내부 코어.
+///
+/// 모든 옥타브가 **타일 가능 노이즈**(토러스 격자)라 타일 경계에서
+/// 완전히 이음새 없이 이어집니다.
+pub fn paper_field(u: f32, v: f32, seed: u64) -> f32 {
+    // ① 모틀링 — 지료 분산 편차 (FBM 3옥타브).
+    let m0 = tile_noise(u, v, seed, 5, 5);
+    let m1 = tile_noise(
+        u + 1.7 / 11.0,
+        v + 4.2 / 11.0,
+        seed ^ 0xA511_7095_B320_FCB3,
+        11,
+        11,
+    );
+    let m2 = tile_noise(
+        u + 9.3 / 23.0,
+        v + 2.6 / 23.0,
+        seed.wrapping_mul(0xD1B5_4A32_D192_ED03),
+        23,
+        23,
+    );
+    let mottling = 0.5 * m0 + 0.3 * m1 + 0.2 * m2 - 0.5;
+    // ② 섬유 — 가로/세로 이방성 셀 두 층 (토러스 격자라 이음새 없음).
+    let fib_h = tile_noise(
+        u + 5.1 / 18.0,
+        v + 8.8 / 4.0,
+        seed ^ 0x9E37_79B9_7F4A_7C15,
+        18,
+        4,
+    ) - 0.5;
+    let fib_v = tile_noise(
+        u + 2.2 / 4.0,
+        v + 6.4 / 18.0,
+        seed ^ 0xBF58_476D_1CE4_E5B9,
+        4,
+        18,
+    ) - 0.5;
+    // ③ 스펙 — 필러 입자/미세 먼지 (고주파 점 얼룩).
+    let speck = tile_noise(
+        u + 11.2 / 29.0,
+        v + 13.9 / 29.0,
+        seed ^ 0x94D0_49BB_1331_11EB,
+        29,
+        29,
+    ) - 0.5;
+    (1.35 * mottling + 0.45 * fib_h + 0.45 * fib_v + 0.35 * speck).clamp(-1.0, 1.0)
+}
+
 /// 종이 질감 노이즈 텍스처 (size×size, **RGBA 평탄화 바이트**) —
 /// 실제 종이의 요철을 흉내내는 **세 성분의 물리 모델**:
 ///
 /// 1. **모틀링(mottling)** — 지료(펄프) 분산 편차로 생기는 저주파 밝기
-///    요동 (값 노이즈 FBM 3옥타브, 파장 3/7/16셀).
-/// 2. **섬유(fiber)** — 종이 섬유가 미세하게 드러나는 중주파 줄무늬
-///    (좌표를 비틀어 한 방향으로 늘어진 노이즈 세포).
+///    요동 (값 노이즈 FBM 3옥타브, 파장 5/11/23셀).
+/// 2. **섬유(fiber)** — 가로/세로 이방성 셀로 종이 섬유의 방향성 줄무늬.
 /// 3. **스펙(speck)** — 필러 입자/미세 먼지의 고주파 점 얼룩.
 ///
 /// 편차는 **양방향**: 어두운 얼룩(섬유 그림자·흡수)은 갈회색, 밝은 얼룩
@@ -351,35 +424,7 @@ pub fn paper_texture_rgba(size: usize, seed: u64, strength: f32) -> Vec<u8> {
         for x in 0..n {
             let u = x as f32 / n as f32;
             let v = y as f32 / n as f32;
-            // ① 모틀링 — 지료 분산 편차 (FBM 3옥타브).
-            let m0 = crate::ink::value_noise(u * 3.0, v * 3.0, seed);
-            let m1 = crate::ink::value_noise(
-                u * 7.0 + 1.7,
-                v * 7.0 + 4.2,
-                seed ^ 0xA511_7095_B320_FCB3,
-            );
-            let m2 = crate::ink::value_noise(
-                u * 16.0 + 9.3,
-                v * 16.0 + 2.6,
-                seed.wrapping_mul(0xD1B5_4A32_D192_ED03),
-            );
-            let mottling = 0.5 * m0 + 0.3 * m1 + 0.2 * m2 - 0.5;
-            // ② 섬유 — 좌표 비틈으로 세로 방향으로 늘어진 노이즈 세포.
-            let fu = u * 7.0 + 0.35 * v;
-            let fv = u * 0.35 + v * 7.0;
-            let fiber = crate::ink::value_noise(
-                fu + 5.1,
-                fv + 8.8,
-                seed ^ 0x9E37_79B9_7F4A_7C15,
-            ) - 0.5;
-            // ③ 스펙 — 필러 입자/미세 먼지.
-            let speck = crate::ink::value_noise(
-                u * 26.0 + 11.2,
-                v * 26.0 + 13.9,
-                seed ^ 0xBF58_476D_1CE4_E5B9,
-            ) - 0.5;
-            // 합성 — 모틀링이 가장 큰 편차, 섬유·스펙이 입자를 더합니다.
-            let t = (1.35 * mottling + 0.75 * fiber + 0.35 * speck).clamp(-1.0, 1.0);
+            let t = paper_field(u, v, seed);
             let mag = (t.abs() * s * 255.0) as u8;
             let (rgb, alpha) = if t >= 0.0 {
                 (DARK, mag)
@@ -536,5 +581,22 @@ mod tests {
         let has_dark = a.chunks_exact(4).any(|p| p[0] < 100 && p[3] > 0);
         let has_light = a.chunks_exact(4).any(|p| p[0] > 200 && p[3] > 0);
         assert!(has_dark && has_light, "어둡고 밝은 얼룩이 공존해야 함");
+    }
+
+    #[test]
+    fn paper_field_is_tileable() {
+        // 모든 옥타브가 정수 셀 수를 쓰므로 타일 경계(u/v = 0 ↔ 1)에서
+        // 값이 정확히 같아야 합니다 — 반복 타일의 이음새(줄무늬)가 없음.
+        let seed = 9;
+        for i in 0..20 {
+            let v = i as f32 / 19.0;
+            let a = paper_field(0.0, v, seed);
+            let b = paper_field(1.0, v, seed);
+            assert!((a - b).abs() < 1e-5, "u 경계 이음새: {a} vs {b}");
+            let u = i as f32 / 19.0;
+            let a = paper_field(u, 0.0, seed);
+            let b = paper_field(u, 1.0, seed);
+            assert!((a - b).abs() < 1e-5, "v 경계 이음새: {a} vs {b}");
+        }
     }
 }
