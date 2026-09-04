@@ -46,10 +46,12 @@ impl Default for InkGrain {
         Self {
             enabled: true,
             seed: 0x5EED_5EED,
-            flow_amp: 0.09,
-            wick_amp: 0.07,
-            pooling: 0.22,
-            starvation: 0.30,
+            // 미묘한 수준을 넘어 눈에 보이는 질감으로 조정 (2026-09):
+            // 팬 노이즈 ±~19%, 만년필 ±~31% 밀도 요동.
+            flow_amp: 0.18,
+            wick_amp: 0.13,
+            pooling: 0.34,
+            starvation: 0.42,
         }
     }
 }
@@ -150,7 +152,9 @@ impl InkGrain {
             _ => (
                 ballpoint_shape(u, s, self),
                 0.06,
-                (self.flow_amp + self.wick_amp) * 0.6,
+                // 볼펜은 잉크 점도가 높아 만년필보다 노이즈가 덜 보이지만,
+                // 기본값 수준에서도 체감되도록 0.6 → 0.85로 키웁니다.
+                (self.flow_amp + self.wick_amp) * 0.85,
             ),
         };
         // 단면: 가장자리가 중심보다 진함 (레일로드 효과).
@@ -397,8 +401,14 @@ mod tests {
 
     #[test]
     fn edges_are_denser_than_center_railroad_effect() {
-        // 단면 불균일: 가장자리가 중심보다 진함 (구간 평균으로 견고하게).
-        let g = InkGrain::default();
+        // 단면 불균일: 가장자리가 중심보다 진함 — 노이즈 성분을 끄고
+        // 순수 레일로드 인자만 비교합니다 (노이즈 진폭이 커지면 고정 시드
+        // 평균이 노이즈에 지배되어 6% 가장자리 효과가 묻힙니다).
+        let g = InkGrain {
+            flow_amp: 0.0,
+            wick_amp: 0.0,
+            ..InkGrain::default()
+        };
         let mut center = 0.0f32;
         let mut edges = 0.0f32;
         for i in 0..200 {
