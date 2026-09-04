@@ -840,6 +840,175 @@ pub async fn download_snapshot(
     resp
 }
 
+/// GET /v3/documents/{id}/pdf — 원본 PDF 다운로드 (ETag `"pdf-<digest>"`).
+///
+/// PDF 본문은 스냅샷 ZIP이 아니라 여기서 직접 받습니다 — "클라우드처럼"
+/// 다른 기기에서 원본 파일을 내려받는 경로 (CAS 다이제스트를 몰라도 됨).
+pub async fn get_pdf(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(doc_id): Path<i64>,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let (pdf, digest) = {
+        let db = state.db.lock().await;
+        match db
+            .query_opt("SELECT pdf, pdf_digest FROM documents WHERE id=$1", &[&doc_id])
+            .await
+        {
+            Ok(Some(row)) => {
+                let pdf: Option<Vec<u8>> = row.get(0);
+                let digest: Option<String> = row.get(1);
+                match (pdf, digest) {
+                    (Some(bytes), Some(d)) => (bytes, d),
+                    _ => {
+                        return ApiError::new(StatusCode::NOT_FOUND, "document has no PDF")
+                            .into_response()
+                    }
+                }
+            }
+            Ok(None) => {
+                return ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response()
+            }
+            Err(e) => return db_err(e).into_response(),
+        }
+    };
+    let etag = format!("\"pdf-{digest}\"");
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        == Some(etag.as_str())
+    {
+        return StatusCode::NOT_MODIFIED.into_response();
+    }
+    let mut resp = ([(header::CONTENT_TYPE, "application/pdf")], pdf).into_response();
+    if let Ok(v) = etag.parse() {
+        resp.headers_mut().insert(header::ETAG, v);
+    }
+    resp
+}
+
+/// PUT /v3/documents/{id}/pdf — 원본 PDF 업로드/교체 (멱등).
+///
+/// 내용이 동일하면 revision 그대로, 바뀌면 CAS 저장 + documents 갱신 +
+/// revision+1 + PdfChanged 변경 로그 — 다른 기기가 pull로 수신합니다.
+pub async fn put_pdf(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(doc_id): Path<i64>,
+    body: Bytes,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    if body.is_empty() {
+        return ApiError::bad("empty pdf body").into_response();
+    }
+    let digest = Digest::from_bytes(&body);
+    let mut db = state.apply_db.lock().await;
+    let tx = match db.transaction().await {
+        Ok(tx) => tx,
+        Err(e) => return db_err(e).into_response(),
+    };
+    let cur_digest: Option<String> = match tx
+        .query_opt("SELECT pdf_digest FROM documents WHERE id=$1", &[&doc_id])
+        .await
+    {
+        Ok(Some(row)) => row.get(0),
+        Ok(None) => {
+            return ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response()
+        }
+        Err(e) => return db_err(e).into_response(),
+    };
+    let cur_rev: i64 = match tx
+        .query_opt("SELECT revision FROM doc_revisions WHERE doc_id=$1", &[&doc_id])
+        .await
+    {
+        Ok(Some(row)) => row.get(0),
+        Ok(None) => 0,
+        Err(e) => return db_err(e).into_response(),
+    };
+    let size = body.len() as i64;
+
+    // 멱등 — 내용 동일하면 변경 없이 현재 revision 그대로.
+    if cur_digest.as_deref() == Some(digest.as_str()) {
+        if let Err(e) = tx.commit().await {
+            return db_err(e).into_response();
+        }
+        return Json(freedf_sync::PdfInfo {
+            digest,
+            size,
+            revision: cur_rev,
+        })
+        .into_response();
+    }
+
+    let slice: &[u8] = &body;
+    let now = now_ms();
+    if let Err(e) = tx
+        .execute(
+            "INSERT INTO cas_objects (digest, bytes, size, created_at) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (digest) DO NOTHING",
+            &[&digest.as_str(), &slice, &size, &now],
+        )
+        .await
+    {
+        return db_err(e).into_response();
+    }
+    if let Err(e) = tx
+        .execute(
+            "UPDATE documents SET pdf=$2, pdf_digest=$3, updated_at=$4 WHERE id=$1",
+            &[&doc_id, &slice, &digest.as_str(), &now],
+        )
+        .await
+    {
+        return db_err(e).into_response();
+    }
+    let new_rev = cur_rev + 1;
+    let patch = Patch {
+        from_revision: cur_rev,
+        to_revision: new_rev,
+        strokes_added: Vec::new(),
+        stroke_ids_removed: Vec::new(),
+        pages_changed: false,
+        pages: Vec::new(),
+        meta: Value::Null,
+        pdf: Some(digest.clone()),
+    };
+    let patch_val = serde_json::to_value(&patch).expect("patch serialize");
+    if let Err(e) = tx
+        .execute(
+            "INSERT INTO doc_revisions (doc_id, revision, updated_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (doc_id) DO UPDATE SET revision = EXCLUDED.revision, updated_at = EXCLUDED.updated_at",
+            &[&doc_id, &new_rev, &now],
+        )
+        .await
+    {
+        return db_err(e).into_response();
+    }
+    if let Err(e) = tx
+        .execute(
+            "INSERT INTO doc_changelog (doc_id, revision, patch, created_at) VALUES ($1, $2, $3, $4)",
+            &[&doc_id, &new_rev, &patch_val, &now],
+        )
+        .await
+    {
+        return db_err(e).into_response();
+    }
+    if let Err(e) = tx.commit().await {
+        return db_err(e).into_response();
+    }
+    state.zip_cache.lock().unwrap().remove(&doc_id); // meta.pdf_digest가 바뀜
+    Json(freedf_sync::PdfInfo {
+        digest,
+        size,
+        revision: new_rev,
+    })
+    .into_response()
+}
+
 /// GET /v3/documents/{id}/revision — 현재 revision.
 pub async fn get_revision(
     State(state): State<AppState>,

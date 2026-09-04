@@ -23,6 +23,13 @@ pub struct Downloaded {
     pub etag: Option<String>,
 }
 
+/// 문서 PDF 다운로드 결과 (캐시 검증용 ETag).
+#[derive(Debug, Clone)]
+pub struct DownloadedPdf {
+    pub bytes: Vec<u8>,
+    pub etag: Option<String>,
+}
+
 /// Sync v3 API 클라이언트.
 #[derive(Debug, Clone)]
 pub struct SyncClient {
@@ -295,6 +302,60 @@ impl SyncClient {
         Ok(bytes)
     }
 
+    /// 문서 원본 PDF 다운로드 (서버에 없으면 Err — Http(404)).
+    pub fn download_pdf(&self, doc_id: i64) -> Result<DownloadedPdf> {
+        match self.download_pdf_inner(doc_id, None)? {
+            Some(d) => Ok(d),
+            // 무조건 다운로드에 304는 오지 않음 — 방어적으로 빈 결과.
+            None => Ok(DownloadedPdf {
+                bytes: Vec::new(),
+                etag: None,
+            }),
+        }
+    }
+
+    /// ETag 조건부 PDF 다운로드 — 변경 없으면 `Ok(None)` (304).
+    pub fn download_pdf_if_changed(&self, doc_id: i64, etag: &str) -> Result<Option<DownloadedPdf>> {
+        self.download_pdf_inner(doc_id, Some(etag))
+    }
+
+    fn download_pdf_inner(
+        &self,
+        doc_id: i64,
+        if_none_match: Option<&str>,
+    ) -> Result<Option<DownloadedPdf>> {
+        let mut req = self.request("GET", &format!("/v3/documents/{doc_id}/pdf"));
+        if let Some(etag) = if_none_match {
+            req = req.set("If-None-Match", etag);
+        }
+        let resp = req.call().map_err(|e| self.error_of(e))?;
+        // ureq 2.x는 3xx를 리다이렉트로 취급 — 304(Location 없음)는 Ok로 온다.
+        if resp.status() == 304 {
+            return Ok(None);
+        }
+        if resp.status() != 200 {
+            return Err(SyncError::Http(resp.status(), "download pdf failed".into()));
+        }
+        let etag = resp.header("ETag").map(str::to_string);
+        let mut reader = resp.into_reader();
+        let mut bytes = Vec::new();
+        reader
+            .read_to_end(&mut bytes)
+            .map_err(|e| SyncError::Transport(e.to_string()))?;
+        Ok(Some(DownloadedPdf { bytes, etag }))
+    }
+
+    /// 문서 원본 PDF 업로드/교체 (멱등 — 내용 동일 시 revision 불변).
+    pub fn upload_pdf(&self, doc_id: i64, bytes: &[u8]) -> Result<PdfInfo> {
+        let resp = self
+            .request("PUT", &format!("/v3/documents/{doc_id}/pdf"))
+            .set("Content-Type", "application/pdf")
+            .send_bytes(bytes)
+            .map_err(|e| self.error_of(e))?;
+        let text = Self::into_string(resp)?;
+        serde_json::from_str(&text).map_err(Into::into)
+    }
+
     /// 서버에 없는 다이제스트만 조회 (업로드 전 dedup).
     pub fn probe_objects(&self, digests: &[Digest]) -> Result<Vec<Digest>> {
         let body = serde_json::to_vec(&DigestProbe {
@@ -392,6 +453,21 @@ mod tests {
             .probe_objects(&[d.clone(), Digest::from_bytes(b"absent object")])
             .expect("probe");
         assert!(!missing.contains(&d));
+
+        // 문서 PDF 업로드/다운로드 (클라우드 스토리지)
+        let pdf_bytes: &[u8] = b"%PDF-1.4 freedf live pdf bytes";
+        let info = c.upload_pdf(doc_id, pdf_bytes).expect("upload pdf");
+        assert_eq!(info.size, pdf_bytes.len() as i64);
+        let dl = c.download_pdf(doc_id).expect("download pdf");
+        assert_eq!(dl.bytes, pdf_bytes);
+        let etag = dl.etag.expect("pdf etag");
+        assert!(c
+            .download_pdf_if_changed(doc_id, &etag)
+            .expect("pdf conditional")
+            .is_none());
+        // 멱등 — 같은 내용 재업로드는 revision 불변.
+        let info2 = c.upload_pdf(doc_id, pdf_bytes).expect("upload pdf again");
+        assert_eq!(info2.revision, info.revision);
     }
 
     fn test_stroke(id: i64) -> Stroke {

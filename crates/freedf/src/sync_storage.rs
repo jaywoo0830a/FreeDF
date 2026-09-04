@@ -785,6 +785,15 @@ impl StorageBackend for SyncStorage {
         self.client.health().is_ok()
     }
 
+    fn has_pending(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .docs
+            .values()
+            .any(|m| m.dirty)
+    }
+
     fn invalidate_document(&self, doc_id: i64) {
         self.inner.lock().unwrap().docs.remove(&doc_id);
     }

@@ -117,6 +117,8 @@ ZIP 압축(deflate)은 저레벨로, 렌더링 코어를 비켜갑니다.
 |---|---|---|
 | GET/POST | `/v3/documents` | 문서 목록 / 문서 생성 (PDF는 CAS 참조) |
 | PUT | `/v3/documents/{id}/title` | 제목 변경 |
+| GET | `/v3/documents/{id}/pdf` | 원본 PDF 다운로드 (ETag/304) |
+| PUT | `/v3/documents/{id}/pdf` | 원본 PDF 업로드/교체 (멱등, revision+1) |
 | DELETE | `/v3/documents/{id}` | 문서 삭제 |
 | PUT | `/v3/documents/{id}/snapshot` | 전체 ZIP 업로드 (202, 멱등) |
 | GET | `/v3/uploads/{uploadId}` | 적용/충돌 결과 (conflict면 패치 동봉) |

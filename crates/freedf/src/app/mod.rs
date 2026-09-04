@@ -61,6 +61,13 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 자동 저장 발사 조건 — pen-up 기록 + 대기 경과 + 포인터가 올라간 상태.
+fn auto_flush_due(last_pen_up_ms: u64, now: u64, any_down: bool) -> bool {
+    last_pen_up_ms != 0
+        && now.saturating_sub(last_pen_up_ms) >= AUTO_FLUSH_IDLE_MS
+        && !any_down
+}
+
 /// 현재 시각 (초, f64) — 로딩 경과 시간 표시용.
 fn now_secs() -> f64 {
     std::time::SystemTime::now()
@@ -88,6 +95,8 @@ const TOP_MARGIN: f32 = 16.0;
 /// 스트로크 id 풀 배치 크기 — 한 번의 원격 왕복으로 이만큼씩 미리 받아둡니다.
 /// (풀 절반 이하에서 미리 보충 예약 — 소진 시 UI 왕복 없음)
 const STROKE_ID_POOL_BATCH: usize = 256;
+/// pen-up 후 이 시간(ms) 동안 무입력이면 백그라운드 자동 저장.
+const AUTO_FLUSH_IDLE_MS: u64 = 2_000;
 /// Page transition animation duration (seconds)
 const PAGE_ANIM_SECS: f32 = 0.28;
 /// Window width (points) below which the UI collapses to canvas + palette
@@ -460,7 +469,7 @@ pub(crate) fn exclusive_panel_on(panel: PanelKind) -> [bool; 3] {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
     RenameNote,
@@ -470,6 +479,9 @@ pub(crate) enum TextAction {
     /// 미디어(녹음) 업로드 — 비 Windows에서 경로 입력 폴백.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
     UploadMedia,
+    /// 서버의 문서 PDF 다운로드 — 비 Windows에서 저장 경로 입력 폴백.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    DownloadPdf { doc_id: i64, title: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -530,6 +542,20 @@ impl ModalState {
                 action,
             },
             text: String::new(),
+            pages: 1,
+        }
+    }
+
+    /// 입력 필드를 미리 채운 ask_text (다운로드 기본 파일명 등).
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
+    fn ask_text_prefilled(title: &str, hint: &str, action: TextAction, text: String) -> Self {
+        Self {
+            kind: ModalKind::AskText {
+                title: title.into(),
+                hint: hint.into(),
+                action,
+            },
+            text,
             pages: 1,
         }
     }
@@ -1101,6 +1127,10 @@ pub struct FreeDfApp {
     loader_rx: Option<std::sync::mpsc::Receiver<LoaderMsg>>,
     /// 미디어 작업(목록/업로드/삭제) 수신 채널.
     media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
+    /// 서버 PDF 다운로드 결과 (백그라운드 스레드 → UI).
+    pdf_dl_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// 마지막 pen-up 시각 — 유휴 자동 저장 타이머 기준.
+    last_pen_up_ms: u64,
     /// 백그라운드 저장 진행 채널 (단계/완료).
     save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
     /// 라이브러리 삭제(노트/PDF) 백그라운드 작업 채널 — 여러 배치가 동시에
@@ -1510,6 +1540,8 @@ impl FreeDfApp {
             loading_started: None,
             loader_rx: None,
             media_rx: None,
+            pdf_dl_rx: None,
+            last_pen_up_ms: 0,
             save_rx: None,
             library_rx: Vec::new(),
             pdf_import_rx: None,
@@ -2135,6 +2167,42 @@ impl FreeDfApp {
                 self.media_status = Some("Media operation was interrupted.".into());
             }
         }
+    }
+
+    /// 서버 PDF 다운로드 결과 수신 (매 프레임 호출).
+    fn poll_pdf_download(&mut self) {
+        let Some(rx) = self.pdf_dl_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(msg)) => self.status = Some(msg),
+            Ok(Err(e)) => self.show_error(e),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.pdf_dl_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
+    }
+
+    /// pen-up 후 일정 시간 무입력이면 백그라운드로 자동 저장합니다.
+    /// (필기 중 네트워크 0 원칙 유지 — 포인터가 내려간 동안은 절대 플러시 금지)
+    fn maybe_auto_flush(&mut self, ctx: &egui::Context) {
+        if !auto_flush_due(
+            self.last_pen_up_ms,
+            now_ms(),
+            ctx.input(|i| i.pointer.any_down()),
+        ) {
+            return;
+        }
+        if self.doc_id.is_none() || self.save_rx.is_some() || !self.db.has_pending() {
+            return;
+        }
+        // 이번 플러시가 끝나기 전 재발사 방지 — 다음 pen-up이 타이머를 재시작.
+        self.last_pen_up_ms = 0;
+        let db = self.db.clone();
+        std::thread::spawn(move || {
+            db.flush_pending();
+        });
     }
 
     /// 라이브러리 삭제(원격 DB 왕복)를 백그라운드 스레드로 보냅니다.
@@ -2814,7 +2882,7 @@ impl FreeDfApp {
                                 .hint_text("Type here...")
                                 .desired_width(360.0),
                         );
-                        if *action == TextAction::NewNote {
+                        if matches!(action, TextAction::NewNote) {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
                                 ui.label("Pages:");
@@ -2906,6 +2974,8 @@ impl eframe::App for FreeDfApp {
         self.poll_connect_result();
         self.poll_loader();
         self.poll_media();
+        self.poll_pdf_download();
+        self.maybe_auto_flush(ui.ctx());
         self.poll_library();
         self.poll_pdf_import();
         self.poll_save(&ctx);
@@ -3040,39 +3110,36 @@ impl eframe::App for FreeDfApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         if self.asking_close {
-            let mut decision: Option<bool> = None;
+            let mut save_and_quit = false;
             egui::Window::new("Save before quitting?")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
-                    ui.label("Save your current work before quitting?");
+                    ui.label("Your work is saved automatically before quitting.");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui.button("Save & Quit").clicked() {
-                            decision = Some(true);
-                        }
-                        if ui.button("Quit").clicked() {
-                            decision = Some(false);
+                            save_and_quit = true;
                         }
                         if ui.button("Cancel").clicked() {
                             self.asking_close = false;
                         }
                     });
                 });
-            if let Some(save) = decision {
+            if save_and_quit {
                 self.asking_close = false;
-                if save {
-                    // 백그라운드 저장 — 완료되면 poll_save가 창을 닫습니다.
-                    self.save_default_session();
-                    self.save_session();
-                    self.pending_quit = true;
-                    self.flush_current_document();
-                } else {
-                    self.save_default_session();
-                    self.save_session();
+                self.save_default_session();
+                self.save_session();
+                if self.doc_id.is_none() {
+                    // 저장할 문서 없음 — 바로 종료.
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    // 백그라운드 저장 — 완료되면 poll_save가 창을 닫습니다.
+                    // (이미 저장 진행 중이면 그 완료 시점에 닫힘)
+                    self.pending_quit = true;
+                    self.flush_current_document();
                 }
             }
         }
@@ -3193,5 +3260,32 @@ mod window_isolation_tests {
             exclusive_panel_on(PanelKind::Bookmarks),
             [false, false, true]
         );
+    }
+}
+
+#[cfg(test)]
+mod auto_flush_tests {
+    use super::*;
+
+    #[test]
+    fn idle_auto_flush_waits_for_pen_up() {
+        // 마지막 pen-up 기록이 없으면 발사 안 함.
+        assert!(!auto_flush_due(0, 100_000, false));
+    }
+
+    #[test]
+    fn idle_auto_flush_fires_after_delay() {
+        assert!(auto_flush_due(1_000, 1_000 + AUTO_FLUSH_IDLE_MS, false));
+    }
+
+    #[test]
+    fn idle_auto_flush_never_fires_while_pointer_down() {
+        // 펜/마우스가 내려간 동안엔 대기 시간과 무관하게 금지.
+        assert!(!auto_flush_due(1_000, 1_000 + AUTO_FLUSH_IDLE_MS * 10, true));
+    }
+
+    #[test]
+    fn idle_auto_flush_needs_enough_idle_time() {
+        assert!(!auto_flush_due(9_000, 9_000 + AUTO_FLUSH_IDLE_MS - 1, false));
     }
 }

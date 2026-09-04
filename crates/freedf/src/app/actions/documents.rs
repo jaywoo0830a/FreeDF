@@ -212,5 +212,59 @@ impl FreeDfApp {
         });
     }
 
+    /// 서버 PDF 다운로드 시작 — Windows는 네이티브 저장 대화상자,
+    /// 그 외엔 기본 파일명이 채워진 경로 입력 모달.
+    pub(crate) fn start_pdf_download(&mut self, doc_id: i64, title: String) {
+        // 경로에 쓸 수 없는 문자는 걷어냄 (기본 파일명).
+        let safe: String = title
+            .chars()
+            .filter(|c| !matches!(c, '/' | '\\'))
+            .take(80)
+            .collect();
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name(format!("{safe}.pdf"))
+                .add_filter("PDF", &["pdf"])
+                .save_file()
+            {
+                self.download_pdf_action(doc_id, title, path);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.modal = Some(ModalState::ask_text_prefilled(
+                "Download PDF",
+                "Enter the save path (e.g. /home/me/Downloads/file.pdf)",
+                TextAction::DownloadPdf {
+                    doc_id,
+                    title: title.clone(),
+                },
+                format!("{safe}.pdf"),
+            ));
+        }
+    }
+
+    /// 서버에서 문서 PDF를 내려받아 로컬 경로에 저장 (비동기 — UI를 막지 않음).
+    pub(crate) fn download_pdf_action(&mut self, doc_id: i64, title: String, path: PathBuf) {
+        let Some(client) = crate::sync_client::sync_client(&self.media_config) else {
+            self.show_error("Server is not configured — open Server settings.".into());
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.pdf_dl_rx = Some(rx);
+        std::thread::spawn(move || {
+            let res = client
+                .download_pdf(doc_id)
+                .map_err(|e| format!("Download failed for {title}: {e}"))
+                .and_then(|d| {
+                    std::fs::write(&path, &d.bytes)
+                        .map_err(|e| format!("Could not write {}: {e}", path.display()))
+                })
+                .map(|_| format!("Saved PDF to {}", path.display()));
+            let _ = tx.send(res);
+        });
+    }
+
     // ---------- Pages ----------
 }

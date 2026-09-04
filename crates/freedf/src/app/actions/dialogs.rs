@@ -13,6 +13,9 @@ impl FreeDfApp {
             }
             TextAction::OpenPdf => self.open_pdf(&PathBuf::from(text.trim())),
             TextAction::UploadMedia => self.upload_media_path(&PathBuf::from(text.trim())),
+            TextAction::DownloadPdf { doc_id, title } => {
+                self.download_pdf_action(doc_id, title, PathBuf::from(text.trim()));
+            }
         }
     }
 

@@ -206,6 +206,64 @@ paths:
         default:
           $ref: '#/components/responses/ServerError'
 
+  /documents/{documentId}/pdf:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    get:
+      tags: [documents]
+      summary: 문서 원본 PDF 다운로드
+      description: |
+        서버에 저장된 문서의 원본 PDF를 직접 내려받습니다 (클라우드 스토리지).
+        ETag는 `"pdf-<digest>"` — If-None-Match로 304 가능합니다.
+      operationId: downloadPdf
+      responses:
+        '200':
+          description: PDF 바이트.
+          headers:
+            ETag:
+              description: 다이제스트 기반 캐시 검증 키.
+              schema:
+                type: string
+          content:
+            application/pdf: {}
+        '304':
+          description: If-None-Match 일치 — 변경 없음.
+        '404':
+          description: 문서 없음 또는 PDF 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [documents]
+      summary: 문서 원본 PDF 업로드/교체
+      description: |
+        PDF 본문을 서버에 저장하고 문서의 pdf_digest를 갱신합니다.
+        내용이 동일하면 revision은 그대로(멱등), 바뀌면 revision+1과
+        PdfChanged 변경 로그가 기록됩니다 (다른 기기가 pull로 수신).
+      operationId: uploadPdf
+      requestBody:
+        required: true
+        content:
+          application/pdf: {}
+      responses:
+        '200':
+          description: 저장된 PDF 정보 (digest/size/적용된 revision).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PdfInfo'
+        '404':
+          description: 문서 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+
   /documents/{documentId}/revision:
     parameters:
       - $ref: '#/components/parameters/DocumentId'
@@ -415,6 +473,22 @@ components:
         size:
           type: integer
           format: int64
+
+    PdfInfo:
+      type: object
+      description: PUT /v3/documents/{id}/pdf 응답.
+      required: [digest, size, revision]
+      properties:
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        size:
+          type: integer
+          format: int64
+        revision:
+          type: integer
+          format: int64
+          description: 적용된 문서 revision (내용 동일 시 기존 revision 그대로).
 
     UploadReceipt:
       type: object

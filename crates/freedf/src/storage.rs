@@ -142,6 +142,11 @@ pub trait StorageBackend: Send + Sync {
     /// 원격 저장소 연결 확인 — write-behind 플러시 게이트용.
     fn ping(&self) -> bool;
 
+    /// 저장 대기 중인 변경(dirty) 여부 — 자동 플러시 판단용 (기본 false).
+    fn has_pending(&self) -> bool {
+        false
+    }
+
     /// 로컬 캐시 무효화 (강제 새로고침 시 호출). 기본은 no-op.
     fn invalidate_document(&self, _doc_id: i64) {}
 }
@@ -272,6 +277,7 @@ mod tests {
     fn disconnected_backend_is_safe_fallback() {
         let db = disconnected();
         assert!(!db.ping());
+        assert!(!db.has_pending());
         assert!(db.list_notes().is_empty());
         assert!(db.load_recents().is_empty());
         assert!(db.get_document(1).is_none());

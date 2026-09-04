@@ -123,6 +123,10 @@ async fn main() {
             get(sync_v3::download_snapshot).delete(sync_v3::delete_document),
         )
         .route("/v3/documents/:id/title", put(sync_v3::rename_document))
+        .route(
+            "/v3/documents/:id/pdf",
+            get(sync_v3::get_pdf).put(sync_v3::put_pdf),
+        )
         .route("/v3/documents/:id/revision", get(sync_v3::get_revision))
         .route("/v3/documents/:id/changes", get(sync_v3::get_changes))
         .route("/v3/objects/query", post(sync_v3::probe_objects))

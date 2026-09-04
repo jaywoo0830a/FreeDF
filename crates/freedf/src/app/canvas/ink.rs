@@ -166,6 +166,8 @@ impl FreeDfApp {
                     width: active.width,
                 });
             }
+            // 유휴 자동 저장 타이머 시작 (pen-up 시각 기록).
+            self.last_pen_up_ms = now_ms();
         }
     }
 

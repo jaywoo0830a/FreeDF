@@ -238,6 +238,15 @@ pub struct ObjectInfo {
     pub size: u64,
 }
 
+/// PUT /v3/documents/{id}/pdf 응답.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PdfInfo {
+    pub digest: Digest,
+    pub size: i64,
+    /// PDF 변경으로 갱신된 문서 revision (내용 동일 시 기존 revision 그대로).
+    pub revision: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -325,6 +325,11 @@ impl FreeDfApp {
         if idx >= self.tabs.len() {
             return;
         }
+        // 닫기 전에 dirty 미러를 서버로 반영 (백그라운드 — 유실 방지).
+        let db = self.db.clone();
+        std::thread::spawn(move || {
+            db.flush_pending();
+        });
         if idx == self.active {
             self.close_document();
             self.tabs.remove(idx);

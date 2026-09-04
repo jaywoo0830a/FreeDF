@@ -24,6 +24,8 @@ impl FreeDfApp {
         let mut delete_note = false;
         // 다중 삭제: (선택된 노트 id, 선택된 PDF id) — 확인 모달로 전달.
         let mut delete_selected: Option<(Vec<i64>, Vec<i64>)> = None;
+        // PDF 다운로드 (서버 → 로컬 디스크) — 행의 아이콘 버튼에서 요청.
+        let mut download_pdf: Option<(i64, String)> = None;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -158,12 +160,32 @@ impl FreeDfApp {
                                     }
                                 }
                             }
+                            if let Some(d) = f.doc_id {
+                                if ui
+                                    .add(
+                                        egui::Button::new(icon_text(
+                                            ui,
+                                            "",
+                                            icons::DOWNLOAD_SIMPLE,
+                                        ))
+                                        .frame(false)
+                                        .small(),
+                                    )
+                                    .on_hover_text("Download PDF to disk")
+                                    .clicked()
+                                {
+                                    download_pdf = Some((d, f.title.clone()));
+                                }
+                            }
                             if library_row(ui, false, &f.title, "PDF") {
                                 if let Some(d) = f.doc_id {
                                     self.open_document(d);
                                 }
                             }
                         });
+                    }
+                    if let Some((doc_id, title)) = download_pdf {
+                        self.start_pdf_download(doc_id, title);
                     }
                     let n_sel = self.sel_pdfs.len();
                     if n_sel > 0 {
