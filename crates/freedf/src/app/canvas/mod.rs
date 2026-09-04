@@ -405,15 +405,22 @@ impl FreeDfApp {
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
                 if canvas.contains(pos) {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
-                    let speed = self.edge_speed.clamp(20.0, 4000.0);
+                    // 방향별 속도 [왼쪽, 오른쪽, 위, 아래] — 글쓰기 흐름(좌→우,
+                    // 위→아래)에 맞춰 따로 지정할 수 있습니다.
+                    let sp = [
+                        self.edge_speeds[0].clamp(20.0, 4000.0),
+                        self.edge_speeds[1].clamp(20.0, 4000.0),
+                        self.edge_speeds[2].clamp(20.0, 4000.0),
+                        self.edge_speeds[3].clamp(20.0, 4000.0),
+                    ];
                     let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
                     let t = |d: f32| (1.0 - d / zone).max(0.0);
                     let mut dx = 0.0f32;
                     let mut dy = 0.0f32;
-                    dx += t(pos.x - canvas.left()) * speed * dt; // 좌측 → 오른쪽 이동
-                    dx -= t(canvas.right() - pos.x) * speed * dt; // 우측 → 왼쪽 이동
-                    dy += t(pos.y - canvas.top()) * speed * dt; // 위 → 아래 이동
-                    dy -= t(canvas.bottom() - pos.y) * speed * dt; // 아래 → 위 이동
+                    dx += t(pos.x - canvas.left()) * sp[0] * dt; // 좌측 가장자리
+                    dx -= t(canvas.right() - pos.x) * sp[1] * dt; // 우측 가장자리
+                    dy += t(pos.y - canvas.top()) * sp[2] * dt; // 위쪽 가장자리
+                    dy -= t(canvas.bottom() - pos.y) * sp[3] * dt; // 아래쪽 가장자리
                     if dx != 0.0 || dy != 0.0 {
                         self.view.pan_x += dx;
                         self.view.pan_y += dy;

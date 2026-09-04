@@ -65,7 +65,7 @@ impl FreeDfApp {
                     if ui
                         .toggle_value(
                             &mut self.server_settings_open,
-                            icon_text(ui, "Server", icons::CLOUD),
+                            icon_text(ui, "Media Server", icons::CLOUD),
                         )
                         .on_hover_text(
                             "Media server connection settings — upload & play audio recordings\n\
@@ -76,7 +76,7 @@ impl FreeDfApp {
                         self.server_msg = None;
                     }
                     if ui
-                        .toggle_value(&mut self.show_media, icon_text(ui, "Media", icons::MICROPHONE))
+                        .toggle_value(&mut self.show_media, icon_text(ui, "Recordings", icons::MICROPHONE))
                         .on_hover_text("Recordings for this document — upload / play / delete")
                         .changed()
                     {
@@ -126,8 +126,8 @@ impl FreeDfApp {
                         self.redo();
                     }
                     if ui
-                        .button(icon_text(ui, "Clear", icons::X_CIRCLE))
-                        .on_hover_text("Clear page")
+                        .button(icon_text(ui, "Clear Page", icons::X_CIRCLE))
+                        .on_hover_text("Clear all ink on this page")
                         .clicked()
                     {
                         self.clear_page();
@@ -135,14 +135,14 @@ impl FreeDfApp {
                     ui.separator();
     
                     if ui
-                        .button(icon_text(ui, "Save", icons::FLOPPY_DISK))
+                        .button(icon_text(ui, "Save Edits", icons::FLOPPY_DISK))
                         .on_hover_text("Save annotations (Ctrl+S)")
                         .clicked()
                     {
                         self.save_annotations();
                     }
                     if ui
-                        .button(icon_text(ui, "Load", icons::FOLDER_SIMPLE))
+                        .button(icon_text(ui, "Load Edits", icons::FOLDER_SIMPLE))
                         .on_hover_text("Load annotations")
                         .clicked()
                     {
@@ -168,7 +168,7 @@ impl FreeDfApp {
                     {
                         self.insert_page_open = true;
                     }
-                    ui.menu_button(icon_text(ui, "Rotate", icons::REPEAT), |ui| {
+                    ui.menu_button(icon_text(ui, "Rotate Page", icons::REPEAT), |ui| {
                         if ui
                             .add_enabled(page_count > 0, egui::Button::new("Rotate current page CW"))
                             .clicked()
@@ -206,7 +206,7 @@ impl FreeDfApp {
                     if ui
                         .add_enabled(
                             page_count > 1,
-                            egui::Button::new(icon_text(ui, "Delete", icons::TRASH_SIMPLE)),
+                            egui::Button::new(icon_text(ui, "Delete Page", icons::TRASH_SIMPLE)),
                         )
                         .on_hover_text("Delete this page")
                         .clicked()
@@ -217,7 +217,7 @@ impl FreeDfApp {
     
                     // Canvas (페이지 뒤 배경색) — 전용 설정 창.
                     // (Paper 그룹 앞에 배치 — 뒤에 두면 화면 밖으로 잘려 안 보임)
-                    ui.label(icon_text(ui, "Canvas", icons::IMAGE));
+                    ui.label(icon_text(ui, "Canvas Color", icons::IMAGE));
                     let canvas_color = Color32::from_rgba_unmultiplied(
                         self.canvas_color[0],
                         self.canvas_color[1],
@@ -230,24 +230,21 @@ impl FreeDfApp {
                     {
                         self.canvas_settings_open = true;
                     }
-                    // 엣지 자동 스크롤 토글 + 설정 창 (커서가 가장자리에 닿으면 자동 패닝)
+                    // 엣지 자동 스크롤 — 라벨 버튼이 설정 창을 엽니다 (상태는
+                    // 선택 하이라이트로 표시).
                     if ui
-                        .selectable_label(
-                            self.edge_autoscroll,
-                            icon_text(ui, "", icons::ARROWS_OUT_CARDINAL),
+                        .add(
+                            egui::Button::new(icon_text(
+                                ui,
+                                "Edge Auto Scroll",
+                                icons::ARROWS_OUT_CARDINAL,
+                            ))
+                            .selected(self.edge_autoscroll),
                         )
                         .on_hover_text(
-                            "Edge auto-scroll: cursor near the canvas edge pans the view",
+                            "Edge auto-scroll: cursor near the canvas edge pans the view.\n\
+                             Click to open its settings (enable, edge zone, per-direction speeds).",
                         )
-                        .clicked()
-                    {
-                        self.edge_autoscroll = !self.edge_autoscroll;
-                        self.save_default_session();
-                        self.save_session();
-                    }
-                    if ui
-                        .add(egui::Button::new(icon_text(ui, "", icons::GEAR)).frame(false))
-                        .on_hover_text("Edge auto-scroll settings (edge zone / max speed)")
                         .clicked()
                     {
                         self.edge_scroll_settings_open = true;
@@ -256,7 +253,7 @@ impl FreeDfApp {
 
                     // Color wheel (원형 팔레트 색 지정) — 전용 설정 창.
                     if ui
-                        .button(icon_text(ui, "Wheel", icons::PALETTE))
+                        .button(icon_text(ui, "Color Wheel", icons::PALETTE))
                         .on_hover_text("Color wheel palette colors — click to open settings")
                         .clicked()
                     {
@@ -320,7 +317,7 @@ impl FreeDfApp {
                     }
                     // 세부 설정 전용 창 트리거 — 크기/간격/줄 색·두께/전체 적용.
                     if ui
-                        .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
+                        .add(egui::Button::new(icon_text(ui, "Paper Settings", icons::GEAR)))
                         .on_hover_text(
                             "Open the paper settings window:\n\
                              page size, grid spacing, line color & thickness, apply to all.",
@@ -472,7 +469,7 @@ impl FreeDfApp {
                             }
                             // 세부 설정 전용 창 트리거 — 툴바는 필수만 남깁니다.
                             if ui
-                                .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
+                                .add(egui::Button::new(icon_text(ui, "Pen Settings", icons::GEAR)))
                                 .on_hover_text(
                                     "Open the ballpen settings window:\n\
                                      physics model, ink soak, ink grain, cursor, smoothing.",
@@ -551,7 +548,7 @@ impl FreeDfApp {
                             }
                             // 세부 설정 전용 창 트리거 — 툴바는 필수만 남깁니다.
                             if ui
-                                .add(egui::Button::new(icon_text(ui, "Settings", icons::GEAR)))
+                                .add(egui::Button::new(icon_text(ui, "Fountain Settings", icons::GEAR)))
                                 .on_hover_text(
                                     "Open the fountain pen settings window:\n\
                                      physics model, ink soak, ink grain, italic nib, dwell.",

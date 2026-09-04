@@ -980,17 +980,34 @@ impl FreeDfApp {
                 self.save_default_session();
                 self.save_session();
             }
-            if ui
-                .add(
-                    egui::Slider::new(&mut self.edge_speed, 60.0..=2000.0)
-                        .text("Max speed (px/s)"),
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Direction speeds (px/s) — writing flows left→right and \
+                     top→bottom, so each direction can be tuned separately.",
                 )
-                .on_hover_text(
-                    "How fast the view pans at the edge. Speed ramps up from 0 \
-                     at the zone boundary to this value at the very edge.",
-                )
-                .changed()
-            {
+                .weak(),
+            );
+            let labels = ["Left", "Right", "Up", "Down"];
+            let mut changed = false;
+            for (i, label) in labels.iter().enumerate() {
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.edge_speeds[i], 20.0..=2000.0)
+                            .text(*label),
+                    )
+                    .on_hover_text(if i == 1 {
+                        "Speed when the cursor reaches the right edge \
+                         (reading/writing direction — next word)."
+                    } else if i == 3 {
+                        "Speed when the cursor reaches the bottom edge \
+                         (reading/writing direction — next line)."
+                    } else {
+                        "Speed when the cursor reaches this edge."
+                    })
+                    .changed();
+            }
+            if changed {
                 self.save_default_session();
                 self.save_session();
             }

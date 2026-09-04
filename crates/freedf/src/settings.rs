@@ -91,15 +91,15 @@ pub struct SessionState {
     #[serde(default = "default_false")]
     pub zoom_lock: bool,
     /// 엣지 자동 스크롤 — 커서가 캔버스 가장자리 근처에 닿으면 그 방향으로
-    /// 자동 패닝 (전역)
-    #[serde(default = "default_true")]
+    /// 자동 패닝 (전역). 기본은 꺼짐.
+    #[serde(default = "default_false")]
     pub edge_autoscroll: bool,
     /// 엣지 반응 영역 폭 (화면 px)
     #[serde(default = "default_edge_zone")]
     pub edge_zone: f32,
-    /// 엣지 자동 스크롤 최대 속도 (화면 px/초)
-    #[serde(default = "default_edge_speed")]
-    pub edge_speed: f32,
+    /// 엣지 자동 스크롤 방향별 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/초)
+    #[serde(default = "default_edge_speeds")]
+    pub edge_speeds: [f32; 4],
     /// 펜 입력 스무딩(안정화) 강도 0..1 — 0이면 원본 그대로
     #[serde(default = "default_smoothing")]
     pub smoothing: f32,
@@ -153,18 +153,14 @@ fn default_false() -> bool {
     false
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// 엣지 자동 스크롤 반응 영역 기본 폭 (화면 px).
 fn default_edge_zone() -> f32 {
     72.0
 }
 
-/// 엣지 자동 스크롤 기본 최대 속도 (화면 px/초).
-fn default_edge_speed() -> f32 {
-    480.0
+/// 엣지 자동 스크롤 방향별 기본 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/초).
+fn default_edge_speeds() -> [f32; 4] {
+    [480.0; 4]
 }
 
 fn default_smoothing() -> f32 {
@@ -232,9 +228,9 @@ impl Default for SessionState {
             text_highlight_snap: false,
             tool_order: ToolType::default_order(),
             zoom_lock: false,
-            edge_autoscroll: true,
+            edge_autoscroll: false,
             edge_zone: 72.0,
-            edge_speed: 480.0,
+            edge_speeds: [480.0; 4],
             smoothing: 0.4,
             smoothing_enabled: false,
             ink_bleed: InkBleed::default(),

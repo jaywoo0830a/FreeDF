@@ -790,10 +790,12 @@ pub struct FreeDfApp {
     edge_autoscroll: bool,
     /// 엣지 반응 영역 폭 (화면 px)
     edge_zone: f32,
-    /// 엣지 최대 속도 (화면 px/s)
-    edge_speed: f32,
+    /// 엣지 방향별 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/s)
+    edge_speeds: [f32; 4],
     /// 엣지 자동 스크롤 설정 창 표시 여부
     edge_scroll_settings_open: bool,
+    /// 최소 모드 컨테이너 본문 접힘 여부 (일시적)
+    minimal_controls_collapsed: bool,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -1063,9 +1065,18 @@ impl FreeDfApp {
         };
         let mouse_draws = if has { s.mouse_draws } else { false };
         let dictionary_enabled = if has { s.dictionary_enabled } else { false };
-        let edge_autoscroll = if has { s.edge_autoscroll } else { true };
+        let edge_autoscroll = if has { s.edge_autoscroll } else { false };
         let edge_zone = if has { s.edge_zone.clamp(8.0, 300.0) } else { 72.0 };
-        let edge_speed = if has { s.edge_speed.clamp(20.0, 4000.0) } else { 480.0 };
+        let edge_speeds = if has {
+            [
+                s.edge_speeds[0].clamp(20.0, 4000.0),
+                s.edge_speeds[1].clamp(20.0, 4000.0),
+                s.edge_speeds[2].clamp(20.0, 4000.0),
+                s.edge_speeds[3].clamp(20.0, 4000.0),
+            ]
+        } else {
+            [480.0; 4]
+        };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -1221,8 +1232,9 @@ impl FreeDfApp {
             zoom_lock,
             edge_autoscroll,
             edge_zone,
-            edge_speed,
+            edge_speeds,
             edge_scroll_settings_open: false,
+            minimal_controls_collapsed: false,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1345,7 +1357,7 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             edge_autoscroll: self.edge_autoscroll,
             edge_zone: self.edge_zone,
-            edge_speed: self.edge_speed,
+            edge_speeds: self.edge_speeds,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -1745,7 +1757,7 @@ impl FreeDfApp {
             zoom_lock: self.zoom_lock,
             edge_autoscroll: self.edge_autoscroll,
             edge_zone: self.edge_zone,
-            edge_speed: self.edge_speed,
+            edge_speeds: self.edge_speeds,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -2231,147 +2243,135 @@ impl FreeDfApp {
         }
     }
 
-    // ---------- Minimal-mode left overlay ----------
+    // ---------- Minimal-mode floating container ----------
 
-    /// 최소(포커스) 모드의 좌측 반투명 오버레이 — Library / Outline / Bookmarks
-    /// 세 섹션. 각 섹션은 헤더(클릭 토글) + 충분한 폭(300pt)의 스크롤 내용입니다.
-    fn minimal_overlays(&mut self, ctx: &egui::Context) {
+    /// 최소(포커스) 모드의 단일 플로팅 컨테이너.
+    ///
+    /// 헤더 행에는 Library / Outline / Bookmarks / Palette / Show UI 5개가
+    /// 항상 보이고, 각 토글이 켜지면 해당 오버레이 섹션이 **독립적으로**
+    /// 본문에 펼쳐집니다. 창은 드래그로 이동할 수 있고(빈 공간을 잡고 끌기),
+    /// 헤더의 접기 버튼으로 본문을 접었다 펼 수 있습니다.
+    fn minimal_controls(&mut self, ctx: &egui::Context) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Area::new(egui::Id::new("minimal_overlays"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
-            .show(ctx, |ui| {
+        egui::Window::new("minimal_controls")
+            .title_bar(false)
+            .movable(true)
+            .resizable(false)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
+            .frame(
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(10.0)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.set_width(300.0);
-                        // Library
-                        if ui
-                            .selectable_label(
-                                self.show_library,
-                                icon_text(ui, "Library", icons::NOTEBOOK),
-                            )
-                            .on_hover_text("Library (notes, PDFs, recents)")
-                            .clicked()
-                        {
-                            self.show_library = !self.show_library;
-                            self.save_session();
-                        }
-                        if self.show_library {
-                            egui::ScrollArea::vertical()
-                                .max_height(320.0)
-                                .show(ui, |ui| self.library_panel(ui));
-                        }
-                        ui.separator();
-                        // Outline
-                        if ui
-                            .selectable_label(
-                                self.show_outline,
-                                icon_text(ui, "Outline", icons::LIST_BULLETS),
-                            )
-                            .on_hover_text("Outline")
-                            .clicked()
-                        {
-                            self.show_outline = !self.show_outline;
-                            self.save_session();
-                        }
-                        if self.show_outline {
-                            egui::ScrollArea::vertical()
-                                .max_height(320.0)
-                                .show(ui, |ui| self.outline_panel(ui));
-                        }
-                        ui.separator();
-                        // Bookmarks
-                        if ui
-                            .selectable_label(
-                                self.show_bookmarks,
-                                icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE),
-                            )
-                            .on_hover_text("Bookmarked pages — click to jump")
-                            .clicked()
-                        {
-                            self.show_bookmarks = !self.show_bookmarks;
-                        }
-                        if self.show_bookmarks {
-                            let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
-                            egui::ScrollArea::vertical()
-                                .max_height(220.0)
-                                .show(ui, |ui| {
-                                    if pages.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new("No bookmarks yet").weak().small(),
-                                        );
-                                    } else {
-                                        for p in pages {
-                                            if ui.button(format!("Page {}", p + 1)).clicked() {
-                                                self.goto_page(p);
-                                            }
-                                        }
-                                        if ui.button("Clear all bookmarks").clicked() {
-                                            self.clear_bookmarks();
-                                        }
-                                    }
-                                });
-                        }
-                    });
-            });
-    }
-
-    // ---------- Compact (narrow-window) floating control ----------
-
-    /// 좁은 창(스플릿 뷰)에서 우상단에 뜨는 작은 조종 버튼.
-    ///
-    /// - 크롬(탭/툴바)이 접혀 있으면 "☰ Show UI"를 눌러 전체 크롬을 잠시
-    ///   다시 켜고, 켜져 있으면 "✕"로 다시 접습니다.
-    /// - 필기 팔레트(오른쪽 색상 바)도 여기서 켜고 끌 수 있습니다.
-    fn compact_pill(&mut self, ctx: &egui::Context, minimal: bool, narrow: bool) {
-        egui::Area::new(egui::Id::new("compact_pill"))
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
-            .order(egui::Order::Foreground)
+                    .inner_margin(egui::Margin::same(6)),
+            )
             .show(ctx, |ui| {
-                egui::Frame::window(&ui.style())
-                    .inner_margin(egui::Margin::same(6))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            let label = if minimal {
-                                "☰  Show UI"
+                ui.set_width(330.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(
+                            self.show_library,
+                            icon_text(ui, "Library", icons::NOTEBOOK),
+                        )
+                        .on_hover_text("Library (notes, PDFs, recents)")
+                        .clicked()
+                    {
+                        self.show_library = !self.show_library;
+                        self.save_session();
+                    }
+                    if ui
+                        .selectable_label(
+                            self.show_outline,
+                            icon_text(ui, "Outline", icons::LIST_BULLETS),
+                        )
+                        .on_hover_text("Outline")
+                        .clicked()
+                    {
+                        self.show_outline = !self.show_outline;
+                        self.save_session();
+                    }
+                    if ui
+                        .selectable_label(
+                            self.show_bookmarks,
+                            icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE),
+                        )
+                        .on_hover_text("Bookmarked pages — click to jump")
+                        .clicked()
+                    {
+                        self.show_bookmarks = !self.show_bookmarks;
+                    }
+                    if ui
+                        .selectable_label(
+                            self.show_palette,
+                            icon_text(ui, "Palette", icons::PALETTE),
+                        )
+                        .on_hover_text("Writing-tool color palette (right side of canvas)")
+                        .clicked()
+                    {
+                        self.show_palette = !self.show_palette;
+                        self.save_default_session();
+                    }
+                    if ui
+                        .button("☰  Show UI")
+                        .on_hover_text(
+                            "Show all toolbars again.\n\
+                             Shortcut: Ctrl+Shift+M",
+                        )
+                        .clicked()
+                    {
+                        self.manual_minimal = false;
+                        self.narrow_chrome_expanded = true;
+                    }
+                    if ui
+                        .button(if self.minimal_controls_collapsed { "▤" } else { "—" })
+                        .on_hover_text(if self.minimal_controls_collapsed {
+                            "Expand panel sections"
+                        } else {
+                            "Collapse panel sections"
+                        })
+                        .clicked()
+                    {
+                        self.minimal_controls_collapsed = !self.minimal_controls_collapsed;
+                    }
+                });
+                if self.minimal_controls_collapsed {
+                    return;
+                }
+                if self.show_library {
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| self.library_panel(ui));
+                }
+                if self.show_outline {
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| self.outline_panel(ui));
+                }
+                if self.show_bookmarks {
+                    ui.separator();
+                    let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
+                    egui::ScrollArea::vertical()
+                        .max_height(220.0)
+                        .show(ui, |ui| {
+                            if pages.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("No bookmarks yet").weak().small(),
+                                );
                             } else {
-                                "✕  Hide UI"
-                            };
-                            if ui
-                                .button(label)
-                                .on_hover_text(
-                                    "Show/hide all toolbars. The canvas and palette stay \
-                                     available. Shortcut: Ctrl+Shift+M",
-                                )
-                                .clicked()
-                            {
-                                if minimal {
-                                    // 숨김 → 크롬 표시.
-                                    self.manual_minimal = false;
-                                    self.narrow_chrome_expanded = true;
-                                } else if narrow {
-                                    // 좁은 자동 모드에서 크롬 표시 → 다시 접기.
-                                    self.narrow_chrome_expanded = false;
-                                } else {
-                                    // 넓은 창에서 크롬 표시 → 수동 최소 모드로.
-                                    self.manual_minimal = true;
+                                for p in pages {
+                                    if ui.button(format!("Page {}", p + 1)).clicked() {
+                                        self.goto_page(p);
+                                    }
+                                }
+                                if ui.button("Clear all bookmarks").clicked() {
+                                    self.clear_bookmarks();
                                 }
                             }
-                            if ui
-                                .selectable_label(self.show_palette, "Palette")
-                                .on_hover_text("Show the writing-tool / color palette")
-                                .clicked()
-                            {
-                                self.show_palette = !self.show_palette;
-                                self.save_default_session();
-                            }
                         });
-                    });
+                }
             });
     }
 
@@ -2593,8 +2593,7 @@ impl eframe::App for FreeDfApp {
         // 플로팅 복귀 장치: 크롬이 숨겨진(최소) 모드에서만 표시.
         // 크롬이 보일 때의 Show/Hide UI 토글은 툴바 Row1이 담당합니다.
         if minimal {
-            self.minimal_overlays(&ctx);
-            self.compact_pill(&ctx, minimal, narrow);
+            self.minimal_controls(&ctx);
         }
 
         self.connection_dialog(&ctx);
