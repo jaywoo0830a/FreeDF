@@ -794,8 +794,12 @@ pub struct FreeDfApp {
     edge_speeds: [f32; 4],
     /// 엣지 자동 스크롤 설정 창 표시 여부
     edge_scroll_settings_open: bool,
-    /// 최소 모드 컨테이너 본문 접힘 여부 (일시적)
-    minimal_controls_collapsed: bool,
+    /// 최소 모드 좌측(Library/Outline/Bookmarks) 컨테이너 접힘 여부 (일시적)
+    minimal_sections_collapsed: bool,
+    /// 최소 모드 우측(Palette/Show UI) 컨테이너 접힘 여부 (일시적)
+    minimal_chrome_collapsed: bool,
+    /// 커서가 창 위에서 움직이면 이 창을 포커스할지 (스플릿 뷰, 창마다 독립)
+    window_focus_on_move: bool,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -1077,6 +1081,7 @@ impl FreeDfApp {
         } else {
             [480.0; 4]
         };
+        let window_focus_on_move = if has { s.window_focus_on_move } else { true };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -1234,7 +1239,9 @@ impl FreeDfApp {
             edge_zone,
             edge_speeds,
             edge_scroll_settings_open: false,
-            minimal_controls_collapsed: false,
+            minimal_sections_collapsed: false,
+            minimal_chrome_collapsed: false,
+            window_focus_on_move,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1358,6 +1365,7 @@ impl FreeDfApp {
             edge_autoscroll: self.edge_autoscroll,
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
+            window_focus_on_move: self.window_focus_on_move,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -1758,6 +1766,7 @@ impl FreeDfApp {
             edge_autoscroll: self.edge_autoscroll,
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
+            window_focus_on_move: self.window_focus_on_move,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -2243,22 +2252,21 @@ impl FreeDfApp {
         }
     }
 
-    // ---------- Minimal-mode floating container ----------
+    // ---------- Minimal-mode floating containers ----------
 
-    /// 최소(포커스) 모드의 단일 플로팅 컨테이너.
+    /// 최소(포커스) 모드의 **좌측 컨테이너** — Library / Outline / Bookmarks.
     ///
-    /// 헤더 행에는 Library / Outline / Bookmarks / Palette / Show UI 5개가
-    /// 항상 보이고, 각 토글이 켜지면 해당 오버레이 섹션이 **독립적으로**
-    /// 본문에 펼쳐집니다. 창은 드래그로 이동할 수 있고(빈 공간을 잡고 끌기),
-    /// 헤더의 접기 버튼으로 본문을 접었다 펼 수 있습니다.
-    fn minimal_controls(&mut self, ctx: &egui::Context) {
+    /// 세 섹션은 **상호 베타적**입니다: 하나를 켜면 나머지는 꺼집니다.
+    /// 창은 빈 공간을 잡고 드래그해 이동할 수 있고, 헤더의 접기 버튼으로
+    /// 본문을 접었다 펼 수 있습니다 (접힘 시 폭 강제 해제 — 안 접히던 버그 수정).
+    fn minimal_sections(&mut self, ctx: &egui::Context) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Window::new("minimal_controls")
+        egui::Window::new("minimal_sections")
             .title_bar(false)
             .movable(true)
             .resizable(false)
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
             .frame(
                 egui::Frame::new()
                     .fill(fill)
@@ -2267,17 +2275,18 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(6)),
             )
             .show(ctx, |ui| {
-                ui.set_width(330.0);
                 ui.horizontal(|ui| {
                     if ui
                         .selectable_label(
                             self.show_library,
                             icon_text(ui, "Library", icons::NOTEBOOK),
                         )
-                        .on_hover_text("Library (notes, PDFs, recents)")
+                        .on_hover_text("Library (notes, PDFs, recents) — exclusive")
                         .clicked()
                     {
                         self.show_library = !self.show_library;
+                        self.show_outline = false;
+                        self.show_bookmarks = false;
                         self.save_session();
                     }
                     if ui
@@ -2285,10 +2294,12 @@ impl FreeDfApp {
                             self.show_outline,
                             icon_text(ui, "Outline", icons::LIST_BULLETS),
                         )
-                        .on_hover_text("Outline")
+                        .on_hover_text("Outline — exclusive")
                         .clicked()
                     {
                         self.show_outline = !self.show_outline;
+                        self.show_library = false;
+                        self.show_bookmarks = false;
                         self.save_session();
                     }
                     if ui
@@ -2296,48 +2307,31 @@ impl FreeDfApp {
                             self.show_bookmarks,
                             icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE),
                         )
-                        .on_hover_text("Bookmarked pages — click to jump")
+                        .on_hover_text("Bookmarked pages — click to jump — exclusive")
                         .clicked()
                     {
                         self.show_bookmarks = !self.show_bookmarks;
+                        self.show_library = false;
+                        self.show_outline = false;
                     }
                     if ui
-                        .selectable_label(
-                            self.show_palette,
-                            icon_text(ui, "Palette", icons::PALETTE),
-                        )
-                        .on_hover_text("Writing-tool color palette (right side of canvas)")
-                        .clicked()
-                    {
-                        self.show_palette = !self.show_palette;
-                        self.save_default_session();
-                    }
-                    if ui
-                        .button("☰  Show UI")
-                        .on_hover_text(
-                            "Show all toolbars again.\n\
-                             Shortcut: Ctrl+Shift+M",
-                        )
-                        .clicked()
-                    {
-                        self.manual_minimal = false;
-                        self.narrow_chrome_expanded = true;
-                    }
-                    if ui
-                        .button(if self.minimal_controls_collapsed { "▤" } else { "—" })
-                        .on_hover_text(if self.minimal_controls_collapsed {
+                        .button(if self.minimal_sections_collapsed { "▤" } else { "—" })
+                        .on_hover_text(if self.minimal_sections_collapsed {
                             "Expand panel sections"
                         } else {
                             "Collapse panel sections"
                         })
                         .clicked()
                     {
-                        self.minimal_controls_collapsed = !self.minimal_controls_collapsed;
+                        self.minimal_sections_collapsed = !self.minimal_sections_collapsed;
                     }
                 });
-                if self.minimal_controls_collapsed {
+                if self.minimal_sections_collapsed {
                     return;
                 }
+                // 본문이 펼쳐질 때만 폭을 강제 — 접힌 상태에서 창이 330pt로
+                // 남아 "접히지 않는 것처럼" 보이던 버그 수정.
+                ui.set_width(330.0);
                 if self.show_library {
                     ui.separator();
                     egui::ScrollArea::vertical()
@@ -2372,6 +2366,63 @@ impl FreeDfApp {
                             }
                         });
                 }
+            });
+    }
+
+    /// 최소(포커스) 모드의 **우측 컨테이너** — Palette / Show UI.
+    /// 접으면 Palette 토글이 숨고 Show UI 버튼만 남습니다.
+    fn minimal_chrome_controls(&mut self, ctx: &egui::Context) {
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        egui::Window::new("minimal_chrome_controls")
+            .title_bar(false)
+            .movable(true)
+            .resizable(false)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, stroke))
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::same(6)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if !self.minimal_chrome_collapsed
+                        && ui
+                            .selectable_label(
+                                self.show_palette,
+                                icon_text(ui, "Palette", icons::PALETTE),
+                            )
+                            .on_hover_text("Writing-tool color palette (right side of canvas)")
+                            .clicked()
+                    {
+                        self.show_palette = !self.show_palette;
+                        self.save_default_session();
+                    }
+                    if ui
+                        .button("☰  Show UI")
+                        .on_hover_text(
+                            "Show all toolbars again.\n\
+                             Shortcut: Ctrl+Shift+M",
+                        )
+                        .clicked()
+                    {
+                        self.manual_minimal = false;
+                        self.narrow_chrome_expanded = true;
+                    }
+                    if ui
+                        .button(if self.minimal_chrome_collapsed { "▤" } else { "—" })
+                        .on_hover_text(if self.minimal_chrome_collapsed {
+                            "Show the Palette toggle"
+                        } else {
+                            "Hide the Palette toggle"
+                        })
+                        .clicked()
+                    {
+                        self.minimal_chrome_collapsed = !self.minimal_chrome_collapsed;
+                    }
+                });
             });
     }
 
@@ -2518,7 +2569,8 @@ impl eframe::App for FreeDfApp {
         // ── 스플릿 뷰: 커서가 이 창 위에서 움직이면 무조건 이 창에 포커스 ──
         // 두 창을 나란히 띄워 놓았을 때, 클릭 없이 커서만 옮겨도 그 창이
         // 활성화됩니다 (다음 클릭/입력이 다른 창에 먹히는 문제 해소).
-        if ctx.input(|i| i.pointer.is_moving() && i.pointer.hover_pos().is_some())
+        if self.window_focus_on_move
+            && ctx.input(|i| i.pointer.is_moving() && i.pointer.hover_pos().is_some())
             && ctx.input(|i| i.viewport().focused == Some(false))
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -2593,7 +2645,8 @@ impl eframe::App for FreeDfApp {
         // 플로팅 복귀 장치: 크롬이 숨겨진(최소) 모드에서만 표시.
         // 크롬이 보일 때의 Show/Hide UI 토글은 툴바 Row1이 담당합니다.
         if minimal {
-            self.minimal_controls(&ctx);
+            self.minimal_sections(&ctx);
+            self.minimal_chrome_controls(&ctx);
         }
 
         self.connection_dialog(&ctx);

@@ -48,8 +48,9 @@ impl FreeDfApp {
     }
 
     /// 굿노트식 **원형 색상 팔레트** 오버레이 — 펜 사이드 버튼으로 열립니다.
-    /// 펜 위치(클램프 후)에 표시: 중앙 = 현재 색, 둘레 = 사용자가 지정한
-    /// 팔레트(즐겨찾기). 탭하면 적용+닫힘, 4초간 입력 없으면 자동으로 닫힙니다.
+    /// 펜 위치(클램프 후)에 표시: 유리처럼 투명한 도넛(중앙 구멍), 둘레 =
+    /// 사용자가 지정한 팔레트(즐겨찾기). 탭하면 적용+닫힘, 4초간 입력이
+    /// 없으면 자동으로 닫힙니다.
     pub(crate) fn color_wheel_overlay(&mut self, ctx: &egui::Context, canvas: Rect) {
         if !self.color_wheel_open {
             return;
@@ -105,8 +106,15 @@ impl FreeDfApp {
                 );
                 let fill = crate::theme::nord::semantic::overlay_bg();
                 let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-                painter.circle_filled(c, WHEEL_BACK_R, fill);
-                painter.circle_stroke(c, WHEEL_BACK_R, Stroke::new(1.0, stroke));
+                // 유리(반투명) 백플레이트 — 뒤의 페이지/캔버스가 은은하게 비칩니다.
+                painter.circle_filled(c, WHEEL_BACK_R, fill.gamma_multiply(0.25));
+                painter.circle_stroke(c, WHEEL_BACK_R, Stroke::new(1.5, stroke));
+                // 유리 광택 — 위쪽으로 어긋난 얇은 하이라이트 링.
+                painter.circle_stroke(
+                    c + egui::vec2(0.0, -8.0),
+                    WHEEL_BACK_R - 8.0,
+                    Stroke::new(1.0, Color32::from_white_alpha(30)),
+                );
                 // 둘레 스와치 — 12시 방향부터 시계 방향.
                 for (i, color) in wheel.ring.iter().enumerate() {
                     let sc = wheel.swatch_pos(i);
@@ -133,15 +141,21 @@ impl FreeDfApp {
                         );
                     }
                 }
-                // 중앙 = 현재 색 (탭하면 그냥 닫힘).
-                let cc = Color32::from_rgba_unmultiplied(
-                    current[0],
-                    current[1],
-                    current[2],
-                    current[3],
+                // 중앙 = 도넛 구멍 — 현재 색 디스크 없이 뻥 뚫립니다.
+                // (캔버스 배경색으로 채워 구멍처럼 보이게 하고, 안쪽 링으로
+                // 유리 두께를 표현합니다. 탭하면 그냥 닫힘.)
+                let hole = Color32::from_rgba_unmultiplied(
+                    self.canvas_color[0],
+                    self.canvas_color[1],
+                    self.canvas_color[2],
+                    self.canvas_color[3],
                 );
-                painter.circle_filled(c, WHEEL_CENTER_R, cc);
-                painter.circle_stroke(c, WHEEL_CENTER_R, Stroke::new(1.5, Color32::from_gray(120)));
+                painter.circle_filled(c, WHEEL_CENTER_R, hole);
+                painter.circle_stroke(
+                    c,
+                    WHEEL_CENTER_R,
+                    Stroke::new(1.0, Color32::from_white_alpha(34)),
+                );
 
                 // 공간을 잡아 이 Area의 **레이어가 휠 영역을 덮게** 합니다 —
                 // 휠 위에서는 캔버스 response.hovered()가 false가 되어

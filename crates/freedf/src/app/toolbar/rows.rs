@@ -25,6 +25,19 @@ impl FreeDfApp {
                         self.show_palette = true;
                         self.save_default_session();
                     }
+                    if ui
+                        .toggle_value(
+                            &mut self.window_focus_on_move,
+                            icon_text(ui, "Window Focus", icons::CROSSHAIR),
+                        )
+                        .on_hover_text(
+                            "Focus this window automatically when the cursor moves over it.\n\
+                             Turn off for windows that should not grab focus in split view.",
+                        )
+                        .changed()
+                    {
+                        self.save_default_session();
+                    }
                     ui.separator();
                     if ui
                         .toggle_value(&mut self.show_library, icon_text(ui, "Library", icons::NOTEBOOK))
