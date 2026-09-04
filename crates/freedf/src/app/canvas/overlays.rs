@@ -64,7 +64,7 @@ impl FreeDfApp {
         // 둘레 색: **사용자가 지정한 팔레트(즐겨찾기)만** 사용.
         let mut ring = self.favorite_colors.clone();
         if ring.is_empty() {
-            ring = crate::settings::SessionState::default().favorite_colors;
+            ring = crate::settings::SessionState::default().panels.favorite_colors;
         }
         ring.truncate(MAX_FAVORITE_COLORS);
         let current = self.current_drawing_style().0;

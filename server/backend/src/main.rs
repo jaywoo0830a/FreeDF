@@ -39,6 +39,8 @@ struct AppState {
 struct MediaObject {
     id: i64,
     doc_id: Option<i64>,
+    /// 0 기반 페이지 번호 (없으면 문서 전체 공유).
+    page_index: Option<i32>,
     kind: String,
     name: String,
     mime: String,
@@ -49,6 +51,7 @@ struct MediaObject {
 #[derive(Deserialize)]
 struct UploadParams {
     doc_id: Option<i64>,
+    page_index: Option<i32>,
     kind: Option<String>,
 }
 
@@ -59,6 +62,8 @@ struct ListParams {
     offset: Option<i64>,
     /// 종류 필터 — audio / photo / video / file (없으면 전체).
     kind: Option<String>,
+    /// 페이지 필터 (0 기반, 없으면 전체).
+    page_index: Option<i32>,
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -213,9 +218,17 @@ async fn upload(
     let db = state.db.lock().await;
     let row = match db
         .query_one(
-            "INSERT INTO media_objects (doc_id, kind, name, mime, size, object_key) \
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-            &[&params.doc_id, &kind, &file_name, &mime, &size, &key],
+            "INSERT INTO media_objects (doc_id, page_index, kind, name, mime, size, object_key) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+            &[
+                &params.doc_id,
+                &params.page_index,
+                &kind,
+                &file_name,
+                &mime,
+                &size,
+                &key,
+            ],
         )
         .await
     {
@@ -229,6 +242,7 @@ async fn upload(
     Json(MediaObject {
         id,
         doc_id: params.doc_id,
+        page_index: params.page_index,
         kind,
         name: file_name,
         mime,
@@ -238,7 +252,7 @@ async fn upload(
     .into_response()
 }
 
-/// GET /api/media?doc_id=&limit=&offset= — 최신순 목록.
+/// GET /api/media?doc_id=&kind=&page_index=&limit=&offset= — 최신순 목록.
 async fn list(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -252,13 +266,20 @@ async fn list(
     let db = state.db.lock().await;
     let rows = match db
         .query(
-            "SELECT id, doc_id, kind, name, mime, size, object_key \
+            "SELECT id, doc_id, page_index, kind, name, mime, size, object_key \
              FROM media_objects \
              WHERE ($1::bigint IS NULL OR doc_id = $1) \
                AND ($2::text IS NULL OR kind = $2) \
+               AND ($3::integer IS NULL OR page_index = $3) \
              ORDER BY created_at DESC, id DESC \
-             LIMIT $3 OFFSET $4",
-            &[&params.doc_id, &params.kind, &limit, &offset],
+             LIMIT $4 OFFSET $5",
+            &[
+                &params.doc_id,
+                &params.kind,
+                &params.page_index,
+                &limit,
+                &offset,
+            ],
         )
         .await
     {
@@ -268,14 +289,15 @@ async fn list(
     let out: Vec<MediaObject> = rows
         .iter()
         .map(|r| {
-            let key: String = r.get(6);
+            let key: String = r.get(7);
             MediaObject {
                 id: r.get(0),
                 doc_id: r.get(1),
-                kind: r.get(2),
-                name: r.get(3),
-                mime: r.get(4),
-                size: r.get(5),
+                page_index: r.get(2),
+                kind: r.get(3),
+                name: r.get(4),
+                mime: r.get(5),
+                size: r.get(6),
                 url: format!("{}/media/{}", state.public_base, key),
             }
         })

@@ -21,7 +21,7 @@ impl FreeDfApp {
             let res = match MediaClient::new_enabled(&config) {
                 None => Err("Media server is not enabled — open Server settings.".to_string()),
                 Some(client) => client
-                    .list(Some(doc_id), None, 100, 0)
+                    .list(Some(doc_id), None, None, 100, 0)
                     .map(MediaOutcome::Listed),
             };
             let _ = tx.send(res);
@@ -53,7 +53,7 @@ impl FreeDfApp {
                 .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp"])
                 .pick_file()
             {
-                self.upload_media_path(&path);
+                self.upload_media_path(&path, Some(self.current_page as i32));
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -66,8 +66,9 @@ impl FreeDfApp {
         }
     }
 
-    /// 파일을 현재 문서의 녹음으로 업로드합니다 (비동기 — UI를 막지 않음).
-    pub(crate) fn upload_media_path(&mut self, path: &Path) {
+    /// 파일을 현재 문서의 특정 페이지에 업로드합니다 (비동기 — UI를 막지 않음).
+    /// `page_index`는 0 기반 페이지 번호 (녹음은 시작 시점 페이지가 전달됨).
+    pub(crate) fn upload_media_path(&mut self, path: &Path, page_index: Option<i32>) {
         if self.media_rx.is_some() || self.loading.is_some() {
             return;
         }
@@ -97,7 +98,7 @@ impl FreeDfApp {
                 let mime = crate::server::mime_for_ext(&name);
                 let kind = crate::server::media_kind_for_ext(&name);
                 client
-                    .upload(Some(doc_id), kind, &name, mime, &bytes)
+                    .upload(Some(doc_id), page_index, kind, &name, mime, &bytes)
                     .map(MediaOutcome::Uploaded)
             })();
             let _ = tx.send(res);
@@ -359,6 +360,8 @@ impl FreeDfApp {
         let dir = std::env::temp_dir().join("freedf-recordings");
         let _ = std::fs::create_dir_all(&dir);
         let name = format!("rec-{doc_id}-{}", now_ms());
+        // 업로드는 정지 시점에 실행되므로 시작 페이지를 여기서 고정합니다.
+        self.recording_page = Some(self.current_page as i32);
         match crate::recording::start_recording(&dir, &name) {
             Ok(rec) => {
                 self.media_status = Some("Recording…".into());
@@ -374,7 +377,8 @@ impl FreeDfApp {
             return;
         };
         let path = rec.stop();
-        self.upload_media_path(&path);
+        let page = self.recording_page.take();
+        self.upload_media_path(&path, page);
     }
 }
 

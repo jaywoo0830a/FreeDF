@@ -71,6 +71,8 @@ impl MediaServerConfig {
 pub struct MediaObject {
     pub id: i64,
     pub doc_id: Option<i64>,
+    /// 0 기반 페이지 번호 (없으면 문서 전체 공유).
+    pub page_index: Option<i32>,
     pub kind: String,
     pub name: String,
     pub mime: String,
@@ -122,11 +124,13 @@ impl MediaClient {
     }
 
     /// 미디어 목록 (최신순). `doc_id`가 Some이면 해당 문서만,
-    /// `kind`가 Some이면 종류(audio/photo/video/file) 필터.
+    /// `kind`가 Some이면 종류(audio/photo/video/file) 필터,
+    /// `page_index`가 Some이면 해당 페이지(0 기반) 필터.
     pub fn list(
         &self,
         doc_id: Option<i64>,
         kind: Option<&str>,
+        page_index: Option<i32>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<MediaObject>, String> {
@@ -137,6 +141,9 @@ impl MediaClient {
         if let Some(k) = kind {
             query.push(format!("kind={}", urlencode(k)));
         }
+        if let Some(p) = page_index {
+            query.push(format!("page_index={p}"));
+        }
         let resp = self.get(&format!("/api/media?{}", query.join("&")))?;
         resp.into_json::<Vec<MediaObject>>().map_err(|e| e.to_string())
     }
@@ -146,6 +153,7 @@ impl MediaClient {
     pub fn upload(
         &self,
         doc_id: Option<i64>,
+        page_index: Option<i32>,
         kind: &str,
         file_name: &str,
         mime: &str,
@@ -156,6 +164,9 @@ impl MediaClient {
         let mut query = format!("kind={}", urlencode(kind));
         if let Some(d) = doc_id {
             query.push_str(&format!("&doc_id={d}"));
+        }
+        if let Some(p) = page_index {
+            query.push_str(&format!("&page_index={p}"));
         }
         let resp = self
             .agent
@@ -360,16 +371,24 @@ mod tests {
 
         // 수동 조립한 multipart 본문이 axum Multipart가 파싱하는지가 핵심.
         let obj = client
-            .upload(Some(43), "audio", "client-upload.m4a", "audio/mp4", b"CLIENT-BODY-TEST")
+            .upload(
+                Some(43),
+                Some(2),
+                "audio",
+                "client-upload.m4a",
+                "audio/mp4",
+                b"CLIENT-BODY-TEST",
+            )
             .expect("upload");
         assert_eq!(obj.name, "client-upload.m4a");
         assert_eq!(obj.doc_id, Some(43));
+        assert_eq!(obj.page_index, Some(2));
 
-        let items = client.list(Some(43), Some("audio"), 10, 0).expect("list");
+        let items = client.list(Some(43), Some("audio"), Some(2), 10, 0).expect("list");
         assert!(items.iter().any(|m| m.id == obj.id), "uploaded item missing");
 
         client.delete(obj.id).expect("delete");
-        let after = client.list(Some(43), Some("audio"), 10, 0).expect("list after delete");
+        let after = client.list(Some(43), Some("audio"), Some(2), 10, 0).expect("list after delete");
         assert!(!after.iter().any(|m| m.id == obj.id));
     }
 }
