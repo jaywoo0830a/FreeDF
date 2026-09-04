@@ -3,7 +3,7 @@
 #
 # 사용법:
 #   ./init.sh                                          # .env 생성 (API 키 자동 생성)
-#   PUBLIC_BASE_URL=https://media.mydomain.com ./init.sh  # VPS 도메인 지정
+#   PUBLIC_BASE_URL=https://api.mydomain.com ./init.sh # 도메인 지정
 #   BIND=0.0.0.0:8080 ./init.sh                        # nginx 없이 직접 테스트 시
 #
 # DATABASE_URL은 같은 호스트의 server/db/.env 에서 자동 조립됩니다.
@@ -21,8 +21,8 @@ else
         DB_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB}"
     fi
     DATABASE_URL="${DATABASE_URL:-${DB_URL:-postgres://freedf:CHANGEME@localhost:5432/freedf}}"
-    # 공개 URL — 반드시 VPS 도메인/IP로. FreeDF 앱이 미디어 재생에 사용합니다.
-    PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://media.example.com}"
+    # 공개 URL — 기본 도메인. FreeDF 앱이 서버 주소로 사용합니다.
+    PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://freedf.rlawjddn00.inline}"
     # 파일 저장 경로 (nginx가 같은 경로를 서빙)
     MEDIA_DIR="${MEDIA_DIR:-/srv/freedf-server/media}"
     # 바인딩 — nginx 프록시 구성이면 127.0.0.1:8080 그대로.
@@ -60,8 +60,8 @@ echo "────────────────────────�
 if [[ "${DATABASE_URL}" == *"CHANGEME"* ]]; then
     echo " ⚠ DATABASE_URL에 CHANGEME가 남아 있습니다 — server/db/up.sh 를 먼저"
     echo "   실행하거나(같은 호스트) .env를 직접 수정하세요."
-elif [[ "${PUBLIC_BASE_URL}" == *"media.example.com"* ]]; then
-    echo " ⚠ PUBLIC_BASE_URL이 예시 도메인입니다 — VPS 도메인/IP로 변경하세요."
+elif [[ "${PUBLIC_BASE_URL}" == *"example.com"* ]]; then
+    echo " ⚠ PUBLIC_BASE_URL이 예시 도메인입니다 — 실제 도메인으로 변경하세요."
 fi
-echo " FreeDF 앱의 Server 설정(server.json)에 PUBLIC_BASE_URL과 API 키를 입력하세요."
+echo " FreeDF 앱의 Server 설정(server.json)에 https://freedf.rlawjddn00.inline 와 API 키를 입력하세요."
 echo " (Sync v3 동기화도 같은 서버/키를 사용 — /v3/* 엔드포인트)"

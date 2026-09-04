@@ -2,12 +2,12 @@
 # FreeDF API 백엔드 — 빌드 + 시작 (미디어 + Sync v3)
 #
 # 사용법:
-#   ./up.sh              # 이미지 재빌드 + 기동 (DB는 server/db/up.sh 로 먼저)
+#   ./up.sh              # 이미지 재빌드 + backend/nginx 기동 (DB는 server/db/up.sh 로 먼저)
 #   ./up.sh --no-build   # 빌드 없이 기동
 #
-# 컨테이너는 브리지 네트워크에서 8080을 게시하고, PostgreSQL은
-# host.docker.internal(host-gateway)로 접근합니다 — Linux VPS와
-# Docker Desktop(WSL) 모두 동일하게 동작합니다.
+# backend는 8080을 127.0.0.1로만 게시(nginx 전용)하고, PostgreSQL은
+# host.docker.internal(host-gateway)로 접근합니다. nginx(호스트 네트워크,
+# 8081)가 /v3·/api 프록시 + /media 서빙을 맡고, 80/443 TLS는 Caddy가 종료합니다.
 set -euo pipefail
 cd "$(dirname "$0")"
 source ../_docker.sh
@@ -44,8 +44,12 @@ fi
 BUILD=(--build)
 [[ "${1:-}" == "--no-build" ]] && BUILD=()
 
+# nginx 프록시 전용 노출 (직접 테스트 시 FREEDF_BACKEND_BIND=0.0.0.0).
+export FREEDF_BACKEND_BIND="${FREEDF_BACKEND_BIND:-127.0.0.1}"
+export FREEDF_BACKEND_PORT="${FREEDF_BACKEND_PORT:-8080}"
+
 set +e
-out="$(CONTAINER_DB_URL="$CONTAINER_DB_URL" "$DOCKER" compose -f ../docker-compose.yml --env-file .env up -d "${BUILD[@]}" backend 2>&1)"
+out="$(CONTAINER_DB_URL="$CONTAINER_DB_URL" "$DOCKER" compose -f ../docker-compose.yml --env-file .env up -d "${BUILD[@]}" backend nginx 2>&1)"
 rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then
@@ -82,11 +86,9 @@ else
 fi
 
 echo "──────────────────────────────────────────────"
-echo " Sync v3 API:"
-echo "   PUT /v3/documents/{id}/snapshot   GET /v3/documents/{id}"
-echo "   GET /v3/documents/{id}/changes    /v3/objects/* (CAS)"
-echo " 미디어 API: /api/media"
+echo " 공개 진입점: ${PUBLIC_BASE_URL}"
+echo "   Sync v3: PUT /v3/documents/{id}/snapshot · GET /v3/documents/{id}"
+echo "   미디어:  /api/media · /media/*"
+echo " 흐름: Caddy(80/443, TLS) → nginx(8081) → backend(127.0.0.1:8080)"
 echo " 인증: X-Api-Key: <backend/.env의 FREEDF_API_KEY>"
-echo " nginx로만 노출하려면 backend/.env에 FREEDF_BACKEND_BIND=127.0.0.1 추가"
-echo "   (8080이 0.0.0.0으로 게시되면 API 키 인증만으로 보호됩니다)"
 echo "──────────────────────────────────────────────"

@@ -6,5 +6,5 @@ cd "$(dirname "$0")"
 source ../_docker.sh
 
 DOCKER="$(require_docker)"
-"$DOCKER" compose -f ../docker-compose.yml rm -sf backend
-echo "완료 — backend 컨테이너를 중지/제거했습니다."
+"$DOCKER" compose -f ../docker-compose.yml rm -sf backend nginx
+echo "완료 — backend/nginx 컨테이너를 중지/제거했습니다."

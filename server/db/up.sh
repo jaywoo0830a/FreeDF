@@ -83,12 +83,11 @@ for f in migrations/*.sql; do
 done
 
 echo "──────────────────────────────────────────────"
-echo " PostgreSQL 준비 완료 — 연결 문자열:"
-echo "   postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${FREEDF_DB_HOST:-localhost}:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB}"
-echo " 앱 실행 시 (원격 접속이면 FREEDF_DB_HOST를 VPS IP로 설정):"
-echo "   FREEDF_DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${FREEDF_DB_HOST:-localhost}:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB} freedf"
+echo " PostgreSQL 준비 완료 — DB는 backend(server/backend)만 접속합니다."
+echo " 연결 문자열: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${FREEDF_DB_HOST:-localhost}:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB}"
+echo " 다음: cd ../backend && ./up.sh → https://freedf.rlawjddn00.inline"
 if [[ "${FREEDF_DB_BIND:-127.0.0.1}" != "127.0.0.1" ]]; then
-    echo " ⚠ 원격 접속 모드 — 방화벽으로 앱 IP만 허용 권장:"
-    echo "   sudo ufw allow from <앱IP> to any port ${FREEDF_DB_PORT:-5432} proto tcp"
+    echo " ⚠ 원격 접속 모드 — 방화벽으로 backend 호스트만 허용 권장:"
+    echo "   sudo ufw allow from <backendIP> to any port ${FREEDF_DB_PORT:-5432} proto tcp"
 fi
 echo "──────────────────────────────────────────────"
