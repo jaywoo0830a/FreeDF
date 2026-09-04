@@ -625,8 +625,7 @@ impl FreeDfApp {
                 let mut changed = ui
                     .checkbox(&mut self.paper_texture, "Paper texture")
                     .on_hover_text(
-                        "Fiber grain over the page (drawn under the ruling and your ink).\n\
-                         Quick toggle: the 'Paper Texture' button on the toolbar.",
+                        "Fiber grain over the page (drawn under the ruling and your ink).",
                     )
                     .changed();
                 ui.add_enabled_ui(self.paper_texture, |ui| {

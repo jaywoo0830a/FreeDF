@@ -1186,7 +1186,7 @@ impl FreeDfApp {
         let paper_texture_strength = if has {
             s.paper_texture_strength.clamp(0.0, 1.0)
         } else {
-            0.35
+            0.25
         };
         let paper_surface = if has {
             s.paper_surface

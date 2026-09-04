@@ -440,15 +440,16 @@ pub struct PaperSurfaceSettings {
 impl Default for PaperSurfaceSettings {
     fn default() -> Self {
         Self {
-            bump: 0.6,
-            albedo_l: 0.06,
-            albedo_c: 0.04,
+            // 은은한 기본값 — 흰 종이에 미세한 결만 남는 수준.
+            bump: 0.35,
+            albedo_l: 0.04,
+            albedo_c: 0.03,
             light_azimuth_deg: 45.0,
             light_elevation_deg: 55.0,
             ambient: 0.55,
             direct: 0.45,
-            ao_strength: 0.4,
-            sheen: 0.06,
+            ao_strength: 0.25,
+            sheen: 0.04,
             gloss: 8.0,
         }
     }

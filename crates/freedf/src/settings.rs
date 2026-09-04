@@ -211,7 +211,7 @@ fn default_tool_order() -> Vec<ToolType> {
 }
 
 fn default_paper_texture_strength() -> f32 {
-    0.35
+    0.25
 }
 
 /// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 3개 (GoodNotes 블랙/레드/블루).
@@ -247,7 +247,7 @@ impl Default for SessionState {
             paper_style: PaperStyle::Blank,
             paper_color: [255, 255, 255, 255],
             paper_texture: true,
-            paper_texture_strength: 0.35,
+            paper_texture_strength: 0.25,
             paper_surface: PaperSurfaceSettings::default(),
             paper_size: PaperSize::A4,
             canvas_color: default_canvas_color(),
