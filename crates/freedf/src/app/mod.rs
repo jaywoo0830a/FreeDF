@@ -973,7 +973,7 @@ impl FreeDfApp {
         let fountain_color = if has { s.fountain_color } else { theme_pen };
         let tool = if has { s.tool } else { ToolType::Pen };
         let color_family = if has { s.color_family } else { ColorFamily::Black };
-        let pen_width = if has { s.pen_width } else { 2.5 };
+        let pen_width = if has { s.pen_width } else { 2.0 };
         let fountain_width = if has { s.fountain_width } else { 2.0 };
         let hi_width = if has { s.hi_width } else { 16.0 };
         let eraser_radius = if has { s.eraser_radius } else { 16.0 };
