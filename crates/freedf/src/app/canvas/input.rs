@@ -282,10 +282,7 @@ impl FreeDfApp {
                                 // 펜 떼는 순간 끝이 갑자기 가늘어지는 "확 바뀜"의
                                 // 원인이었습니다. (첫 점 4개는 접촉 시작 타이밍
                                 // 차이로 잘릴 수 있으니 점이 쌓인 뒤에만 적용)
-                                let pen_lifted = self
-                                    .pen_monitor
-                                    .as_ref()
-                                    .is_some_and(|m| !m.snapshot().contact);
+                                let pen_lifted = !self.input_sources.pen_contact();
                                 // 직전에는 힘이 있었는데 지금 1% 미만 → 리프트 꼬리.
                                 let pressure_collapsed = pressure <= 0.01
                                     && st

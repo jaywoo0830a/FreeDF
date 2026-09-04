@@ -27,6 +27,7 @@
 mod actions;
 pub(crate) mod canvas;
 mod dictionary;
+mod input;
 mod panels;
 mod tabs;
 mod toolbar;
@@ -936,6 +937,8 @@ pub struct FreeDfApp {
     /// 엣지 자동 스크롤이 펜으로 커서를 움직일 때만(호버/접촉) 반응할지 —
     /// 단순 마우스/트랙패드 호버는 무시. 펜 스트림이 없으면 구분 불가라 허용.
     edge_autoscroll_pen_only: bool,
+    /// 입력 소스(펜/마우스/트랙패드) 판정 상태 — 매 프레임 canvas()에서 갱신.
+    input_sources: input::InputSources,
     /// 엣지 반응 영역 폭 (화면 px)
     edge_zone: f32,
     /// 엣지 방향별 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/s)
@@ -1367,6 +1370,7 @@ impl FreeDfApp {
             pen_monitor,
             live_pressure: None,
             pen_buttons: Default::default(),
+            input_sources: input::InputSources::default(),
             last_pen_state_ms: None,
             pen_verdict: None,
             pen_flat_log_ms: 0,

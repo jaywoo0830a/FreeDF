@@ -671,10 +671,7 @@ impl FreeDfApp {
                 // 1) 입체 그림자 2겹 (넓고 옅게 + 좁고 진하게) — **근접감** 반영:
                 // 펜이 패드에 닿으면(접촉) 짙고 팁에 가깝게, 호버는 중간,
                 // 패드에서 떨어져 리포트가 끊기면 옅고 멀어집니다 (입체감).
-                let pen_contact = self
-                    .pen_monitor
-                    .as_ref()
-                    .is_some_and(|m| m.snapshot().contact);
+                let pen_contact = self.input_sources.pen_contact();
                 let hover_age = self
                     .last_pen_state_ms
                     .map_or(u64::MAX, |t| now_ms().saturating_sub(t));

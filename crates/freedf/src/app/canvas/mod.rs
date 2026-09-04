@@ -252,20 +252,6 @@ impl FreeDfApp {
         }
     }
 
-    /// 엣지 자동 스크롤 "펜으로 커서를 움직이고 있을 때" 판정.
-    /// 펜 스트림(OTD/evdev)이 살아 있으면 그것으로 판정합니다: **호버든 접촉이든**
-    /// 최근 리포트(2초 이내)가 도착하면 펜이 커서를 움직이는 것입니다 —
-    /// 마우스/트랙패드만 쓰면 리포트가 끊겨 무효가 됩니다.
-    /// 스트림이 한 번도 안 온 환경(장치/드라이버 미탐지)에서는 펜과 마우스를
-    /// 구분할 수 없으므로 허용합니다 (그런 환경의 펜은 일반 포인터 이벤트로
-    /// 들어옵니다 — 마우스 전용 사용자는 설정에서 이 모드를 끄세요).
-    fn pen_active(&self) -> bool {
-        match self.last_pen_state_ms {
-            Some(t) => now_ms().saturating_sub(t) < 2000,
-            None => true,
-        }
-    }
-
     pub(crate) fn ensure_texture(&mut self, ctx: &egui::Context) {
         let Some(doc) = &self.document else {
             return;
@@ -352,7 +338,7 @@ impl FreeDfApp {
 
         // evdev/OTD 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
         let pen_state = self.pen_monitor.as_mut().and_then(|mon| mon.poll());
-        if let Some(st) = pen_state {
+        if let Some(st) = &pen_state {
             if self.last_pen_state_ms.is_none() {
                 pen_trace(&format!(
                     "pen stream 연결됨: tilt=[{:+.0}, {:+.0}] pressure={:?} contact={} b1={} b2={}",
@@ -385,6 +371,13 @@ impl FreeDfApp {
                 }
             }
         }
+        // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
+        self.input_sources.update(
+            &ctx,
+            pen_state.as_ref(),
+            self.last_pen_state_ms,
+            now_ms(),
+        );
 
         // ── 스플릿 뷰 포커스 제스처 ──────────────────────────────────────
         // 펜(OTD/evdev)이 우리 창 위를 호버 중인데 포커스가 없으면 한 번만
@@ -435,8 +428,10 @@ impl FreeDfApp {
                 // response.hovered()가 false — 이때는 발동 금지. (커스텀
                 // 커서가 이미 검증한 신호: 오버레이 Area가 위에 있으면 false)
                 // 그리고 "펜을 쓰는 중일 때만"(설정)이 켜져 있으면 단순
-                // 마우스/트랙패드 커서는 무시합니다.
-                let pen_ok = !self.edge_autoscroll_pen_only || self.pen_active();
+                // 마우스/트랙패드 커서는 무시합니다 (판정: input_sources).
+                let pen_ok = !self.edge_autoscroll_pen_only
+                    || self.input_sources.is_pen_in_use(now_ms())
+                    || self.input_sources.pen_undetectable();
                 if response.hovered() && canvas.contains(pos) && pen_ok {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
                     let sp = [
