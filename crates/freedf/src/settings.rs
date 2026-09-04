@@ -90,8 +90,8 @@ pub struct SessionState {
     /// 자동 패닝 (전역). 기본은 꺼짐.
     #[serde(default = "default_false")]
     pub edge_autoscroll: bool,
-    /// 엣지 자동 스크롤이 **펜이 화면에 닿아 있을 때만** 반응할지 (전역).
-    /// 기본 true — 단순 마우스/트랙패드 커서로는 발동하지 않습니다.
+    /// 엣지 자동 스크롤이 **펜으로 커서를 움직일 때만**(호버/접촉) 반응할지
+    /// (전역). 기본 true — 단순 마우스/트랙패드 커서로는 발동하지 않습니다.
     #[serde(default = "default_true")]
     pub edge_autoscroll_pen_only: bool,
     /// 엣지 반응 영역 폭 (화면 px)

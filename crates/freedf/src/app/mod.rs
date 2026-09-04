@@ -933,7 +933,8 @@ pub struct FreeDfApp {
     zoom_lock: bool,
     /// 엣지 자동 스크롤 (커서가 캔버스 가장자리 근처 → 그 방향으로 자동 패닝)
     edge_autoscroll: bool,
-    /// 엣지 자동 스크롤이 펜 접촉 중일 때만 반응할지 (마우스/트랙패드 호버 무시)
+    /// 엣지 자동 스크롤이 펜으로 커서를 움직일 때만(호버/접촉) 반응할지 —
+    /// 단순 마우스/트랙패드 호버는 무시. 펜 스트림이 없으면 구분 불가라 허용.
     edge_autoscroll_pen_only: bool,
     /// 엣지 반응 영역 폭 (화면 px)
     edge_zone: f32,

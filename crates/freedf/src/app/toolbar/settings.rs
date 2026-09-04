@@ -984,13 +984,13 @@ impl FreeDfApp {
             if ui
                 .checkbox(
                     &mut self.edge_autoscroll_pen_only,
-                    "Only while the pen is touching",
+                    "Only while the pen is in use",
                 )
                 .on_hover_text(
-                    "Edge auto-scroll reacts only while the pen is pressed \
-                     against the screen — a bare mouse/trackpad cursor at the \
-                     edge does nothing. Turn off to let the mouse cursor \
-                     trigger it too.",
+                    "Edge auto-scroll reacts only while the pen is driving \
+                     the cursor (hover or touch) — a bare mouse/trackpad \
+                     cursor at the edge does nothing. Turn off to let the \
+                     mouse cursor trigger it too.",
                 )
                 .changed()
             {
