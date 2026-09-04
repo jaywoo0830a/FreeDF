@@ -131,7 +131,8 @@ impl FreeDfApp {
                         page_count,
                     });
                 }
-                self.load_outline_if_needed();
+                // 목차는 Outline 패널을 열 때 지연 로드합니다 — 큰 책을 열 때
+                // 북마크 트리 순회가 문서 열기 경로에 끼지 않도록.
                 let kind = if is_note {
                     TabKind::Note(doc_id)
                 } else {

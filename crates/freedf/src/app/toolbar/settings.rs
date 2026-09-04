@@ -951,8 +951,9 @@ impl FreeDfApp {
     pub(crate) fn edge_scroll_settings_ui(&mut self, ui: &mut egui::Ui) {
         ui.label(
             egui::RichText::new(
-                "When zoomed in, moving the cursor (or pen) close to the canvas \
-                 edge pans the view in that direction.",
+                "When zoomed in, moving the pen (or the mouse cursor, if enabled \
+                 below) close to the canvas edge pans the view in that direction. \
+                 It is ignored over the palette, the bottom bar and other floating UI.",
             )
             .weak(),
         );
@@ -974,6 +975,22 @@ impl FreeDfApp {
                 .on_hover_text(
                     "How close to the edge (in screen pixels) the cursor must be \
                      before scrolling starts.",
+                )
+                .changed()
+            {
+                self.save_default_session();
+                self.save_session();
+            }
+            if ui
+                .checkbox(
+                    &mut self.edge_autoscroll_pen_only,
+                    "Only while the pen is touching",
+                )
+                .on_hover_text(
+                    "Edge auto-scroll reacts only while the pen is pressed \
+                     against the screen — a bare mouse/trackpad cursor at the \
+                     edge does nothing. Turn off to let the mouse cursor \
+                     trigger it too.",
                 )
                 .changed()
             {

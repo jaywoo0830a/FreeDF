@@ -196,6 +196,61 @@ fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui:
     job.into()
 }
 
+/// 아이콘 글리프와 제목을 **하나의 라벨**로 합칩니다 — 아이콘이 따로
+/// 덩그러니 남지 않고 제목과 한 몸으로 보이게 합니다.
+fn overlay_title(ui: &egui::Ui, icon: egui_phosphor_icons::Icon, title: &str) -> egui::WidgetText {
+    let color = ui.visuals().text_color();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        icon.0,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(16.0, egui::FontFamily::Name("phosphor-regular".into())),
+            color,
+            ..Default::default()
+        },
+    );
+    job.append(
+        &format!("  {title}"),
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            color,
+            ..Default::default()
+        },
+    );
+    job.into()
+}
+
+/// Library/Outline/Bookmarks **공용 오버레이 헤더** — 한 컨테이너 안에
+/// 아이콘+제목(강조)+개수(약하게)를 왼쪽에, 닫기(✕)를 오른쪽 끝에 배치해
+/// 균형 잡힌 한 줄로 만듭니다. 닫기를 누르면 true를 반환합니다.
+fn overlay_header(
+    ui: &mut egui::Ui,
+    icon: egui_phosphor_icons::Icon,
+    title: &str,
+    count: &str,
+    close_hint: &str,
+) -> bool {
+    let mut close = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+        ui.label(overlay_title(ui, icon, title));
+        ui.label(egui::RichText::new(count).weak().small());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(icon_text(ui, "", icons::X))
+                .on_hover_text(close_hint)
+                .clicked()
+            {
+                close = true;
+            }
+        });
+    });
+    ui.separator();
+    close
+}
+
 /// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
 /// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
 fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
@@ -878,6 +933,8 @@ pub struct FreeDfApp {
     zoom_lock: bool,
     /// 엣지 자동 스크롤 (커서가 캔버스 가장자리 근처 → 그 방향으로 자동 패닝)
     edge_autoscroll: bool,
+    /// 엣지 자동 스크롤이 펜 접촉 중일 때만 반응할지 (마우스/트랙패드 호버 무시)
+    edge_autoscroll_pen_only: bool,
     /// 엣지 반응 영역 폭 (화면 px)
     edge_zone: f32,
     /// 엣지 방향별 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/s)
@@ -1167,6 +1224,7 @@ impl FreeDfApp {
         let mouse_draws = if has { s.mouse_draws } else { false };
         let dictionary_enabled = if has { s.dictionary_enabled } else { false };
         let edge_autoscroll = if has { s.edge_autoscroll } else { false };
+        let edge_autoscroll_pen_only = if has { s.edge_autoscroll_pen_only } else { true };
         let edge_zone = if has { s.edge_zone.clamp(8.0, 300.0) } else { 72.0 };
         let edge_speeds = if has {
             [
@@ -1350,6 +1408,7 @@ impl FreeDfApp {
             smoothing,
             zoom_lock,
             edge_autoscroll,
+            edge_autoscroll_pen_only,
             edge_zone,
             edge_speeds,
             edge_scroll_settings_open: false,
@@ -1487,6 +1546,7 @@ impl FreeDfApp {
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
             edge_autoscroll: self.edge_autoscroll,
+            edge_autoscroll_pen_only: self.edge_autoscroll_pen_only,
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
@@ -1909,6 +1969,7 @@ impl FreeDfApp {
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
             edge_autoscroll: self.edge_autoscroll,
+            edge_autoscroll_pen_only: self.edge_autoscroll_pen_only,
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
@@ -2499,28 +2560,23 @@ impl FreeDfApp {
             .show(ctx, |ui| {
                 ui.set_width(520.0);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-                // 헤더(한 컨테이너): 아이콘 + 제목(strong) + 개수(weak) + 닫기 —
-                // 균형 배치.
+                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 let total = self.notes.list().len() + self.recents.sorted().len();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                    ui.label(icon_text(ui, "", icons::NOTEBOOK));
-                    ui.label(egui::RichText::new("Library").strong().size(15.0));
-                    ui.label(egui::RichText::new(format!("{total} items")).weak().small());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(icon_text(ui, "", icons::X))
-                            .on_hover_text("Close Library")
-                            .clicked()
-                        {
-                            self.show_library = false;
-                        }
-                    });
-                });
-                ui.separator();
+                if overlay_header(
+                    ui,
+                    icons::NOTEBOOK,
+                    "Library",
+                    &format!("{total} items"),
+                    "Close Library",
+                ) {
+                    self.show_library = false;
+                }
+                // 콘텐츠가 아무리 넓어도 창 폭(520pt)이 늘어나지 않게 상한 고정 —
+                // 닫기 버튼이 항상 오른쪽 구석에 붙습니다.
                 egui::ScrollArea::vertical()
                     .id_salt("library_overlay_scroll")
                     .max_height(520.0)
+                    .max_width(504.0)
                     .show(ui, |ui| self.library_panel(ui));
             });
     }
@@ -2544,27 +2600,25 @@ impl FreeDfApp {
             .show(ctx, |ui| {
                 ui.set_width(460.0);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-                // 헤더(한 컨테이너): 아이콘 + 제목(strong) + 개수(weak) + 닫기.
+                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
+                // 개수가 첫 프레임부터 정확하도록 패널 표시 시점에 목차를 로드.
+                self.load_outline_if_needed();
                 let count = self.outline.len();
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                    ui.label(icon_text(ui, "", icons::LIST_BULLETS));
-                    ui.label(egui::RichText::new("Outline").strong().size(15.0));
-                    ui.label(egui::RichText::new(format!("{count} entries")).weak().small());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(icon_text(ui, "", icons::X))
-                            .on_hover_text("Close Outline")
-                            .clicked()
-                        {
-                            self.show_outline = false;
-                        }
-                    });
-                });
-                ui.separator();
+                if overlay_header(
+                    ui,
+                    icons::LIST_BULLETS,
+                    "Outline",
+                    &format!("{count} entries"),
+                    "Close Outline",
+                ) {
+                    self.show_outline = false;
+                }
+                // 깊은 계층 때문에 창 폭이 늘어나 닫기 버튼이 밀리는 문제를 막기
+                // 위해 콘텐츠 폭 상한을 창 폭(460pt)으로 고정합니다.
                 egui::ScrollArea::vertical()
                     .id_salt("outline_overlay_scroll")
                     .max_height(520.0)
+                    .max_width(444.0)
                     .show(ui, |ui| self.outline_panel(ui));
             });
     }
@@ -2589,24 +2643,20 @@ impl FreeDfApp {
             .show(ctx, |ui| {
                 ui.set_width(420.0);
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-                // 계층 1: 제목 + 개수 + 닫기.
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Bookmarks").strong().size(15.0));
-                    ui.label(egui::RichText::new(pages.len().to_string()).weak().small());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .button(icon_text(ui, "", icons::X))
-                            .on_hover_text("Close Bookmarks")
-                            .clicked()
-                        {
-                            self.show_bookmarks = false;
-                        }
-                    });
-                });
-                ui.separator();
+                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
+                if overlay_header(
+                    ui,
+                    icons::BOOKMARKS_SIMPLE,
+                    "Bookmarks",
+                    &format!("{} bookmarks", pages.len()),
+                    "Close Bookmarks",
+                ) {
+                    self.show_bookmarks = false;
+                }
                 egui::ScrollArea::vertical()
                     .id_salt("bookmarks_overlay_scroll")
                     .max_height(420.0)
+                    .max_width(404.0)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
                         if pages.is_empty() {

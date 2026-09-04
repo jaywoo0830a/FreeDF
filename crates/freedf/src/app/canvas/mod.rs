@@ -252,6 +252,21 @@ impl FreeDfApp {
         }
     }
 
+    /// 엣지 자동 스크롤의 "펜을 잡고 있을 때" 판정.
+    /// - 펜 모니터(evdev/OTD, Linux)가 있으면 실제 **접촉 상태**를 사용하고,
+    ///   리포트가 1초 이상 끊기면(펜을 뗐거나 장치 대기) 무효로 봅니다.
+    /// - 모니터가 없는 환경(예: Windows)에서는 진행 중인 입력(잉크 획/팬
+    ///   드래그)을 펜 사용으로 간주합니다 — 단순 커서 호버는 제외됩니다.
+    fn pen_grabbed(&self) -> bool {
+        if let Some(mon) = &self.pen_monitor {
+            return mon.snapshot().contact
+                && self
+                    .last_pen_state_ms
+                    .is_some_and(|t| now_ms().saturating_sub(t) < 1000);
+        }
+        self.active_stroke.is_some() || self.pan_last.is_some() || self.middle_pan_last.is_some()
+    }
+
     pub(crate) fn ensure_texture(&mut self, ctx: &egui::Context) {
         let Some(doc) = &self.document else {
             return;
@@ -417,7 +432,12 @@ impl FreeDfApp {
         if self.edge_autoscroll {
             let pos = ctx.input(|i| i.pointer.hover_pos());
             if let Some(pos) = pos {
-                if canvas.contains(pos) {
+                // 팔레트/하단 플로팅 바 등 UI 위에서는 발동 금지. 그리고
+                // "펜을 잡고 있을 때만"(설정)이 켜져 있으면 단순 마우스/트랙패드
+                // 커서는 무시합니다.
+                let over_ui = ctx.is_pointer_over_egui();
+                let pen_ok = !self.edge_autoscroll_pen_only || self.pen_grabbed();
+                if canvas.contains(pos) && !over_ui && pen_ok {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
                     let sp = [
                         self.edge_speeds[0].clamp(20.0, 4000.0),
@@ -465,9 +485,11 @@ impl FreeDfApp {
                     }
                 } else {
                     self.edge_glow = [0.0; 4];
+                    self.edge_zone_enter_ms = [0; 4];
                 }
             } else {
                 self.edge_glow = [0.0; 4];
+                self.edge_zone_enter_ms = [0; 4];
             }
         }
 

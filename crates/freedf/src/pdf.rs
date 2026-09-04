@@ -4,6 +4,7 @@
 //! 실행 파일 옆에 두면 자동으로 찾습니다.
 
 use pdfium_render::prelude::*;
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use freedf_core::outline::OutlineNode;
@@ -126,8 +127,9 @@ pub fn load_pdfium() -> Result<Pdfium, String> {
 pub struct DocumentView {
     document: PdfDocument<'static>,
     pub file_name: String,
-    /// 페이지별 크기(포인트)
-    pub page_sizes_pts: Vec<[f32; 2]>,
+    /// 페이지별 크기(포인트) — `Some`이면 캐시됨. 1,000쪽이 넘는 문서도
+    /// 열 때 전체 페이지를 건드리지 않도록 **지연 계산**합니다.
+    pub page_sizes_pts: RefCell<Vec<Option<[f32; 2]>>>,
 }
 
 /// 렌더링 결과 (RGBA, top-down).
@@ -150,11 +152,11 @@ impl DocumentView {
         // document가 해제된 pdfium을 참조하지 않습니다.
         let document: PdfDocument<'static> = unsafe { std::mem::transmute(document) };
 
+        // 페이지 크기는 지연 계산: 처음 방문한 페이지만 pdfium에서 읽어
+        // 캐시합니다. (전체 페이지 스윕은 1,000쪽 이상 문서에서 열기 시
+        // 초 단위 렉의 원인이었습니다.)
         let count = document.pages().len() as usize;
-        let mut sizes = Vec::with_capacity(count);
-        for i in 0..count {
-            sizes.push(display_size_of(&document, i).unwrap_or([595.0, 842.0]));
-        }
+        let sizes = RefCell::new(vec![None; count]);
         let file_name = path
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
@@ -215,19 +217,27 @@ impl DocumentView {
         Ok(Self {
             document,
             file_name: name.to_string(),
-            page_sizes_pts: vec![size_pts; count],
+            page_sizes_pts: RefCell::new(vec![Some(size_pts); count]),
         })
     }
 
     pub fn page_count(&self) -> usize {
-        self.page_sizes_pts.len()
+        self.page_sizes_pts.borrow().len()
     }
 
+    /// `index` 페이지의 표시 크기(포인트) — 아직 읽지 않았으면 지연 계산해
+    /// 캐시합니다. 대형 문서에서도 방문한 페이지만 pdfium을 건드립니다.
     pub fn page_size_pts(&self, index: usize) -> [f32; 2] {
-        self.page_sizes_pts
-            .get(index)
-            .copied()
-            .unwrap_or([595.0, 842.0])
+        let fallback = [595.0, 842.0];
+        let mut sizes = self.page_sizes_pts.borrow_mut();
+        if let Some(Some(s)) = sizes.get(index) {
+            return *s;
+        }
+        let size = display_size_of(&self.document, index).unwrap_or(fallback);
+        if let Some(slot) = sizes.get_mut(index) {
+            *slot = Some(size);
+        }
+        size
     }
 
     /// 페이지의 표시 회전 (0/90/180/270) — 용지 줄/점 렌더링 방향 결정용.
@@ -417,7 +427,9 @@ impl DocumentView {
             .pages_mut()
             .create_page_at_index(paper, index as i32)
             .map_err(|e| format!("Could not insert page: {e}"))?;
-        self.refresh_sizes();
+        self.page_sizes_pts
+            .borrow_mut()
+            .insert(index, Some(size_pts));
         Ok(())
     }
 
@@ -435,7 +447,7 @@ impl DocumentView {
             .map_err(|e| format!("Could not read page: {e}"))?
             .delete()
             .map_err(|e| format!("Could not delete page: {e}"))?;
-        self.refresh_sizes();
+        self.page_sizes_pts.borrow_mut().remove(index);
         Ok(())
     }
 
@@ -474,14 +486,11 @@ impl DocumentView {
         Ok(())
     }
 
-    /// 페이지 크기 캐시를 문서 상태에 맞게 다시 계산합니다.
+    /// 페이지 크기 캐시를 무효화합니다 (페이지 삽입/삭제/회전 후).
+    /// 실제 크기는 `page_size_pts`가 요청 시 지연 계산해 다시 채웁니다.
     fn refresh_sizes(&mut self) {
         let count = self.document.pages().len() as usize;
-        let mut sizes = Vec::with_capacity(count);
-        for i in 0..count {
-            sizes.push(display_size_of(&self.document, i).unwrap_or([595.0, 842.0]));
-        }
-        self.page_sizes_pts = sizes;
+        *self.page_sizes_pts.borrow_mut() = vec![None; count];
     }
 }
 

@@ -280,8 +280,8 @@ impl FreeDfApp {
                             .selected(self.edge_autoscroll),
                         )
                         .on_hover_text(
-                            "Edge auto-scroll: cursor near the canvas edge pans the view.\n\
-                             Click to open its settings (enable, edge zone, per-direction speeds).",
+                            "Edge auto-scroll: the pen (by default) near the canvas edge pans the view.\n\
+                             Ignored over the palette/bottom bar. Click to open its settings.",
                         )
                         .clicked()
                     {
