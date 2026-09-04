@@ -33,13 +33,13 @@ impl PaperStyle {
     }
 }
 
-/// 용지 배경색 팔레트 (RGBA).
+/// 용지 배경색 팔레트 (RGBA) — GoodNotes 풍 종이 색.
 pub const PAPER_COLORS: &[[u8; 4]] = &[
     [255, 255, 255, 255], // White
-    [253, 247, 231, 255], // Cream
-    [244, 246, 251, 255], // Ice blue
-    [240, 248, 241, 255], // Mint
-    [244, 244, 244, 255], // Light gray
+    [251, 243, 220, 255], // Cream
+    [249, 237, 197, 255], // Warm yellow
+    [234, 242, 248, 255], // Ice blue
+    [240, 240, 240, 255], // Light gray
 ];
 
 /// 기본 용지 색 (White).
@@ -48,8 +48,8 @@ pub const PAPER_WHITE: [u8; 4] = [255, 255, 255, 255];
 /// 그리드 간격 (포인트, 약 6mm).
 pub const GRID_SPACING_PTS: f32 = 24.0;
 
-/// 기본 줄/격자/점 색 (약간 투명한 회색).
-pub const PAPER_LINE: [u8; 4] = [120, 120, 140, 110];
+/// 기본 줄/격자/점 색 (GoodNotes 풍 연한 회청).
+pub const PAPER_LINE: [u8; 4] = [180, 186, 198, 120];
 /// 기본 줄/격자/점 두께 (포인트).
 pub const PAPER_LINE_WIDTH_PT: f32 = 1.2;
 

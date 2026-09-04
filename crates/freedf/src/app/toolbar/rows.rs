@@ -575,6 +575,25 @@ impl FreeDfApp {
                             }
                         }
                         ToolType::Highlighter => {
+                            // GoodNotes 풍 파스텔 프리셋.
+                            let swatches = Palette::highlighter_swatches();
+                            for (i, swatch) in swatches.iter().enumerate() {
+                                let color = Color32::from_rgba_unmultiplied(
+                                    swatch[0],
+                                    swatch[1],
+                                    swatch[2],
+                                    swatch[3],
+                                );
+                                let selected = *swatch == self.hi_color;
+                                if color_circle_swatch(ui, ("hi_swatch", i), color, selected)
+                                    .on_hover_text("Highlighter color")
+                                    .clicked()
+                                {
+                                    self.hi_color = *swatch;
+                                    self.save_default_session();
+                                    self.save_session();
+                                }
+                            }
                             let mut color = Color32::from_rgba_unmultiplied(
                                 self.hi_color[0],
                                 self.hi_color[1],

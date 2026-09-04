@@ -1275,49 +1275,73 @@ impl ColorFamily {
 pub struct Palette;
 
 impl Palette {
-    /// 계열별 스와치(불투명 RGBA).
+    /// 계열별 스와치(불투명 RGBA) — GoodNotes 풍 팔레트.
+    ///
+    /// 계열마다 진한 → 중간 → 밝은 → 연한 순서의 4단계 농도입니다.
     pub fn swatches(family: ColorFamily) -> Vec<[u8; 4]> {
         let base: &[[u8; 3]] = match family {
             ColorFamily::Red => &[
-                [198, 40, 40],  // deep red
-                [229, 57, 53],  // red
-                [239, 83, 80],  // light red
-                [255, 138, 128], // lighter red
+                [189, 33, 38],   // deep red
+                [255, 71, 66],   // red (#FF4742)
+                [255, 122, 118], // light red
+                [255, 178, 174], // lighter red
             ],
             ColorFamily::Blue => &[
-                [21, 101, 192], // deep blue
-                [30, 136, 229], // blue
-                [66, 165, 245], // light blue
-                [144, 202, 249], // lighter blue
+                [20, 87, 173],   // deep blue
+                [72, 166, 235],  // blue (#48A6EB)
+                [116, 194, 247], // light blue
+                [168, 219, 252], // lighter blue
             ],
             ColorFamily::Black => &[
                 [0, 0, 0],       // black
-                [33, 33, 33],    // dark gray
-                [66, 66, 66],    // gray
-                [117, 117, 117], // light gray
+                [66, 66, 66],    // dark gray
+                [97, 97, 102],   // gray
+                [120, 120, 124], // light gray
             ],
             ColorFamily::Green => &[
-                [27, 94, 32], [46, 125, 50], [102, 187, 106], [165, 214, 167],
+                [25, 128, 74],   // deep green
+                [59, 194, 119],  // green (#3BC277)
+                [112, 219, 158], // light green
+                [176, 237, 202], // lighter green
             ],
             ColorFamily::Orange => &[
-                [230, 81, 0], [245, 124, 0], [255, 167, 38], [255, 202, 40],
+                [201, 101, 14],  // deep orange
+                [255, 148, 48],  // orange (#FF9430)
+                [255, 183, 107], // light orange
+                [255, 214, 170], // lighter orange
             ],
             ColorFamily::Purple => &[
-                [74, 20, 140], [106, 27, 154], [156, 39, 176], [206, 147, 216],
+                [106, 62, 188],  // deep purple
+                [156, 106, 222], // purple (#9C6ADE)
+                [181, 140, 232], // light purple
+                [214, 188, 244], // lighter purple
             ],
-            ColorFamily::Custom => &[[20, 20, 20]],
+            ColorFamily::Custom => &[[26, 26, 28]],
         };
         base.iter().map(|c| [c[0], c[1], c[2], 255]).collect()
     }
 
-    /// 기본 펜 색(진한 검정).
-    pub fn default_pen() -> [u8; 4] {
-        [20, 20, 20, 255]
+    /// 형광펜 프리셋 (GoodNotes 풍 파스텔, 반투명 RGBA).
+    pub fn highlighter_swatches() -> Vec<[u8; 4]> {
+        vec![
+            [255, 230, 109, 120], // yellow
+            [255, 183, 77, 120],  // orange
+            [255, 138, 178, 120], // pink
+            [150, 228, 164, 120], // green
+            [136, 198, 255, 120], // blue
+            [194, 178, 255, 120], // purple
+            [178, 182, 190, 120], // gray
+        ]
     }
 
-    /// 기본 형광펜 색(반투명 노랑).
+    /// 기본 펜 색(GoodNotes 블랙).
+    pub fn default_pen() -> [u8; 4] {
+        [26, 26, 28, 255]
+    }
+
+    /// 기본 형광펜 색(GoodNotes 풍 노랑, 반투명).
     pub fn default_highlighter() -> [u8; 4] {
-        [255, 235, 59, 90]
+        [255, 230, 109, 120]
     }
 }
 
