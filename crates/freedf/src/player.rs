@@ -22,6 +22,10 @@ pub(crate) struct PlayerState {
 struct Inner {
     sink: rodio::Sink,
     _stream: rodio::OutputStream,
+    /// 일시정지 시점까지의 누적 재생 위치.
+    pos: std::sync::Mutex<Duration>,
+    /// 재생 중일 때의 시작 시각 (None = 일시정지/정지).
+    since: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl PlayerState {
@@ -35,7 +39,12 @@ impl PlayerState {
     pub(crate) fn elapsed(&self) -> Duration {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            self.inner.sink.get_pos()
+            // rodio 0.18의 Sink에는 get_pos가 없음 — 수동 누적 추적.
+            let pos = *self.inner.pos.lock().unwrap();
+            match *self.inner.since.lock().unwrap() {
+                Some(since) => pos + since.elapsed(),
+                None => pos,
+            }
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
@@ -57,8 +66,18 @@ impl PlayerState {
         {
             if self.inner.sink.is_paused() {
                 self.inner.sink.play();
+                *self.inner.since.lock().unwrap() = Some(std::time::Instant::now());
             } else {
                 self.inner.sink.pause();
+                let d = self
+                    .inner
+                    .since
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .map(|i| i.elapsed())
+                    .unwrap_or_default();
+                *self.inner.pos.lock().unwrap() += d;
             }
         }
     }
@@ -66,6 +85,10 @@ impl PlayerState {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             let _ = self.inner.sink.try_seek(pos);
+            *self.inner.pos.lock().unwrap() = pos;
+            if !self.inner.sink.is_paused() {
+                *self.inner.since.lock().unwrap() = Some(std::time::Instant::now());
+            }
         }
     }
     pub(crate) fn is_finished(&self) -> bool {
@@ -101,6 +124,7 @@ pub(crate) struct StreamDownload {
 pub(crate) fn open_player(path: &Path, name: &str) -> Result<PlayerState, String> {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
+        use rodio::Source; // total_duration 트레이트 메서드.
         let (stream, handle) = rodio::OutputStream::try_default()
             .map_err(|e| format!("No audio output device: {e}"))?;
         let sink = rodio::Sink::try_new(&handle).map_err(|e| e.to_string())?;
@@ -117,6 +141,8 @@ pub(crate) fn open_player(path: &Path, name: &str) -> Result<PlayerState, String
             inner: Inner {
                 sink,
                 _stream: stream,
+                pos: std::sync::Mutex::new(Duration::ZERO),
+                since: std::sync::Mutex::new(Some(std::time::Instant::now())),
             },
         })
     }
