@@ -5,20 +5,8 @@ use super::*;
 impl FreeDfApp {
     pub(crate) fn outline_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
-        ui.add_space(6.0);
-        // 계층 1: 패널 제목 + 항목 수.
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Outline").strong().size(16.0));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("{} entries", self.outline.len()))
-                        .weak()
-                        .small(),
-                );
-            });
-        });
-        ui.add_space(4.0);
-        ui.separator();
+        // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 목차 트리부터.
+        ui.add_space(2.0);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }

@@ -183,13 +183,14 @@ fn default_true() -> bool {
 }
 
 /// Window Focus 기본 지연(초) — 0 = 커서가 올라가는 즉시 포커스.
+/// 비활성화가 기본이지만, 켰을 때 쓰이는 기본 지연은 0.5초입니다.
 fn default_focus_dwell() -> f32 {
-    0.0
+    0.5
 }
 
 /// 엣지 자동 스크롤 방향별 반응 지연 기본값 (초, 0 = 즉시).
 fn default_edge_delays() -> [f32; 4] {
-    [0.0; 4]
+    [0.5; 4]
 }
 
 fn default_smoothing() -> f32 {
@@ -260,10 +261,10 @@ impl Default for SessionState {
             edge_zone: 72.0,
             edge_speeds: [480.0; 4],
             window_focus_on_move: false,
-            window_focus_dwell_sec: 0.0,
+            window_focus_dwell_sec: 0.5,
             edge_overscroll: 64.0,
             edge_pulse: true,
-            edge_delays: [0.0; 4],
+            edge_delays: [0.5; 4],
             smoothing: 0.4,
             smoothing_enabled: false,
             pen_soak: InkSoak::ballpoint_default(),

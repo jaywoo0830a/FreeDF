@@ -1182,7 +1182,7 @@ impl FreeDfApp {
         let window_focus_dwell_sec = if has {
             s.window_focus_dwell_sec.clamp(0.0, 5.0)
         } else {
-            0.0
+            0.5
         };
         let edge_overscroll = if has { s.edge_overscroll.clamp(0.0, 2000.0) } else { 64.0 };
         let edge_pulse = if has { s.edge_pulse } else { true };
@@ -1194,7 +1194,7 @@ impl FreeDfApp {
                 s.edge_delays[3].clamp(0.0, 3.0),
             ]
         } else {
-            [0.0; 4]
+            [0.5; 4]
         };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
@@ -2498,7 +2498,15 @@ impl FreeDfApp {
             )
             .show(ctx, |ui| {
                 ui.set_width(520.0);
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                // 헤더(한 컨테이너): 아이콘 + 제목(strong) + 개수(weak) + 닫기 —
+                // 균형 배치.
+                let total = self.notes.list().len() + self.recents.sorted().len();
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                    ui.label(icon_text(ui, "", icons::NOTEBOOK));
+                    ui.label(egui::RichText::new("Library").strong().size(15.0));
+                    ui.label(egui::RichText::new(format!("{total} items")).weak().small());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(icon_text(ui, "", icons::X))
@@ -2509,6 +2517,7 @@ impl FreeDfApp {
                         }
                     });
                 });
+                ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("library_overlay_scroll")
                     .max_height(520.0)
@@ -2534,7 +2543,14 @@ impl FreeDfApp {
             )
             .show(ctx, |ui| {
                 ui.set_width(460.0);
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                // 헤더(한 컨테이너): 아이콘 + 제목(strong) + 개수(weak) + 닫기.
+                let count = self.outline.len();
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                    ui.label(icon_text(ui, "", icons::LIST_BULLETS));
+                    ui.label(egui::RichText::new("Outline").strong().size(15.0));
+                    ui.label(egui::RichText::new(format!("{count} entries")).weak().small());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(icon_text(ui, "", icons::X))
@@ -2545,6 +2561,7 @@ impl FreeDfApp {
                         }
                     });
                 });
+                ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("outline_overlay_scroll")
                     .max_height(520.0)

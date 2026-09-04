@@ -7,17 +7,8 @@ pub(crate) use super::*;
 impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-        ui.add_space(6.0);
-
-        // ── 헤더 (계층 1: 패널 제목 + 총 개수) ──
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Library").strong().size(16.0));
-            let total = self.notes.list().len() + self.recents.sorted().len();
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(format!("{total} items")).weak().small());
-            });
-        });
-        ui.add_space(4.0);
+        // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
+        ui.add_space(2.0);
         ui.add(
             egui::TextEdit::singleline(&mut self.library_filter)
                 .hint_text("Search notes & files…")
