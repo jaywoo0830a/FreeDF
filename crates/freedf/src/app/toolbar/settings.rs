@@ -1012,6 +1012,22 @@ impl FreeDfApp {
                 self.save_session();
             }
         });
+        ui.add_space(4.0);
+        // 문서 바깥 패닝 여유 — 엣지 스크롤과 무관하게 일반 팬 범위에도 적용.
+        if ui
+            .add(
+                egui::Slider::new(&mut self.edge_overscroll, 0.0..=600.0)
+                    .text("Overscroll beyond page (px)"),
+            )
+            .on_hover_text(
+                "How far past the document edges the view may scroll \
+                 (up/down/left/right).",
+            )
+            .changed()
+        {
+            self.save_default_session();
+            self.save_session();
+        }
     }
 
     /// 설정 플로팅 창들 렌더 (툴바 뒤에 호출).

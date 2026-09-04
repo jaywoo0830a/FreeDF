@@ -802,6 +802,8 @@ pub struct FreeDfApp {
     minimal_chrome_collapsed: bool,
     /// 커서가 창 위에서 움직이면 이 창을 포커스할지 (스플릿 뷰, 창마다 독립)
     window_focus_on_move: bool,
+    /// 페이지(문서) 바깥으로 더 패닝할 수 있는 여유 (화면 px)
+    edge_overscroll: f32,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -1083,7 +1085,8 @@ impl FreeDfApp {
         } else {
             [480.0; 4]
         };
-        let window_focus_on_move = if has { s.window_focus_on_move } else { true };
+        let window_focus_on_move = if has { s.window_focus_on_move } else { false };
+        let edge_overscroll = if has { s.edge_overscroll.clamp(0.0, 2000.0) } else { 64.0 };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -1245,6 +1248,7 @@ impl FreeDfApp {
             minimal_sections_collapsed: false,
             minimal_chrome_collapsed: false,
             window_focus_on_move,
+            edge_overscroll,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1369,6 +1373,7 @@ impl FreeDfApp {
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
+            edge_overscroll: self.edge_overscroll,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -1770,6 +1775,7 @@ impl FreeDfApp {
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
+            edge_overscroll: self.edge_overscroll,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -2096,7 +2102,7 @@ impl FreeDfApp {
             self.view.pan_x = s.pan_x;
             self.view.pan_y = s.pan_y;
             self.view
-                .clamp_pan(self.page_size_pts, self.last_canvas, CANVAS_MARGIN);
+                .clamp_pan(self.page_size_pts, self.last_canvas, self.edge_overscroll);
         }
         self.render_dirty = true;
         self.search_update();

@@ -96,10 +96,9 @@ impl FreeDfApp {
                 let painter = ui.painter_at(rect);
                 let c = rect.center();
                 let fill = crate::theme::nord::semantic::overlay_bg();
-                let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-                // 유리(반투명) 백플레이트 — 뒤의 페이지/캔버스가 은은하게 비칩니다.
-                painter.circle_filled(c, WHEEL_BACK_R, fill.gamma_multiply(0.25));
-                painter.circle_stroke(c, WHEEL_BACK_R, Stroke::new(1.5, stroke));
+                // 유리(더 투명) 백플레이트 — 뒤의 페이지/캔버스가 선명하게 비칩니다.
+                // 검정 테두리는 없습니다 (은은한 광택 링만).
+                painter.circle_filled(c, WHEEL_BACK_R, fill.gamma_multiply(0.12));
                 // 유리 광택 — 위쪽으로 어긋난 얇은 하이라이트 링.
                 painter.circle_stroke(
                     c + egui::vec2(0.0, -8.0),
@@ -410,22 +409,25 @@ impl FreeDfApp {
                             self.save_session();
                         }
                         let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
-                        if ui
-                            .add_enabled(
-                                !full,
-                                egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false),
-                            )
-                            .on_hover_text(if full {
-                                format!(
-                                    "Palette is full ({MAX_FAVORITE_COLORS} colors) — remove one first"
+                        // "+" 버튼 — 색 스와치들 아래 **중앙 정렬**.
+                        ui.vertical_centered(|ui| {
+                            if ui
+                                .add_enabled(
+                                    !full,
+                                    egui::Button::new(icon_text(ui, "", icons::PLUS)).frame(false),
                                 )
-                            } else {
-                                "Add current color to favorites".into()
-                            })
-                            .clicked()
-                        {
-                            to_add = true;
-                        }
+                                .on_hover_text(if full {
+                                    format!(
+                                        "Palette is full ({MAX_FAVORITE_COLORS} colors) — remove one first"
+                                    )
+                                } else {
+                                    "Add current color to favorites".into()
+                                })
+                                .clicked()
+                            {
+                                to_add = true;
+                            }
+                        });
                         ui.separator();
 
                         // 자주 쓰는 색상 (클릭 = 적용, 우클릭 = 제거).

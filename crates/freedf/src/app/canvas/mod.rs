@@ -400,7 +400,9 @@ impl FreeDfApp {
         self.prev_viewport_focused = focused_now;
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);
         // Keep the page within the canvas (no infinite panning)
-        self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+        // — 문서 바깥 여유(overscroll)는 설정값을 따릅니다.
+        self.view
+            .clamp_pan(self.page_size_pts, canvas_size, self.edge_overscroll);
 
         // ── 엣지 자동 스크롤 ───────────────────────────────────────────
         // 줌인 상태에서 커서(펜 호버 포함)가 캔버스 가장자리 근처에 닿으면
@@ -429,7 +431,8 @@ impl FreeDfApp {
                     if dx != 0.0 || dy != 0.0 {
                         self.view.pan_x += dx;
                         self.view.pan_y += dy;
-                        self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+                        self.view
+                            .clamp_pan(self.page_size_pts, canvas_size, self.edge_overscroll);
                     }
                 }
             }

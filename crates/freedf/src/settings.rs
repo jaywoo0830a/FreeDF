@@ -100,9 +100,13 @@ pub struct SessionState {
     /// 엣지 자동 스크롤 방향별 최대 속도 [왼쪽, 오른쪽, 위, 아래] (화면 px/초)
     #[serde(default = "default_edge_speeds")]
     pub edge_speeds: [f32; 4],
-    /// 커서가 창 위에서 움직이면 이 창을 포커스할지 (스플릿 뷰, 창마다 독립)
-    #[serde(default = "default_true")]
+    /// 커서가 창 위에서 움직이면 이 창을 포커스할지 (스플릿 뷰, 창마다 독립).
+    /// 기본은 꺼짐.
+    #[serde(default = "default_false")]
     pub window_focus_on_move: bool,
+    /// 페이지(문서) 바깥으로 더 패닝할 수 있는 여유 (화면 px)
+    #[serde(default = "default_edge_overscroll")]
+    pub edge_overscroll: f32,
     /// 펜 입력 스무딩(안정화) 강도 0..1 — 0이면 원본 그대로
     #[serde(default = "default_smoothing")]
     pub smoothing: f32,
@@ -166,8 +170,9 @@ fn default_edge_speeds() -> [f32; 4] {
     [480.0; 4]
 }
 
-fn default_true() -> bool {
-    true
+/// 페이지 바깥 패닝 여유 기본값 (화면 px).
+fn default_edge_overscroll() -> f32 {
+    64.0
 }
 
 fn default_smoothing() -> f32 {
@@ -238,7 +243,8 @@ impl Default for SessionState {
             edge_autoscroll: false,
             edge_zone: 72.0,
             edge_speeds: [480.0; 4],
-            window_focus_on_move: true,
+            window_focus_on_move: false,
+            edge_overscroll: 64.0,
             smoothing: 0.4,
             smoothing_enabled: false,
             ink_bleed: InkBleed::default(),
