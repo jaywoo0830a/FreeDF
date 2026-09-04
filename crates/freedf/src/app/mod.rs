@@ -658,6 +658,10 @@ pub struct FreeDfApp {
     paper_settings_open: bool,
     /// Canvas(서라운드 배경색) 설정 플로팅 창 표시 여부 (임시)
     canvas_settings_open: bool,
+    /// Color wheel(원형 팔레트 색 지정) 설정 플로팅 창 표시 여부 (임시)
+    wheel_settings_open: bool,
+    /// Insert Page 플로팅 창 표시 여부 (임시 — 메뉴 대신 창이라 타이핑 유지)
+    insert_page_open: bool,
     /// 마지막으로 감지된 입력 장치 (펜/마우스)
     input_device: InputDevice,
     /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
@@ -1142,6 +1146,8 @@ impl FreeDfApp {
             tool_settings_open: false,
             paper_settings_open: false,
             canvas_settings_open: false,
+            wheel_settings_open: false,
+            insert_page_open: false,
             input_device: InputDevice::Mouse,
             last_touch_time: None,
             mouse_draws,
