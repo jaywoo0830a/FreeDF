@@ -12,23 +12,6 @@ impl FreeDfApp {
         }
     }
 
-    /// 다음 페이지로 이동 (키보드 PgDn). FreeDF 노트에서 이미 마지막
-    /// 페이지라면 현재 페이지와 같은 크기/용지의 빈 페이지를 자동으로
-    /// 추가해 계속 이어 씁니다.
-    pub(crate) fn next_page_auto(&mut self) {
-        let at_end = self
-            .document
-            .as_ref()
-            .map(|d| self.current_page + 1 >= d.page_count())
-            .unwrap_or(false);
-        if at_end && self.current_note.is_some() {
-            // 현재(마지막) 페이지의 크기/용지를 복사해 바로 다음에 삽입.
-            self.insert_page_action(InsertTarget::FromCurrent);
-        } else {
-            self.next_page();
-        }
-    }
-
     pub(crate) fn prev_page(&mut self) {
         if self.current_page > 0 {
             self.current_page -= 1;
@@ -41,7 +24,7 @@ impl FreeDfApp {
     /// - 페이지가 캔버스보다 길면(세로 스크롤 여지) **한 뷰포트만** 이동하고,
     ///   페이지를 넘기지 않습니다.
     /// - 더 스크롤할 수 없을 때만 다음/이전 페이지로 넘어갑니다
-    ///   (노트는 `next_page_auto`라서 마지막 페이지면 새 페이지가 자동 추가됨).
+    ///   (마지막 페이지에서는 멈춥니다 — 새 페이지 자동 추가 없음).
     pub(crate) fn page_key(&mut self, down: bool) {
         if self.document.is_none() {
             return;
@@ -59,7 +42,7 @@ impl FreeDfApp {
             freedf_core::transform::PageStep::ScrollTo { pan_y } => {
                 self.view.pan_y = pan_y;
             }
-            freedf_core::transform::PageStep::NextPage => self.next_page_auto(),
+            freedf_core::transform::PageStep::NextPage => self.next_page(),
             freedf_core::transform::PageStep::PrevPage => self.prev_page(),
         }
     }
@@ -136,11 +119,6 @@ impl FreeDfApp {
             direction: if to > from { 1.0 } else { -1.0 },
             vertical,
         });
-    }
-
-    /// 새 빈 페이지를 1장 삽입합니다 (`insert_pages_action`의 단건 래퍼).
-    pub(crate) fn insert_page_action(&mut self, target: InsertTarget) {
-        self.insert_pages_action(target, 1);
     }
 
     /// 새 빈 페이지를 `count`장 삽입합니다. `target`에 따라 위치/크기/용지가

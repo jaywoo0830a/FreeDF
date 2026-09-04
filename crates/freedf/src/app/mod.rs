@@ -786,6 +786,14 @@ pub struct FreeDfApp {
     smoothing: f32,
     /// 줌 잠금 (휠/핀치/단축키 줌 무시)
     zoom_lock: bool,
+    /// 엣지 자동 스크롤 (커서가 캔버스 가장자리 근처 → 그 방향으로 자동 패닝)
+    edge_autoscroll: bool,
+    /// 엣지 반응 영역 폭 (화면 px)
+    edge_zone: f32,
+    /// 엣지 최대 속도 (화면 px/s)
+    edge_speed: f32,
+    /// 엣지 자동 스크롤 설정 창 표시 여부
+    edge_scroll_settings_open: bool,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -851,6 +859,8 @@ pub struct FreeDfApp {
     // ---------- Panels ----------
     show_library: bool,
     show_outline: bool,
+    /// 최소(포커스) 모드 오버레이의 Bookmarks 섹션 표시 여부 (일시적).
+    show_bookmarks: bool,
     /// Library / Outline panel widths (tracked per tab & persisted in session)
     library_width: f32,
     outline_width: f32,
@@ -1053,6 +1063,9 @@ impl FreeDfApp {
         };
         let mouse_draws = if has { s.mouse_draws } else { false };
         let dictionary_enabled = if has { s.dictionary_enabled } else { false };
+        let edge_autoscroll = if has { s.edge_autoscroll } else { true };
+        let edge_zone = if has { s.edge_zone.clamp(8.0, 300.0) } else { 72.0 };
+        let edge_speed = if has { s.edge_speed.clamp(20.0, 4000.0) } else { 480.0 };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -1206,6 +1219,10 @@ impl FreeDfApp {
             custom_paper_size,
             smoothing,
             zoom_lock,
+            edge_autoscroll,
+            edge_zone,
+            edge_speed,
+            edge_scroll_settings_open: false,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1240,6 +1257,7 @@ impl FreeDfApp {
             outline_loaded: false,
             show_library,
             show_outline,
+            show_bookmarks: true,
             library_width,
             outline_width,
             show_palette,
@@ -1325,6 +1343,9 @@ impl FreeDfApp {
             text_highlight_snap: self.text_highlight_snap,
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
+            edge_autoscroll: self.edge_autoscroll,
+            edge_zone: self.edge_zone,
+            edge_speed: self.edge_speed,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -1722,6 +1743,9 @@ impl FreeDfApp {
             text_highlight_snap: self.text_highlight_snap,
             tool_order: self.tool_order.clone(),
             zoom_lock: self.zoom_lock,
+            edge_autoscroll: self.edge_autoscroll,
+            edge_zone: self.edge_zone,
+            edge_speed: self.edge_speed,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -2161,7 +2185,7 @@ impl FreeDfApp {
             self.save_session();
         }
         // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
-        // 노트에서는 PgDn 시 마지막 페이지면 새 페이지를 자동으로 추가합니다.
+        // 마지막 페이지에서는 더 이상 넘어가지 않습니다 (새 페이지 자동 추가 없음).
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
         let typing = ctx.egui_wants_keyboard_input();
         if !typing {
@@ -2205,6 +2229,96 @@ impl FreeDfApp {
                 self.tool = ToolType::Pan;
             }
         }
+    }
+
+    // ---------- Minimal-mode left overlay ----------
+
+    /// 최소(포커스) 모드의 좌측 반투명 오버레이 — Library / Outline / Bookmarks
+    /// 세 섹션. 각 섹션은 헤더(클릭 토글) + 충분한 폭(300pt)의 스크롤 내용입니다.
+    fn minimal_overlays(&mut self, ctx: &egui::Context) {
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        egui::Area::new(egui::Id::new("minimal_overlays"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 8.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, stroke))
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(300.0);
+                        // Library
+                        if ui
+                            .selectable_label(
+                                self.show_library,
+                                icon_text(ui, "Library", icons::NOTEBOOK),
+                            )
+                            .on_hover_text("Library (notes, PDFs, recents)")
+                            .clicked()
+                        {
+                            self.show_library = !self.show_library;
+                            self.save_session();
+                        }
+                        if self.show_library {
+                            egui::ScrollArea::vertical()
+                                .max_height(320.0)
+                                .show(ui, |ui| self.library_panel(ui));
+                        }
+                        ui.separator();
+                        // Outline
+                        if ui
+                            .selectable_label(
+                                self.show_outline,
+                                icon_text(ui, "Outline", icons::LIST_BULLETS),
+                            )
+                            .on_hover_text("Outline")
+                            .clicked()
+                        {
+                            self.show_outline = !self.show_outline;
+                            self.save_session();
+                        }
+                        if self.show_outline {
+                            egui::ScrollArea::vertical()
+                                .max_height(320.0)
+                                .show(ui, |ui| self.outline_panel(ui));
+                        }
+                        ui.separator();
+                        // Bookmarks
+                        if ui
+                            .selectable_label(
+                                self.show_bookmarks,
+                                icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE),
+                            )
+                            .on_hover_text("Bookmarked pages — click to jump")
+                            .clicked()
+                        {
+                            self.show_bookmarks = !self.show_bookmarks;
+                        }
+                        if self.show_bookmarks {
+                            let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
+                            egui::ScrollArea::vertical()
+                                .max_height(220.0)
+                                .show(ui, |ui| {
+                                    if pages.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new("No bookmarks yet").weak().small(),
+                                        );
+                                    } else {
+                                        for p in pages {
+                                            if ui.button(format!("Page {}", p + 1)).clicked() {
+                                                self.goto_page(p);
+                                            }
+                                        }
+                                        if ui.button("Clear all bookmarks").clicked() {
+                                            self.clear_bookmarks();
+                                        }
+                                    }
+                                });
+                        }
+                    });
+            });
     }
 
     // ---------- Compact (narrow-window) floating control ----------
@@ -2401,6 +2515,15 @@ impl eframe::App for FreeDfApp {
         }
         self.handle_shortcuts(&ctx);
 
+        // ── 스플릿 뷰: 커서가 이 창 위에서 움직이면 무조건 이 창에 포커스 ──
+        // 두 창을 나란히 띄워 놓았을 때, 클릭 없이 커서만 옮겨도 그 창이
+        // 활성화됩니다 (다음 클릭/입력이 다른 창에 먹히는 문제 해소).
+        if ctx.input(|i| i.pointer.is_moving() && i.pointer.hover_pos().is_some())
+            && ctx.input(|i| i.viewport().focused == Some(false))
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
         // 좁은 창에서는 캔버스 + 팔레트만 남기고 나머지는 자동으로 숨깁니다.
         // 판정 기준: (1) 창 폭이 모니터(뷰포트) 폭의 **절반 이하**일 때
         // (Windows 스플릿 뷰 = 정확히 절반) 또는 (2) 절대 폭이 너무 작을 때.
@@ -2470,6 +2593,7 @@ impl eframe::App for FreeDfApp {
         // 플로팅 복귀 장치: 크롬이 숨겨진(최소) 모드에서만 표시.
         // 크롬이 보일 때의 Show/Hide UI 토글은 툴바 Row1이 담당합니다.
         if minimal {
+            self.minimal_overlays(&ctx);
             self.compact_pill(&ctx, minimal, narrow);
         }
 

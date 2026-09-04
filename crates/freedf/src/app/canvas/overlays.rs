@@ -317,6 +317,25 @@ impl FreeDfApp {
                             {
                                 self.fit_height();
                             }
+                            ui.separator();
+                            // Bookmark ↔ Bookmarked — 아이콘 토글 (툴바에서 이곳으로 이동).
+                            let bookmarked = self.store.is_bookmarked(self.current_page);
+                            let bm_icon = if bookmarked {
+                                icons::BOOKMARK
+                            } else {
+                                icons::BOOKMARK_SIMPLE
+                            };
+                            if ui
+                                .selectable_label(bookmarked, icon_text(ui, "", bm_icon))
+                                .on_hover_text(if bookmarked {
+                                    "Remove bookmark from this page"
+                                } else {
+                                    "Bookmark this page"
+                                })
+                                .clicked()
+                            {
+                                self.toggle_bookmark(self.current_page);
+                            }
                         });
                     });
             });

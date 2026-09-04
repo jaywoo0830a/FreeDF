@@ -85,41 +85,6 @@ impl FreeDfApp {
                     }
                     ui.separator();
     
-                    // Bookmark the current page + jump list.
-                    let bookmarked = self.store.is_bookmarked(self.current_page);
-                    if ui
-                        .selectable_label(
-                            bookmarked,
-                            icon_text(ui, "Bookmark", icons::BOOKMARK_SIMPLE),
-                        )
-                        .on_hover_text(if bookmarked {
-                            "Remove bookmark from this page"
-                        } else {
-                            "Bookmark this page"
-                        })
-                        .clicked()
-                    {
-                        self.toggle_bookmark(self.current_page);
-                    }
-                    ui.menu_button(icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE), |ui| {
-                        let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
-                        if pages.is_empty() {
-                            ui.label("No bookmarks yet");
-                            return;
-                        }
-                        for p in pages {
-                            if ui.button(format!("Page {}", p + 1)).clicked() {
-                                ui.close();
-                                self.goto_page(p);
-                            }
-                        }
-                        ui.separator();
-                        if ui.button("Clear all bookmarks").clicked() {
-                            self.clear_bookmarks();
-                        }
-                    });
-                    ui.separator();
-    
                     // 정렬(왼쪽/가운데/오른쪽) — 패널 상태와 무관하게 **항상 표시**
                     // (패널이 펼쳐지면 사라지던 버그 패턴 제거).
                     let aligns = [
@@ -265,8 +230,30 @@ impl FreeDfApp {
                     {
                         self.canvas_settings_open = true;
                     }
+                    // 엣지 자동 스크롤 토글 + 설정 창 (커서가 가장자리에 닿으면 자동 패닝)
+                    if ui
+                        .selectable_label(
+                            self.edge_autoscroll,
+                            icon_text(ui, "", icons::ARROWS_OUT_CARDINAL),
+                        )
+                        .on_hover_text(
+                            "Edge auto-scroll: cursor near the canvas edge pans the view",
+                        )
+                        .clicked()
+                    {
+                        self.edge_autoscroll = !self.edge_autoscroll;
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                    if ui
+                        .add(egui::Button::new(icon_text(ui, "", icons::GEAR)).frame(false))
+                        .on_hover_text("Edge auto-scroll settings (edge zone / max speed)")
+                        .clicked()
+                    {
+                        self.edge_scroll_settings_open = true;
+                    }
                     ui.separator();
-    
+
                     // Color wheel (원형 팔레트 색 지정) — 전용 설정 창.
                     if ui
                         .button(icon_text(ui, "Wheel", icons::PALETTE))

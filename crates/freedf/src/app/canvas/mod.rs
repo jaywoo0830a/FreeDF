@@ -397,6 +397,32 @@ impl FreeDfApp {
         // Keep the page within the canvas (no infinite panning)
         self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
 
+        // ── 엣지 자동 스크롤 ───────────────────────────────────────────
+        // 줌인 상태에서 커서(펜 호버 포함)가 캔버스 가장자리 근처에 닿으면
+        // 그 방향으로 뷰를 자동 패닝합니다. 경계에서 0, 가장자리에서 최대
+        // 속도로 부드럽게 증가합니다. (설정: Edge auto-scroll 창)
+        if self.edge_autoscroll {
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                if canvas.contains(pos) {
+                    let zone = self.edge_zone.clamp(8.0, 300.0);
+                    let speed = self.edge_speed.clamp(20.0, 4000.0);
+                    let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
+                    let t = |d: f32| (1.0 - d / zone).max(0.0);
+                    let mut dx = 0.0f32;
+                    let mut dy = 0.0f32;
+                    dx += t(pos.x - canvas.left()) * speed * dt; // 좌측 → 오른쪽 이동
+                    dx -= t(canvas.right() - pos.x) * speed * dt; // 우측 → 왼쪽 이동
+                    dy += t(pos.y - canvas.top()) * speed * dt; // 위 → 아래 이동
+                    dy -= t(canvas.bottom() - pos.y) * speed * dt; // 아래 → 위 이동
+                    if dx != 0.0 || dy != 0.0 {
+                        self.view.pan_x += dx;
+                        self.view.pan_y += dy;
+                        self.view.clamp_pan(self.page_size_pts, canvas_size, CANVAS_MARGIN);
+                    }
+                }
+            }
+        }
+
         // Advance the page transition animation
         let mut animating = false;
         if let Some(anim) = &mut self.page_anim {

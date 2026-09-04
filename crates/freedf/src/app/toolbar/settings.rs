@@ -947,6 +947,56 @@ impl FreeDfApp {
         }
     }
 
+    /// 엣지 자동 스크롤 설정 창 내용.
+    pub(crate) fn edge_scroll_settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new(
+                "When zoomed in, moving the cursor (or pen) close to the canvas \
+                 edge pans the view in that direction.",
+            )
+            .weak(),
+        );
+        ui.add_space(6.0);
+        if ui
+            .checkbox(&mut self.edge_autoscroll, "Enable edge auto-scroll")
+            .changed()
+        {
+            self.save_default_session();
+            self.save_session();
+        }
+        ui.add_space(4.0);
+        ui.add_enabled_ui(self.edge_autoscroll, |ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edge_zone, 16.0..=300.0)
+                        .text("Edge zone (px)"),
+                )
+                .on_hover_text(
+                    "How close to the edge (in screen pixels) the cursor must be \
+                     before scrolling starts.",
+                )
+                .changed()
+            {
+                self.save_default_session();
+                self.save_session();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edge_speed, 60.0..=2000.0)
+                        .text("Max speed (px/s)"),
+                )
+                .on_hover_text(
+                    "How fast the view pans at the edge. Speed ramps up from 0 \
+                     at the zone boundary to this value at the very edge.",
+                )
+                .changed()
+            {
+                self.save_default_session();
+                self.save_session();
+            }
+        });
+    }
+
     /// 설정 플로팅 창들 렌더 (툴바 뒤에 호출).
     pub(crate) fn settings_windows(&mut self, ui: &mut egui::Ui) {
             // ── 도구별 세부 설정 플로팅 창 (툴바의 Settings 버튼으로 열림) ──
@@ -1014,6 +1064,19 @@ impl FreeDfApp {
                         self.wheel_settings_ui(ui);
                     });
                 self.wheel_settings_open = open;
+            }
+
+            // ── Edge auto-scroll 설정 플로팅 창 (Row2의 토글/기어) ──
+            if self.edge_scroll_settings_open {
+                let mut open = self.edge_scroll_settings_open;
+                egui::Window::new("Edge auto-scroll")
+                    .open(&mut open)
+                    .resizable(false)
+                    .default_width(330.0)
+                    .show(ui.ctx(), |ui| {
+                        self.edge_scroll_settings_ui(ui);
+                    });
+                self.edge_scroll_settings_open = open;
             }
     
             // ── Insert Page 플로팅 창 (메뉴 대신 — 타이핑이 유지됨) ──
