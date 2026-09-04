@@ -1,15 +1,28 @@
+# FreeDF 서버 스택 — API 백엔드(미디어 + Sync v3) + nginx
+#
+# - backend: 브리지 네트워크 + 8080 게시 → Linux VPS/Docker Desktop 공용 동작.
+#   DB는 같은 호스트 PostgreSQL을 host.docker.internal(host-gateway)로 접근.
+# - nginx:   호스트 네트워크 — 게시된 8080으로 프록시 (freedf.conf 그대로 사용).
 services:
   backend:
-    build: ./backend
-    network_mode: host            # Linux VPS: 호스트의 Postgres(5432)에 직접 접근
+    build:
+      context: ..                       # 저장소 루트 (freedf-sync 경로 의존 포함)
+      dockerfile: server/backend/Dockerfile
     restart: unless-stopped
-    env_file: ./backend/.env      # server/backend/init.sh 가 생성
+    env_file: ./backend/.env            # server/backend/init.sh 가 생성
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://freedf:freedf@localhost:5432/freedf}
-      MEDIA_DIR: ${MEDIA_DIR:-/srv/freedf-server/media}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://media.example.com}
-      FREEDF_API_KEY: ${FREEDF_API_KEY:-}
-      BIND: ${BIND:-127.0.0.1:8080}
+      # 컨테이너 내부 고정 경로 — 호스트 MEDIA_DIR이 여기로 마운트됨.
+      MEDIA_DIR: /srv/freedf-server/media
+      # 게시 포트로 도달하도록 컨테이너 안에선 0.0.0.0 바인딩.
+      BIND: "0.0.0.0:8080"
+      # server/backend/up.sh 가 ../db/.env 기반으로 조립해 넘겨줌.
+      DATABASE_URL: ${CONTAINER_DB_URL:-postgres://freedf:freedf@host.docker.internal:5432/freedf}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # VPS에서 외부 노출이 싫으면 FREEDF_BACKEND_BIND=127.0.0.1 로 제한
+      # (nginx가 호스트 네트워크에서 8080으로 프록시).
+      - "${FREEDF_BACKEND_BIND:-0.0.0.0}:${FREEDF_BACKEND_PORT:-8080}:8080"
     volumes:
       - ${MEDIA_DIR:-/srv/freedf-server/media}:/srv/freedf-server/media
 

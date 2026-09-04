@@ -1,0 +1,5 @@
+# Docker 빌드 컨텍스트(저장소 루트) 제외 목록 — server/docker-compose.yml 의
+# backend 이미지 빌드에서 사용됩니다 (rust:1.98-slim, freedf-sync 경로 의존 포함).
+**/target
+**/.env
+.git
