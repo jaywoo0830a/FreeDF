@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 freedf-core = { path = "../freedf-core" }
+# Sync v3 프로토콜 전용 객체 (Snapshot/Patch/SyncClient) — 서버와 공유.
+freedf-sync = { path = "../freedf-sync" }
 eframe.workspace = true
 egui.workspace = true
 pdfium-render.workspace = true

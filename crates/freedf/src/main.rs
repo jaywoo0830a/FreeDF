@@ -18,6 +18,7 @@ mod recent;
 mod server;
 mod settings;
 mod storage;
+mod sync_client;
 mod theme;
 
 use eframe::egui;

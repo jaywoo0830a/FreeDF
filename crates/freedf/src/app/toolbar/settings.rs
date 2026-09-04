@@ -1047,13 +1047,24 @@ impl FreeDfApp {
             {
                 let client = MediaClient::new(&self.media_config);
                 let start = std::time::Instant::now();
-                self.server_msg = Some(match client.health() {
-                    Ok(()) => (
-                        true,
-                        format!("Connected — {} ms", start.elapsed().as_millis()),
-                    ),
+                let result = match client.health() {
+                    Ok(()) => {
+                        // 같은 서버를 Sync v3 프로토콜 클라이언트로도 확인 —
+                        // 앱의 v3 연결 지점이 살아 있는지 검증.
+                        match crate::sync_client::sync_client(&self.media_config) {
+                            Some(sync) => match sync.health() {
+                                Ok(()) => (
+                                    true,
+                                    format!("Connected — {} ms (Sync v3)", start.elapsed().as_millis()),
+                                ),
+                                Err(e) => (false, format!("Sync v3 check failed: {e}")),
+                            },
+                            None => (true, format!("Connected — {} ms", start.elapsed().as_millis())),
+                        }
+                    }
                     Err(e) => (false, e),
-                });
+                };
+                self.server_msg = Some(result);
             }
             if ui.button("Save").clicked() {
                 let path = MediaServerConfig::config_path();

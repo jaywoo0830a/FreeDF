@@ -33,11 +33,16 @@ pub struct SyncClient {
 
 impl SyncClient {
     pub fn new(base_url: &str, api_key: &str) -> Result<Self> {
+        Self::new_with_timeout(base_url, api_key, API_TIMEOUT)
+    }
+
+    /// 타임아웃을 지정해 생성 (UI 즉시 응답용으로 짧게 줄 수 있음).
+    pub fn new_with_timeout(base_url: &str, api_key: &str, timeout: Duration) -> Result<Self> {
         let base = base_url.trim_end_matches('/').to_string();
         if base.is_empty() || !(base.starts_with("http://") || base.starts_with("https://")) {
             return Err(SyncError::Transport(format!("invalid base_url: {base_url}")));
         }
-        let agent = AgentBuilder::new().timeout(API_TIMEOUT).build();
+        let agent = AgentBuilder::new().timeout(timeout).build();
         Ok(Self {
             agent,
             base,

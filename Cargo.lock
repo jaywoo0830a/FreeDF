@@ -1346,6 +1346,7 @@ dependencies = [
  "egui",
  "egui_phosphor_icons",
  "freedf-core",
+ "freedf-sync",
  "pdfium-render",
  "postgres",
  "rfd",
