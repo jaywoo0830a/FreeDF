@@ -1,4 +1,4 @@
-//! Media 패널 — 문서의 녹음 목록(스트리밍 재생/다운로드/삭제).
+//! Media 패널 — 문서의 미디어 목록(재생/미리보기/외부 열기/다운로드/삭제).
 
 use super::*;
 
@@ -8,11 +8,11 @@ fn fmt_secs(d: std::time::Duration) -> String {
 }
 
 impl FreeDfApp {
-    /// 녹음(미디어) 패널 — 현재 문서의 녹음 업로드/목록/재생/삭제.
+    /// 미디어 패널 — 현재 문서의 미디어 업로드/목록/재생/미리보기/삭제.
     pub(crate) fn media_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.strong("Recordings");
+            ui.strong("Media");
             ui.add_space(6.0);
             if ui
                 .small_button(icon_text(ui, "", icons::ARROWS_CLOCKWISE))
@@ -23,7 +23,7 @@ impl FreeDfApp {
             }
             if ui
                 .small_button(icon_text(ui, "Upload", icons::UPLOAD_SIMPLE))
-                .on_hover_text("Upload an audio file to this document")
+                .on_hover_text("Upload an audio / image / video file to this document")
                 .clicked()
             {
                 self.upload_media_dialog();
@@ -119,18 +119,59 @@ impl FreeDfApp {
             return;
         }
         let Some(doc_id) = self.doc_id else {
-            ui.label("Open a document to manage its recordings.");
+            ui.label("Open a document to manage its media.");
             return;
         };
         // 문서가 바뀌었으면 목록 자동 갱신 (1회 — media_refresh가 id를 기록).
         if self.media_loaded_for != Some(doc_id) {
             self.media_items.clear();
+            self.media_preview = None;
             self.media_refresh();
         }
         if let Some(status) = &self.media_status {
             ui.colored_label(ui.visuals().text_color(), status);
             ui.add_space(2.0);
         }
+
+        // ── 인앱 이미지 미리보기 ──
+        let mut close_preview = false;
+        let preview = match &mut self.media_preview {
+            Some(pv) => {
+                if pv.texture.is_none() {
+                    let image = pv.image.clone();
+                    pv.texture = Some(ui.ctx().load_texture(
+                        format!("media-preview-{}", pv.id),
+                        image,
+                        egui::TextureOptions::LINEAR,
+                    ));
+                }
+                Some((pv.texture.as_ref().expect("texture").clone(), pv.name.clone()))
+            }
+            None => None,
+        };
+        if let Some((tex, name)) = preview {
+            ui.horizontal(|ui| {
+                ui.strong("Preview");
+                ui.label(egui::RichText::new(name).weak());
+                if ui
+                    .small_button(icon_text(ui, "", icons::X))
+                    .on_hover_text("Close preview")
+                    .clicked()
+                {
+                    close_preview = true;
+                }
+            });
+            ui.add(
+                egui::Image::new(&tex)
+                    .max_width(ui.available_width().min(480.0))
+                    .max_height(280.0),
+            );
+            ui.separator();
+        }
+        if close_preview {
+            self.media_preview = None;
+        }
+
         if self.media_items.is_empty() {
             return;
         }
@@ -139,12 +180,29 @@ impl FreeDfApp {
             let items = self.media_items.clone();
             for item in &items {
                 ui.horizontal(|ui| {
-                    if ui
-                        .small_button(icon_text(ui, "", icons::PLAY))
-                        .on_hover_text("Stream and play inside the app")
-                        .clicked()
+                    if item.kind == "audio"
+                        && ui
+                            .small_button(icon_text(ui, "", icons::PLAY))
+                            .on_hover_text("Stream and play inside the app")
+                            .clicked()
                     {
                         self.stream_media_item(item.clone());
+                    }
+                    if item.kind == "photo"
+                        && ui
+                            .small_button(icon_text(ui, "", icons::IMAGE_SQUARE))
+                            .on_hover_text("Preview this image inside the app")
+                            .clicked()
+                    {
+                        self.preview_media_item(item.clone());
+                    }
+                    if (item.kind == "video" || item.kind == "photo")
+                        && ui
+                            .small_button(icon_text(ui, "", icons::ARROW_SQUARE_OUT))
+                            .on_hover_text("Download and open with your default app")
+                            .clicked()
+                    {
+                        self.open_media_externally(item.clone());
                     }
                     if ui
                         .small_button(icon_text(ui, "", icons::DOWNLOAD_SIMPLE))
@@ -161,6 +219,7 @@ impl FreeDfApp {
                                 .sense(egui::Sense::hover()),
                         )
                         .on_hover_text(&item.name);
+                    ui.label(egui::RichText::new(&item.kind).weak().small());
                     ui.label(
                         egui::RichText::new(format_bytes(item.size))
                             .weak()

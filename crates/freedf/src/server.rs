@@ -121,16 +121,21 @@ impl MediaClient {
         }
     }
 
-    /// 미디어 목록 (최신순). `doc_id`가 Some이면 해당 문서만.
+    /// 미디어 목록 (최신순). `doc_id`가 Some이면 해당 문서만,
+    /// `kind`가 Some이면 종류(audio/photo/video/file) 필터.
     pub fn list(
         &self,
         doc_id: Option<i64>,
+        kind: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<MediaObject>, String> {
         let mut query = vec![format!("limit={}", limit.clamp(1, 500)), format!("offset={offset}")];
         if let Some(d) = doc_id {
             query.push(format!("doc_id={d}"));
+        }
+        if let Some(k) = kind {
+            query.push(format!("kind={}", urlencode(k)));
         }
         let resp = self.get(&format!("/api/media?{}", query.join("&")))?;
         resp.into_json::<Vec<MediaObject>>().map_err(|e| e.to_string())
@@ -201,15 +206,38 @@ pub fn mime_for_ext(file_name: &str) -> &'static str {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "m4a" | "m4b" | "mp4" => "audio/mp4",
+        // 오디오
+        "m4a" | "m4b" => "audio/mp4",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
-        "webm" => "audio/webm",
         "ogg" | "oga" => "audio/ogg",
         "aac" => "audio/aac",
         "flac" => "audio/flac",
         "opus" => "audio/opus",
+        // 비디오
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        "avi" => "video/x-msvideo",
+        // 이미지
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
         _ => "application/octet-stream",
+    }
+}
+
+/// 파일 확장자 → 미디어 종류 (`audio` | `photo` | `video` | `file`).
+/// 서버의 kind 파라미터로 그대로 사용됩니다.
+pub fn media_kind_for_ext(file_name: &str) -> &'static str {
+    match mime_for_ext(file_name) {
+        m if m.starts_with("audio/") => "audio",
+        m if m.starts_with("image/") => "photo",
+        m if m.starts_with("video/") => "video",
+        _ => "file",
     }
 }
 
@@ -300,7 +328,19 @@ mod tests {
         assert_eq!(mime_for_ext("rec.m4a"), "audio/mp4");
         assert_eq!(mime_for_ext("REC.MP3"), "audio/mpeg");
         assert_eq!(mime_for_ext("voice.wav"), "audio/wav");
+        assert_eq!(mime_for_ext("clip.mp4"), "video/mp4");
+        assert_eq!(mime_for_ext("clip.webm"), "video/webm");
+        assert_eq!(mime_for_ext("photo.png"), "image/png");
+        assert_eq!(mime_for_ext("photo.jpg"), "image/jpeg");
         assert_eq!(mime_for_ext("noext"), "application/octet-stream");
+    }
+
+    #[test]
+    fn media_kind_infers_from_extension() {
+        assert_eq!(media_kind_for_ext("rec.wav"), "audio");
+        assert_eq!(media_kind_for_ext("photo.png"), "photo");
+        assert_eq!(media_kind_for_ext("clip.mp4"), "video");
+        assert_eq!(media_kind_for_ext("doc.pdf"), "file");
     }
 
     /// 실서버 왕복 — `FREEDF_TEST_MEDIA=1 cargo test -p freedf media_client_against_live_server`
@@ -325,11 +365,11 @@ mod tests {
         assert_eq!(obj.name, "client-upload.m4a");
         assert_eq!(obj.doc_id, Some(43));
 
-        let items = client.list(Some(43), 10, 0).expect("list");
+        let items = client.list(Some(43), Some("audio"), 10, 0).expect("list");
         assert!(items.iter().any(|m| m.id == obj.id), "uploaded item missing");
 
         client.delete(obj.id).expect("delete");
-        let after = client.list(Some(43), 10, 0).expect("list after delete");
+        let after = client.list(Some(43), Some("audio"), 10, 0).expect("list after delete");
         assert!(!after.iter().any(|m| m.id == obj.id));
     }
 }

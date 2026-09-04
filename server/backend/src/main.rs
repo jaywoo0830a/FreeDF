@@ -57,6 +57,8 @@ struct ListParams {
     doc_id: Option<i64>,
     limit: Option<i64>,
     offset: Option<i64>,
+    /// 종류 필터 — audio / photo / video / file (없으면 전체).
+    kind: Option<String>,
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
@@ -253,9 +255,10 @@ async fn list(
             "SELECT id, doc_id, kind, name, mime, size, object_key \
              FROM media_objects \
              WHERE ($1::bigint IS NULL OR doc_id = $1) \
+               AND ($2::text IS NULL OR kind = $2) \
              ORDER BY created_at DESC, id DESC \
-             LIMIT $2 OFFSET $3",
-            &[&params.doc_id, &limit, &offset],
+             LIMIT $3 OFFSET $4",
+            &[&params.doc_id, &params.kind, &limit, &offset],
         )
         .await
     {

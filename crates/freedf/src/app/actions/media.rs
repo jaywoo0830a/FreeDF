@@ -16,12 +16,12 @@ impl FreeDfApp {
         self.media_rx = Some(rx);
         // 실패해도 재시도 루프가 생기지 않게 문서 id를 먼저 기록.
         self.media_loaded_for = Some(doc_id);
-        self.begin_loading("Loading recordings…");
+        self.begin_loading("Loading media…");
         std::thread::spawn(move || {
             let res = match MediaClient::new_enabled(&config) {
                 None => Err("Media server is not enabled — open Server settings.".to_string()),
                 Some(client) => client
-                    .list(Some(doc_id), 100, 0)
+                    .list(Some(doc_id), None, 100, 0)
                     .map(MediaOutcome::Listed),
             };
             let _ = tx.send(res);
@@ -39,9 +39,18 @@ impl FreeDfApp {
         {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter(
-                    "Audio files",
-                    &["m4a", "mp3", "wav", "webm", "ogg", "aac", "flac", "m4b", "opus"],
+                    "All media",
+                    &[
+                        "m4a", "m4b", "mp3", "wav", "webm", "ogg", "aac", "flac", "opus",
+                        "mp4", "mov", "mkv", "avi", "png", "jpg", "jpeg", "gif", "bmp",
+                    ],
                 )
+                .add_filter(
+                    "Audio",
+                    &["m4a", "m4b", "mp3", "wav", "ogg", "aac", "flac", "opus"],
+                )
+                .add_filter("Video", &["mp4", "webm", "mov", "mkv", "avi"])
+                .add_filter("Images", &["png", "jpg", "jpeg", "gif", "bmp"])
                 .pick_file()
             {
                 self.upload_media_path(&path);
@@ -50,8 +59,8 @@ impl FreeDfApp {
         #[cfg(not(target_os = "windows"))]
         {
             self.modal = Some(ModalState::ask_text(
-                "Upload recording",
-                "Enter the audio file path (e.g. /home/me/rec.m4a)",
+                "Upload media",
+                "Enter the file path (audio / image / video)",
                 TextAction::UploadMedia,
             ));
         }
@@ -86,8 +95,9 @@ impl FreeDfApp {
                     return Err("File is larger than 200 MB (server limit).".into());
                 }
                 let mime = crate::server::mime_for_ext(&name);
+                let kind = crate::server::media_kind_for_ext(&name);
                 client
-                    .upload(Some(doc_id), "audio", &name, mime, &bytes)
+                    .upload(Some(doc_id), kind, &name, mime, &bytes)
                     .map(MediaOutcome::Uploaded)
             })();
             let _ = tx.send(res);
@@ -186,13 +196,18 @@ impl FreeDfApp {
         }
     }
 
-    /// 녹음 다운로드 경로 선택 — Windows는 네이티브 대화상자, 그 외엔 입력 모달.
+    /// 미디어 다운로드 경로 선택 — Windows는 네이티브 대화상자, 그 외엔 입력 모달.
     pub(crate) fn download_media_dialog(&mut self, item: MediaObject) {
         #[cfg(target_os = "windows")]
         {
+            let (filter_name, exts): (&str, &[&str]) = match item.kind.as_str() {
+                "photo" => ("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
+                "video" => ("Video", &["mp4", "webm", "mov", "mkv", "avi"]),
+                _ => ("Audio", &["wav", "m4a", "mp3", "ogg", "webm", "aac", "flac", "opus"]),
+            };
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name(&item.name)
-                .add_filter("Audio", &["wav", "m4a", "mp3", "ogg", "webm", "aac"])
+                .add_filter(filter_name, exts)
                 .save_file()
             {
                 self.download_media_action(item.url, item.name, path);
@@ -201,8 +216,8 @@ impl FreeDfApp {
         #[cfg(not(target_os = "windows"))]
         {
             self.modal = Some(ModalState::ask_text_prefilled(
-                "Download recording",
-                "Enter the save path (e.g. /home/me/Downloads/rec.wav)",
+                "Download media",
+                "Enter the save path (e.g. /home/me/Downloads/photo.png)",
                 TextAction::DownloadMedia {
                     url: item.url,
                     name: item.name.clone(),
@@ -217,21 +232,118 @@ impl FreeDfApp {
         let (tx, rx) = std::sync::mpsc::channel();
         self.pdf_dl_rx = Some(rx);
         std::thread::spawn(move || {
-            let res = ureq::get(&url)
-                .call()
-                .map_err(|e| format!("Download failed for {name}: {e}"))
-                .and_then(|resp| {
-                    let mut reader = resp.into_reader();
-                    let mut bytes = Vec::new();
-                    std::io::Read::read_to_end(&mut reader, &mut bytes)
-                        .map_err(|e| e.to_string())?;
+            let res = download_bytes(&url)
+                .and_then(|bytes| {
                     std::fs::write(&path, &bytes)
                         .map_err(|e| format!("Could not write {}: {e}", path.display()))
                 })
-                .map(|_| format!("Saved recording to {}", path.display()));
+                .map(|_| format!("Saved {name} to {}", path.display()));
             let _ = tx.send(res);
         });
     }
+
+    /// 이미지를 서버에서 받아 앱 안에서 미리 봅니다 (비동기 — UI를 막지 않음).
+    pub(crate) fn preview_media_item(&mut self, item: MediaObject) {
+        if self.media_rx.is_some() || self.loading.is_some() {
+            self.media_status = Some("Another media operation is in progress.".into());
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.media_rx = Some(rx);
+        self.media_status = Some(format!("Loading preview of {}…", item.name));
+        let url = item.url;
+        let id = item.id;
+        let name = item.name;
+        std::thread::spawn(move || {
+            let res = (|| -> Result<MediaOutcome, String> {
+                let bytes = download_bytes(&url)?;
+                if bytes.len() > 50 * 1024 * 1024 {
+                    return Err("Image is too large to preview (50 MB limit).".into());
+                }
+                let image = decode_image_bytes(&bytes)?;
+                Ok(MediaOutcome::Previewed { id, name, image })
+            })();
+            let _ = tx.send(res);
+        });
+    }
+
+    /// 비디오/이미지를 로컬 캐시로 받아 시스템 기본 앱으로 엽니다 (비동기).
+    pub(crate) fn open_media_externally(&mut self, item: MediaObject) {
+        if self.media_rx.is_some() || self.loading.is_some() {
+            self.media_status = Some("Another media operation is in progress.".into());
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.media_rx = Some(rx);
+        self.media_status = Some(format!("Downloading {}…", item.name));
+        let url = item.url;
+        let name = item.name;
+        std::thread::spawn(move || {
+            let res = (|| -> Result<MediaOutcome, String> {
+                let bytes = download_bytes(&url)?;
+                let safe = std::path::Path::new(&name)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "media.bin".into());
+                let dir = std::env::temp_dir().join("freedf-open");
+                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                let path = dir.join(format!("{}-{safe}", now_ms()));
+                std::fs::write(&path, &bytes)
+                    .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+                open_externally(&path)?;
+                Ok(MediaOutcome::OpenedExternally { name })
+            })();
+            let _ = tx.send(res);
+        });
+    }
+}
+
+/// URL에서 바이트 전체를 받습니다 (공유 헬퍼 — 다운로드/미리보기/외부 열기).
+fn download_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let resp = ureq::get(url)
+        .call()
+        .map_err(|e| format!("Download failed: {e}"))?;
+    let mut reader = resp.into_reader();
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
+/// 이미지 바이트 → egui 색상 이미지 (PNG/JPEG/GIF/WebP/BMP).
+pub(crate) fn decode_image_bytes(bytes: &[u8]) -> Result<egui::ColorImage, String> {
+    let img = image::load_from_memory(bytes).map_err(|e| format!("Unsupported image: {e}"))?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        rgba.as_raw(),
+    ))
+}
+
+/// 시스템 기본 앱으로 파일을 엽니다
+/// (Windows: `cmd /C start`, macOS: `open`, 그 외: `xdg-open`).
+fn open_externally(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "start", "", path.to_str().ok_or("invalid file path")?]);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(path);
+        c
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(path);
+        c
+    };
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Could not open {}: {e}", path.display()))
 }
 
 impl FreeDfApp {
@@ -263,5 +375,34 @@ impl FreeDfApp {
         };
         let path = rec.stop();
         self.upload_media_path(&path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_image_bytes;
+
+    /// 1×1 빨간 PNG를 인코딩 → 디코딩 왕복 검증 (image 크레이트 연결 확인).
+    #[test]
+    fn decode_image_bytes_roundtrips_png() {
+        let img = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encode png");
+        let bytes = png.into_inner();
+
+        let decoded = decode_image_bytes(&bytes).expect("decode png");
+        assert_eq!(decoded.size, [1, 1]);
+        assert_eq!(
+            decoded.pixels,
+            vec![egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)]
+        );
+    }
+
+    /// 깨진 바이트는 지원되지 않는 이미지 오류가 되어야 합니다.
+    #[test]
+    fn decode_image_bytes_rejects_garbage() {
+        assert!(decode_image_bytes(b"not an image at all").is_err());
     }
 }

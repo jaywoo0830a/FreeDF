@@ -618,6 +618,23 @@ pub(crate) enum MediaOutcome {
     Listed(Vec<MediaObject>),
     Uploaded(MediaObject),
     Deleted,
+    /// 이미지 미리보기 (서버에서 받아 디코딩 완료 — id/이름/픽셀).
+    Previewed {
+        id: i64,
+        name: String,
+        image: egui::ColorImage,
+    },
+    /// 시스템 기본 앱으로 열기 완료 (다운로드 + 실행).
+    OpenedExternally { name: String },
+}
+
+/// 인앱 이미지 미리보기 상태 (미디어 패널에 표시).
+pub(crate) struct MediaPreview {
+    pub id: i64,
+    pub name: String,
+    pub image: egui::ColorImage,
+    /// 미리보기 텍스처 (첫 표시 시 생성, None이면 지연 로드).
+    pub texture: Option<egui::TextureHandle>,
 }
 
 /// 문서 열기 로더 진행 메시지 — 단계(무슨 데이터를 가져오는지) + 완료.
@@ -1171,6 +1188,8 @@ pub struct FreeDfApp {
     media_loaded_for: Option<i64>,
     /// 패널 안 마지막 작업 결과 메시지.
     media_status: Option<String>,
+    /// 인앱 이미지 미리보기 (사진 행의 Preview 버튼).
+    media_preview: Option<MediaPreview>,
     // ---------- Close confirmation ----------
     asking_close: bool,
     quitting: bool,
@@ -1573,6 +1592,7 @@ impl FreeDfApp {
             media_items: Vec::new(),
             media_loaded_for: None,
             media_status: None,
+            media_preview: None,
             asking_close: false,
             quitting: false,
         }
@@ -2161,7 +2181,7 @@ impl FreeDfApp {
                 match outcome {
                     MediaOutcome::Listed(items) => {
                         self.media_status = if items.is_empty() {
-                            Some("No recordings yet.".into())
+                            Some("No media yet.".into())
                         } else {
                             None
                         };
@@ -2174,6 +2194,18 @@ impl FreeDfApp {
                     MediaOutcome::Deleted => {
                         self.media_status = Some("Deleted.".into());
                         self.media_list_job();
+                    }
+                    MediaOutcome::Previewed { id, name, image } => {
+                        self.media_status = None;
+                        self.media_preview = Some(MediaPreview {
+                            id,
+                            name,
+                            image,
+                            texture: None,
+                        });
+                    }
+                    MediaOutcome::OpenedExternally { name } => {
+                        self.media_status = Some(format!("Opened {name} with your default app."));
                     }
                 }
             }
