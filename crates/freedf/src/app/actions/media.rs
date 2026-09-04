@@ -141,3 +141,35 @@ fn open_in_system_player(url: &str) -> std::io::Result<()> {
         .spawn()
         .map(|_| ())
 }
+
+impl FreeDfApp {
+    /// 마이크 녹음 시작 — WAV 임시 파일로 기록하다가 정지 시 업로드됩니다.
+    pub(crate) fn start_recording_action(&mut self) {
+        if self.recording.is_some() {
+            return;
+        }
+        let Some(doc_id) = self.doc_id else {
+            self.show_error("Open a document to record into.".into());
+            return;
+        };
+        let dir = std::env::temp_dir().join("freedf-recordings");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = format!("rec-{doc_id}-{}", now_ms());
+        match crate::recording::start_recording(&dir, &name) {
+            Ok(rec) => {
+                self.media_status = Some("Recording…".into());
+                self.recording = Some(rec);
+            }
+            Err(e) => self.show_error(format!("Could not start recording: {e}")),
+        }
+    }
+
+    /// 녹음 정지 + 업로드 (패널의 Stop 버튼).
+    pub(crate) fn stop_recording_action(&mut self) {
+        let Some(rec) = self.recording.take() else {
+            return;
+        };
+        let path = rec.stop();
+        self.upload_media_path(&path);
+    }
+}

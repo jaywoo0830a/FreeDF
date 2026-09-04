@@ -1131,6 +1131,8 @@ pub struct FreeDfApp {
     pdf_dl_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// 마지막 pen-up 시각 — 유휴 자동 저장 타이머 기준.
     last_pen_up_ms: u64,
+    /// 진행 중인 마이크 녹음 (없으면 None).
+    recording: Option<crate::recording::Recorder>,
     /// 백그라운드 저장 진행 채널 (단계/완료).
     save_rx: Option<std::sync::mpsc::Receiver<SaveMsg>>,
     /// 라이브러리 삭제(노트/PDF) 백그라운드 작업 채널 — 여러 배치가 동시에
@@ -1542,6 +1544,7 @@ impl FreeDfApp {
             media_rx: None,
             pdf_dl_rx: None,
             last_pen_up_ms: 0,
+            recording: None,
             save_rx: None,
             library_rx: Vec::new(),
             pdf_import_rx: None,
@@ -3146,7 +3149,7 @@ impl eframe::App for FreeDfApp {
 
         // High-refresh support: keep repainting while a document is open so
         // pen input and ink rendering stay smooth (120Hz+ displays).
-        if self.document.is_some() || self.active_stroke.is_some() {
+        if self.document.is_some() || self.active_stroke.is_some() || self.recording.is_some() {
             ctx.request_repaint();
         }
     }

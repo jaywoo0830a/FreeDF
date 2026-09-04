@@ -199,6 +199,8 @@ cd server/db && ./init.sh && ./up.sh
   disappears (even under floating overlays / side panels)
 - 💾 **Auto-save & close prompt** — strokes and pages are saved continuously, and
   quitting asks whether to save first
+- 🎙️ **Microphone recording** — the Recordings panel records audio from your
+  microphone (WAV) and uploads it to the server automatically (Windows/macOS)
 - 🧪 **Full test coverage** — unit tests for every core feature plus end-to-end
   integration tests, all runnable without a GUI or PDFium
 

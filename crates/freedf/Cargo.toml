@@ -22,7 +22,14 @@ serde_json.workspace = true
 ureq = { version = "2", features = ["json"] }
 # Phosphor icons for egui (only the regular style to keep the binary small)
 egui_phosphor_icons = { version = "0.5", default-features = false }
+# WAV 파일 저장 (순수 Rust — 녹음 출력)
+hound = "3"
 
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = "0.15"
+
+# 마이크 캡처 — Windows(WASAPI)/macOS(CoreAudio)에서 자동 포함.
+# Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+cpal = "0.15"

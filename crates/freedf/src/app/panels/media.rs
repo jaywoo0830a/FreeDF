@@ -23,6 +23,31 @@ impl FreeDfApp {
             {
                 self.upload_media_dialog();
             }
+            ui.add_space(6.0);
+            let elapsed = self
+                .recording
+                .as_ref()
+                .map(|r| now_ms().saturating_sub(r.started_ms()) / 1000)
+                .unwrap_or(0);
+            if self.recording.is_some() {
+                ui.colored_label(
+                    egui::Color32::RED,
+                    format!("● {:02}:{:02}", elapsed / 60, elapsed % 60),
+                );
+                if ui
+                    .small_button(icon_text(ui, "Stop", icons::STOP))
+                    .on_hover_text("Stop and upload this recording")
+                    .clicked()
+                {
+                    self.stop_recording_action();
+                }
+            } else if ui
+                .small_button(icon_text(ui, "Record", icons::MICROPHONE))
+                .on_hover_text("Record audio from your microphone")
+                .clicked()
+            {
+                self.start_recording_action();
+            }
         });
         ui.separator();
 

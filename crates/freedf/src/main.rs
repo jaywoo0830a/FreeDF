@@ -11,6 +11,7 @@ mod app;
 mod fonts;
 mod pdf;
 mod recent;
+mod recording;
 mod server;
 mod settings;
 mod storage;
