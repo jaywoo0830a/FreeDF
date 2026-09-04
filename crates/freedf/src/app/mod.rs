@@ -654,8 +654,6 @@ pub struct TabEntry {
     show_library: bool,
     show_outline: bool,
     show_search: bool,
-    library_width: f32,
-    outline_width: f32,
     tool: ToolType,
     color_family: ColorFamily,
     pen_color: [u8; 4],
@@ -1049,9 +1047,6 @@ pub struct FreeDfApp {
     show_outline: bool,
     /// 최소(포커스) 모드 오버레이의 Bookmarks 섹션 표시 여부 (일시적).
     show_bookmarks: bool,
-    /// Library / Outline panel widths (tracked per tab & persisted in session)
-    library_width: f32,
-    outline_width: f32,
     /// Canvas right-side writing-tool / color palette (global pref)
     show_palette: bool,
     /// Frequently-used pen colors (global pref)
@@ -1211,8 +1206,6 @@ impl FreeDfApp {
         };
         let show_library = if has { s.show_notes } else { true };
         let show_outline = if has { s.show_outline } else { false };
-        let library_width = if has { s.library_width } else { 260.0 };
-        let outline_width = if has { s.outline_width } else { 240.0 };
         let show_palette = if has { s.show_palette } else { true };
         let mut favorite_colors = if has {
             s.favorite_colors.clone()
@@ -1491,8 +1484,6 @@ impl FreeDfApp {
             show_library,
             show_outline,
             show_bookmarks: false,
-            library_width,
-            outline_width,
             show_palette,
             favorite_colors,
             text_highlight_snap,
@@ -1571,8 +1562,6 @@ impl FreeDfApp {
             paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
-            library_width: self.library_width,
-            outline_width: self.outline_width,
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
@@ -1997,8 +1986,6 @@ impl FreeDfApp {
             paper_style_settings: self.paper_style_settings,
             show_notes: self.show_library,
             show_outline: self.show_outline,
-            library_width: self.library_width,
-            outline_width: self.outline_width,
             show_palette: self.show_palette,
             favorite_colors: self.favorite_colors.clone(),
             text_highlight_snap: self.text_highlight_snap,
@@ -2319,8 +2306,6 @@ impl FreeDfApp {
         if self.show_library || self.show_outline {
             self.show_bookmarks = false;
         }
-        self.library_width = s.library_width.clamp(160.0, 460.0);
-        self.outline_width = s.outline_width.clamp(160.0, 460.0);
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
             self.view.zoom = s.zoom.clamp(MIN_ZOOM, MAX_ZOOM);

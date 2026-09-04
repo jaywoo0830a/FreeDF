@@ -607,36 +607,11 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
-                ui.separator();
-                // 종이 질감 — 페이지 위 은은한 섬유 노이즈 (잉크/줄 아래).
-                if ui
-                    .checkbox(&mut self.paper_texture, "Paper texture")
-                    .on_hover_text(
-                        "Subtle fiber noise over the page — realistic paper grain \
-                         (drawn under the ruling and your ink).",
-                    )
-                    .changed()
-                {
-                    self.save_default_session();
-                    self.save_session();
-                }
-                if self.paper_texture {
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut self.paper_texture_strength, 0.0..=1.0)
-                                .text("Grain strength"),
-                        )
-                        .on_hover_text("How visible the paper grain is (0 = invisible).")
-                        .changed()
-                    {
-                        self.save_default_session();
-                        self.save_session();
-                    }
-                }
             });
-        // ── 표면 물리 모델 (docs/paper-texture-model.md §6) ──
-        egui::CollapsingHeader::new("Surface & lighting")
-            .id_salt("paper_win_surface")
+        // ── 종이 질감 — 물리 기반 표면 모델 (docs/paper-texture-model.md) ──
+        // 모든 질감 설정을 한 곳에 통합: 켜기/끄기 + 강도 + 표면·조명 10개.
+        egui::CollapsingHeader::new("Paper texture")
+            .id_salt("paper_win_texture")
             .default_open(false)
             .show(ui, |ui| {
                 ui.label(
@@ -647,9 +622,23 @@ impl FreeDfApp {
                     .weak()
                     .small(),
                 );
-                let mut changed = false;
-                let s = &mut self.paper_surface;
-                egui::Grid::new("paper_surface_grid")
+                let mut changed = ui
+                    .checkbox(&mut self.paper_texture, "Paper texture")
+                    .on_hover_text(
+                        "Fiber grain over the page (drawn under the ruling and your ink).\n\
+                         Quick toggle: the 'Paper Texture' button on the toolbar.",
+                    )
+                    .changed();
+                ui.add_enabled_ui(self.paper_texture, |ui| {
+                    changed |= ui
+                        .add(
+                            egui::Slider::new(&mut self.paper_texture_strength, 0.0..=1.0)
+                                .text("Strength"),
+                        )
+                        .on_hover_text("How visible the paper grain is (0 = invisible).")
+                        .changed();
+                    let s = &mut self.paper_surface;
+                    egui::Grid::new("paper_surface_grid")
                     .num_columns(2)
                     .spacing(egui::vec2(8.0, 2.0))
                     .show(ui, |ui| {
@@ -711,6 +700,7 @@ impl FreeDfApp {
                             .changed();
                         ui.end_row();
                     });
+                });
                 if changed {
                     self.save_default_session();
                     self.save_session();

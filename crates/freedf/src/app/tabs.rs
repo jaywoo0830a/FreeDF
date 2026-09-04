@@ -122,8 +122,6 @@ impl FreeDfApp {
         tab.show_library = self.show_library;
         tab.show_outline = self.show_outline;
         tab.show_search = self.show_search;
-        tab.library_width = self.library_width;
-        tab.outline_width = self.outline_width;
         tab.tool = self.tool;
         tab.color_family = self.color_family;
         tab.pen_color = self.pen_color;
@@ -172,8 +170,6 @@ impl FreeDfApp {
             show_library,
             show_outline,
             show_search,
-            library_width,
-            outline_width,
             tool,
             color_family,
             pen_color,
@@ -220,8 +216,6 @@ impl FreeDfApp {
                 tab.show_library,
                 tab.show_outline,
                 tab.show_search,
-                tab.library_width,
-                tab.outline_width,
                 tab.tool,
                 tab.color_family,
                 tab.pen_color,
@@ -285,8 +279,6 @@ impl FreeDfApp {
             self.show_bookmarks = false;
         }
         self.show_search = show_search;
-        self.library_width = library_width;
-        self.outline_width = outline_width;
         self.tool = tool;
         self.color_family = color_family;
         self.pen_color = pen_color;
@@ -374,8 +366,6 @@ impl FreeDfApp {
             show_library: self.show_library,
             show_outline: self.show_outline,
             show_search: self.show_search,
-            library_width: self.library_width,
-            outline_width: self.outline_width,
             tool: self.tool,
             color_family: self.color_family,
             pen_color: self.pen_color,

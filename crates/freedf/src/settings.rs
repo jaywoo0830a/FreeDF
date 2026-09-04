@@ -75,11 +75,6 @@ pub struct SessionState {
     pub paper_style_settings: PaperStyleSettings,
     pub show_notes: bool,
     pub show_outline: bool,
-    /// Library / Outline 패널 폭 (탭별·문서별로 독립 유지)
-    #[serde(default = "default_library_width")]
-    pub library_width: f32,
-    #[serde(default = "default_outline_width")]
-    pub outline_width: f32,
     /// 캔버스 오른쪽 필기구/색상 팔레트 표시 여부 (전역 기본값)
     #[serde(default = "default_show_palette")]
     pub show_palette: bool,
@@ -215,14 +210,6 @@ fn default_tool_order() -> Vec<ToolType> {
     ToolType::default_order()
 }
 
-fn default_library_width() -> f32 {
-    260.0
-}
-
-fn default_outline_width() -> f32 {
-    240.0
-}
-
 fn default_paper_texture_strength() -> f32 {
     0.35
 }
@@ -267,8 +254,6 @@ impl Default for SessionState {
             paper_style_settings: PaperStyleSettings::default(),
             show_notes: true,
             show_outline: false,
-            library_width: 260.0,
-            outline_width: 240.0,
             show_palette: true,
             favorite_colors: vec![
                 [26, 26, 28, 255],   // Black (#1A1A1C)
