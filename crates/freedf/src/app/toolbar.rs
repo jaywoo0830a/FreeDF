@@ -510,7 +510,8 @@ impl FreeDfApp {
         ui.label(
             egui::RichText::new(
                 "Colors shown around the pen wheel (side-button palette).\n\
-                 Click a color to remove it. Pick a color and press Add.",
+                 Click a color to remove it. Set R/G/B (or use the picker)\n\
+                 and press Add to add a new color.",
             )
             .weak()
             .small(),
@@ -532,19 +533,47 @@ impl FreeDfApp {
             self.save_default_session();
             self.save_session();
         }
-        // 새 색 추가 (최대 MAX_FAVORITE_COLORS).
+        // 새 색 추가 — **RGB 숫자 입력 + 팝업 컬러픽커** (최대 MAX_FAVORITE_COLORS).
         let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
         ui.horizontal(|ui| {
-            let mut new_color = Color32::from_rgb(200, 40, 40);
-            ui.color_edit_button_srgba(&mut new_color)
-                .on_hover_text("Pick a color to add");
+            ui.label("Add:");
+            ui.add(
+                egui::DragValue::new(&mut self.wheel_pick_color[0])
+                    .range(0..=255)
+                    .prefix("R "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.wheel_pick_color[1])
+                    .range(0..=255)
+                    .prefix("G "),
+            );
+            ui.add(
+                egui::DragValue::new(&mut self.wheel_pick_color[2])
+                    .range(0..=255)
+                    .prefix("B "),
+            );
+            let mut pick = Color32::from_rgba_unmultiplied(
+                self.wheel_pick_color[0],
+                self.wheel_pick_color[1],
+                self.wheel_pick_color[2],
+                self.wheel_pick_color[3],
+            );
+            if ui
+                .color_edit_button_srgba(&mut pick)
+                .on_hover_text("Pick a color")
+                .changed()
+            {
+                self.wheel_pick_color = pick.to_array();
+            }
+            // 휠 색은 불투명으로 유지 (알파는 팔레트에 의미 없음).
+            self.wheel_pick_color[3] = 255;
+            let picked = self.wheel_pick_color;
             if ui
                 .add_enabled(!full, egui::Button::new("Add to wheel"))
                 .clicked()
             {
-                let arr = new_color.to_array();
-                if !self.favorite_colors.contains(&arr) {
-                    self.favorite_colors.push(arr);
+                if !self.favorite_colors.contains(&picked) {
+                    self.favorite_colors.push(picked);
                     self.save_default_session();
                     self.save_session();
                 }
@@ -1027,7 +1056,7 @@ impl FreeDfApp {
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
             // Row 1: panels / page tools / ink tools
-            toolbar_row(ui, |ui| {
+            toolbar_row(ui, "row1", |ui| {
                 ui.horizontal(|ui| {
                 // Show UI / Hide UI 토글 — 항상 툴바 **가장 왼쪽**에 상주합니다.
                 // 숨기면 캔버스+팔레트만 남고, 복귀는 우상단 플로팅 pill(☰)
@@ -1141,25 +1170,22 @@ impl FreeDfApp {
                 });
                 ui.separator();
 
-                if !self.show_library && !self.show_outline {
-                    // With the side panels collapsed the canvas is wide, so let
-                    // the page be aligned left / center / right.
-                    ui.separator();
-                    let aligns = [
-                        (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
-                        (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
-                        (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
-                    ];
-                    for (a, ic, hint) in aligns {
-                        if ui
-                            .selectable_label(self.page_align == a, icon_text(ui, "", ic))
-                            .on_hover_text(hint)
-                            .clicked()
-                        {
-                            self.page_align = a;
-                            self.realign();
-                            self.save_session();
-                        }
+                // 정렬(왼쪽/가운데/오른쪽) — 패널 상태와 무관하게 **항상 표시**
+                // (패널이 펼쳐지면 사라지던 버그 패턴 제거).
+                let aligns = [
+                    (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
+                    (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
+                    (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
+                ];
+                for (a, ic, hint) in aligns {
+                    if ui
+                        .selectable_label(self.page_align == a, icon_text(ui, "", ic))
+                        .on_hover_text(hint)
+                        .clicked()
+                    {
+                        self.page_align = a;
+                        self.realign();
+                        self.save_session();
                     }
                 }
                 ui.separator();
@@ -1215,19 +1241,39 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 2: Page (structure + paper styling)
-            toolbar_row(ui, |ui| {
+            toolbar_row(ui, "row2", |ui| {
                 ui.horizontal(|ui| {
                 ui.label(icon_text(ui, "Page", icons::FILES));
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 ui.menu_button(icon_text(ui, "Insert Page", icons::PLUS_SQUARE), |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Pages:");
-                        ui.add(
-                            egui::DragValue::new(&mut self.insert_page_count)
-                                .range(1..=200)
-                                .speed(1),
-                        )
-                        .on_hover_text("Type a number or drag to change (1–200)");
+                        // 포커스가 없을 때만 카운트와 동기화 — 타이핑 중에는
+                        // 매 프레임 덮어쓰지 않습니다.
+                        if !self.insert_page_focus {
+                            self.insert_page_text = self.insert_page_count.to_string();
+                        }
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.insert_page_text)
+                                .desired_width(56.0)
+                                .char_limit(3)
+                                .hint_text("1–200"),
+                        );
+                        self.insert_page_focus = resp.has_focus();
+                        if resp.changed() {
+                            if let Ok(v) = self.insert_page_text.trim().parse::<usize>() {
+                                self.insert_page_count = v.clamp(1, 200);
+                            }
+                        }
+                        if resp.lost_focus() {
+                            self.insert_page_count = self
+                                .insert_page_text
+                                .trim()
+                                .parse()
+                                .unwrap_or(self.insert_page_count)
+                                .clamp(1, 200);
+                            self.insert_page_text = self.insert_page_count.to_string();
+                        }
                     });
                     ui.label(egui::RichText::new("Insert blank pages at:").weak().small());
                     let insert = [
@@ -1296,6 +1342,26 @@ impl FreeDfApp {
                 }
                 ui.separator();
 
+                // Canvas (페이지 뒤 배경색 + 원형 휠 팔레트) — 전용 설정 창.
+                // (Paper 그룹 앞에 배치 — 뒤에 두면 화면 밖으로 잘려 안 보임)
+                ui.label(icon_text(ui, "Canvas", icons::IMAGE));
+                let canvas_color = Color32::from_rgba_unmultiplied(
+                    self.canvas_color[0],
+                    self.canvas_color[1],
+                    self.canvas_color[2],
+                    self.canvas_color[3],
+                );
+                if color_circle_swatch(ui, "canvas_swatch", canvas_color, false)
+                    .on_hover_text(
+                        "Canvas background & color wheel palette —\n\
+                         click to open settings",
+                    )
+                    .clicked()
+                {
+                    self.canvas_settings_open = true;
+                }
+                ui.separator();
+
                 // Paper (grid / ruling / color) — applied to the **current
                 // page**; new pages use these values as their defaults.
                 // "Apply to all" pushes the current values onto every page.
@@ -1361,25 +1427,6 @@ impl FreeDfApp {
                 {
                     self.paper_settings_open = true;
                 }
-                ui.separator();
-
-                // Canvas (페이지 뒤 배경색 + 원형 휠 팔레트) — 전용 설정 창.
-                ui.label(icon_text(ui, "Canvas", icons::IMAGE));
-                let canvas_color = Color32::from_rgba_unmultiplied(
-                    self.canvas_color[0],
-                    self.canvas_color[1],
-                    self.canvas_color[2],
-                    self.canvas_color[3],
-                );
-                if color_circle_swatch(ui, "canvas_swatch", canvas_color, false)
-                    .on_hover_text(
-                        "Canvas background & color wheel palette —\n\
-                         click to open settings",
-                    )
-                    .clicked()
-                {
-                    self.canvas_settings_open = true;
-                }
                 });
             });
 
@@ -1388,7 +1435,7 @@ impl FreeDfApp {
             ui.add_space(2.0);
 
             // Row 3: drawing tools (drag to reorder) + settings
-            toolbar_row(ui, |ui| {
+            toolbar_row(ui, "row3", |ui| {
                 ui.horizontal(|ui| {
                 // ── 도구 선택기 (드래그 앤 드롭 재정렬) ─────────────
                 let mut order = self.tool_order.clone();
@@ -1661,7 +1708,7 @@ impl FreeDfApp {
 
             // Row 4: search (only while Ctrl+F is pressed)
             if self.show_search {
-                toolbar_row(ui, |ui| {
+                toolbar_row(ui, "search", |ui| {
                     ui.horizontal(|ui| {
                     ui.label(icon_text(ui, "Find", icons::MAGNIFYING_GLASS));
                     let resp = ui.add(

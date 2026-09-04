@@ -278,8 +278,14 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
 }
 
 /// Renders a left-aligned row of controls in the toolbar.
-fn toolbar_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.horizontal(|ui| add(ui)).inner
+/// 내용이 창 폭을 넘으면 가로 스크롤로 접근할 수 있게 합니다 (툴바 항목이
+/// 화면 밖으로 잘려 "보이지 않는 버튼"이 생기지 않도록 — 예: Color wheel).
+fn toolbar_row<R>(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::ScrollArea::horizontal()
+        .id_salt(("toolbar_row", salt))
+        .auto_shrink([false, true])
+        .show(ui, |ui| ui.horizontal(|ui| add(ui)).inner)
+        .inner
 }
 
 /// 동그란 색상 스와치를 그립니다. `selected`면 강조 링, 아니면 옅은 테두리.
@@ -756,6 +762,12 @@ pub struct FreeDfApp {
     paper_range_to: usize,
     /// Insert Page 메뉴의 페이지 개수 입력 (임시 — 입력이 유지되도록 필드에 둠).
     insert_page_count: usize,
+    /// Insert Page 메뉴 숫자 입력칸의 편집 중 텍스트 (포커스 유지용).
+    insert_page_text: String,
+    /// Insert Page 숫자 입력칸 포커스 여부 (편집 중 텍스트 덮어쓰기 방지).
+    insert_page_focus: bool,
+    /// Color wheel 설정 창에서 새 색을 조합 중인 RGB 값 (임시).
+    wheel_pick_color: [u8; 4],
     /// 펜 사이드 버튼 1로 여는 원형 색상 팔레트(굿노트식) 표시 여부 (임시).
     color_wheel_open: bool,
     /// 원형 팔레트가 열린 시각 (ms) — 일정 시간 입력이 없으면 자동 닫힘.
@@ -1178,6 +1190,9 @@ impl FreeDfApp {
             paper_range_from: 0,
             paper_range_to: 0,
             insert_page_count: 1,
+            insert_page_text: String::from("1"),
+            insert_page_focus: false,
+            wheel_pick_color: [200, 40, 40, 255],
             color_wheel_open: false,
             color_wheel_opened_at: 0,
             color_wheel_anchor: [0.0, 0.0],

@@ -65,9 +65,9 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
     }
 }
 
-/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 20ms면 50Hz. 사람 눈에는
-/// 충분히 부드럽고(리본이 O(n)으로 저렴), 재구성 비용을 반으로 아낍니다.
-const ACTIVE_STROKE_GEOM_MS: u64 = 20;
+/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 100Hz. 사람 눈에는
+/// 충분히 부드럽고(리본이 O(n)으로 저렴), 재구성 비용을 아낍니다.
+const ACTIVE_STROKE_GEOM_MS: u64 = 10;
 /// 번지는 후광(병합 메시) 재구성 스로틀 (ms) — 후광은 느리게 자라므로
 /// 20Hz면 충분하고, 페이지 전체 재구성 비용을 아낍니다.
 const HALO_GEOM_MS: u64 = 50;
@@ -528,7 +528,7 @@ impl FreeDfApp {
                     if let Some(v) = &self.pen_verdict {
                         ui.label(format!("verdict: {v}"));
                     }
-                    ui.label("render: ribbon ≈ O(n) · 20ms 스로틀  (완성 획: 동일 리본)");
+                    ui.label("render: ribbon ≈ O(n) · 10ms 스로틀  (완성 획: 동일 리본)");
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -2092,7 +2092,7 @@ impl FreeDfApp {
             (now_ms().saturating_sub(created_ms)) as f32 / 1000.0
         };
         let pts_pt: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
-        // ── 20ms 스로틀: 지오메트리 재구성은 최대 50Hz — 그 사이엔
+        // ── 10ms 스로틀: 지오메트리 재구성은 최대 100Hz — 그 사이엔
         // 캐시된 메시를 그대로 다시 그립니다.
         let now = now_ms();
         let view_key = (
