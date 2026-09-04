@@ -55,6 +55,12 @@ pub struct SessionState {
     pub page_align: PageAlign,
     pub paper_style: PaperStyle,
     pub paper_color: [u8; 4],
+    /// 종이 질감 — 페이지 위에 은은한 섬유 노이즈 (전역 기본값, 기본 켜짐).
+    #[serde(default = "default_true")]
+    pub paper_texture: bool,
+    /// 종이 질감 강도 0..1 (기본 0.35 — 미묘한 수준).
+    #[serde(default = "default_paper_texture_strength")]
+    pub paper_texture_strength: f32,
     pub paper_size: PaperSize,
     /// 캔버스(페이지 뒤 서라운드) 배경색 — 전역 기본값 + 탭별 상태.
     #[serde(default = "default_canvas_color")]
@@ -213,6 +219,10 @@ fn default_outline_width() -> f32 {
     240.0
 }
 
+fn default_paper_texture_strength() -> f32 {
+    0.35
+}
+
 /// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 3개 (GoodNotes 블랙/레드/블루).
 fn default_favorite_colors() -> Vec<[u8; 4]> {
     vec![
@@ -245,6 +255,8 @@ impl Default for SessionState {
             page_align: PageAlign::Center,
             paper_style: PaperStyle::Blank,
             paper_color: [255, 255, 255, 255],
+            paper_texture: true,
+            paper_texture_strength: 0.35,
             paper_size: PaperSize::A4,
             canvas_color: default_canvas_color(),
             paper_style_settings: PaperStyleSettings::default(),

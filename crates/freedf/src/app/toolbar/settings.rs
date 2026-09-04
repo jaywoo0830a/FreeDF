@@ -607,6 +607,32 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
+                ui.separator();
+                // 종이 질감 — 페이지 위 은은한 섬유 노이즈 (잉크/줄 아래).
+                if ui
+                    .checkbox(&mut self.paper_texture, "Paper texture")
+                    .on_hover_text(
+                        "Subtle fiber noise over the page — realistic paper grain \
+                         (drawn under the ruling and your ink).",
+                    )
+                    .changed()
+                {
+                    self.save_default_session();
+                    self.save_session();
+                }
+                if self.paper_texture {
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut self.paper_texture_strength, 0.0..=1.0)
+                                .text("Grain strength"),
+                        )
+                        .on_hover_text("How visible the paper grain is (0 = invisible).")
+                        .changed()
+                    {
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
             });
         // ── 스타일별 독립 세부설정 — **현재 선택된 스타일**을 편집합니다.
         // Ruled/Grid/Dotted 각각 자기만의 간격/색/두께를 가집니다.

@@ -329,6 +329,33 @@ pub fn paper_lines_rotated(
     }
 }
 
+/// 종이 질감 노이즈 텍스처 (size×size, **RGBA 평탄화 바이트**) — 섬유
+/// 얼룩을 알파로 담은 어두운 반점들. **결정적**: 같은 (size, seed,
+/// strength)면 항상 같은 결과라 렌더링 중 깜빡임이 없습니다.
+pub fn paper_texture_rgba(size: usize, seed: u64, strength: f32) -> Vec<u8> {
+    let n = size.clamp(8, 512);
+    let s = strength.clamp(0.0, 1.0);
+    let mut out = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let u = x as f32 / n as f32;
+            let v = y as f32 / n as f32;
+            // 저주파(6셀) + 고주파(22셀) 옥타브 — 종이 섬유 얼룩.
+            let lo = crate::ink::value_noise(u * 6.0, v * 6.0, seed);
+            let hi = crate::ink::value_noise(
+                u * 22.0 + 3.7,
+                v * 22.0 + 9.1,
+                seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            );
+            let t = (0.72 * lo + 0.28 * hi - 0.5) * 2.0; // 대략 -1..1
+            // 어두운 반점만 (밝은 반점은 생략 — 종이의 그림자 얼룩 느낌).
+            let a = (t * s * 255.0).clamp(0.0, 255.0) as u8;
+            out.extend_from_slice(&[72, 66, 60, a]); // 짙은 갈회색 얼룩.
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,5 +483,18 @@ mod tests {
         let p = PagePaper::default();
         assert_eq!(p.style, PaperStyle::Blank);
         assert_eq!(p.color, PAPER_WHITE);
+    }
+
+    #[test]
+    fn paper_texture_is_deterministic_and_bounded() {
+        let a = paper_texture_rgba(64, 7, 0.5);
+        let b = paper_texture_rgba(64, 7, 0.5);
+        assert_eq!(a, b, "같은 입력은 항상 같은 질감 (깜빡임 금지)");
+        assert_eq!(a.len(), 64 * 64 * 4);
+        for px in a.chunks_exact(4) {
+            assert!(px[3] <= 128, "강도 0.5면 알파가 절반을 넘지 않음: {}", px[3]);
+        }
+        let zero = paper_texture_rgba(16, 7, 0.0);
+        assert!(zero.chunks_exact(4).all(|p| p[3] == 0), "강도 0 = 투명");
     }
 }

@@ -611,6 +611,8 @@ impl FreeDfApp {
                 Stroke::new(1.0, Color32::from_gray(120)),
                 egui::StrokeKind::Inside,
             );
+            // 종이 질감 — 페이지 위, 잉크/줄보다 아래 (설정: Paper settings).
+            self.paint_paper_texture(&ctx, &painter, draw_rect);
             // Paper grid / ruling (only for notes)
             if self.current_note.is_some() {
                 self.paint_paper(&painter, draw_origin);

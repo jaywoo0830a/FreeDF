@@ -116,6 +116,58 @@ impl FreeDfApp {
             });
     }
 
+    /// 종이 질감 — 페이지 배경 위에 은은한 섬유 노이즈를 깔아줍니다.
+    /// 타일 텍스처는 **페이지 좌표 기준**이라 줌과 함께 확대/축소됩니다.
+    pub(crate) fn paint_paper_texture(
+        &mut self,
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        page_rect: Rect,
+    ) {
+        if !self.paper_texture || self.paper_texture_strength <= 0.001 {
+            return;
+        }
+        const TEX_SIZE: usize = 128;
+        const NOISE_SEED: u64 = 0x0B5E_E5ED;
+        let strength = self.paper_texture_strength;
+        let stale = self
+            .paper_noise_tex
+            .as_ref()
+            .map(|t| t.size() != [TEX_SIZE, TEX_SIZE])
+            .unwrap_or(true)
+            || (self.paper_noise_tex_strength - strength).abs() > 1e-3;
+        if stale {
+            let rgba = freedf_core::paper::paper_texture_rgba(TEX_SIZE, NOISE_SEED, strength);
+            let img = egui::ColorImage::from_rgba_unmultiplied([TEX_SIZE, TEX_SIZE], &rgba);
+            self.paper_noise_tex = Some(ctx.load_texture(
+                "paper_noise",
+                img,
+                egui::TextureOptions {
+                    magnification: egui::TextureFilter::Linear,
+                    minification: egui::TextureFilter::Linear,
+                    wrap_mode: egui::TextureWrapMode::Repeat,
+                    mipmap_mode: Some(egui::TextureFilter::Linear),
+                },
+            ));
+            self.paper_noise_tex_strength = strength;
+        }
+        let Some(tex) = &self.paper_noise_tex else {
+            return;
+        };
+        // 128px 타일이 페이지 36pt에 해당 → 줌해도 질감이 페이지와 함께 확대.
+        let tile_pt = 36.0;
+        let reps = egui::vec2(
+            page_rect.width() / (tile_pt * self.view.zoom),
+            page_rect.height() / (tile_pt * self.view.zoom),
+        );
+        painter.image(
+            tex.id(),
+            page_rect,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(reps.x, reps.y)),
+            Color32::WHITE,
+        );
+    }
+
     pub(crate) fn paint_search_highlights(&self, painter: &egui::Painter, origin: Pos2) {
         let match_fill = Color32::from_rgba_unmultiplied(255, 235, 60, 80);
         let current_fill = Color32::from_rgba_unmultiplied(255, 200, 40, 120);

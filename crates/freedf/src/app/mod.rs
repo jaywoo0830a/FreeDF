@@ -901,6 +901,13 @@ pub struct FreeDfApp {
     // ---------- Paper (grid / color / size) ----------
     paper_style: PaperStyle,
     paper_color: [u8; 4],
+    /// 종이 질감 — 페이지 위에 은은한 섬유 노이즈.
+    paper_texture: bool,
+    /// 종이 질감 강도 0..1.
+    paper_texture_strength: f32,
+    /// 종이 질감 노이즈 텍스처 캐시 (강도 변경 시 재생성).
+    paper_noise_tex: Option<egui::TextureHandle>,
+    paper_noise_tex_strength: f32,
     /// 종이 크기 (새 페이지/노트 기본값)
     paper_size: PaperSize,
     /// 캔버스(페이지 뒤 서라운드) 배경색.
@@ -1178,6 +1185,12 @@ impl FreeDfApp {
         let pen_profile = if has { s.pen_profile } else { BallPenProfile::default() };
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
+        let paper_texture = if has { s.paper_texture } else { true };
+        let paper_texture_strength = if has {
+            s.paper_texture_strength.clamp(0.0, 1.0)
+        } else {
+            0.35
+        };
         let canvas_color = if has {
             s.canvas_color
         } else {
@@ -1396,6 +1409,10 @@ impl FreeDfApp {
             active_mesh: None,
             paper_style,
             paper_color,
+            paper_texture,
+            paper_texture_strength,
+            paper_noise_tex: None,
+            paper_noise_tex_strength: 0.0,
             paper_size,
             canvas_color,
             paper_style_settings,
@@ -1538,6 +1555,8 @@ impl FreeDfApp {
             page_align: self.page_align,
             paper_style: self.paper_style,
             paper_color: self.paper_color,
+            paper_texture: self.paper_texture,
+            paper_texture_strength: self.paper_texture_strength,
             paper_size: self.paper_size,
             canvas_color: self.canvas_color,
             paper_style_settings: self.paper_style_settings,
@@ -1961,6 +1980,8 @@ impl FreeDfApp {
             page_align: self.page_align,
             paper_style: self.paper_style,
             paper_color: self.paper_color,
+            paper_texture: self.paper_texture,
+            paper_texture_strength: self.paper_texture_strength,
             paper_size: self.paper_size,
             canvas_color: self.canvas_color,
             paper_style_settings: self.paper_style_settings,
@@ -2263,6 +2284,8 @@ impl FreeDfApp {
         self.page_align = s.page_align;
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
+        self.paper_texture = s.paper_texture;
+        self.paper_texture_strength = s.paper_texture_strength.clamp(0.0, 1.0);
         self.paper_size = s.paper_size;
         self.canvas_color = s.canvas_color;
         self.paper_style_settings = s.paper_style_settings;
