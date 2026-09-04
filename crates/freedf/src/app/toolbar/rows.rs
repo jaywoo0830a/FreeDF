@@ -67,6 +67,20 @@ impl FreeDfApp {
                         self.save_session();
                     }
                     if ui
+                        .toggle_value(
+                            &mut self.show_bookmarks,
+                            icon_text(ui, "Bookmarks", icons::BOOKMARKS_SIMPLE),
+                        )
+                        .on_hover_text("Bookmarked pages — exclusive")
+                        .changed()
+                    {
+                        // Library / Outline / Bookmarks는 어디서든 상호 베타적.
+                        if self.show_bookmarks {
+                            [self.show_library, self.show_outline, self.show_bookmarks] =
+                                exclusive_panel_on(PanelKind::Bookmarks);
+                        }
+                    }
+                    if ui
                         .toggle_value(&mut self.show_palette, icon_text(ui, "Palette", icons::PALETTE))
                         .on_hover_text("Writing-tool color palette (right side of canvas)")
                         .changed()

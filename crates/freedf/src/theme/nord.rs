@@ -114,6 +114,24 @@ pub fn nord_style() -> egui::Style {
     style.spacing.slider_width = spacing::SLIDER_W;
     style.spacing.slider_rail_height = spacing::SLIDER_RAIL_H;
 
+    // --- Scrollbars: 얇은 플로팅 스타일 (툴바 가로 스크롤 포함) ---------
+    // 평소에는 2pt 두께의 얇은 바, 호버하면 8pt로 부드럽게 확장됩니다.
+    style.spacing.scroll = egui::style::ScrollStyle {
+        floating: true,
+        bar_width: 8.0,               // 호버 시 최대 두께
+        floating_width: 2.0,          // 평소(비호버) 얇은 두께
+        floating_allocated_width: 4.0, // 항상 얇은 바가 보이도록 4pt 할당
+        handle_min_length: 20.0,
+        foreground_color: false,
+        dormant_background_opacity: 0.0,
+        active_background_opacity: 0.12,
+        interact_background_opacity: 0.2,
+        dormant_handle_opacity: 0.35,
+        active_handle_opacity: 0.7,
+        interact_handle_opacity: 1.0,
+        ..egui::style::ScrollStyle::floating()
+    };
+
     // --- Visuals: Nord (dark) --------------------------------------------
     style.visuals = nord_visuals();
     style

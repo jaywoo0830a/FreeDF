@@ -116,6 +116,13 @@ impl FreeDfApp {
                     let session = crate::settings::SessionState::from_json_value(value);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
+                } else {
+                    // 새 문서(저장된 세션 없음) — 캐시가 아니라 **기본값** 때문에
+                    // 라이브러리가 열려 보이던 것을 정리: 패널 없이 깨끗한
+                    // 캔버스로 시작합니다.
+                    self.show_library = false;
+                    self.show_outline = false;
+                    self.show_bookmarks = false;
                 }
                 if is_note {
                     self.logger.log(AppEvent::NoteOpened {
