@@ -9,7 +9,7 @@
 use freedf_core::ink::InkGrain;
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PaperStyleSettings};
-use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak};
+use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkSoak};
 use freedf_core::transform::PageAlign;
 use serde::{Deserialize, Serialize};
 
@@ -37,10 +37,6 @@ pub struct SessionState {
     pub hi_width: f32,
     pub eraser_radius: f32,
     pub pressure_enabled: bool,
-    /// 프로파일(펜/만년필 모델) 기본값 마이그레이션 버전 — 이전 버전이면
-    /// 저장된 프로파일 대신 새 기본값(더 강한 필압/속도/틸트 감도)을 씁니다.
-    #[serde(default)]
-    pub profile_version: u32,
     /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부 (전역).
     #[serde(default)]
     pub debug_hud: bool,
@@ -124,10 +120,6 @@ pub struct SessionState {
     /// 스무딩 사용 여부 (기본 off — OTD 등 외부 드라이버 안정화와 충돌 방지)
     #[serde(default = "default_false")]
     pub smoothing_enabled: bool,
-    /// 잉크 번짐(블리드) 설정 — **레거시** (이전 v2 세션 마이그레이션용).
-    /// 현재 기능은 `pen_soak`/`fountain_soak`이 담당합니다.
-    #[serde(default)]
-    pub ink_bleed: InkBleed,
     /// 일반 펜(볼펜) 잉크 스밈 — 은은하게 진해짐
     #[serde(default)]
     pub pen_soak: InkSoak,
@@ -239,7 +231,6 @@ impl Default for SessionState {
             hi_width: 16.0,
             eraser_radius: 16.0,
             pressure_enabled: true,
-            profile_version: 2,
             debug_hud: false,
             left_handed: false,
             pen_profile: BallPenProfile::default(),
@@ -258,9 +249,9 @@ impl Default for SessionState {
             outline_width: 240.0,
             show_palette: true,
             favorite_colors: vec![
-                [20, 20, 20, 255],   // Black
-                [200, 40, 40, 255],  // Red
-                [29, 78, 216, 255],  // Blue
+                [26, 26, 28, 255],   // Black (#1A1A1C)
+                [255, 71, 66, 255],  // Red (#FF4742)
+                [72, 166, 235, 255], // Blue (#48A6EB)
             ],
             text_highlight_snap: false,
             tool_order: ToolType::default_order(),
@@ -275,7 +266,6 @@ impl Default for SessionState {
             edge_delays: [0.0; 4],
             smoothing: 0.4,
             smoothing_enabled: false,
-            ink_bleed: InkBleed::default(),
             pen_soak: InkSoak::ballpoint_default(),
             fountain_soak: InkSoak::fountain_default(),
             pen_grain: InkGrain::default(),

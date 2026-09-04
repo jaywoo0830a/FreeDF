@@ -6,28 +6,24 @@ pub(crate) use super::*;
 
 impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 5.0);
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         ui.add_space(6.0);
 
-        // ── 헤더 + 검색 필터 ──────────────────────────────────────────
+        // ── 헤더 (계층 1: 패널 제목 + 총 개수) ──
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Library").strong().size(16.0));
             let total = self.notes.list().len() + self.recents.sorted().len();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!("{total} items"))
-                        .weak()
-                        .small(),
-                );
+                ui.label(egui::RichText::new(format!("{total} items")).weak().small());
             });
         });
-        ui.add_space(3.0);
+        ui.add_space(4.0);
         ui.add(
             egui::TextEdit::singleline(&mut self.library_filter)
                 .hint_text("Search notes & files…")
                 .desired_width(f32::INFINITY),
         );
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         ui.separator();
 
         let filter = self.library_filter.trim().to_lowercase();
@@ -41,7 +37,8 @@ impl FreeDfApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                // ── Notes ──────────────────────────────────────────────
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                // ── Notes (계층 2: 섹션 헤더 + 행) ──
                 let all_notes: Vec<(u64, String, usize)> = self
                     .notes
                     .list()
@@ -53,15 +50,9 @@ impl FreeDfApp {
                     .filter(|(_, t, _)| matches(t))
                     .cloned()
                     .collect();
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                    ui.label(icon_text(ui, "Notes", icons::NOTE_PENCIL));
-                    ui.label(
-                        egui::RichText::new(all_notes.len().to_string())
-                            .weak()
-                            .small(),
-                    );
+                    section_header(ui, icons::NOTE_PENCIL, "Notes", all_notes.len());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
                         if ui
@@ -90,13 +81,8 @@ impl FreeDfApp {
                         }
                     });
                 });
-                ui.add_space(2.0);
                 if notes.is_empty() {
-                    ui.label(
-                        egui::RichText::new("No notes yet — use ＋ New to create one.")
-                            .weak()
-                            .small(),
-                    );
+                    empty_note(ui, "No notes yet — use ＋ New to create one.");
                 } else {
                     for (id, title, page_count) in &notes {
                         let mut sel = self.sel_notes.contains(&(*id as i64));
@@ -125,21 +111,26 @@ impl FreeDfApp {
                         });
                     }
                     let n_sel = self.sel_notes.len();
-                    if ui
-                        .add_enabled(n_sel > 0, egui::Button::new(format!("Delete selected ({n_sel})")))
-                        .on_hover_text(
-                            "Delete all checked notes (and their annotations).",
-                        )
-                        .clicked()
-                    {
-                        let ids: Vec<i64> = self.sel_notes.iter().copied().collect();
-                        delete_selected = Some((ids, Vec::new()));
+                    if n_sel > 0 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(22.0);
+                            if ui
+                                .button(format!("Delete selected ({n_sel})"))
+                                .on_hover_text(
+                                    "Delete all checked notes (and their annotations).",
+                                )
+                                .clicked()
+                            {
+                                let ids: Vec<i64> = self.sel_notes.iter().copied().collect();
+                                delete_selected = Some((ids, Vec::new()));
+                            }
+                        });
                     }
                 }
                 ui.add_space(4.0);
                 ui.separator();
 
-                // ── PDFs (recently opened files) ──────────────────────
+                // ── PDFs (계층 2) ──
                 let files: Vec<RecentItem> = self
                     .recents
                     .sorted()
@@ -152,18 +143,12 @@ impl FreeDfApp {
                     .filter(|f| matches(&f.title))
                     .cloned()
                     .collect();
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(icon_text(ui, "PDFs", icons::FILE_PDF));
-                    ui.label(
-                        egui::RichText::new(files.len().to_string())
-                            .weak()
-                            .small(),
-                    );
+                    section_header(ui, icons::FILE_PDF, "PDFs", files.len());
                 });
-                ui.add_space(2.0);
                 if visible.is_empty() {
-                    ui.label(egui::RichText::new("No PDFs opened yet.").weak().small());
+                    empty_note(ui, "No PDFs opened yet.");
                 } else {
                     for f in &visible {
                         let mut sel = f.doc_id.is_some_and(|d| self.sel_pdfs.contains(&d));
@@ -190,22 +175,27 @@ impl FreeDfApp {
                         });
                     }
                     let n_sel = self.sel_pdfs.len();
-                    if ui
-                        .add_enabled(n_sel > 0, egui::Button::new(format!("Delete selected ({n_sel})")))
-                        .on_hover_text(
-                            "Delete the checked PDF documents from the library \
-                             (the original files on disk are left untouched).",
-                        )
-                        .clicked()
-                    {
-                        let paths: Vec<i64> = self.sel_pdfs.iter().copied().collect();
-                        delete_selected = Some((Vec::new(), paths));
+                    if n_sel > 0 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(22.0);
+                            if ui
+                                .button(format!("Delete selected ({n_sel})"))
+                                .on_hover_text(
+                                    "Delete the checked PDF documents from the library \
+                                     (the original files on disk are left untouched).",
+                                )
+                                .clicked()
+                            {
+                                let paths: Vec<i64> = self.sel_pdfs.iter().copied().collect();
+                                delete_selected = Some((Vec::new(), paths));
+                            }
+                        });
                     }
                 }
                 ui.add_space(4.0);
                 ui.separator();
 
-                // ── Recents (notes + PDFs) ────────────────────────────
+                // ── Recents (계층 2) ──
                 let recents: Vec<RecentItem> = self
                     .recents
                     .sorted()
@@ -213,18 +203,17 @@ impl FreeDfApp {
                     .filter(|r| matches(&r.title))
                     .cloned()
                     .collect();
-                ui.add_space(2.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(icon_text(ui, "Recents", icons::CLOCK_COUNTER_CLOCKWISE));
-                    ui.label(
-                        egui::RichText::new(self.recents.sorted().len().to_string())
-                            .weak()
-                            .small(),
+                    section_header(
+                        ui,
+                        icons::CLOCK_COUNTER_CLOCKWISE,
+                        "Recents",
+                        self.recents.sorted().len(),
                     );
                 });
-                ui.add_space(2.0);
                 if recents.is_empty() {
-                    ui.label(egui::RichText::new("No recent files yet.").weak().small());
+                    empty_note(ui, "No recent files yet.");
                 } else {
                     for item in &recents {
                         let meta = match item.kind {
@@ -294,6 +283,21 @@ impl FreeDfApp {
     }
 
     // ---------- UI: outline panel ----------
+}
+
+fn section_header(ui: &mut egui::Ui, ic: egui_phosphor_icons::Icon, name: &str, count: usize) {
+    // 계층 2: 섹션 제목 — 아이콘 + 이름 + 개수(weak small).
+    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+    ui.label(icon_text(ui, name, ic));
+    ui.label(egui::RichText::new(count.to_string()).weak().small());
+}
+
+/// 섹션의 빈 상태 — 행과 같은 들여쓰기(체크박스 폭)에 맞춘 약한 안내 문구.
+fn empty_note(ui: &mut egui::Ui, text: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(22.0);
+        ui.label(egui::RichText::new(text).weak().small());
+    });
 }
 
 fn format_bytes(n: i64) -> String {

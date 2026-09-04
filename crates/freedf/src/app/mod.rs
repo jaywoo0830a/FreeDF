@@ -46,7 +46,7 @@ pub(crate) use freedf_core::paper::{
     PaperStyleSettings, PAPER_COLORS, PAPER_WHITE,
 };
 pub(crate) use freedf_core::pen::{
-    BallPenProfile, ColorFamily, FountainProfile, InkBleed, InkSoak, OneEuroFilter, Palette,
+    BallPenProfile, ColorFamily, FountainProfile, InkSoak, OneEuroFilter, Palette,
 };
 pub(crate) use freedf_core::ink::{combine_saturation, stroke_ink_lr, InkGrain};
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
@@ -1114,12 +1114,7 @@ impl FreeDfApp {
             .map(freedf_core::pen_input::from_receiver);
         #[cfg(not(target_os = "windows"))]
         let pen_monitor = freedf_core::pen_input::open_best();
-        // 이전 버전 세션은 저장된 프로파일 대신 새 기본값 사용 (감도 보정 반영).
-        let pen_profile = if has && s.profile_version >= 1 {
-            s.pen_profile
-        } else {
-            BallPenProfile::default()
-        };
+        let pen_profile = if has { s.pen_profile } else { BallPenProfile::default() };
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
         let canvas_color = if has {
@@ -1152,21 +1147,11 @@ impl FreeDfApp {
         let zoom_lock = if has { s.zoom_lock } else { false };
         let smoothing = if has { s.smoothing.clamp(0.0, 1.0) } else { 0.4 };
         let smoothing_enabled = if has { s.smoothing_enabled } else { false };
-        // 프로파일 v3: 잉크 스밈이 **도구별**(볼펜/만년필)로 분리.
-        // v2 세션은 만년필 스밈 설정을 ink_bleed에 담고 있었으므로 이전합니다.
-        let (pen_soak, fountain_soak) = if has && s.profile_version >= 3 {
-            (s.pen_soak, s.fountain_soak)
-        } else if has && s.profile_version >= 2 {
-            (
-                InkSoak::ballpoint_default(),
-                InkSoak {
-                    enabled: s.ink_bleed.enabled,
-                    saturate_sec: s.ink_bleed.saturate_sec,
-                    ..InkSoak::fountain_default()
-                },
-            )
+        let pen_soak = if has { s.pen_soak } else { InkSoak::ballpoint_default() };
+        let fountain_soak = if has {
+            s.fountain_soak
         } else {
-            (InkSoak::ballpoint_default(), InkSoak::fountain_default())
+            InkSoak::fountain_default()
         };
         let pen_grain = if has { s.pen_grain } else { InkGrain::default() };
         let fountain_grain = if has {
@@ -1174,7 +1159,7 @@ impl FreeDfApp {
         } else {
             InkGrain::default()
         };
-        let fountain_profile = if has && s.profile_version >= 1 {
+        let fountain_profile = if has {
             s.fountain_profile
         } else {
             FountainProfile::default()
@@ -1416,7 +1401,7 @@ impl FreeDfApp {
             outline_loaded: false,
             show_library,
             show_outline,
-            show_bookmarks: true,
+            show_bookmarks: false,
             library_width,
             outline_width,
             show_palette,
@@ -1480,7 +1465,6 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 3,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1512,7 +1496,6 @@ impl FreeDfApp {
             edge_delays: self.edge_delays,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
-            ink_bleed: InkBleed::default(),
             pen_soak: self.pen_soak,
             fountain_soak: self.fountain_soak,
             pen_grain: self.pen_grain,
@@ -1904,7 +1887,6 @@ impl FreeDfApp {
             hi_width: self.hi_width,
             eraser_radius: self.eraser_radius,
             pressure_enabled: self.pressure_enabled,
-            profile_version: 3,
             debug_hud: self.debug_hud,
             left_handed: self.left_handed,
             pen_profile: self.pen_profile,
@@ -1936,7 +1918,6 @@ impl FreeDfApp {
             edge_delays: self.edge_delays,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
-            ink_bleed: InkBleed::default(),
             pen_soak: self.pen_soak,
             fountain_soak: self.fountain_soak,
             pen_grain: self.pen_grain,
@@ -2211,14 +2192,8 @@ impl FreeDfApp {
         self.pressure_enabled = s.pressure_enabled;
         self.debug_hud = s.debug_hud;
         self.left_handed = s.left_handed;
-        // 이전 버전 세션이면 새 기본값 프로파일 사용.
-        if s.profile_version >= 1 {
-            self.pen_profile = s.pen_profile;
-            self.fountain_profile = s.fountain_profile;
-        } else {
-            self.pen_profile = BallPenProfile::default();
-            self.fountain_profile = FountainProfile::default();
-        }
+        self.pen_profile = s.pen_profile;
+        self.fountain_profile = s.fountain_profile;
         self.page_align = s.page_align;
         self.paper_style = s.paper_style;
         self.paper_color = s.paper_color;
@@ -2228,21 +2203,8 @@ impl FreeDfApp {
         self.zoom_lock = s.zoom_lock;
         self.smoothing = s.smoothing.clamp(0.0, 1.0);
         self.smoothing_enabled = s.smoothing_enabled;
-        if s.profile_version >= 3 {
-            self.pen_soak = s.pen_soak;
-            self.fountain_soak = s.fountain_soak;
-        } else if s.profile_version >= 2 {
-            // v2 세션: 만년필 스밈 설정은 ink_bleed에 저장되어 있었음.
-            self.pen_soak = InkSoak::ballpoint_default();
-            self.fountain_soak = InkSoak {
-                enabled: s.ink_bleed.enabled,
-                saturate_sec: s.ink_bleed.saturate_sec,
-                ..InkSoak::fountain_default()
-            };
-        } else {
-            self.pen_soak = InkSoak::ballpoint_default();
-            self.fountain_soak = InkSoak::fountain_default();
-        }
+        self.pen_soak = s.pen_soak;
+        self.fountain_soak = s.fountain_soak;
         self.pen_grain = s.pen_grain;
         self.fountain_grain = s.fountain_grain;
         self.mouse_draws = s.mouse_draws;
@@ -2252,6 +2214,11 @@ impl FreeDfApp {
         }
         self.show_library = s.show_notes;
         self.show_outline = s.show_outline;
+        // Library / Outline / Bookmarks 상호 베타 — 구버전 세션에서 둘 이상
+        // 켜져 있어도 하나만 남깁니다.
+        if self.show_library || self.show_outline {
+            self.show_bookmarks = false;
+        }
         self.library_width = s.library_width.clamp(160.0, 460.0);
         self.outline_width = s.outline_width.clamp(160.0, 460.0);
         if let Some(doc) = &self.document {
@@ -2604,8 +2571,11 @@ impl FreeDfApp {
             )
             .show(ctx, |ui| {
                 ui.set_width(420.0);
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                // 계층 1: 제목 + 개수 + 닫기.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Bookmarks").strong());
+                    ui.label(egui::RichText::new("Bookmarks").strong().size(15.0));
+                    ui.label(egui::RichText::new(pages.len().to_string()).weak().small());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .button(icon_text(ui, "", icons::X))
@@ -2621,15 +2591,29 @@ impl FreeDfApp {
                     .id_salt("bookmarks_overlay_scroll")
                     .max_height(420.0)
                     .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
                         if pages.is_empty() {
-                            ui.label(egui::RichText::new("No bookmarks yet").weak().small());
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(6.0);
+                                ui.label(
+                                    egui::RichText::new("No bookmarks yet").weak().small(),
+                                );
+                            });
                         } else {
+                            // 계층 2: 행 — 호버 강조 + 클릭으로 이동.
                             for p in pages {
-                                if ui.button(format!("Page {}", p + 1)).clicked() {
+                                if library_row(ui, false, &format!("Page {}", p + 1), "") {
                                     self.goto_page(p);
                                 }
                             }
-                            if ui.button("Clear all bookmarks").clicked() {
+                            ui.add_space(4.0);
+                            ui.separator();
+                            if ui
+                                .button("Clear all bookmarks")
+                                .on_hover_text("Remove every bookmark from this document")
+                                .clicked()
+                            {
                                 self.clear_bookmarks();
                             }
                         }

@@ -280,6 +280,10 @@ impl FreeDfApp {
         // Per-tab UI state (panels, tools, paper).
         self.show_library = show_library;
         self.show_outline = show_outline;
+        // 상호 베타 유지 — Library/Outline이 켜지면 Bookmarks는 꺼집니다.
+        if self.show_library || self.show_outline {
+            self.show_bookmarks = false;
+        }
         self.show_search = show_search;
         self.library_width = library_width;
         self.outline_width = outline_width;
