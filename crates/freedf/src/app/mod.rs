@@ -359,6 +359,12 @@ pub(crate) fn wheel_toggle_allowed(window_focused: Option<bool>) -> bool {
     window_focused == Some(true)
 }
 
+/// Window Focus의 대기 시간 판정 — 커서가 `dwell_sec` 이상 창 위에 머물렀는지.
+/// (0초면 즉시, `since_ms == 0`이면 아직 머물지 않음.)
+pub(crate) fn dwell_focus_due(now_ms: u64, since_ms: u64, dwell_sec: f32) -> bool {
+    since_ms != 0 && now_ms.saturating_sub(since_ms) >= (dwell_sec.clamp(0.0, 5.0) * 1000.0) as u64
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TextAction {
     NewNote,
@@ -844,8 +850,26 @@ pub struct FreeDfApp {
     minimal_chrome_collapsed: bool,
     /// 커서가 창 위에서 움직이면 이 창을 포커스할지 (스플릿 뷰, 창마다 독립)
     window_focus_on_move: bool,
+    /// Window Focus 지연(초) — 커서가 창 위에 이 시간 이상 머물면 포커스
+    window_focus_dwell_sec: f32,
+    /// 커서가 이 창 위에 머물기 시작한 시각(ms) — 0이면 없음 (런타임 전용)
+    window_hover_since_ms: u64,
+    /// Window Focus 설정 창 표시 여부
+    window_focus_settings_open: bool,
     /// 페이지(문서) 바깥으로 더 패닝할 수 있는 여유 (화면 px)
     edge_overscroll: f32,
+    /// 엣지 스크롤 "숨쉬는" 글로우 표시 여부
+    edge_pulse: bool,
+    /// 엣지 스크롤 방향별 반응 지연(초) [왼쪽, 오른쪽, 위, 아래]
+    edge_delays: [f32; 4],
+    /// 방향별 가장자리 진입 시각(ms) — 반응 지연 램프용 (런타임 전용)
+    edge_zone_enter_ms: [u64; 4],
+    /// 이번 프레임 방향별 글로우 강도 [왼쪽, 오른쪽, 위, 아래] (런타임 전용)
+    edge_glow: [f32; 4],
+    /// 커스텀 커서 표시 여부 (히스테리시스 — 상태 깜빡임 방지)
+    cursor_custom_shown: bool,
+    /// 커스텀 커서 상태 연속 프레임 카운터
+    cursor_custom_counter: u32,
 
     // ---------- Input ----------
     active_stroke: Option<ActiveStroke>,
@@ -1128,7 +1152,23 @@ impl FreeDfApp {
             [480.0; 4]
         };
         let window_focus_on_move = if has { s.window_focus_on_move } else { false };
+        let window_focus_dwell_sec = if has {
+            s.window_focus_dwell_sec.clamp(0.0, 5.0)
+        } else {
+            0.0
+        };
         let edge_overscroll = if has { s.edge_overscroll.clamp(0.0, 2000.0) } else { 64.0 };
+        let edge_pulse = if has { s.edge_pulse } else { true };
+        let edge_delays = if has {
+            [
+                s.edge_delays[0].clamp(0.0, 3.0),
+                s.edge_delays[1].clamp(0.0, 3.0),
+                s.edge_delays[2].clamp(0.0, 3.0),
+                s.edge_delays[3].clamp(0.0, 3.0),
+            ]
+        } else {
+            [0.0; 4]
+        };
         let custom_paper_size = if let Some(c) = s.custom_paper_size {
             [c[0].clamp(100.0, 2400.0), c[1].clamp(100.0, 2400.0)]
         } else {
@@ -1290,7 +1330,16 @@ impl FreeDfApp {
             minimal_sections_collapsed: false,
             minimal_chrome_collapsed: false,
             window_focus_on_move,
+            window_focus_dwell_sec,
+            window_hover_since_ms: 0,
+            window_focus_settings_open: false,
             edge_overscroll,
+            edge_pulse,
+            edge_delays,
+            edge_zone_enter_ms: [0; 4],
+            edge_glow: [0.0; 4],
+            cursor_custom_shown: false,
+            cursor_custom_counter: 0,
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
@@ -1415,7 +1464,10 @@ impl FreeDfApp {
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
+            window_focus_dwell_sec: self.window_focus_dwell_sec,
             edge_overscroll: self.edge_overscroll,
+            edge_pulse: self.edge_pulse,
+            edge_delays: self.edge_delays,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -1836,7 +1888,10 @@ impl FreeDfApp {
             edge_zone: self.edge_zone,
             edge_speeds: self.edge_speeds,
             window_focus_on_move: self.window_focus_on_move,
+            window_focus_dwell_sec: self.window_focus_dwell_sec,
             edge_overscroll: self.edge_overscroll,
+            edge_pulse: self.edge_pulse,
+            edge_delays: self.edge_delays,
             smoothing: self.smoothing,
             smoothing_enabled: self.smoothing_enabled,
             ink_bleed: InkBleed::default(),
@@ -2324,11 +2379,13 @@ impl FreeDfApp {
 
     // ---------- Minimal-mode floating containers ----------
 
-    /// 최소(포커스) 모드의 **좌측 컨테이너** — Library / Outline / Bookmarks.
+    /// 최소(포커스) 모드의 **좌측 컨테이너** — Library / Outline / Bookmarks
+    /// **트리거만** 담습니다. 콘텐츠는 컨테이너 바깥의 독립 오버레이로
+    /// 표시됩니다 (`minimal_library_overlay` 등).
     ///
     /// 세 섹션은 **상호 베타적**입니다: 하나를 켜면 나머지는 꺼집니다.
-    /// 창은 빈 공간을 잡고 드래그해 이동할 수 있고, 헤더의 접기 버튼으로
-    /// 본문을 접었다 펼 수 있습니다 (접힘 시 폭 강제 해제 — 안 접히던 버그 수정).
+    /// 창은 빈 공간을 잡고 드래그해 이동할 수 있고, 접기 버튼으로 작은
+    /// ▤ 버튼 하나만 남길 수 있습니다.
     fn minimal_sections(&mut self, ctx: &egui::Context) {
         let fill = crate::theme::nord::semantic::overlay_bg();
         let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
@@ -2356,7 +2413,6 @@ impl FreeDfApp {
                     }
                     return;
                 }
-                ui.set_width(330.0);
                 ui.horizontal(|ui| {
                     if ui
                         .selectable_label(
@@ -2404,44 +2460,130 @@ impl FreeDfApp {
                         self.minimal_sections_collapsed = true;
                     }
                 });
-                if self.show_library {
-                    ui.separator();
-                    // 안쪽(library_panel) 자체 ScrollArea와 ID가 충돌하지 않도록
-                    // 바깥 래퍼에 고유 id_salt를 부여합니다.
-                    egui::ScrollArea::vertical()
-                        .id_salt("minimal_library_scroll")
-                        .max_height(320.0)
-                        .show(ui, |ui| self.library_panel(ui));
-                }
-                if self.show_outline {
-                    ui.separator();
-                    egui::ScrollArea::vertical()
-                        .id_salt("minimal_outline_scroll")
-                        .max_height(320.0)
-                        .show(ui, |ui| self.outline_panel(ui));
-                }
-                if self.show_bookmarks {
-                    ui.separator();
-                    let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
-                    egui::ScrollArea::vertical()
-                        .max_height(220.0)
-                        .show(ui, |ui| {
-                            if pages.is_empty() {
-                                ui.label(
-                                    egui::RichText::new("No bookmarks yet").weak().small(),
-                                );
-                            } else {
-                                for p in pages {
-                                    if ui.button(format!("Page {}", p + 1)).clicked() {
-                                        self.goto_page(p);
-                                    }
-                                }
-                                if ui.button("Clear all bookmarks").clicked() {
-                                    self.clear_bookmarks();
+            });
+    }
+
+    /// Library 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
+    fn minimal_library_overlay(&mut self, ctx: &egui::Context) {
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        egui::Window::new("minimal_library_overlay")
+            .title_bar(false)
+            .movable(true)
+            .resizable(false)
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, stroke))
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(320.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("✕")
+                            .on_hover_text("Close Library")
+                            .clicked()
+                        {
+                            self.show_library = false;
+                        }
+                    });
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("minimal_library_scroll")
+                    .max_height(360.0)
+                    .show(ui, |ui| self.library_panel(ui));
+            });
+    }
+
+    /// Outline 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
+    fn minimal_outline_overlay(&mut self, ctx: &egui::Context) {
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        egui::Window::new("minimal_outline_overlay")
+            .title_bar(false)
+            .movable(true)
+            .resizable(false)
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, stroke))
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(320.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("✕")
+                            .on_hover_text("Close Outline")
+                            .clicked()
+                        {
+                            self.show_outline = false;
+                        }
+                    });
+                });
+                egui::ScrollArea::vertical()
+                    .id_salt("minimal_outline_scroll")
+                    .max_height(360.0)
+                    .show(ui, |ui| self.outline_panel(ui));
+            });
+    }
+
+    /// Bookmarks 콘텐츠 오버레이 — 컨테이너 **바깥**의 독립 플로팅 창.
+    fn minimal_bookmarks_overlay(&mut self, ctx: &egui::Context) {
+        let fill = crate::theme::nord::semantic::overlay_bg();
+        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+        let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
+        egui::Window::new("minimal_bookmarks_overlay")
+            .title_bar(false)
+            .movable(true)
+            .resizable(false)
+            .anchor(egui::Align2::LEFT_TOP, egui::vec2(8.0, 52.0))
+            .frame(
+                egui::Frame::new()
+                    .fill(fill)
+                    .stroke(egui::Stroke::new(1.0, stroke))
+                    .corner_radius(10.0)
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(280.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Bookmarks").strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("✕")
+                            .on_hover_text("Close Bookmarks")
+                            .clicked()
+                        {
+                            self.show_bookmarks = false;
+                        }
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("minimal_bookmarks_scroll")
+                    .max_height(300.0)
+                    .show(ui, |ui| {
+                        if pages.is_empty() {
+                            ui.label(egui::RichText::new("No bookmarks yet").weak().small());
+                        } else {
+                            for p in pages {
+                                if ui.button(format!("Page {}", p + 1)).clicked() {
+                                    self.goto_page(p);
                                 }
                             }
-                        });
-                }
+                            if ui.button("Clear all bookmarks").clicked() {
+                                self.clear_bookmarks();
+                            }
+                        }
+                    });
             });
     }
 
@@ -2669,14 +2811,21 @@ impl eframe::App for FreeDfApp {
         }
         self.handle_shortcuts(&ctx);
 
-        // ── 스플릿 뷰: 커서가 이 창 위에서 움직이면 무조건 이 창에 포커스 ──
-        // 두 창을 나란히 띄워 놓았을 때, 클릭 없이 커서만 옮겨도 그 창이
-        // 활성화됩니다 (다음 클릭/입력이 다른 창에 먹히는 문제 해소).
+        // ── 스플릿 뷰: 커서가 이 창 위에서 일정 시간(dwell) 활성화되면
+        //    이 창에 포커스 — 0초면 즉시, 그 이상이면 머문 시간 기준.
         if self.window_focus_on_move
-            && ctx.input(|i| i.pointer.is_moving() && i.pointer.hover_pos().is_some())
+            && ctx.input(|i| i.pointer.hover_pos().is_some())
             && ctx.input(|i| i.viewport().focused == Some(false))
         {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            let now = now_ms();
+            if self.window_hover_since_ms == 0 {
+                self.window_hover_since_ms = now;
+            }
+            if dwell_focus_due(now, self.window_hover_since_ms, self.window_focus_dwell_sec) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        } else {
+            self.window_hover_since_ms = 0;
         }
 
         // 좁은 창에서는 캔버스 + 팔레트만 남기고 나머지는 자동으로 숨깁니다.
@@ -2750,6 +2899,16 @@ impl eframe::App for FreeDfApp {
         if minimal {
             self.minimal_sections(&ctx);
             self.minimal_chrome_controls(&ctx);
+            // 콘텐츠는 컨테이너 바깥의 **독립 오버레이**로 표시됩니다.
+            if self.show_library {
+                self.minimal_library_overlay(&ctx);
+            }
+            if self.show_outline {
+                self.minimal_outline_overlay(&ctx);
+            }
+            if self.show_bookmarks {
+                self.minimal_bookmarks_overlay(&ctx);
+            }
         }
 
         self.connection_dialog(&ctx);
@@ -2856,5 +3015,24 @@ mod window_isolation_tests {
         assert!(!wheel_toggle_allowed(Some(false)));
         // 포커스된 창만 반응.
         assert!(wheel_toggle_allowed(Some(true)));
+    }
+
+    #[test]
+    fn dwell_zero_focuses_immediately() {
+        // 0초 지연 = 머물기 시작한 순간 포커스.
+        assert!(dwell_focus_due(1000, 1000, 0.0));
+    }
+
+    #[test]
+    fn dwell_waits_for_configured_time() {
+        // 1초 지연 — 500ms는 부족, 1000ms면 충분.
+        assert!(!dwell_focus_due(1500, 1000, 1.0));
+        assert!(dwell_focus_due(2000, 1000, 1.0));
+    }
+
+    #[test]
+    fn dwell_not_hovering_never_focuses() {
+        // since_ms == 0 (아직 머물지 않음) → 항상 false.
+        assert!(!dwell_focus_due(9999, 0, 0.0));
     }
 }

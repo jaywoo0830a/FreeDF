@@ -412,34 +412,62 @@ impl FreeDfApp {
         // ── 엣지 자동 스크롤 ───────────────────────────────────────────
         // 줌인 상태에서 커서(펜 호버 포함)가 캔버스 가장자리 근처에 닿으면
         // 그 방향으로 뷰를 자동 패닝합니다. 경계에서 0, 가장자리에서 최대
-        // 속도로 부드럽게 증가합니다. (설정: Edge auto-scroll 창)
+        // 속도로 부드럽게 증가합니다. 방향별 반응 지연(delay)과 "숨쉬는"
+        // 표시(pulse)는 설정 창에서 조정합니다.
         if self.edge_autoscroll {
-            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+            let pos = ctx.input(|i| i.pointer.hover_pos());
+            if let Some(pos) = pos {
                 if canvas.contains(pos) {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
-                    // 방향별 속도 [왼쪽, 오른쪽, 위, 아래] — 글쓰기 흐름(좌→우,
-                    // 위→아래)에 맞춰 따로 지정할 수 있습니다.
                     let sp = [
                         self.edge_speeds[0].clamp(20.0, 4000.0),
                         self.edge_speeds[1].clamp(20.0, 4000.0),
                         self.edge_speeds[2].clamp(20.0, 4000.0),
                         self.edge_speeds[3].clamp(20.0, 4000.0),
                     ];
-                    let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
                     let t = |d: f32| (1.0 - d / zone).max(0.0);
+                    let raw = [
+                        t(pos.x - canvas.left()),   // 좌측 가장자리
+                        t(canvas.right() - pos.x),  // 우측 가장자리
+                        t(pos.y - canvas.top()),    // 위쪽 가장자리
+                        t(canvas.bottom() - pos.y), // 아래쪽 가장자리
+                    ];
+                    // 방향별 반응 지연 — 가장자리에 머문 시간이 delay를 넘어야
+                    // 스크롤이 시작됩니다 (delay 0 = 즉시).
+                    let now = now_ms();
+                    let mut te = [0.0f32; 4];
+                    for i in 0..4 {
+                        if raw[i] > 0.0 {
+                            if self.edge_zone_enter_ms[i] == 0 {
+                                self.edge_zone_enter_ms[i] = now;
+                            }
+                            let delay_ms = (self.edge_delays[i].clamp(0.0, 3.0) * 1000.0) as u64;
+                            if now.saturating_sub(self.edge_zone_enter_ms[i]) >= delay_ms {
+                                te[i] = raw[i];
+                            }
+                        } else {
+                            self.edge_zone_enter_ms[i] = 0;
+                        }
+                    }
+                    self.edge_glow = raw; // 숨쉬는 글로우는 지연과 무관하게 즉시.
+                    let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.1);
                     let mut dx = 0.0f32;
                     let mut dy = 0.0f32;
-                    dx += t(pos.x - canvas.left()) * sp[0] * dt; // 좌측 가장자리
-                    dx -= t(canvas.right() - pos.x) * sp[1] * dt; // 우측 가장자리
-                    dy += t(pos.y - canvas.top()) * sp[2] * dt; // 위쪽 가장자리
-                    dy -= t(canvas.bottom() - pos.y) * sp[3] * dt; // 아래쪽 가장자리
+                    dx += te[0] * sp[0] * dt;
+                    dx -= te[1] * sp[1] * dt;
+                    dy += te[2] * sp[2] * dt;
+                    dy -= te[3] * sp[3] * dt;
                     if dx != 0.0 || dy != 0.0 {
                         self.view.pan_x += dx;
                         self.view.pan_y += dy;
                         self.view
                             .clamp_pan(self.page_size_pts, canvas_size, self.edge_overscroll);
                     }
+                } else {
+                    self.edge_glow = [0.0; 4];
                 }
+            } else {
+                self.edge_glow = [0.0; 4];
             }
         }
 
@@ -631,7 +659,18 @@ impl FreeDfApp {
         let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
         let over_page = pointer_pos
             .is_some_and(|pos| canvas.contains(pos) && draw_rect.contains(pos));
-        if response.hovered() && over_page {
+        // 히스테리시스: 커서 상태가 무한히 바뀌어도 커스텀 커서가 시스템 커서
+        // 위에 겹쳐 깜빡이지 않도록, 같은 상태가 3프레임 연속일 때만 전환.
+        let want_custom = response.hovered() && over_page;
+        let same = want_custom == self.cursor_custom_shown;
+        self.cursor_custom_counter = if same { (self.cursor_custom_counter + 1).min(3) } else { 0 };
+        let show = if self.cursor_custom_counter >= 3 {
+            want_custom
+        } else {
+            self.cursor_custom_shown
+        };
+        self.cursor_custom_shown = show;
+        if show {
             ctx.set_cursor_icon(egui::CursorIcon::None);
             let time = ctx.input(|i| i.time) as f32;
             if let Some(pos) = pointer_pos {
@@ -639,6 +678,56 @@ impl FreeDfApp {
             }
         } else {
             ctx.set_cursor_icon(egui::CursorIcon::Default);
+        }
+
+        // ── 엣지 스크롤 숨쉬는 글로우 (맨 위 레이어) ──
+        if self.edge_pulse && self.edge_glow.iter().any(|&s| s > 0.0) {
+            let time = ctx.input(|i| i.time) as f32;
+            let breathe = 0.5 + 0.5 * (time * std::f32::consts::TAU * 0.8).sin();
+            let base = crate::theme::nord::semantic::ACCENT_ACTIVE;
+            let bw = 10.0;
+            let band = |s: f32| base.gamma_multiply(0.08 + 0.18 * s * breathe);
+            if self.edge_glow[0] > 0.0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(canvas.left(), canvas.top()),
+                        egui::vec2(bw, canvas.height()),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    band(self.edge_glow[0]),
+                );
+            }
+            if self.edge_glow[1] > 0.0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(canvas.right() - bw, canvas.top()),
+                        egui::vec2(bw, canvas.height()),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    band(self.edge_glow[1]),
+                );
+            }
+            if self.edge_glow[2] > 0.0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(canvas.left(), canvas.top()),
+                        egui::vec2(canvas.width(), bw),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    band(self.edge_glow[2]),
+                );
+            }
+            if self.edge_glow[3] > 0.0 {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(canvas.left(), canvas.bottom() - bw),
+                        egui::vec2(canvas.width(), bw),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    band(self.edge_glow[3]),
+                );
+            }
+            ctx.request_repaint(); // 숨쉬는 애니메이션 유지.
         }
 
         // Debug HUD — 실시간 입력값 확인용 오버레이.

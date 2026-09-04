@@ -980,33 +980,48 @@ impl FreeDfApp {
                 self.save_default_session();
                 self.save_session();
             }
+            if ui
+                .checkbox(&mut self.edge_pulse, "Breathing edge glow")
+                .on_hover_text(
+                    "Soft pulsing glow on the canvas edge while auto-scroll is active.",
+                )
+                .changed()
+            {
+                self.save_default_session();
+                self.save_session();
+            }
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(
-                    "Direction speeds (px/s) — writing flows left→right and \
-                     top→bottom, so each direction can be tuned separately.",
+                    "Direction tuning — speed (px/s) and reaction delay (s).\n\
+                     Delay 0 = scrolling starts the moment the cursor touches the edge.\n\
+                     Writing flows left→right and top→bottom.",
                 )
                 .weak(),
             );
             let labels = ["Left", "Right", "Up", "Down"];
             let mut changed = false;
-            for (i, label) in labels.iter().enumerate() {
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.edge_speeds[i], 20.0..=2000.0)
-                            .text(*label),
-                    )
-                    .on_hover_text(if i == 1 {
-                        "Speed when the cursor reaches the right edge \
-                         (reading/writing direction — next word)."
-                    } else if i == 3 {
-                        "Speed when the cursor reaches the bottom edge \
-                         (reading/writing direction — next line)."
-                    } else {
-                        "Speed when the cursor reaches this edge."
-                    })
-                    .changed();
-            }
+            egui::Grid::new("edge_dir_grid")
+                .num_columns(3)
+                .spacing(egui::vec2(8.0, 2.0))
+                .show(ui, |ui| {
+                    for (i, label) in labels.iter().enumerate() {
+                        ui.label(*label);
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut self.edge_speeds[i], 20.0..=2000.0)
+                                    .text("px/s"),
+                            )
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut self.edge_delays[i], 0.0..=2.0)
+                                    .text("s"),
+                            )
+                            .changed();
+                        ui.end_row();
+                    }
+                });
             if changed {
                 self.save_default_session();
                 self.save_session();
@@ -1028,6 +1043,40 @@ impl FreeDfApp {
             self.save_default_session();
             self.save_session();
         }
+    }
+
+    /// Window Focus 설정 창 내용 — 커서가 일정 시간 머물면 포커스.
+    pub(crate) fn window_focus_settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new(
+                "In split view, focus this window when the cursor stays \
+                 over it for the dwell time below.",
+            )
+            .weak(),
+        );
+        ui.add_space(6.0);
+        if ui
+            .checkbox(&mut self.window_focus_on_move, "Focus on cursor dwell")
+            .changed()
+        {
+            self.save_default_session();
+        }
+        ui.add_space(4.0);
+        ui.add_enabled_ui(self.window_focus_on_move, |ui| {
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.window_focus_dwell_sec, 0.0..=5.0)
+                        .text("Dwell time (s)"),
+                )
+                .on_hover_text(
+                    "0 = focus the moment the cursor moves over this window.\n\
+                     Higher = the cursor must stay this long before focusing.",
+                )
+                .changed()
+            {
+                self.save_default_session();
+            }
+        });
     }
 
     /// 설정 플로팅 창들 렌더 (툴바 뒤에 호출).
@@ -1110,6 +1159,19 @@ impl FreeDfApp {
                         self.edge_scroll_settings_ui(ui);
                     });
                 self.edge_scroll_settings_open = open;
+            }
+
+            // ── Window Focus 설정 플로팅 창 (Row1의 Focus Delay 버튼) ──
+            if self.window_focus_settings_open {
+                let mut open = self.window_focus_settings_open;
+                egui::Window::new("Window Focus")
+                    .open(&mut open)
+                    .resizable(false)
+                    .default_width(330.0)
+                    .show(ui.ctx(), |ui| {
+                        self.window_focus_settings_ui(ui);
+                    });
+                self.window_focus_settings_open = open;
             }
     
             // ── Insert Page 플로팅 창 (메뉴 대신 — 타이핑이 유지됨) ──

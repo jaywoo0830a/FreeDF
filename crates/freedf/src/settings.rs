@@ -104,9 +104,20 @@ pub struct SessionState {
     /// 기본은 꺼짐.
     #[serde(default = "default_false")]
     pub window_focus_on_move: bool,
+    /// Window Focus 지연(초) — 커서가 창 위에 이 시간 이상 머물면 포커스.
+    /// 0이면 커서가 올라가는 즉시 포커스합니다.
+    #[serde(default = "default_focus_dwell")]
+    pub window_focus_dwell_sec: f32,
     /// 페이지(문서) 바깥으로 더 패닝할 수 있는 여유 (화면 px)
     #[serde(default = "default_edge_overscroll")]
     pub edge_overscroll: f32,
+    /// 엣지 자동 스크롤 활성 가장자리의 "숨쉬는" 글로우 표시
+    #[serde(default = "default_true")]
+    pub edge_pulse: bool,
+    /// 엣지 자동 스크롤 방향별 반응 지연(초) [왼쪽, 오른쪽, 위, 아래] —
+    /// 0이면 가장자리에 닿는 즉시 스크롤이 시작됩니다.
+    #[serde(default = "default_edge_delays")]
+    pub edge_delays: [f32; 4],
     /// 펜 입력 스무딩(안정화) 강도 0..1 — 0이면 원본 그대로
     #[serde(default = "default_smoothing")]
     pub smoothing: f32,
@@ -173,6 +184,20 @@ fn default_edge_speeds() -> [f32; 4] {
 /// 페이지 바깥 패닝 여유 기본값 (화면 px).
 fn default_edge_overscroll() -> f32 {
     64.0
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Window Focus 기본 지연(초) — 0 = 커서가 올라가는 즉시 포커스.
+fn default_focus_dwell() -> f32 {
+    0.0
+}
+
+/// 엣지 자동 스크롤 방향별 반응 지연 기본값 (초, 0 = 즉시).
+fn default_edge_delays() -> [f32; 4] {
+    [0.0; 4]
 }
 
 fn default_smoothing() -> f32 {
@@ -244,7 +269,10 @@ impl Default for SessionState {
             edge_zone: 72.0,
             edge_speeds: [480.0; 4],
             window_focus_on_move: false,
+            window_focus_dwell_sec: 0.0,
             edge_overscroll: 64.0,
+            edge_pulse: true,
+            edge_delays: [0.0; 4],
             smoothing: 0.4,
             smoothing_enabled: false,
             ink_bleed: InkBleed::default(),

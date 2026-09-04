@@ -31,12 +31,26 @@ impl FreeDfApp {
                             icon_text(ui, "Window Focus", icons::CROSSHAIR),
                         )
                         .on_hover_text(
-                            "Focus this window automatically when the cursor moves over it.\n\
-                             Turn off for windows that should not grab focus in split view.",
+                            "Focus this window when the cursor stays over it for the dwell time\n\
+                             (set with the Focus Delay button). Turn off for windows that\n\
+                             should not grab focus in split view.",
                         )
                         .changed()
                     {
                         self.save_default_session();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(icon_text(ui, "Focus Delay", icons::TIMER))
+                                .frame(false),
+                        )
+                        .on_hover_text(
+                            "Window Focus settings — how long the cursor must stay\n\
+                             over this window before it is focused (0 = instantly).",
+                        )
+                        .clicked()
+                    {
+                        self.window_focus_settings_open = true;
                     }
                     ui.separator();
                     if ui
