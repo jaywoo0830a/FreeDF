@@ -3,13 +3,12 @@
 use super::*;
 
 impl FreeDfApp {
-    /// 현재 문서를 DB로 플러시합니다 — **델타 프로토콜**:
-    ///   1) write-behind 대기열 플러시 (획은 이미 증분 반영 중 — 재전송 없음)
-    ///   2) 서버 구조 델타 (페이지 인덱스 이동/삭제/회전 — 선택)
-    ///   3) 메타 동기화 (페이지/문서 정보/PDF — migration 0008)
-    /// 전체 스트로크 재동기화는 하지 않습니다 (repair용 `document_sync`는 별도).
+    /// 현재 문서를 서버로 플러시합니다:
+    ///   1) 대기열 플러시 — 스냅샷 업로드 (획/용지/저널/세션 전부)
+    ///   2) 구조 연산 (페이지 인덱스 이동/삭제/회전 — 선택)
+    ///   3) 메타 반영 (페이지/문서 정보/PDF)
     ///
-    /// PDF 직렬화(pdfium)만 UI 스레드에서 하고, **DB 반영은 백그라운드**로
+    /// PDF 직렬화(pdfium)만 UI 스레드에서 하고, **서버 반영은 백그라운드**로
     /// 단계별 진행 메시지(SaveMsg::Stage)를 보냅니다.
     pub(crate) fn flush_current_document(&mut self) {
         self.flush_current_document_with(None);

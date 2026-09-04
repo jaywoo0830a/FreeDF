@@ -32,7 +32,7 @@ fn load_document_bundle(
         format!("{} has no PDF content in the database.", row.title)
     })?;
     // 주석(획 전체)·페이지·편집 저널·세션을 한 번의 왕복으로 로드
-    // (migration 0007 — 서버가 JSONB로 집계, 클라이언트는 단일 패스 파싱).
+    // (Sync v3 서버가 스냅샷 ZIP으로 집계).
     let _ = tx.send(LoaderMsg::Stage(format!(
         "Loading: annotations, history & session…"
     )));

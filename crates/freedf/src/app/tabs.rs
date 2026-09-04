@@ -71,7 +71,7 @@ impl FreeDfApp {
             None => return,
         };
         let db = self.db.clone();
-        // 탭 분리 전 최신 상태 보장 — 한 번의 왕복으로 원자 동기화(0006 함수).
+        // 탭 분리 전 최신 상태 보장 — 스냅샷 업로드로 원자 반영.
         let default_paper = freedf_core::paper::PagePaper {
             style: self.paper_style,
             color: self.paper_color,
