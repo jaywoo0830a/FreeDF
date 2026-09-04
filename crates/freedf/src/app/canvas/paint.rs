@@ -116,8 +116,9 @@ impl FreeDfApp {
             });
     }
 
-    /// 종이 질감 — 페이지 배경 위에 은은한 섬유 노이즈를 깔아줍니다.
-    /// 타일 텍스처는 **페이지 좌표 기준**이라 줌과 함께 확대/축소됩니다.
+    /// 종이 질감 — 물리 기반 표면 모델(docs/paper-texture-model.md)을
+    /// 페이지 위에 깔아줍니다. 색 텍스처는 페이지 좌표 기준이라 줌과 함께
+    /// 확대/축소되고, 배경색·강도·조명 설정이 바뀔 때만 다시 굽습니다.
     pub(crate) fn paint_paper_texture(
         &mut self,
         ctx: &egui::Context,
@@ -129,15 +130,25 @@ impl FreeDfApp {
         }
         const TEX_SIZE: usize = 256;
         const NOISE_SEED: u64 = 0x0B5E_E5ED;
-        let strength = self.paper_texture_strength;
+        let base: [u8; 3] = {
+            let p = self.current_page_paper().color;
+            [p[0], p[1], p[2]]
+        };
+        let cfg = (self.paper_texture_strength, base, self.paper_surface);
         let stale = self
             .paper_noise_tex
             .as_ref()
             .map(|t| t.size() != [TEX_SIZE, TEX_SIZE])
             .unwrap_or(true)
-            || (self.paper_noise_tex_strength - strength).abs() > 1e-3;
+            || self.paper_noise_cfg != Some(cfg);
         if stale {
-            let rgba = freedf_core::paper::paper_texture_rgba(TEX_SIZE, NOISE_SEED, strength);
+            let rgba = freedf_core::paper::paper_texture_rgba(
+                TEX_SIZE,
+                base,
+                self.paper_texture_strength,
+                &self.paper_surface,
+                NOISE_SEED,
+            );
             let img = egui::ColorImage::from_rgba_unmultiplied([TEX_SIZE, TEX_SIZE], &rgba);
             self.paper_noise_tex = Some(ctx.load_texture(
                 "paper_noise",
@@ -149,7 +160,7 @@ impl FreeDfApp {
                     mipmap_mode: Some(egui::TextureFilter::Linear),
                 },
             ));
-            self.paper_noise_tex_strength = strength;
+            self.paper_noise_cfg = Some(cfg);
         }
         let Some(tex) = &self.paper_noise_tex else {
             return;
@@ -165,11 +176,18 @@ impl FreeDfApp {
         // 다른 부분이 보여 반복 패턴이 눈에 띄지 않습니다.
         let phase = (self.current_page as f32 * 0.6180339).fract();
         let uv0 = Pos2::new(phase * 0.71, phase * 1.31);
+        // 노트: 불투명 절차적 종이(원본은 흰 종이뿐이므로 덮어씀).
+        // 외부 PDF: 원본 콘텐츠 보존을 위해 반투명 오버레이.
+        let tint = if self.current_note.is_some() {
+            Color32::WHITE
+        } else {
+            Color32::from_white_alpha(96)
+        };
         painter.image(
             tex.id(),
             page_rect,
             Rect::from_min_max(uv0, uv0 + egui::vec2(reps.x, reps.y)),
-            Color32::WHITE,
+            tint,
         );
     }
 

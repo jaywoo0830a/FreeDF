@@ -634,6 +634,88 @@ impl FreeDfApp {
                     }
                 }
             });
+        // ── 표면 물리 모델 (docs/paper-texture-model.md §6) ──
+        egui::CollapsingHeader::new("Surface & lighting")
+            .id_salt("paper_win_surface")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "Physical paper surface: height field → normals → lighting.\n\
+                         Flat paper keeps its exact color; relief comes from the light.",
+                    )
+                    .weak()
+                    .small(),
+                );
+                let mut changed = false;
+                let s = &mut self.paper_surface;
+                egui::Grid::new("paper_surface_grid")
+                    .num_columns(2)
+                    .spacing(egui::vec2(8.0, 2.0))
+                    .show(ui, |ui| {
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.bump, 0.0..=2.0).text("Bump β"))
+                            .on_hover_text("Relief strength — height gradient scale.")
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut s.albedo_l, 0.0..=0.3)
+                                    .text("Light var a_L"),
+                            )
+                            .on_hover_text("Shared luminance variation (fiber absorption).")
+                            .changed();
+                        ui.end_row();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut s.albedo_c, 0.0..=0.2)
+                                    .text("Chroma var a_C"),
+                            )
+                            .on_hover_text("Per-channel spectral variation (warm/cool flecks).")
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.ao_strength, 0.0..=1.0).text("Valley AO k"))
+                            .on_hover_text("Ambient occlusion in the fiber valleys.")
+                            .changed();
+                        ui.end_row();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut s.light_azimuth_deg, 0.0..=360.0)
+                                    .text("Light azimuth °"),
+                            )
+                            .on_hover_text("Directional light angle around the page.")
+                            .changed();
+                        changed |= ui
+                            .add(
+                                egui::Slider::new(&mut s.light_elevation_deg, 5.0..=90.0)
+                                    .text("Light elevation °"),
+                            )
+                            .on_hover_text("Light height above the page (90° = straight down).")
+                            .changed();
+                        ui.end_row();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.ambient, 0.0..=1.0).text("Ambient E_a"))
+                            .on_hover_text("Hemispheric ambient light intensity.")
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.direct, 0.0..=1.0).text("Direct E_d"))
+                            .on_hover_text("Directional light intensity.")
+                            .changed();
+                        ui.end_row();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.sheen, 0.0..=0.3).text("Sheen ρ_s"))
+                            .on_hover_text("Subtle specular sheen strength.")
+                            .changed();
+                        changed |= ui
+                            .add(egui::Slider::new(&mut s.gloss, 1.0..=64.0).text("Gloss α"))
+                            .on_hover_text("Sheen sharpness (Blinn-Phong exponent).")
+                            .changed();
+                        ui.end_row();
+                    });
+                if changed {
+                    self.save_default_session();
+                    self.save_session();
+                }
+            });
         // ── 스타일별 독립 세부설정 — **현재 선택된 스타일**을 편집합니다.
         // Ruled/Grid/Dotted 각각 자기만의 간격/색/두께를 가집니다.
         egui::CollapsingHeader::new("Style details")

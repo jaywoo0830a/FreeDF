@@ -355,9 +355,10 @@ fn tile_noise(u: f32, v: f32, seed: u64, cu: u32, cv: u32) -> f32 {
     lo + (hi - lo) * sy
 }
 
-/// 종이 질감 필드 (−1..1, 편차 부호 포함) — 픽셀 생성의 내부 코어.
+/// 종이 높이장 h(u,v) — 문서 §2.
 ///
-/// 모든 옥타브가 **타일 가능 노이즈**(토러스 격자)라 타일 경계에서
+/// 모틀링(지료 밀도, FBM 3옥타브) + 섬유(이방성 두 방향) + 스펙(필러 입자)의
+/// 합입니다. 모든 성분이 **토러스 격자 노이즈**(`tile_noise`)라 타일 경계에서
 /// 완전히 이음새 없이 이어집니다.
 pub fn paper_field(u: f32, v: f32, seed: u64) -> f32 {
     // ① 모틀링 — 지료 분산 편차 (FBM 3옥타브).
@@ -403,38 +404,196 @@ pub fn paper_field(u: f32, v: f32, seed: u64) -> f32 {
     (1.35 * mottling + 0.45 * fib_h + 0.45 * fib_v + 0.35 * speck).clamp(-1.0, 1.0)
 }
 
-/// 종이 질감 노이즈 텍스처 (size×size, **RGBA 평탄화 바이트**) —
-/// 실제 종이의 요철을 흉내내는 **세 성분의 물리 모델**:
-///
-/// 1. **모틀링(mottling)** — 지료(펄프) 분산 편차로 생기는 저주파 밝기
-///    요동 (값 노이즈 FBM 3옥타브, 파장 5/11/23셀).
-/// 2. **섬유(fiber)** — 가로/세로 이방성 셀로 종이 섬유의 방향성 줄무늬.
-/// 3. **스펙(speck)** — 필러 입자/미세 먼지의 고주파 점 얼룩.
-///
-/// 편차는 **양방향**: 어두운 얼룩(섬유 그림자·흡수)은 갈회색, 밝은 얼룩
-/// (섬유 산란 하이라이트)은 아이보리색 픽셀로 한 텍스처에 인코딩합니다.
-/// **결정적** (같은 입력 = 같은 결과) — 렌더링 중 깜빡임이 없습니다.
-pub fn paper_texture_rgba(size: usize, seed: u64, strength: f32) -> Vec<u8> {
-    let n = size.clamp(8, 512);
-    let s = strength.clamp(0.0, 1.0);
-    const DARK: [u8; 3] = [70, 64, 58]; // 갈회색 그림자 얼룩.
-    const LIGHT: [u8; 3] = [255, 253, 248]; // 아이보리 하이라이트.
-    let mut out = Vec::with_capacity(n * n * 4);
-    for y in 0..n {
-        for x in 0..n {
-            let u = x as f32 / n as f32;
-            let v = y as f32 / n as f32;
-            let t = paper_field(u, v, seed);
-            let mag = (t.abs() * s * 255.0) as u8;
-            let (rgb, alpha) = if t >= 0.0 {
-                (DARK, mag)
-            } else {
-                (LIGHT, mag)
-            };
-            out.extend_from_slice(&[rgb[0], rgb[1], rgb[2], alpha]);
+// ═════════════════════════════════════════════════════════════════════
+// 물리 기반 종이 표면 모델 — docs/paper-texture-model.md 구현
+//
+// 함수형 스타일: 모든 함수는 순수(입력 불변·부수효과 없음)하며,
+// 최종 텍스처는 순수 함수들의 합성(iterator pipeline)으로 계산됩니다.
+// ═════════════════════════════════════════════════════════════════════
+
+/// 종이 표면의 조명·요철 파라미터 (문서 §6).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaperSurfaceSettings {
+    /// 요철(범프) 강도 β — 높이장 기울기가 법선에 미치는 배율.
+    pub bump: f32,
+    /// 휘도 요동 진폭 a_L — 섬유 밀도의 광흡수 편차 (채널 공통).
+    pub albedo_l: f32,
+    /// 색도 요동 진폭 a_C — 충전재·형광증백제의 미세 스펙트럼 편차 (채널 독립).
+    pub albedo_c: f32,
+    /// 광원 방위각 θ (도).
+    pub light_azimuth_deg: f32,
+    /// 광원 고도 φ (도).
+    pub light_elevation_deg: f32,
+    /// 주변광 강도 E_a.
+    pub ambient: f32,
+    /// 직사광 강도 E_d.
+    pub direct: f32,
+    /// 골 차폐 강도 k_ao — A(x) = 1 − k_ao·max(0, −h).
+    pub ao_strength: f32,
+    /// 시닝 강도 ρ_s (Blinn-Phong).
+    pub sheen: f32,
+    /// 광택 지수 α (클수록 좁은 하이라이트).
+    pub gloss: f32,
+}
+
+impl Default for PaperSurfaceSettings {
+    fn default() -> Self {
+        Self {
+            bump: 0.6,
+            albedo_l: 0.06,
+            albedo_c: 0.04,
+            light_azimuth_deg: 45.0,
+            light_elevation_deg: 55.0,
+            ambient: 0.55,
+            direct: 0.45,
+            ao_strength: 0.4,
+            sheen: 0.06,
+            gloss: 8.0,
         }
     }
-    out
+}
+
+/// 높이장의 중앙 차분 기울기 ∇h (문서 §3).
+/// `step`은 한 텍셀에 해당하는 타일 좌표 간격(1/size).
+pub fn paper_gradient(u: f32, v: f32, seed: u64, step: f32) -> (f32, f32) {
+    let dx =
+        (paper_field(u + step, v, seed) - paper_field(u - step, v, seed)) / (2.0 * step);
+    let dy =
+        (paper_field(u, v + step, seed) - paper_field(u, v - step, seed)) / (2.0 * step);
+    (dx, dy)
+}
+
+/// 단위 법선 n = normalize(−β∇h, 1) — 문서 §3.
+pub fn paper_normal((gx, gy): (f32, f32), bump: f32) -> [f32; 3] {
+    let nx = -bump * gx;
+    let ny = -bump * gy;
+    let inv = 1.0 / (nx * nx + ny * ny + 1.0).sqrt();
+    [nx * inv, ny * inv, inv]
+}
+
+/// 방향광 벡터 l(θ, φ) — 문서 §5.
+pub fn light_direction(azimuth_deg: f32, elevation_deg: f32) -> [f32; 3] {
+    let az = azimuth_deg.to_radians();
+    let el = elevation_deg.to_radians();
+    [el.cos() * az.cos(), el.cos() * az.sin(), el.sin()]
+}
+
+/// 골짜기 차폐 A(h) = 1 − k_ao·max(0, −h) — 문서 §5.
+pub fn ambient_occlusion(h: f32, ao_strength: f32) -> f32 {
+    1.0 - ao_strength * (-h).max(0.0)
+}
+
+/// 채널 반사율 ρ_c(x) = ρ0_c·[1 + a_L·ξ_L + a_C·ξ_c] — 문서 §4.
+/// `channel` ∈ {0,1,2} — ξ_c는 채널마다 다른 노이즈(씨앗·위상)를 씁니다.
+pub fn albedo(
+    rho0: f32,
+    u: f32,
+    v: f32,
+    channel: u32,
+    seed: u64,
+    s: &PaperSurfaceSettings,
+) -> f32 {
+    // ξ_L: 채널 공통 휘도 노이즈 (섬유 밀도 → 광흡수).
+    let lum = (tile_noise(u + 0.13, v + 0.27, seed ^ 0x5EED_00A1, 7, 7) - 0.5) * 2.0;
+    // ξ_c: 채널 독립 색도 노이즈 (충전재 스펙트럼 편차).
+    let chr = (tile_noise(
+        u + 0.31 + channel as f32 * 0.17,
+        v + 0.47 + channel as f32 * 0.23,
+        seed ^ 0x00C1_C0DEu64.wrapping_mul(channel as u64 + 1),
+        13,
+        13,
+    ) - 0.5) * 2.0;
+    (rho0 * (1.0 + s.albedo_l * lum + s.albedo_c * chr)).clamp(0.0, 1.0)
+}
+
+/// 표면 복사휘도 L — 문서 §5. 확산(주변광·차폐 + 직사광) + Blinn-Phong 시닝.
+///
+/// `flat`은 평평한 표면(β=0, h=0)에서의 노출로, 평면에서 C = ρ가 되도록
+/// 정규화합니다 — 설정한 종이 색이 그대로 보이게 하는 실용적 보정입니다.
+pub fn radiance(
+    rho: f32,
+    n: [f32; 3],
+    l: [f32; 3],
+    view: [f32; 3],
+    ao: f32,
+    s: &PaperSurfaceSettings,
+) -> f32 {
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let ndl = dot(n, l).max(0.0);
+    // 하프 벡터 ĥ = normalize(l + v) — Blinn-Phong 시닝.
+    let (hx, hy, hz) = (l[0] + view[0], l[1] + view[1], l[2] + view[2]);
+    let hlen = (hx * hx + hy * hy + hz * hz).sqrt().max(1e-6);
+    let ndh = dot(n, [hx / hlen, hy / hlen, hz / hlen]).max(0.0);
+    let flat = s.ambient + s.direct * l[2].max(0.0);
+    let exposure = if flat > 1e-4 { 1.0 / flat } else { 1.0 };
+    rho * (s.ambient * ao + s.direct * ndl) * exposure + s.sheen * ndh.powf(s.gloss.max(1.0))
+}
+
+/// sRGB → 선형광 (문서 §5의 감마 디코딩).
+pub fn srgb_to_linear(c: u8) -> f32 {
+    let x = c as f32 / 255.0;
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// 선형광 → sRGB (감마 인코딩).
+pub fn linear_to_srgb(x: f32) -> u8 {
+    let y = x.clamp(0.0, 1.0);
+    let e = if y <= 0.003_130_8 {
+        y * 12.92
+    } else {
+        1.055 * y.powf(1.0 / 2.4) - 0.055
+    };
+    (e * 255.0 + 0.5) as u8
+}
+
+/// 종이 표면을 **물리 모델**로 굽습니다 (size×size, RGBA 평탄화, 불투명).
+///
+/// 픽셀 색 = albedo(ρ0, 채널 노이즈) × 조명(법선·광원·차폐) + 시닝을
+/// 선형광 공간에서 계산하고 감마 인코딩해 반환합니다.
+/// `strength`(0..1)는 최종 결과를 평평한 ρ0 쪽으로 선형 보간합니다 —
+/// 0이면 텍스처가 종이 색 그 자체가 됩니다.
+/// **순수 함수**: 같은 입력은 항상 같은 출력 (깜빡임 없음).
+pub fn paper_texture_rgba(
+    size: usize,
+    base_rgb: [u8; 3],
+    strength: f32,
+    settings: &PaperSurfaceSettings,
+    seed: u64,
+) -> Vec<u8> {
+    let n = size.clamp(8, 512);
+    let step = 1.0 / n as f32;
+    let s = strength.clamp(0.0, 1.0);
+    const VIEW: [f32; 3] = [0.0, 0.0, 1.0];
+    let l = light_direction(settings.light_azimuth_deg, settings.light_elevation_deg);
+    let rho0 = [
+        srgb_to_linear(base_rgb[0]),
+        srgb_to_linear(base_rgb[1]),
+        srgb_to_linear(base_rgb[2]),
+    ];
+    (0..n)
+        .flat_map(move |y| (0..n).map(move |x| (x, y)))
+        .map(move |(x, y)| {
+            let u = x as f32 / n as f32;
+            let v = y as f32 / n as f32;
+            // 순수 파이프라인: 높이 → 기울기 → 법선 → (채널별) 반사율 → 복사휘도.
+            let h = paper_field(u, v, seed);
+            let ao = ambient_occlusion(h, settings.ao_strength);
+            let nrm = paper_normal(paper_gradient(u, v, seed, step), settings.bump);
+            let rgb: [u8; 3] = std::array::from_fn(|c| {
+                let rho = albedo(rho0[c], u, v, c as u32, seed, settings);
+                let lit = radiance(rho, nrm, l, VIEW, ao, settings);
+                let lin = rho0[c] + (lit - rho0[c]) * s;
+                linear_to_srgb(lin)
+            });
+            [rgb[0], rgb[1], rgb[2], 255]
+        })
+        .flatten()
+        .collect()
 }
 
 #[cfg(test)]
@@ -566,27 +725,101 @@ mod tests {
         assert_eq!(p.color, PAPER_WHITE);
     }
 
+    /// 테스트용 베이크 헬퍼 (문서 §7의 CPU 베이킹과 동일 경로).
+    fn bake(size: usize, base: [u8; 3], strength: f32, settings: PaperSurfaceSettings) -> Vec<u8> {
+        paper_texture_rgba(size, base, strength, &settings, 7)
+    }
+
     #[test]
-    fn paper_texture_is_deterministic_and_bounded() {
-        let a = paper_texture_rgba(64, 7, 0.5);
-        let b = paper_texture_rgba(64, 7, 0.5);
+    fn texture_is_deterministic() {
+        let a = bake(64, [255, 255, 255], 0.35, PaperSurfaceSettings::default());
+        let b = bake(64, [255, 255, 255], 0.35, PaperSurfaceSettings::default());
         assert_eq!(a, b, "같은 입력은 항상 같은 질감 (깜빡임 금지)");
         assert_eq!(a.len(), 64 * 64 * 4);
-        for px in a.chunks_exact(4) {
-            assert!(px[3] <= 128, "강도 0.5면 알파가 절반을 넘지 않음: {}", px[3]);
+    }
+
+    #[test]
+    fn zero_strength_is_plain_paper() {
+        // strength 0 → 텍스처가 종이 색 그 자체 (감마 왕복 ±1 이내).
+        let out = bake(32, [240, 230, 210], 0.0, PaperSurfaceSettings::default());
+        for px in out.chunks_exact(4) {
+            assert!((px[0] as i32 - 240).abs() <= 1, "r={}", px[0]);
+            assert!((px[1] as i32 - 230).abs() <= 1, "g={}", px[1]);
+            assert!((px[2] as i32 - 210).abs() <= 1, "b={}", px[2]);
+            assert_eq!(px[3], 255, "불투명");
         }
-        let zero = paper_texture_rgba(16, 7, 0.0);
-        assert!(zero.chunks_exact(4).all(|p| p[3] == 0), "강도 0 = 투명");
-        // 양방향 물리 모델: 어두운 얼룩과 밝은 얼룩이 모두 있어야 함.
-        let has_dark = a.chunks_exact(4).any(|p| p[0] < 100 && p[3] > 0);
-        let has_light = a.chunks_exact(4).any(|p| p[0] > 200 && p[3] > 0);
-        assert!(has_dark && has_light, "어둡고 밝은 얼룩이 공존해야 함");
+    }
+
+    #[test]
+    fn flat_surface_is_uniform() {
+        // β=0, 반사율 요동 0, 차폐 0, 시닝 0 → 평면이므로 모든 픽셀이 ρ0.
+        // (노출 정규화 덕분에 평면에서 C = ρ가 정확히 성립해야 함 — 문서 §5)
+        let flat = PaperSurfaceSettings {
+            bump: 0.0,
+            albedo_l: 0.0,
+            albedo_c: 0.0,
+            ao_strength: 0.0,
+            sheen: 0.0,
+            ..PaperSurfaceSettings::default()
+        };
+        let out = bake(32, [250, 240, 230], 1.0, flat);
+        for px in out.chunks_exact(4) {
+            assert!((px[0] as i32 - 250).abs() <= 1, "r={}", px[0]);
+            assert!((px[1] as i32 - 240).abs() <= 1, "g={}", px[1]);
+            assert!((px[2] as i32 - 230).abs() <= 1, "b={}", px[2]);
+        }
+    }
+
+    #[test]
+    fn bump_creates_relief() {
+        let flat = PaperSurfaceSettings {
+            bump: 0.0,
+            albedo_l: 0.0,
+            albedo_c: 0.0,
+            ao_strength: 0.0,
+            sheen: 0.0,
+            ..PaperSurfaceSettings::default()
+        };
+        let relief = PaperSurfaceSettings { bump: 1.0, ..flat };
+        let a = bake(48, [255, 255, 255], 1.0, flat);
+        let b = bake(48, [255, 255, 255], 1.0, relief);
+        assert_ne!(a, b, "β>0이면 음영이 생겨 달라야 함");
+        // 음영 분산이 실제로 존재해야 입체감이 있음.
+        let mut min = 255u8;
+        let mut max = 0u8;
+        for px in b.chunks_exact(4) {
+            min = min.min(px[0]);
+            max = max.max(px[0]);
+        }
+        assert!(max - min > 8, "음영 범위가 너무 좁음: {min}..{max}");
+    }
+
+    #[test]
+    fn light_rotation_changes_shading() {
+        let a = PaperSurfaceSettings {
+            light_azimuth_deg: 0.0,
+            ..PaperSurfaceSettings::default()
+        };
+        let b = PaperSurfaceSettings {
+            light_azimuth_deg: 180.0,
+            ..PaperSurfaceSettings::default()
+        };
+        let ta = bake(48, [255, 255, 255], 1.0, a);
+        let tb = bake(48, [255, 255, 255], 1.0, b);
+        assert_ne!(ta, tb, "광원을 반대로 돌리면 음영이 달라져야 함");
+    }
+
+    #[test]
+    fn texture_depends_on_base_color() {
+        let white = bake(32, [255, 255, 255], 0.35, PaperSurfaceSettings::default());
+        let cream = bake(32, [251, 243, 220], 0.35, PaperSurfaceSettings::default());
+        assert_ne!(white, cream, "종이 배경색에 따라 텍스처가 달라야 함 (요구 ①)");
     }
 
     #[test]
     fn paper_field_is_tileable() {
-        // 모든 옥타브가 정수 셀 수를 쓰므로 타일 경계(u/v = 0 ↔ 1)에서
-        // 값이 정확히 같아야 합니다 — 반복 타일의 이음새(줄무늬)가 없음.
+        // 모든 옥타브가 토러스 격자(셀 수 나머지 연산)를 쓰므로 타일
+        // 경계(u/v = 0 ↔ 1)에서 값이 정확히 같아야 합니다 — 이음새 없음.
         let seed = 9;
         for i in 0..20 {
             let v = i as f32 / 19.0;

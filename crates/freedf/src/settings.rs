@@ -7,6 +7,7 @@
 //! 이 모듈은 상태 구조체와 기본값만 정의하고, JSONB 변환은 `serde_json`으로 앱이 처리합니다.
 
 use freedf_core::ink::InkGrain;
+use freedf_core::paper::PaperSurfaceSettings;
 use freedf_core::model::ToolType;
 use freedf_core::paper::{PaperSize, PaperStyle, PaperStyleSettings};
 use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkSoak};
@@ -61,6 +62,9 @@ pub struct SessionState {
     /// 종이 질감 강도 0..1 (기본 0.35 — 미묘한 수준).
     #[serde(default = "default_paper_texture_strength")]
     pub paper_texture_strength: f32,
+    /// 종이 표면 물리 모델 (요철·조명·반사율) — docs/paper-texture-model.md §6.
+    #[serde(default)]
+    pub paper_surface: PaperSurfaceSettings,
     pub paper_size: PaperSize,
     /// 캔버스(페이지 뒤 서라운드) 배경색 — 전역 기본값 + 탭별 상태.
     #[serde(default = "default_canvas_color")]
@@ -257,6 +261,7 @@ impl Default for SessionState {
             paper_color: [255, 255, 255, 255],
             paper_texture: true,
             paper_texture_strength: 0.35,
+            paper_surface: PaperSurfaceSettings::default(),
             paper_size: PaperSize::A4,
             canvas_color: default_canvas_color(),
             paper_style_settings: PaperStyleSettings::default(),
