@@ -1,6 +1,7 @@
 # FreeDF Sync v3 — 스냅샷 중심: "클라이언트는 ZIP만, 나머지는 서버가"
 
-> 상태: 설계 제안 (OpenAPI 3.2.0 명세: `docs/openapi/sync-v3.openapi.yaml`)
+> 상태: 구현 완료 — 서버(server/backend), 프로토콜 크레이트(crates/freedf-sync), 앱 저장소(crates/freedf/src/sync_storage.rs)
+> (OpenAPI 3.2.0 명세: `docs/openapi/sync-v3.openapi.yaml`)
 > 전제: 대역폭 풍부(1Gbps), **서버 자원 풍부**. 최적화 대상은
 > **구현 단순성과 왕복 수** — 클라이언트 로직을 최소화하고 복잡한 것은 전부 서버로.
 > **최우선 불변식: 필기 중 지연 0. 동기화는 펜 경로에 절대 끼어들지 않는다(§4).**
@@ -27,7 +28,7 @@
 
 ## 3. 로딩 — "서버가 ZIP 만들어줌"
 
-`GET /v3/documents/{id}` → 서버가 strokes/pages/meta 내부 쿼리 → ZIP 스트리밍.
+`GET /v3/documents/{id}` → 서버가 strokes/pages/edits/session/meta 내부 조회 → ZIP 스트리밍.
 **단일 왕복**. 리비전별 ETag 캐시(304) 가능 — 서버 자원 풍부하니 맘껏 캐시.
 다운로드·압축해제도 백그라운드 스레드에서 하고, 렌더 준비가 끝난 상태만
 UI 스레드에 전달합니다 — 로딩도 필기를 멈추지 않습니다.
@@ -113,6 +114,9 @@ ZIP 압축(deflate)은 저레벨로, 렌더링 코어를 비켜갑니다.
 
 | 메서드 | 경로 | 역할 |
 |---|---|---|
+| GET/POST | `/v3/documents` | 문서 목록 / 문서 생성 (PDF는 CAS 참조) |
+| PUT | `/v3/documents/{id}/title` | 제목 변경 |
+| DELETE | `/v3/documents/{id}` | 문서 삭제 |
 | PUT | `/v3/documents/{id}/snapshot` | 전체 ZIP 업로드 (202, 멱등) |
 | GET | `/v3/uploads/{uploadId}` | 적용/충돌 결과 (conflict면 패치 동봉) |
 | GET | `/v3/documents/{id}` | 전체 ZIP 다운로드 (서버 조립) |
@@ -123,17 +127,41 @@ ZIP 압축(deflate)은 저레벨로, 렌더링 코어를 비켜갑니다.
 | GET | `/v3/objects/{digest}` | CAS fetch |
 | — | `webhooks.documentChanged` | push 알림 |
 
-## 7. 스냅샷 ZIP 레이아웃
+## 7. 문서 생명주기
+
+1. `POST /v3/documents` — 서버가 문서를 만들고 **비어 있는 상태**로 준비
+   (PDF는 CAS 다이제스트로 참조).
+2. 클라이언트가 첫 스냅샷을 `PUT /v3/documents/{id}/snapshot`으로 전송
+   (이 시점의 `base_revision = 0` — 새 문서는 항상 일치 → 첫 업로드는 충돌 불가).
+3. 이후 스냅샷 반복(`base_revision` 낙관적 동시성, §5).
+4. `PUT /v3/documents/{id}/title` — 제목 변경(경량, 스냅샷 불필요).
+5. `DELETE /v3/documents/{id}` — 문서·첨부 객체 삭제.
+
+## 8. 프로토콜 단일 소스 — freedf-sync 크레이트
+
+모든 v3 타입·직렬화 규칙·클라이언트 HTTP 로직은 **`crates/freedf-sync`** 한 곳에만
+존재합니다. 서버(server/backend)와 앱(freedf)이 같은 크레이트를 의존하므로
+스키마가 어긋날 수 없습니다.
+
+- 타입: `Snapshot`/`SnapshotMeta`/`Patch`/`ChangeRecord`/`Digest`/`UploadReceipt`/
+  `DocumentInfo`/`CreateDocument`/`RenameDocument`/`ObjectInfo`/`ApiError`/`RevisionInfo`.
+- 클라이언트: `SyncClient` — 서버 통신 전체(문서·스냅샷·객체·변경분).
+- 명세 확장 시 순서: `sync-v3.openapi.yaml` 갱신 → `freedf-sync` 타입 추가 →
+  서버/앱이 그 타입 사용. 수제 `json!` 응답은 만들지 않습니다.
+
+## 9. 스냅샷 ZIP 레이아웃
 
 ```
 snapshot.zip
-├── meta.json       # revision, page_count, updated_at
+├── meta.json       # revision/base_revision, page_count, updated_at,
+│                   # title, kind, pdf_digest, session(GUI 세션 JSON)
 ├── strokes.jsonl   # 획 전체 (id, page, points, width, color, tool)
 ├── pages.json      # 페이지 목록 (paper, rotation)
+├── edits.json      # 영속 편집 저널(undo) 배열
 └── pdf.digest      # sha256 참조 (바이트 미포함)
 ```
 
-## 8. 비용
+## 10. 비용
 
 $$
 T_{\text{save}} = \text{RTT}_{202} + \frac{B_{\text{strokes}}(1-r)}{\text{bw}} + t_{\text{proc}}
@@ -144,7 +172,7 @@ $$
 충돌 시 +1~2 왕복(드묾). PDF는 CAS 1회.
 **UI 스레드가 부담하는 비용은 스냅샷 `Arc` 복제 O(1)이 전부입니다.**
 
-## 9. 함정과 대응
+## 11. 함정과 대응
 
 - **"전체 ZIP"이 커질까 걱정**: ZIP에는 획/메타만. PDF는 CAS 참조라 최초 1회.
   임계값(변경량·시간)을 키우면 업로드 빈도 조절.
@@ -154,8 +182,8 @@ $$
 - **서버 큐 순서**: 문서별 단일 소비자. revision 증가 순서 = 적용 순서.
 - **변경 로그 무한 증가**: 보관 기간 설정, 오래된 클라이언트는 전체 로딩으로 폴백.
 
-## 10. 이전 제안과의 관계
+## 12. 이전 제안과의 관계
 
 - v3-번들(순수 이벤트 소싱, `/v3/bundles`) 설계에서 **클라이언트 복잡도를 걷어낸** 단순화안.
-- 서버 내부는 기존 SQL 델타 함수를 **패치 계산/적용**에 그대로 재사용 가능.
+- 패치 계산/적용은 서버가 담당(§5.2) — 클라이언트 diff 로직 없음.
 - 실시간 필기 중에는 임계값을 작게(예: 1초 무입력) 두면 사실상 연속 동기화가 됩니다.

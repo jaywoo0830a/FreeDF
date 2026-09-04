@@ -38,6 +38,45 @@ security:
   - bearerAuth: []
 
 paths:
+  /documents:
+    get:
+      tags: [documents]
+      summary: 문서 목록 (라이브러리/최근)
+      operationId: listDocuments
+      responses:
+        '200':
+          description: 전체 문서 목록.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentInfo'
+        default:
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [documents]
+      summary: 문서 생성
+      description: |
+        PDF는 CAS에 먼저 올리고 다이제스트를 넘기세요. 새 문서의
+        revision은 0 — 첫 스냅샷은 base_revision=0으로 업로드합니다.
+      operationId: createDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDocument'
+      responses:
+        '200':
+          description: 생성된 문서 id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedDocument'
+        default:
+          $ref: '#/components/responses/ServerError'
+
   /documents/{documentId}/snapshot:
     parameters:
       - $ref: '#/components/parameters/DocumentId'
@@ -101,8 +140,8 @@ paths:
       tags: [documents]
       summary: 문서 전체 ZIP 다운로드 (서버가 조립)
       description: |
-        서버가 내부 쿼리(strokes/pages/meta)를 전부 조회해 ZIP으로 조립해
-        스트리밍합니다. 클라이언트는 압축해제 후 바로 렌더 — 단일 왕복.
+        서버가 내부 쿼리(strokes/pages/meta/edits/session)를 전부 조회해 ZIP으로
+        조립해 스트리밍합니다. 클라이언트는 압축해제 후 바로 렌더 — 단일 왕복.
         리비전별 ETag 캐시로 304 응답 가능합니다.
       operationId: downloadSnapshot
       responses:
@@ -118,6 +157,46 @@ paths:
               $ref: '#/components/mediaTypes/SyncSnapshot'
         '304':
           description: If-None-Match 일치 — 변경 없음.
+        '404':
+          description: 문서 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [documents]
+      summary: 문서 삭제 (CASCADE)
+      operationId: deleteDocument
+      responses:
+        '204':
+          description: 삭제됨.
+        '404':
+          description: 문서 없음.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/ServerError'
+
+  /documents/{documentId}/title:
+    parameters:
+      - $ref: '#/components/parameters/DocumentId'
+    put:
+      tags: [documents]
+      summary: 문서 제목 변경
+      operationId: renameDocument
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameDocument'
+      responses:
+        '204':
+          description: 변경됨.
         '404':
           description: 문서 없음.
           content:
@@ -231,14 +310,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [digest, size]
-                properties:
-                  digest:
-                    type: string
-                  size:
-                    type: integer
-                    format: int64
+                $ref: '#/components/schemas/ObjectInfo'
         '400':
           description: 다이제스트 형식 오류 또는 본문-다이제스트 불일치.
           content:
@@ -332,6 +404,18 @@ components:
         message:
           type: string
 
+    ObjectInfo:
+      type: object
+      description: PUT /v3/objects/{digest} 응답.
+      required: [digest, size]
+      properties:
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        size:
+          type: integer
+          format: int64
+
     UploadReceipt:
       type: object
       required: [upload_id, state]
@@ -380,6 +464,68 @@ components:
         revision:
           type: integer
           format: int64
+
+    # ── 문서 CRUD ──
+    DocumentInfo:
+      type: object
+      required: [id, kind, title, page_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [note, pdf]
+        title:
+          type: string
+        origin_path:
+          type: string
+          nullable: true
+        page_count:
+          type: integer
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        pdf_digest:
+          type: string
+          nullable: true
+
+    CreateDocument:
+      type: object
+      required: [kind, title]
+      properties:
+        kind:
+          type: string
+          enum: [note, pdf]
+        title:
+          type: string
+        origin_path:
+          type: string
+          nullable: true
+        page_count:
+          type: integer
+          default: 0
+        pdf_digest:
+          type: string
+          nullable: true
+
+    CreatedDocument:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: integer
+          format: int64
+
+    RenameDocument:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
 
     # ── 서버가 계산하는 두 상태 간 diff ──
     Patch:

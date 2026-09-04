@@ -41,7 +41,7 @@ impl AnnotationStore {
 
     /// `from` 이상의 페이지 인덱스를 `delta`만큼 이동.
     /// 충돌을 피하기 위해 증가는 내림차순, 감소는 오름차순으로 처리합니다.
-    fn shift_pages(&mut self, from: PageIndex, delta: i32) {
+    pub fn shift_pages(&mut self, from: PageIndex, delta: i32) {
         shift_map(&mut self.pages, from, delta, |k, page| page.page_index = k);
         shift_map(&mut self.paper, from, delta, |_k, _paper| {});
     }

@@ -737,7 +737,7 @@ pub struct FreeDfApp {
 
     // ---------- Storage backend ----------
     /// 저장소 백엔드(트레이트 객체) — UI는 `StorageBackend`만 바라보고,
-    /// 실제 구현(postgres/로컬/자체 API)은 main.rs의 `storage::from_env`가 선택.
+    /// 실제 구현은 `storage::from_server_config`(Sync v3 서버)가 선택합니다.
     db: std::sync::Arc<dyn StorageBackend>,
 
     // ---------- Document ----------
@@ -1080,20 +1080,17 @@ pub struct FreeDfApp {
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
-    // ---------- DB connection (first-run setup) ----------
-    /// 실제 DB 연결 여부 — 연결 전엔 `DisconnectedStorage` 폴백 백엔드.
+    // ---------- Sync server connection (first-run setup) ----------
+    /// Sync v3 서버 연결 여부 — 연결 전엔 `DisconnectedStorage` 폴백 백엔드.
     db_connected: bool,
-    /// 첫 실행 대화상자 표시 여부 (DB 연결 후에도 Media 서버 설정을 위해 유지).
+    /// 첫 실행 대화상자 표시 여부 (서버 연결 후에도 저장 확인을 위해 유지).
     setup_open: bool,
-    /// 연결 대화상자/서버 설정 창의 DB URL 입력값 (런타임 입력).
-    connect_url: String,
-    /// 마지막 DB 연결 시도 결과 (성공 여부, 메시지).
+    /// 마지막 서버 연결 시도 결과 (성공 여부, 메시지).
     connect_status: Option<(bool, String)>,
-    /// 백그라운드 연결 시도 수신 채널 (+자동 시작 여부, 시도한 URL).
+    /// 백그라운드 연결 시도 수신 채널 (+자동 시작 여부).
     pending_connect: Option<(
         std::sync::mpsc::Receiver<Result<SharedStorage, String>>,
         bool,
-        String,
     )>,
     // ---------- Loading / background ops ----------
     /// 진행 중인 배경 작업 표시 (스피너+진행바 오버레이). 완료 시 None.
@@ -1139,13 +1136,7 @@ impl FreeDfApp {
         cc: &eframe::CreationContext<'_>,
         db: std::sync::Arc<dyn StorageBackend>,
         db_connected: bool,
-        connect_url: String,
         connect_error: Option<String>,
-        pending_connect: Option<(
-            std::sync::mpsc::Receiver<Result<SharedStorage, String>>,
-            bool,
-            String,
-        )>,
         logger: Logger,
         pending_open: Option<PathBuf>,
         pending_doc: Option<i64>,
@@ -1513,9 +1504,8 @@ impl FreeDfApp {
             modal: None,
             db_connected,
             setup_open: !db_connected,
-            connect_url,
             connect_status: connect_error.map(|e| (false, e)),
-            pending_connect,
+            pending_connect: None,
             loading: None,
             loading_started: None,
             loader_rx: None,
@@ -1688,48 +1678,38 @@ impl FreeDfApp {
         out
     }
 
-    /// DB 연결 시도 (백그라운드 — UI를 블로킹하지 않음). 성공하면 백엔드를
-    /// 교체하고 URL을 `connection.json`에 저장. 도중에 다른 DB로 전환하면
-    /// 열린 문서(이전 DB 소속)를 닫습니다.
-    fn try_connect_db(&mut self) {
-        let url = self.connect_url.trim().to_string();
-        if url.is_empty() {
-            self.connect_status = Some((false, "Enter the database URL first.".into()));
+    /// Sync v3 서버 연결 시도 (백그라운드 — UI를 블로킹하지 않음).
+    /// 서버 설정(server.json)을 저장하고 백엔드를 `SyncStorage`로 교체합니다.
+    /// 도중에 다른 서버로 전환하면 열린 문서(이전 서버 소속)를 닫습니다.
+    fn try_connect_server(&mut self, auto: bool) {
+        let base = self.media_config.base_url.trim().trim_end_matches('/').to_string();
+        if base.is_empty() {
+            self.connect_status = Some((false, "Enter the server URL first.".into()));
             return;
         }
         if self.pending_connect.is_some() {
             return; // 이미 시도 중.
         }
         self.connect_status = None;
+        let config = self.media_config.clone();
         let (tx, rx) = std::sync::mpsc::channel();
-        self.pending_connect = Some((rx, false, url.clone())); // 수동 — 성공해도 대화상자 유지.
+        self.pending_connect = Some((rx, auto));
         std::thread::spawn(move || {
-            let _ = tx.send(crate::storage::connect(&url));
-        });
-    }
-
-    /// `--doc` 새 창 전용: 저장된 URL로 **자동** 연결 — 성공하면 첫 실행
-    /// 대화상자도 닫습니다 (연결 완료 후 pending_doc이 열립니다).
-    fn try_connect_db_auto(&mut self) {
-        let url = self.connect_url.trim().to_string();
-        if url.is_empty() {
-            self.connect_status = Some((false, "Enter the database URL first.".into()));
-            return;
-        }
-        if self.pending_connect.is_some() {
-            return;
-        }
-        self.connect_status = None;
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.pending_connect = Some((rx, true, url.clone()));
-        std::thread::spawn(move || {
-            let _ = tx.send(crate::storage::connect(&url));
+            let storage = crate::storage::from_server_config(&config);
+            let result = if storage.ping() {
+                Ok(storage)
+            } else {
+                Err("Cannot reach the server (GET /health failed). \
+                     Check the URL and API key."
+                    .into())
+            };
+            let _ = tx.send(result);
         });
     }
 
     /// 백그라운드 연결 결과 수신 (매 프레임 호출).
     fn poll_connect_result(&mut self) {
-        let Some((rx, auto, url)) = self.pending_connect.take() else {
+        let Some((rx, auto)) = self.pending_connect.take() else {
             return;
         };
         match rx.try_recv() {
@@ -1737,7 +1717,8 @@ impl FreeDfApp {
                 let switching = self.db_connected;
                 self.db = db;
                 self.db_connected = true;
-                crate::storage::save_connection(&url);
+                self.media_config.enabled = true;
+                let _ = self.media_config.save(&MediaServerConfig::config_path());
                 self.connect_status = Some((true, "Connected.".into()));
                 if switching {
                     self.close_all_documents();
@@ -1753,7 +1734,7 @@ impl FreeDfApp {
                 self.connect_status = Some((false, e));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
-                self.pending_connect = Some((rx, auto, url)); // 아직 — 다음 프레임에 다시.
+                self.pending_connect = Some((rx, auto)); // 아직 — 다음 프레임에 다시.
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.connect_status =
@@ -1815,9 +1796,8 @@ impl FreeDfApp {
 
     /// First-run setup dialog.
     ///
-    /// While the database is not connected it cannot be closed; once connected
-    /// it stays open so the media server can be configured, and the user
-    /// closes it with "Done".
+    /// 서버에 연결되기 전에는 닫을 수 없습니다 — 연결 후에는
+    /// "Done"으로 닫습니다.
     fn connection_dialog(&mut self, ctx: &egui::Context) {
         if !self.setup_open {
             return;
@@ -1834,26 +1814,40 @@ impl FreeDfApp {
             window = window.open(&mut open);
         }
         window.show(ctx, |ui| {
-            ui.label(egui::RichText::new("① Database (PostgreSQL 18.6)").strong());
+            ui.label(egui::RichText::new("Sync server (v3)").strong());
             if forced {
-                ui.label("Paste the URL printed by server/db/up.sh on the DB host:");
+                ui.label(
+                    "Enter the FreeDF server address — all documents are stored \
+                     through it (Sync v3 snapshots + media):",
+                );
             }
             ui.horizontal(|ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut self.connect_url)
-                        .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
-                        .desired_width(420.0),
+                ui.label("Server URL");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.media_config.base_url)
+                        .hint_text("https://your-server.example.com")
+                        .desired_width(330.0),
                 );
+            });
+            ui.horizontal(|ui| {
+                ui.label("API key");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.media_config.api_key)
+                        .password(true)
+                        .desired_width(330.0),
+                );
+            });
+            ui.horizontal(|ui| {
                 let label = if self.db_connected {
                     "Reconnect"
                 } else {
                     "Connect"
                 };
                 if ui.button(label).clicked() {
-                    self.try_connect_db();
+                    self.try_connect_server(false);
                 }
-                if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    self.try_connect_db();
+                if self.db_connected {
+                    ui.label(egui::RichText::new("✓ connected").weak());
                 }
             });
             if self.pending_connect.is_some() {
@@ -1866,54 +1860,14 @@ impl FreeDfApp {
                 };
                 ui.colored_label(color, msg);
             }
-            ui.add_space(10.0);
-            ui.separator();
-            ui.label(egui::RichText::new("② Media server (self-hosted)").strong());
-            ui.label("Optional — audio recordings. Available after the database connects:");
-            ui.add_enabled_ui(self.db_connected, |ui| {
-                let mut changed = false;
-                ui.horizontal(|ui| {
-                    ui.label("Server URL");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.media_config.base_url)
-                                .hint_text("https://media.example.com")
-                                .desired_width(240.0),
-                        )
-                        .changed();
-                });
-                ui.horizontal(|ui| {
-                    ui.label("API key");
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.media_config.api_key)
-                                .password(true)
-                                .desired_width(240.0),
-                        )
-                        .changed();
-                });
-                changed |= ui
-                    .checkbox(&mut self.media_config.enabled, "Connect to media server")
-                    .changed();
-                if ui.button("Save").clicked() {
-                    let path = MediaServerConfig::config_path();
-                    self.server_msg = Some(match self.media_config.save(&path) {
-                        Ok(()) => (true, format!("Saved to {}", path.display())),
-                        Err(e) => (false, format!("Save failed: {e}")),
-                    });
-                }
-                if changed {
-                    self.server_msg = None;
-                }
-                if let Some((ok, msg)) = &self.server_msg {
-                    let color = if *ok {
-                        ui.visuals().hyperlink_color
-                    } else {
-                        ui.visuals().error_fg_color
-                    };
-                    ui.colored_label(color, msg);
-                }
-            });
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(
+                    "The server hosts Sync v3 (document snapshots) and media \
+                     (recordings) behind one address and API key.",
+                )
+                .weak(),
+            );
             if !forced {
                 ui.add_space(8.0);
                 if ui.button("Done").clicked() {
@@ -2972,7 +2926,7 @@ impl eframe::App for FreeDfApp {
             self.db_connected,
             self.pending_connect.is_some(),
         ) {
-            StartupOpenAction::Connect => self.try_connect_db_auto(),
+            StartupOpenAction::Connect => self.try_connect_server(true),
             StartupOpenAction::Open(doc_id) => {
                 self.pending_doc = None;
                 self.open_document(doc_id);

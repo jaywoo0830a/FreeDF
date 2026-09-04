@@ -60,6 +60,7 @@ impl SyncClient {
             "GET" => self.agent.get(&url),
             "PUT" => self.agent.put(&url),
             "POST" => self.agent.post(&url),
+            "DELETE" => self.agent.delete(&url),
             _ => unreachable!("unsupported method {method}"),
         };
         req.set("X-Api-Key", &self.key)
@@ -216,6 +217,57 @@ impl SyncClient {
 
     // ── CAS ──────────────────────────────────────────────────────────────────
 
+    /// 문서 목록 (라이브러리/최근 목록의 원천).
+    pub fn list_documents(&self) -> Result<Vec<DocumentInfo>> {
+        let resp = self
+            .request("GET", "/v3/documents")
+            .call()
+            .map_err(|e| self.error_of(e))?;
+        let text = Self::into_string(resp)?;
+        Ok(serde_json::from_str::<Vec<DocumentInfo>>(&text)?)
+    }
+
+    /// 문서 생성 — PDF는 CAS에 먼저 올리고 다이제스트를 넘기세요.
+    pub fn create_document(&self, req: &CreateDocument) -> Result<CreatedDocument> {
+        let resp = self
+            .request("POST", "/v3/documents")
+            .set("Content-Type", "application/json")
+            .send_json(req)
+            .map_err(|e| self.error_of(e))?;
+        let text = Self::into_string(resp)?;
+        Ok(serde_json::from_str::<CreatedDocument>(&text)?)
+    }
+
+    /// 문서 제목 변경.
+    pub fn rename_document(&self, doc_id: i64, title: &str) -> Result<()> {
+        let body = serde_json::to_vec(&RenameDocument {
+            title: title.to_string(),
+        })?;
+        let resp = self
+            .request("PUT", &format!("/v3/documents/{doc_id}/title"))
+            .set("Content-Type", "application/json")
+            .send_bytes(&body)
+            .map_err(|e| self.error_of(e))?;
+        if resp.status() == 204 || resp.status() == 200 {
+            Ok(())
+        } else {
+            Err(SyncError::Http(resp.status(), "rename failed".into()))
+        }
+    }
+
+    /// 문서 삭제 (204).
+    pub fn delete_document(&self, doc_id: i64) -> Result<()> {
+        let resp = self
+            .request("DELETE", &format!("/v3/documents/{doc_id}"))
+            .call()
+            .map_err(|e| self.error_of(e))?;
+        if resp.status() == 204 || resp.status() == 200 {
+            Ok(())
+        } else {
+            Err(SyncError::Http(resp.status(), "delete failed".into()))
+        }
+    }
+
     /// 객체 업로드 (멱등) — 다이제스트 반환.
     pub fn put_object(&self, bytes: &[u8]) -> Result<Digest> {
         let digest = Digest::from_bytes(bytes);
@@ -224,8 +276,9 @@ impl SyncClient {
             .set("Content-Type", "application/octet-stream")
             .send_bytes(bytes)
             .map_err(|e| self.error_of(e))?;
-        Self::into_string(resp)?;
-        Ok(digest)
+        let text = Self::into_string(resp)?;
+        let stored: ObjectInfo = serde_json::from_str(&text)?;
+        Ok(stored.digest)
     }
 
     /// 객체 fetch.

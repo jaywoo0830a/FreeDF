@@ -12,7 +12,7 @@ sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 # client 피처: API 서버 HTTP 통신 (블로킹 ureq — 앱은 백그라운드 스레드에서 사용).
-ureq = { version = "2.12", optional = true }
+ureq = { version = "2.12", optional = true, features = ["json"] }
 
 [features]
 default = ["client"]

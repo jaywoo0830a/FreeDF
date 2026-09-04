@@ -21,9 +21,10 @@ use axum::{
     Json,
 };
 use freedf_sync::{
-    ChangeRecord, Conflict, Digest, DigestProbe, DigestProbeResult, Page, Patch,
-    RevisionInfo, Snapshot, SnapshotMeta, Stroke, UploadReceipt, UploadState,
-    UploadStatus, SNAPSHOT_MIME,
+    ChangeRecord, Conflict, CreateDocument, CreatedDocument, Digest, DigestProbe,
+    DigestProbeResult, DocumentInfo, Page, Patch, RenameDocument, RevisionInfo,
+    Snapshot, SnapshotMeta, Stroke, UploadReceipt, UploadState, UploadStatus,
+    SNAPSHOT_MIME,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -50,7 +51,10 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
             self.0,
-            Json(json!({"code": self.0.as_u16().to_string(), "message": self.1})),
+            Json(freedf_sync::ApiError {
+                code: self.0.as_u16().to_string(),
+                message: self.1,
+            }),
         )
             .into_response()
     }
@@ -118,6 +122,18 @@ async fn assemble_snapshot<C: GenericClient>(db: &C, doc_id: i64) -> Result<(Vec
     let updated_at: i64 = doc.get(4);
 
     let state = load_state(db, doc_id).await?;
+    let edits: Vec<Value> = db
+        .query("SELECT edit FROM doc_edits WHERE doc_id=$1 ORDER BY id", &[&doc_id])
+        .await
+        .map_err(db_err)?
+        .iter()
+        .map(|r| r.get(0))
+        .collect();
+    let session: Option<Value> = db
+        .query_opt("SELECT state FROM sessions WHERE doc_id=$1", &[&doc_id])
+        .await
+        .map_err(db_err)?
+        .map(|r| r.get(0));
     let meta = SnapshotMeta {
         revision: Some(revision),
         base_revision: None,
@@ -126,12 +142,14 @@ async fn assemble_snapshot<C: GenericClient>(db: &C, doc_id: i64) -> Result<(Vec
         title,
         kind,
         pdf_digest: pdf_digest.and_then(|s| Digest::parse(&s).ok()),
+        session,
     };
     let snap = Snapshot {
         meta,
         strokes: state.strokes,
         pages: state.pages,
         pdf_digest: state.pdf_digest,
+        edits,
     };
     let bytes = snap.to_zip().map_err(|e| sync_err(&e))?;
     Ok((bytes, revision))
@@ -346,6 +364,32 @@ async fn apply_to_db<C: GenericClient>(db: &C, doc_id: i64, snap: &Snapshot, old
     .await
     .map_err(db_err)?;
 
+    // 편집 저널(undo) 전체 교체
+    db.execute("DELETE FROM doc_edits WHERE doc_id=$1", &[&doc_id])
+        .await
+        .map_err(db_err)?;
+    if !snap.edits.is_empty() {
+        let arr = Value::Array(snap.edits.clone());
+        db.execute(
+            "INSERT INTO doc_edits (doc_id, edit, created_at) \
+             SELECT $1, e, $2 FROM jsonb_array_elements($3::jsonb) e",
+            &[&doc_id, &now_ms(), &arr],
+        )
+        .await
+        .map_err(db_err)?;
+    }
+
+    // 문서 GUI 세션
+    if let Some(session) = &snap.meta.session {
+        db.execute(
+            "INSERT INTO sessions (doc_id, state, updated_at) VALUES ($1, $2, $3) \
+             ON CONFLICT (doc_id) DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at",
+            &[&doc_id, session, &now_ms()],
+        )
+        .await
+        .map_err(db_err)?;
+    }
+
     Ok(())
 }
 
@@ -413,6 +457,135 @@ async fn apply_snapshot(
         revision: new_rev,
         patch: patch_val,
     })
+}
+
+// ── 문서 CRUD ───────────────────────────────────────────────────────────────
+
+/// GET /v3/documents — 문서 목록 (라이브러리/최근).
+pub async fn list_documents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let db = state.db.lock().await;
+    let rows = match db
+        .query(
+            "SELECT id, kind, title, origin_path, page_count, created_at, updated_at, pdf_digest \
+             FROM documents ORDER BY id",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_err(e).into_response(),
+    };
+    let docs: Vec<DocumentInfo> = rows
+        .iter()
+        .map(|r| {
+            let digest: Option<String> = r.get(7);
+            DocumentInfo {
+                id: r.get(0),
+                kind: r.get(1),
+                title: r.get(2),
+                origin_path: r.get(3),
+                page_count: r.get(4),
+                created_at: r.get(5),
+                updated_at: r.get(6),
+                pdf_digest: digest.and_then(|s| Digest::parse(&s).ok()),
+            }
+        })
+        .collect();
+    Json(docs).into_response()
+}
+
+/// POST /v3/documents — 문서 생성 (PDF는 CAS 다이제스트 참조).
+pub async fn create_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateDocument>,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let db = state.db.lock().await;
+    // PDF: CAS에서 바이트를 가져옵니다.
+    let (pdf_bytes, digest): (Option<Vec<u8>>, Option<String>) = match &req.pdf_digest {
+        Some(d) => {
+            let d: &str = d.as_str();
+            let row = match db
+                .query_opt("SELECT bytes FROM cas_objects WHERE digest=$1", &[&d])
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return db_err(e).into_response(),
+            };
+            let Some(row) = row else {
+                return ApiError::bad(format!("pdf object {d} not in CAS — PUT /v3/objects/{d} first"))
+                    .into_response();
+            };
+            (Some(row.get(0)), Some(d.to_string()))
+        }
+        None => (None, None),
+    };
+    let now = now_ms();
+    let row = match db
+        .query_one(
+            "INSERT INTO documents (kind, title, origin_path, page_count, pdf, pdf_digest, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING id",
+            &[&req.kind, &req.title, &req.origin_path, &req.page_count, &pdf_bytes, &digest, &now],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_err(e).into_response(),
+    };
+    Json(CreatedDocument { id: row.get(0) }).into_response()
+}
+
+/// PUT /v3/documents/{id}/title — 제목 변경.
+pub async fn rename_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(doc_id): Path<i64>,
+    Json(req): Json<RenameDocument>,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let db = state.db.lock().await;
+    match db
+        .execute(
+            "UPDATE documents SET title=$2, updated_at=$3 WHERE id=$1",
+            &[&doc_id, &req.title, &now_ms()],
+        )
+        .await
+    {
+        Ok(0) => ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => db_err(e).into_response(),
+    }
+}
+
+/// DELETE /v3/documents/{id} — 문서 삭제 (CASCADE).
+pub async fn delete_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(doc_id): Path<i64>,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let db = state.db.lock().await;
+    match db
+        .execute("DELETE FROM documents WHERE id=$1", &[&doc_id])
+        .await
+    {
+        Ok(0) => ApiError::new(StatusCode::NOT_FOUND, "document not found").into_response(),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => db_err(e).into_response(),
+    }
 }
 
 // ── 핸들러 ───────────────────────────────────────────────────────────────────
@@ -792,7 +965,11 @@ pub async fn put_object(
         )
         .await
     {
-        Ok(_) => Json(json!({"digest": parsed, "size": body.len()})).into_response(),
+        Ok(_) => Json(freedf_sync::ObjectInfo {
+            digest: parsed,
+            size: body.len() as u64,
+        })
+        .into_response(),
         Err(e) => db_err(e).into_response(),
     }
 }

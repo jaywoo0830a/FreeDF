@@ -58,6 +58,9 @@ pub struct SnapshotMeta {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_digest: Option<Digest>,
+    /// 문서별 GUI 세션 (서버 sessions 테이블과 왕복).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<serde_json::Value>,
 }
 
 /// 두 상태 간 diff — 변경 로그와 충돌 패치에 공통 사용.
@@ -171,6 +174,55 @@ pub struct DigestProbeResult {
 pub struct ApiError {
     pub code: String,
     pub message: String,
+}
+
+/// GET /v3/documents 목록 항목 (라이브러리/최근 목록의 원천).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DocumentInfo {
+    pub id: i64,
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub origin_path: Option<String>,
+    pub page_count: i32,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+    #[serde(default)]
+    pub pdf_digest: Option<Digest>,
+}
+
+/// POST /v3/documents 요청 — PDF는 CAS에 먼저 올리고 다이제스트를 넘깁니다.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CreateDocument {
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub origin_path: Option<String>,
+    #[serde(default)]
+    pub page_count: i32,
+    #[serde(default)]
+    pub pdf_digest: Option<Digest>,
+}
+
+/// POST /v3/documents 응답.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CreatedDocument {
+    pub id: i64,
+}
+
+/// PUT /v3/documents/{id}/title 요청.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RenameDocument {
+    pub title: String,
+}
+
+/// PUT /v3/objects/{digest} 응답.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ObjectInfo {
+    pub digest: Digest,
+    pub size: u64,
 }
 
 #[cfg(test)]

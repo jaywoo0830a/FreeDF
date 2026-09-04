@@ -93,9 +93,17 @@ async fn main() {
         // axum 0.7은 matchit 0.7 — 경로 파라미터는 `:id` 문법 ({}는 0.8+).
         .route("/api/media/:id", delete(remove))
         // ── Sync v3 (docs/sync-protocol-v3.md) — 클라이언트는 ZIP만 ──
+        .route(
+            "/v3/documents",
+            get(sync_v3::list_documents).post(sync_v3::create_document),
+        )
         .route("/v3/documents/:id/snapshot", put(sync_v3::put_snapshot))
         .route("/v3/uploads/:upload_id", get(sync_v3::get_upload_status))
-        .route("/v3/documents/:id", get(sync_v3::download_snapshot))
+        .route(
+            "/v3/documents/:id",
+            get(sync_v3::download_snapshot).delete(sync_v3::delete_document),
+        )
+        .route("/v3/documents/:id/title", put(sync_v3::rename_document))
         .route("/v3/documents/:id/revision", get(sync_v3::get_revision))
         .route("/v3/documents/:id/changes", get(sync_v3::get_changes))
         .route("/v3/objects/query", post(sync_v3::probe_objects))

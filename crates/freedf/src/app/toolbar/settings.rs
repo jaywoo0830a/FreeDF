@@ -949,44 +949,54 @@ impl FreeDfApp {
         });
     }
 
-    /// 미디어 서버 연결 설정 창 내용 (툴바 Server 버튼으로 열림).
+    /// Sync v3 서버 연결 설정 창 내용 (툴바 Server 버튼으로 열림).
     ///
-    /// 설정은 `server.json`에 저장되고 다음 실행에서 로드됩니다 — 서버 주소는
-    /// 빌드타임이 아니라 **런타임 입력**입니다.
+    /// 모든 문서 저장(Sync v3)과 미디어가 이 서버를 통합니다. 주소는
+    /// `server.json`에 저장되고 다음 실행에서 로드됩니다 — 빌드타임이 아니라
+    /// **런타임 입력**입니다.
     pub(crate) fn server_settings_ui(&mut self, ui: &mut egui::Ui) {
-        // ── Database (런타임 입력 — 하드코딩 없음) ──
-        ui.label(egui::RichText::new("Database (PostgreSQL 18.6)").strong());
+        ui.label(egui::RichText::new("Sync server (v3)").strong());
+        ui.label(
+            egui::RichText::new(
+                "All documents are stored through this server — Sync v3\n\
+                 snapshots and media uploads share one address and API key.",
+            )
+            .weak(),
+        );
+        let mut changed = false;
         ui.horizontal(|ui| {
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut self.connect_url)
-                    .hint_text("postgres://freedf:<password>@<host>:5432/freedf")
-                    .desired_width(210.0),
-            );
+            ui.label("Server URL");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.media_config.base_url)
+                        .hint_text("https://your-server.example.com")
+                        .desired_width(230.0),
+                )
+                .changed();
+        });
+        ui.horizontal(|ui| {
+            ui.label("API key");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.media_config.api_key)
+                        .password(true)
+                        .desired_width(230.0),
+                )
+                .changed();
+        });
+        ui.horizontal(|ui| {
             if ui
                 .button(if self.db_connected { "Reconnect" } else { "Connect" })
                 .clicked()
             {
-                self.try_connect_db();
+                self.try_connect_server(false);
             }
-            if self.db_connected
-                && ui
-                    .button("Disconnect")
-                    .on_hover_text(
-                        "Close open documents and switch to offline mode — \n\
-                         then enter a different database URL.",
-                    )
-                    .clicked()
-            {
-                self.pending_connect = None; // 진행 중이던 시도 폐기.
-                self.close_all_documents();
-                self.db = crate::storage::disconnected();
-                self.db_connected = false;
-                self.setup_open = true;
-                self.connect_status =
-                    Some((false, "Disconnected — enter a new URL and Connect.".into()));
-            }
-            if resp.lost_focus() && ui.ctx().input(|i| i.key_pressed(egui::Key::Enter)) {
-                self.try_connect_db();
+            if ui.button("Save").clicked() {
+                let path = MediaServerConfig::config_path();
+                self.server_msg = Some(match self.media_config.save(&path) {
+                    Ok(()) => (true, format!("Saved to {}", path.display())),
+                    Err(e) => (false, format!("Save failed: {e}")),
+                });
             }
         });
         if self.pending_connect.is_some() {
@@ -1003,39 +1013,13 @@ impl FreeDfApp {
         }
         ui.add_space(6.0);
         ui.separator();
-
-        ui.label(
-            "Self-hosted media server for audio recordings.\n\
-             Playback streams straight from nginx; this key only guards\n\
-             uploads, lists and deletes.",
+        ui.checkbox(
+            &mut self.media_config.enabled,
+            "Enable media features (audio recordings)",
+        )
+        .on_hover_text(
+            "Playback streams straight from nginx; the API key guards uploads, lists and deletes.",
         );
-        ui.add_space(4.0);
-        let mut changed = false;
-        changed |= ui
-            .checkbox(&mut self.media_config.enabled, "Connect to media server")
-            .on_hover_text("Leave off until your VPS server is deployed.")
-            .changed();
-        ui.horizontal(|ui| {
-            ui.label("Server URL");
-            changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.media_config.base_url)
-                        .hint_text("https://media.example.com")
-                        .desired_width(230.0),
-                )
-                .changed();
-        });
-        ui.horizontal(|ui| {
-            ui.label("API key");
-            changed |= ui
-                .add(
-                    egui::TextEdit::singleline(&mut self.media_config.api_key)
-                        .password(true)
-                        .desired_width(230.0),
-                )
-                .changed();
-        });
-        ui.add_space(6.0);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -1065,13 +1049,6 @@ impl FreeDfApp {
                     Err(e) => (false, e),
                 };
                 self.server_msg = Some(result);
-            }
-            if ui.button("Save").clicked() {
-                let path = MediaServerConfig::config_path();
-                self.server_msg = Some(match self.media_config.save(&path) {
-                    Ok(()) => (true, format!("Saved to {}", path.display())),
-                    Err(e) => (false, format!("Save failed: {e}")),
-                });
             }
         });
         if changed {

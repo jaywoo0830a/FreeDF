@@ -205,18 +205,13 @@ cd server/db && ./init.sh && ./up.sh
 ## Requirements
 
 - Rust 1.75+ (MSRV follows egui 0.36)
-- **PostgreSQL 18.6** (Docker 권장 — 위 `cd server/db && ./up.sh`)
-  - 연결은 `FREEDF_DATABASE_URL`(기본 `postgres://freedf:freedf@localhost:5432/freedf`)
-  - 원격 DB도 가능: `FREEDF_DATABASE_URL=postgres://user:pass@host:5432/freedf`
-    (VPS에선 `server/db/.env`의 `FREEDF_DB_BIND=0.0.0.0`, `FREEDF_DB_HOST=<VPS IP>` 설정)
-  - **스키마는 앱이 만들지 않습니다** — DB 호스트에서 `server/db/up.sh`가
-    마이그레이션을 적용합니다 (앱은 `schema_migrations` 존재만 확인)
-  - **로컬 캐시 + write-behind** (기본 켜짐): 무거운 데이터(PDF 본문/주석)는
-    앱 데이터 폴더 `cache/`에 보관되어 원격 DB 왕복 없이 문서가 열리고,
-    스트로크 저장은 백그라운드에서 순서대로 동기화됩니다 (오프라인 필기 보존).
-    끄려면 `FREEDF_STORAGE_CACHE=0`.
-  - 저장소 백엔드는 `FREEDF_STORAGE`(기본 `postgres`)로 런타임 선택 —
-    새 백엔드 추가는 `storage.rs` 한 곳
+- **Sync v3 API 서버** — `server/backend` (axum) + PostgreSQL (Docker 권장:
+  `cd server/db && ./up.sh`, API는 `cd server/backend && ./up.sh`)
+  - 앱의 저장소는 전부 이 서버 — 첫 실행 대화상자에서 서버 주소/API 키를
+    입력하면 `server.json`에 저장됩니다 (DB 직접 연결 워크플로우는 제거됨).
+  - 문서는 스냅샷 ZIP으로 왕복, 프로토콜 명세는
+    `docs/sync-protocol-v3.md` + `docs/openapi/sync-v3.openapi.yaml`
+    (타입 단일 소스: `crates/freedf-sync`)
 - **PDFium library** placed next to the executable
 
 ### Windows 11: getting pdfium.dll

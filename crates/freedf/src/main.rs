@@ -1,17 +1,13 @@
 //! FreeDF — lightweight PDF viewer + drawing pad.
 //!
-//! FreeDF v2: 모든 데이터(노트/PDF/주석/세션/로그)는 PostgreSQL(18.6, Docker)에
-//! 저장됩니다. 연결은 `FREEDF_DATABASE_URL`(기본
-//! `postgres://freedf:freedf@localhost:5432/freedf`)로 결정됩니다.
-//! **스키마는 앱이 만들지 않습니다** — DB 호스트에서 `server/db/up.sh`를
-//! 먼저 실행하세요 (컨테이너 기동 + 마이그레이션 자동 적용).
+//! FreeDF v3: 모든 문서는 **Sync v3 API 서버**(server/backend, 스냅샷 ZIP
+//! 동기화)를 통해 저장됩니다. 연결은 `server.json`(앱 데이터 폴더)의
+//! 서버 주소/API 키로 결정됩니다 — 첫 실행 대화상자에서 입력합니다.
 //! PDFium 라이브러리는 여전히 실행 파일 옆에 필요합니다.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod cache;
-mod db;
 mod fonts;
 mod pdf;
 mod recent;
@@ -19,6 +15,7 @@ mod server;
 mod settings;
 mod storage;
 mod sync_client;
+mod sync_storage;
 mod theme;
 
 use eframe::egui;
@@ -27,7 +24,7 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
     // CLI: `freedf <file.pdf>` — 외부 PDF import 후 열기.
-    //      `freedf --doc <id>` — DB의 문서 id로 열기 ("새 창" 분리 시 사용).
+    //      `freedf --doc <id>` — 서버의 문서 id로 열기 ("새 창" 분리 시 사용).
     let mut args = std::env::args().skip(1);
     let mut open_path: Option<PathBuf> = None;
     let mut open_doc: Option<i64> = None;
@@ -42,16 +39,13 @@ fn main() -> eframe::Result<()> {
     }
     let open_path = open_path.filter(|p| p.is_file());
 
-    // DB 연결 — **시작 시에는 아무 연결도 시도하지 않습니다.**
-    // 사용자가 첫 실행 대화상자(또는 툴바 Server 창)에서 "Connect"를 누를
-    // 때만 백그라운드로 연결합니다. 아래 URL은 대화상자의 **입력 프리필**용:
-    // FREEDF_DATABASE_URL 환경 변수 → 마지막 연결 성공(connection.json) → 기본값.
-    let db_url = std::env::var("FREEDF_DATABASE_URL")
-        .ok()
-        .or_else(storage::load_saved_connection)
-        .unwrap_or_else(|| db::DEFAULT_DATABASE_URL.to_string());
-    let (db, db_connected, connect_error, pending_connect) =
-        (storage::disconnected(), false, None, None);
+    // 서버 연결 — `server.json`(Sync v3 + 미디어 공용)에서 런타임 로드.
+    // 설정이 없으면 disconnected 폴백으로 시작하고 첫 실행 대화상자가 떠서
+    // 서버 주소/API 키를 입력받습니다 (DB URL 입력 워크플로우는 제거됨).
+    let media_config = server::MediaServerConfig::load(&server::MediaServerConfig::config_path());
+    let db_connected = media_config.enabled;
+    let connect_error: Option<String> = None;
+    let db = storage::from_server_config(&media_config);
 
     // 이벤트 로그는 백그라운드 스레드로 비동기 기록 — 스트로크마다 원격 왕복
     // 없이 필기 응답성을 유지합니다 (연결 전이면 no-op 폴백).
@@ -108,9 +102,7 @@ fn main() -> eframe::Result<()> {
                 cc,
                 db,
                 db_connected,
-                db_url,
                 connect_error,
-                pending_connect,
                 logger,
                 open_path,
                 open_doc,

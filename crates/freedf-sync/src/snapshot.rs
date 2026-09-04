@@ -23,6 +23,8 @@ pub struct Snapshot {
     pub strokes: Vec<Stroke>,
     pub pages: Vec<Page>,
     pub pdf_digest: Option<Digest>,
+    /// 영속 편집 저널(undo) — 서버 doc_edits와 왕복.
+    pub edits: Vec<serde_json::Value>,
 }
 
 impl Snapshot {
@@ -44,6 +46,7 @@ impl Snapshot {
             strokes,
             pages,
             pdf_digest,
+            edits: Vec::new(),
         }
     }
 
@@ -85,6 +88,9 @@ impl Snapshot {
             w.start_file("pdf.digest", opts)?;
             let digest = self.pdf_digest.as_ref().map(|d| d.as_str()).unwrap_or("");
             w.write_all(digest.as_bytes())?;
+
+            w.start_file("edits.json", opts)?;
+            serde_json::to_writer(&mut w, &self.edits)?;
 
             w.finish()?;
         }
@@ -142,11 +148,18 @@ impl Snapshot {
             _ => None,
         };
 
+        let edits = match read_entry(&mut zip, "edits.json")? {
+            Some(text) => serde_json::from_str(&text)
+                .map_err(|e| SyncError::Decode(format!("edits.json: {e}")))?,
+            None => Vec::new(),
+        };
+
         Ok(Self {
             meta,
             strokes,
             pages,
             pdf_digest,
+            edits,
         })
     }
 
@@ -218,6 +231,7 @@ impl Default for SnapshotMeta {
             title: String::new(),
             kind: String::new(),
             pdf_digest: None,
+            session: None,
         }
     }
 }
