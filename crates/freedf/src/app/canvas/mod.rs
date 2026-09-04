@@ -431,12 +431,13 @@ impl FreeDfApp {
         if self.edge_autoscroll {
             let pos = ctx.input(|i| i.pointer.hover_pos());
             if let Some(pos) = pos {
-                // 팔레트/하단 플로팅 바 등 UI 위에서는 발동 금지. 그리고
-                // "펜을 잡고 있을 때만"(설정)이 켜져 있으면 단순 마우스/트랙패드
-                // 커서는 무시합니다.
-                let over_ui = ctx.is_pointer_over_egui();
+                // 팔레트/하단 플로팅 바 등 캔버스 위 UI가 포인터를 가로채면
+                // response.hovered()가 false — 이때는 발동 금지. (커스텀
+                // 커서가 이미 검증한 신호: 오버레이 Area가 위에 있으면 false)
+                // 그리고 "펜을 쓰는 중일 때만"(설정)이 켜져 있으면 단순
+                // 마우스/트랙패드 커서는 무시합니다.
                 let pen_ok = !self.edge_autoscroll_pen_only || self.pen_active();
-                if canvas.contains(pos) && !over_ui && pen_ok {
+                if response.hovered() && canvas.contains(pos) && pen_ok {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
                     let sp = [
                         self.edge_speeds[0].clamp(20.0, 4000.0),
