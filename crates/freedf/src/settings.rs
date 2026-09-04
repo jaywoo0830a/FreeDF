@@ -59,9 +59,16 @@ pub struct SessionState {
     /// 종이 질감 — 페이지 위에 은은한 섬유 노이즈 (전역 기본값, 기본 켜짐).
     #[serde(default = "default_true")]
     pub paper_texture: bool,
-    /// 종이 질감 강도 0..1 (기본 0.35 — 미묘한 수준).
+    /// 종이 질감 강도 0..1 (기본 0.25 — 은은한 수준).
     #[serde(default = "default_paper_texture_strength")]
     pub paper_texture_strength: f32,
+    /// 종이 질감 초보자 프리셋 단계 0..=4 (Lowest..Highest).
+    /// Custom이 꺼져 있을 때 이 단계가 강도·표면 값을 지배합니다.
+    #[serde(default = "default_paper_texture_level")]
+    pub paper_texture_level: u8,
+    /// Custom — 상세 값(강도·표면·조명)을 직접 조절할지.
+    #[serde(default = "default_false")]
+    pub paper_texture_custom: bool,
     /// 종이 표면 물리 모델 (요철·조명·반사율) — docs/paper-texture-model.md §6.
     #[serde(default)]
     pub paper_surface: PaperSurfaceSettings,
@@ -214,6 +221,10 @@ fn default_paper_texture_strength() -> f32 {
     0.25
 }
 
+fn default_paper_texture_level() -> u8 {
+    2
+}
+
 /// 이전 버전 세션 파일(필드 없음)에서도 기본 즐겨찾기 색상 3개 (GoodNotes 블랙/레드/블루).
 fn default_favorite_colors() -> Vec<[u8; 4]> {
     vec![
@@ -248,6 +259,8 @@ impl Default for SessionState {
             paper_color: [255, 255, 255, 255],
             paper_texture: true,
             paper_texture_strength: 0.25,
+            paper_texture_level: 2,
+            paper_texture_custom: false,
             paper_surface: PaperSurfaceSettings::default(),
             paper_size: PaperSize::A4,
             canvas_color: default_canvas_color(),

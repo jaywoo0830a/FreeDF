@@ -617,7 +617,7 @@ impl FreeDfApp {
                 ui.label(
                     egui::RichText::new(
                         "Physical paper surface: height field → normals → lighting.\n\
-                         Flat paper keeps its exact color; relief comes from the light.",
+                         Pick a preset (Lowest…Highest) or enable Custom for fine control.",
                     )
                     .weak()
                     .small(),
@@ -628,7 +628,40 @@ impl FreeDfApp {
                         "Fiber grain over the page (drawn under the ruling and your ink).",
                     )
                     .changed();
-                ui.add_enabled_ui(self.paper_texture, |ui| {
+                // 초보자용 5단계 프리셋 — Custom이 켜지면 상세 값이 우선.
+                ui.add_enabled_ui(self.paper_texture && !self.paper_texture_custom, |ui| {
+                    let mut lvl = self.paper_texture_level as i32;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut lvl, 0..=4)
+                                .text("Preset")
+                                .custom_formatter(|v, _| {
+                                    freedf_core::paper::paper_texture_preset_label(v as u8)
+                                        .to_owned()
+                                }),
+                        )
+                        .on_hover_text("Lowest / Low / Medium / High / Highest")
+                        .changed()
+                    {
+                        self.paper_texture_level = lvl as u8;
+                        self.apply_paper_texture_preset();
+                        changed = true;
+                    }
+                });
+                if ui
+                    .checkbox(&mut self.paper_texture_custom, "Custom")
+                    .on_hover_text(
+                        "Unlock the detailed surface & lighting values below.\n\
+                         Unchecking returns to the preset.",
+                    )
+                    .changed()
+                {
+                    if !self.paper_texture_custom {
+                        self.apply_paper_texture_preset(); // 프리셋으로 되돌림.
+                    }
+                    changed = true;
+                }
+                ui.add_enabled_ui(self.paper_texture && self.paper_texture_custom, |ui| {
                     changed |= ui
                         .add(
                             egui::Slider::new(&mut self.paper_texture_strength, 0.0..=1.0)

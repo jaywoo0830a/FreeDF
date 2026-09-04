@@ -903,6 +903,10 @@ pub struct FreeDfApp {
     paper_texture: bool,
     /// 종이 질감 강도 0..1.
     paper_texture_strength: f32,
+    /// 종이 질감 초보자 프리셋 단계 0..=4 (Lowest..Highest).
+    paper_texture_level: u8,
+    /// Custom — 상세 표면/조명 값 직접 조절.
+    paper_texture_custom: bool,
     /// 종이 표면 물리 모델 (요철·조명·반사율) — 문서 §6.
     paper_surface: freedf_core::paper::PaperSurfaceSettings,
     /// 종이 질감 노이즈 텍스처 캐시 (강도·배경색·표면 설정 변경 시 재생성).
@@ -1183,16 +1187,24 @@ impl FreeDfApp {
         let paper_style = if has { s.paper_style } else { PaperStyle::Blank };
         let paper_color = if has { s.paper_color } else { PAPER_WHITE };
         let paper_texture = if has { s.paper_texture } else { true };
-        let paper_texture_strength = if has {
+        let mut paper_texture_strength = if has {
             s.paper_texture_strength.clamp(0.0, 1.0)
         } else {
             0.25
         };
-        let paper_surface = if has {
+        let mut paper_surface = if has {
             s.paper_surface
         } else {
             freedf_core::paper::PaperSurfaceSettings::default()
         };
+        let paper_texture_level = if has { s.paper_texture_level.min(4) } else { 2 };
+        let paper_texture_custom = if has { s.paper_texture_custom } else { false };
+        // Custom이 꺼져 있으면 프리셋 단계가 강도·표면 값을 지배합니다.
+        if !paper_texture_custom {
+            let (ps, surf) = freedf_core::paper::paper_texture_preset(paper_texture_level);
+            paper_texture_strength = ps;
+            paper_surface = surf;
+        }
         let canvas_color = if has {
             s.canvas_color
         } else {
@@ -1411,6 +1423,8 @@ impl FreeDfApp {
             paper_color,
             paper_texture,
             paper_texture_strength,
+            paper_texture_level,
+            paper_texture_custom,
             paper_surface,
             paper_noise_tex: None,
             paper_noise_cfg: None,
@@ -1556,6 +1570,8 @@ impl FreeDfApp {
             paper_color: self.paper_color,
             paper_texture: self.paper_texture,
             paper_texture_strength: self.paper_texture_strength,
+            paper_texture_level: self.paper_texture_level,
+            paper_texture_custom: self.paper_texture_custom,
             paper_surface: self.paper_surface,
             paper_size: self.paper_size,
             canvas_color: self.canvas_color,
@@ -1980,6 +1996,8 @@ impl FreeDfApp {
             paper_color: self.paper_color,
             paper_texture: self.paper_texture,
             paper_texture_strength: self.paper_texture_strength,
+            paper_texture_level: self.paper_texture_level,
+            paper_texture_custom: self.paper_texture_custom,
             paper_surface: self.paper_surface,
             paper_size: self.paper_size,
             canvas_color: self.canvas_color,
@@ -2261,6 +2279,14 @@ impl FreeDfApp {
         ctx.request_repaint();
     }
 
+    /// 초보자 프리셋을 현재 단계 값으로 적용합니다 (단계 변경·Custom 해제 시).
+    fn apply_paper_texture_preset(&mut self) {
+        let (strength, surface) =
+            freedf_core::paper::paper_texture_preset(self.paper_texture_level);
+        self.paper_texture_strength = strength;
+        self.paper_surface = surface;
+    }
+
     /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
     fn apply_session(&mut self, s: &crate::settings::SessionState, page_count: usize) {
         self.current_page = s.page.min(page_count.saturating_sub(1));
@@ -2283,7 +2309,12 @@ impl FreeDfApp {
         self.paper_color = s.paper_color;
         self.paper_texture = s.paper_texture;
         self.paper_texture_strength = s.paper_texture_strength.clamp(0.0, 1.0);
+        self.paper_texture_level = s.paper_texture_level.min(4);
+        self.paper_texture_custom = s.paper_texture_custom;
         self.paper_surface = s.paper_surface;
+        if !self.paper_texture_custom {
+            self.apply_paper_texture_preset();
+        }
         self.paper_size = s.paper_size;
         self.canvas_color = s.canvas_color;
         self.paper_style_settings = s.paper_style_settings;

@@ -552,6 +552,36 @@ pub fn linear_to_srgb(x: f32) -> u8 {
     (e * 255.0 + 0.5) as u8
 }
 
+/// 초보자용 5단계 프리셋 (Lowest..Highest) — (전체 강도, 표면 설정).
+/// 광원 각도·주변광·직사광·광택은 모든 단계에서 동일하고, 요철·반사율
+/// 요동·차폐·시닝만 단계별로 커집니다. 순수 함수.
+pub fn paper_texture_preset(level: u8) -> (f32, PaperSurfaceSettings) {
+    let light = PaperSurfaceSettings::default();
+    let (strength, bump, albedo_l, albedo_c, ao, sheen) = match level.clamp(0, 4) {
+        0 => (0.08, 0.12, 0.012, 0.010, 0.08, 0.015),
+        1 => (0.16, 0.22, 0.025, 0.018, 0.16, 0.025),
+        2 => (0.25, 0.35, 0.040, 0.030, 0.25, 0.040),
+        3 => (0.35, 0.60, 0.060, 0.040, 0.40, 0.060),
+        _ => (0.50, 0.90, 0.090, 0.060, 0.55, 0.090),
+    };
+    (
+        strength,
+        PaperSurfaceSettings {
+            bump,
+            albedo_l,
+            albedo_c,
+            ao_strength: ao,
+            sheen,
+            ..light
+        },
+    )
+}
+
+/// 프리셋 단계 라벨.
+pub fn paper_texture_preset_label(level: u8) -> &'static str {
+    ["Lowest", "Low", "Medium", "High", "Highest"][level.clamp(0, 4) as usize]
+}
+
 /// 종이 표면을 **물리 모델**로 굽습니다 (size×size, RGBA 평탄화, 불투명).
 ///
 /// 픽셀 색 = albedo(ρ0, 채널 노이즈) × 조명(법선·광원·차폐) + 시닝을
@@ -815,6 +845,28 @@ mod tests {
         let white = bake(32, [255, 255, 255], 0.35, PaperSurfaceSettings::default());
         let cream = bake(32, [251, 243, 220], 0.35, PaperSurfaceSettings::default());
         assert_ne!(white, cream, "종이 배경색에 따라 텍스처가 달라야 함 (요구 ①)");
+    }
+
+    #[test]
+    fn presets_are_monotonic_and_medium_is_default() {
+        // 단계가 올라갈수록 강도·요철이 커져야 합니다.
+        let mut prev = paper_texture_preset(0);
+        assert_eq!("Lowest", paper_texture_preset_label(0));
+        assert_eq!("Highest", paper_texture_preset_label(4));
+        for level in 1..5u8 {
+            let cur = paper_texture_preset(level);
+            assert!(cur.0 > prev.0, "강도 단조 증가: {level}");
+            assert!(
+                cur.1.bump > prev.1.bump,
+                "요철 단조 증가: {level}"
+            );
+            prev = cur;
+        }
+        // Medium(2)는 은은한 기본값과 정확히 일치해야 합니다.
+        assert_eq!(
+            paper_texture_preset(2),
+            (0.25, PaperSurfaceSettings::default())
+        );
     }
 
     #[test]
