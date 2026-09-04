@@ -299,6 +299,22 @@ impl FreeDfApp {
                     }
                     ui.separator();
     
+                    // 종이 질감 빠른 토글 — Paper 설정의 강도 슬라이더와 연동.
+                    if ui
+                        .add(
+                            egui::Button::new(icon_text(ui, "Paper Texture", icons::SPARKLE))
+                                .selected(self.paper_texture),
+                        )
+                        .on_hover_text(
+                            "Paper texture: fiber grain over the page — click to \
+                             toggle on/off (strength is in Paper settings).",
+                        )
+                        .clicked()
+                    {
+                        self.paper_texture = !self.paper_texture;
+                        self.save_default_session();
+                        self.save_session();
+                    }
                     // Paper (grid / ruling / color) — applied to the **current
                     // page**; new pages use these values as their defaults.
                     // "Apply to all" pushes the current values onto every page.

@@ -329,28 +329,64 @@ pub fn paper_lines_rotated(
     }
 }
 
-/// 종이 질감 노이즈 텍스처 (size×size, **RGBA 평탄화 바이트**) — 섬유
-/// 얼룩을 알파로 담은 어두운 반점들. **결정적**: 같은 (size, seed,
-/// strength)면 항상 같은 결과라 렌더링 중 깜빡임이 없습니다.
+/// 종이 질감 노이즈 텍스처 (size×size, **RGBA 평탄화 바이트**) —
+/// 실제 종이의 요철을 흉내내는 **세 성분의 물리 모델**:
+///
+/// 1. **모틀링(mottling)** — 지료(펄프) 분산 편차로 생기는 저주파 밝기
+///    요동 (값 노이즈 FBM 3옥타브, 파장 3/7/16셀).
+/// 2. **섬유(fiber)** — 종이 섬유가 미세하게 드러나는 중주파 줄무늬
+///    (좌표를 비틀어 한 방향으로 늘어진 노이즈 세포).
+/// 3. **스펙(speck)** — 필러 입자/미세 먼지의 고주파 점 얼룩.
+///
+/// 편차는 **양방향**: 어두운 얼룩(섬유 그림자·흡수)은 갈회색, 밝은 얼룩
+/// (섬유 산란 하이라이트)은 아이보리색 픽셀로 한 텍스처에 인코딩합니다.
+/// **결정적** (같은 입력 = 같은 결과) — 렌더링 중 깜빡임이 없습니다.
 pub fn paper_texture_rgba(size: usize, seed: u64, strength: f32) -> Vec<u8> {
     let n = size.clamp(8, 512);
     let s = strength.clamp(0.0, 1.0);
+    const DARK: [u8; 3] = [70, 64, 58]; // 갈회색 그림자 얼룩.
+    const LIGHT: [u8; 3] = [255, 253, 248]; // 아이보리 하이라이트.
     let mut out = Vec::with_capacity(n * n * 4);
     for y in 0..n {
         for x in 0..n {
             let u = x as f32 / n as f32;
             let v = y as f32 / n as f32;
-            // 저주파(6셀) + 고주파(22셀) 옥타브 — 종이 섬유 얼룩.
-            let lo = crate::ink::value_noise(u * 6.0, v * 6.0, seed);
-            let hi = crate::ink::value_noise(
-                u * 22.0 + 3.7,
-                v * 22.0 + 9.1,
-                seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            // ① 모틀링 — 지료 분산 편차 (FBM 3옥타브).
+            let m0 = crate::ink::value_noise(u * 3.0, v * 3.0, seed);
+            let m1 = crate::ink::value_noise(
+                u * 7.0 + 1.7,
+                v * 7.0 + 4.2,
+                seed ^ 0xA511_7095_B320_FCB3,
             );
-            let t = (0.72 * lo + 0.28 * hi - 0.5) * 2.0; // 대략 -1..1
-            // 어두운 반점만 (밝은 반점은 생략 — 종이의 그림자 얼룩 느낌).
-            let a = (t * s * 255.0).clamp(0.0, 255.0) as u8;
-            out.extend_from_slice(&[72, 66, 60, a]); // 짙은 갈회색 얼룩.
+            let m2 = crate::ink::value_noise(
+                u * 16.0 + 9.3,
+                v * 16.0 + 2.6,
+                seed.wrapping_mul(0xD1B5_4A32_D192_ED03),
+            );
+            let mottling = 0.5 * m0 + 0.3 * m1 + 0.2 * m2 - 0.5;
+            // ② 섬유 — 좌표 비틈으로 세로 방향으로 늘어진 노이즈 세포.
+            let fu = u * 7.0 + 0.35 * v;
+            let fv = u * 0.35 + v * 7.0;
+            let fiber = crate::ink::value_noise(
+                fu + 5.1,
+                fv + 8.8,
+                seed ^ 0x9E37_79B9_7F4A_7C15,
+            ) - 0.5;
+            // ③ 스펙 — 필러 입자/미세 먼지.
+            let speck = crate::ink::value_noise(
+                u * 26.0 + 11.2,
+                v * 26.0 + 13.9,
+                seed ^ 0xBF58_476D_1CE4_E5B9,
+            ) - 0.5;
+            // 합성 — 모틀링이 가장 큰 편차, 섬유·스펙이 입자를 더합니다.
+            let t = (1.35 * mottling + 0.75 * fiber + 0.35 * speck).clamp(-1.0, 1.0);
+            let mag = (t.abs() * s * 255.0) as u8;
+            let (rgb, alpha) = if t >= 0.0 {
+                (DARK, mag)
+            } else {
+                (LIGHT, mag)
+            };
+            out.extend_from_slice(&[rgb[0], rgb[1], rgb[2], alpha]);
         }
     }
     out
@@ -496,5 +532,9 @@ mod tests {
         }
         let zero = paper_texture_rgba(16, 7, 0.0);
         assert!(zero.chunks_exact(4).all(|p| p[3] == 0), "강도 0 = 투명");
+        // 양방향 물리 모델: 어두운 얼룩과 밝은 얼룩이 모두 있어야 함.
+        let has_dark = a.chunks_exact(4).any(|p| p[0] < 100 && p[3] > 0);
+        let has_light = a.chunks_exact(4).any(|p| p[0] > 200 && p[3] > 0);
+        assert!(has_dark && has_light, "어둡고 밝은 얼룩이 공존해야 함");
     }
 }
