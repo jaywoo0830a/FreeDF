@@ -1,8 +1,10 @@
 # FreeDF 서버 스택 — API 백엔드(미디어 + Sync v3) + nginx
 #
-# 트래픽 흐름: Caddy(80/443, TLS) → nginx(호스트 네트워크, 8081) → backend(127.0.0.1:8080)
-# - backend: 브리지 네트워크, 8080은 기본 127.0.0.1로만 게시(nginx 전용).
-#   DB는 같은 호스트 PostgreSQL을 host.docker.internal(host-gateway)로 접근.
+# 트래픽 흐름: Caddy(80/443, TLS) → nginx(호스트 네트워크, 8081) → backend
+# backend 네트워크는 배포 환경에 따라 up.sh가 오버레이를 자동 선택합니다:
+#   - docker-compose.host.yml   — Linux Docker Engine(VPS): 호스트 네트워크,
+#                                 DB(127.0.0.1:5432)·nginx(127.0.0.1:8080) 직통.
+#   - docker-compose.bridge.yml — Docker Desktop: 브리지 + host-gateway.
 # - nginx:   호스트 네트워크 — /v3·/api 프록시 + /media 정적 서빙 (freedf.conf).
 services:
   backend:
@@ -14,16 +16,12 @@ services:
     environment:
       # 컨테이너 내부 고정 경로 — 호스트 MEDIA_DIR이 여기로 마운트됨.
       MEDIA_DIR: /srv/freedf-server/media
-      # 게시 포트로 도달하도록 컨테이너 안에선 0.0.0.0 바인딩.
+      # 브리지 모드 기본 — 게시 포트로 도달하도록 컨테이너 안에선 0.0.0.0.
+      # (호스트 네트워크 모드는 docker-compose.host.yml 이 127.0.0.1로 덮어씀)
       BIND: "0.0.0.0:8080"
-      # server/backend/up.sh 가 ../db/.env 기반으로 조립해 넘겨줌.
+      # server/backend/up.sh 가 ../db/.env 기반으로 조립해 넘겨줌
+      # (브리지: host.docker.internal / 호스트 네트워크: 127.0.0.1).
       DATABASE_URL: ${CONTAINER_DB_URL:-postgres://freedf:freedf@host.docker.internal:5432/freedf}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      # 기본 127.0.0.1 — nginx만 접근 (외부 노출 없음).
-      # nginx 없이 직접 테스트할 때만 FREEDF_BACKEND_BIND=0.0.0.0.
-      - "${FREEDF_BACKEND_BIND:-127.0.0.1}:${FREEDF_BACKEND_PORT:-8080}:8080"
     volumes:
       - ${MEDIA_DIR:-/srv/freedf-server/media}:/srv/freedf-server/media
 

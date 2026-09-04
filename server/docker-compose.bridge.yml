@@ -1,0 +1,8 @@
+# Docker Desktop(WSL/Windows) 전용 오버레이 — backend를 브리지 + host-gateway로.
+services:
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # 기본 127.0.0.1 — nginx(호스트 네트워크)만 접근.
+      - "${FREEDF_BACKEND_BIND:-127.0.0.1}:${FREEDF_BACKEND_PORT:-8080}:8080"

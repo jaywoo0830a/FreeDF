@@ -36,6 +36,11 @@ cd backend && ./init.sh && ./up.sh && cd ..
   DB 비밀번호를 직접 복사할 필요가 없습니다.
 - `db/up.sh`는 PostgreSQL 18.6 기동 후 `migrations/`를 순서대로 적용
 - `backend/up.sh`는 backend+nginx 컨테이너를 빌드/기동, `backend/down.sh`로 중지
+  - **네트워크 자동 선택**: Linux Docker Engine(VPS) = backend를 **호스트 네트워크**로
+    실행해 DB(127.0.0.1:5432)와 nginx(127.0.0.1:8080)에 루프백 직통.
+    Docker Desktop = 브리지 + `host.docker.internal`(host-gateway).
+  - VPS 순서: `db/up.sh`로 DB 먼저 → `backend/up.sh` (DB가 없으면 백엔드가
+    PostgreSQL 연결 실패로 재시작 루프에 빠집니다)
 - PostgreSQL 튜닝: `db/postgresql.conf` (SSD 전용 — PG18 내장 비동기 I/O, WAL zstd 등)
 
 > **Docker Desktop(Win/Mac)에서 개발할 때**: `network_mode: host`는 Docker

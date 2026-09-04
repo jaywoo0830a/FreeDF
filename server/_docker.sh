@@ -44,3 +44,20 @@ is_distro_mount_error() {
     local out="$1"
     [[ "$out" == *"distro mount service"* || "$out" == *"guest-services"* ]]
 }
+
+# FreeDF 서버 스택의 compose 파일 세트 선택 (backend/up.sh·down.sh 공용).
+#   Linux Docker Engine(VPS 등) → 호스트 네트워크 — DB(127.0.0.1:5432)·
+#                                nginx(127.0.0.1:8080)와 루프백 직통.
+#                                (브리지의 host-gateway는 127.0.0.1 전용
+#                                 바인딩에 연결 거부가 남 — VPS 불가)
+#   Docker Desktop(WSL/Windows) → 브리지 + host-gateway.
+# 사용: COMPOSE_FILES=( $(freedf_compose_files "$DOCKER") )
+freedf_compose_files() {
+    local os
+    os="$("$1" info --format '{{.OperatingSystem}}' 2>/dev/null || true)"
+    if [[ "$os" == *"Docker Desktop"* ]]; then
+        echo "-f ../docker-compose.yml -f ../docker-compose.bridge.yml"
+    else
+        echo "-f ../docker-compose.yml -f ../docker-compose.host.yml"
+    fi
+}

@@ -5,9 +5,10 @@
 #   ./up.sh              # 이미지 재빌드 + backend/nginx 기동 (DB는 server/db/up.sh 로 먼저)
 #   ./up.sh --no-build   # 빌드 없이 기동
 #
-# backend는 8080을 127.0.0.1로만 게시(nginx 전용)하고, PostgreSQL은
-# host.docker.internal(host-gateway)로 접근합니다. nginx(호스트 네트워크,
-# 8081)가 /v3·/api 프록시 + /media 서빙을 맡고, 80/443 TLS는 Caddy가 종료합니다.
+# backend는 nginx(호스트 네트워크, 8081) 뒤에서만 동작합니다. 네트워크는
+# 배포 환경에 따라 자동 선택: Linux Docker Engine(VPS) = 호스트 네트워크로
+# DB(127.0.0.1:5432) 직통, Docker Desktop = 브리지 + host-gateway.
+# nginx가 /v3·/api 프록시 + /media 서빙을 맡고, 80/443 TLS는 Caddy가 종료합니다.
 set -euo pipefail
 cd "$(dirname "$0")"
 source ../_docker.sh
@@ -25,9 +26,20 @@ set +a
 
 DOCKER="$(require_docker)"
 
-# 컨테이너 → 호스트 PostgreSQL 주소 (host-gateway: VPS·Docker Desktop 공용).
+# 배포 환경에 맞는 compose 오버레이 선택 (host / bridge).
+COMPOSE_FILES=( $(freedf_compose_files "$DOCKER") )
+if [[ " ${COMPOSE_FILES[*]} " == *"docker-compose.host.yml"* ]]; then
+    NET_LABEL="host(호스트 네트워크 — DB 직통)"
+else
+    NET_LABEL="bridge + host-gateway"
+fi
+
+# 컨테이너 → PostgreSQL 주소 (모드별로 up.sh가 조립해 넘김).
+# 브리지(Desktop): host.docker.internal, 호스트 네트워크(VPS): 127.0.0.1 직통.
 CONTAINER_DB_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@host.docker.internal:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB}"
 export CONTAINER_DB_URL
+HOST_DB_URL="postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${FREEDF_DB_HOST:-127.0.0.1}:${FREEDF_DB_PORT:-5432}/${POSTGRES_DB}"
+export HOST_DB_URL
 
 # 호스트에서 PostgreSQL이 열려 있는지 미리 확인 (경고만 — 기동은 진행).
 if ! (timeout 2 bash -c "</dev/tcp/127.0.0.1/${FREEDF_DB_PORT:-5432}" >/dev/null 2>&1); then
@@ -49,7 +61,7 @@ export FREEDF_BACKEND_BIND="${FREEDF_BACKEND_BIND:-127.0.0.1}"
 export FREEDF_BACKEND_PORT="${FREEDF_BACKEND_PORT:-8080}"
 
 set +e
-out="$(CONTAINER_DB_URL="$CONTAINER_DB_URL" "$DOCKER" compose -f ../docker-compose.yml --env-file .env up -d "${BUILD[@]}" backend nginx 2>&1)"
+out="$("$DOCKER" compose "${COMPOSE_FILES[@]}" --env-file .env up -d "${BUILD[@]}" backend nginx 2>&1)"
 rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then
@@ -79,9 +91,9 @@ if command -v curl >/dev/null 2>&1; then
         echo "✓ 백엔드 준비 완료 — http://127.0.0.1:${FREEDF_BACKEND_PORT:-8080}"
     else
         echo "⚠ /health 응답을 받지 못했습니다 — 컨테이너 상태와 최근 로그:"
-        "$DOCKER" compose -f ../docker-compose.yml ps backend
-        "$DOCKER" compose -f ../docker-compose.yml logs --tail 30 backend
-        echo "(전체 로그: $DOCKER compose -f ../docker-compose.yml logs -f backend)"
+        "$DOCKER" compose "${COMPOSE_FILES[@]}" ps backend
+        "$DOCKER" compose "${COMPOSE_FILES[@]}" logs --tail 30 backend
+        echo "(전체 로그: $DOCKER compose ${COMPOSE_FILES[*]} logs -f backend)"
     fi
 else
     echo "완료 — 백엔드가 기동되었습니다 (curl이 없어 /health 확인 생략)."
@@ -92,5 +104,6 @@ echo " 공개 진입점: ${PUBLIC_BASE_URL}"
 echo "   Sync v3: PUT /v3/documents/{id}/snapshot · GET /v3/documents/{id}"
 echo "   미디어:  /api/media · /media/*"
 echo " 흐름: Caddy(80/443, TLS) → nginx(8081) → backend(127.0.0.1:8080)"
+echo " backend 네트워크: ${NET_LABEL}"
 echo " 인증: X-Api-Key: <backend/.env의 FREEDF_API_KEY>"
 echo "──────────────────────────────────────────────"
