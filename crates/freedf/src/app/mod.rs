@@ -1226,37 +1226,37 @@ impl FreeDfApp {
         };
         if !has {
             // 첫 실행 — 기본 펜/하이라이터 색은 테마를 따릅니다.
-            s.pen.color = theme_pen;
-            s.fountain.color = theme_pen;
+            s.pen.ink.color = theme_pen;
+            s.fountain.ink.color = theme_pen;
             s.highlighter.color = theme_hi;
         }
-        // 값 범위 검사/보정은 SessionState::sanitized() 한 곳에서만.
+        // 값 범위는 뉴타입이, 교차 필드 보정은 sanitized()가 담당.
         let s = s.sanitized();
-        let pen_color = s.pen.color;
+        let pen_color = s.pen.ink.color;
         let hi_color = s.highlighter.color;
-        let fountain_color = s.fountain.color;
-        let tool = s.tool;
-        let color_family = s.color_family;
-        let pen_width = s.pen.width;
-        let fountain_width = s.fountain.width;
-        let hi_width = s.highlighter.width;
-        let eraser_radius = s.eraser_radius;
-        let pressure_enabled = s.pressure_enabled;
-        let debug_hud = s.debug_hud;
-        let left_handed = s.left_handed;
+        let fountain_color = s.fountain.ink.color;
+        let tool = s.tool.active;
+        let color_family = s.tool.color_family;
+        let pen_width = s.pen.ink.width.get();
+        let fountain_width = s.fountain.ink.width.get();
+        let hi_width = s.highlighter.width.get();
+        let eraser_radius = s.tool.eraser_radius.get();
+        let pressure_enabled = s.tool.pressure_enabled;
+        let debug_hud = s.global.debug_hud;
+        let left_handed = s.global.left_handed;
         // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
         let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
             .map(freedf_core::pen_input::from_receiver);
         #[cfg(not(target_os = "windows"))]
         let pen_monitor = freedf_core::pen_input::open_best();
-        let pen_profile = s.pen_profile;
+        let pen_profile = s.pen.profile;
         let paper_style = s.paper.style;
         let paper_color = s.paper.color;
         let paper_texture = s.texture.enabled;
-        let paper_texture_strength = s.texture.strength;
+        let paper_texture_strength = s.texture.strength.get();
         let paper_surface = s.texture.surface;
-        let paper_texture_level = s.texture.level;
+        let paper_texture_level = s.texture.level.get();
         let paper_texture_custom = s.texture.custom;
         let canvas_color = s.paper.canvas_color;
         let paper_size = s.paper.size;
@@ -1266,28 +1266,39 @@ impl FreeDfApp {
         let show_palette = s.panels.show_palette;
         let favorite_colors = s.panels.favorite_colors;
         let text_highlight_snap = s.panels.text_highlight_snap;
-        let zoom_lock = s.zoom_lock;
-        let smoothing = s.smoothing.strength;
+        let zoom_lock = s.view.zoom_lock;
+        let smoothing = s.smoothing.strength.get();
         let smoothing_enabled = s.smoothing.enabled;
-        let pen_soak = s.pen.soak;
-        let fountain_soak = s.fountain.soak;
-        let pen_grain = s.pen.grain;
-        let fountain_grain = s.fountain.grain;
-        let fountain_profile = s.fountain_profile;
-        let mouse_draws = s.mouse_draws;
-        let dictionary_enabled = s.dictionary_enabled;
+        let pen_soak = s.pen.ink.soak;
+        let fountain_soak = s.fountain.ink.soak;
+        let pen_grain = s.pen.ink.grain;
+        let fountain_grain = s.fountain.ink.grain;
+        let fountain_profile = s.fountain.profile;
+        let mouse_draws = s.tool.mouse_draws;
+        let dictionary_enabled = s.global.dictionary_enabled;
         let edge_autoscroll = s.edge_autoscroll.enabled;
         let edge_autoscroll_pen_only = s.edge_autoscroll.pen_only;
-        let edge_zone = s.edge_autoscroll.zone;
-        let edge_speeds = s.edge_autoscroll.speeds;
+        let edge_zone = s.edge_autoscroll.zone.get();
+        let edge_speeds = [
+            s.edge_autoscroll.speeds[0].get(),
+            s.edge_autoscroll.speeds[1].get(),
+            s.edge_autoscroll.speeds[2].get(),
+            s.edge_autoscroll.speeds[3].get(),
+        ];
         let window_focus_on_move = s.window_focus.on_move;
-        let window_focus_dwell_sec = s.window_focus.dwell_sec;
-        let edge_overscroll = s.edge_autoscroll.overscroll;
+        let window_focus_dwell_sec = s.window_focus.dwell_sec.get();
+        let edge_overscroll = s.edge_autoscroll.overscroll.get();
         let edge_pulse = s.edge_autoscroll.pulse;
-        let edge_delays = s.edge_autoscroll.delays;
+        let edge_delays = [
+            s.edge_autoscroll.delays[0].get(),
+            s.edge_autoscroll.delays[1].get(),
+            s.edge_autoscroll.delays[2].get(),
+            s.edge_autoscroll.delays[3].get(),
+        ];
         let custom_paper_size = s
             .paper
             .custom_size
+            .map(|c| [c[0].get(), c[1].get()])
             .unwrap_or_else(|| PaperSize::A4.size_pts());
         let tool_order = s.panels.tool_order;
         let library_filter = String::new();
@@ -1893,56 +1904,66 @@ impl FreeDfApp {
     // ---------- Session (per-document GUI state) ----------
 
     /// 현재 GUI 상태를 세션 구조체로 캡처합니다 — 앱 ↔ 세션 매핑은
-    /// 이 함수와 `apply_session` **한 쌍**으로만 유지합니다 (settings.rs 규칙 4).
+    /// 이 함수와 `apply_session` **한 쌍**으로만 유지합니다 (settings.rs 규칙 5).
     fn capture_session(&self) -> crate::settings::SessionState {
+        use crate::settings as st;
         crate::settings::SessionState {
             page: self.current_page,
-            tool: self.tool,
-            color_family: self.color_family,
-            pen: crate::settings::InkToolState {
-                color: self.pen_color,
-                width: self.pen_width,
-                soak: self.pen_soak,
-                grain: self.pen_grain,
+            tool: st::ToolState {
+                active: self.tool,
+                color_family: self.color_family,
+                eraser_radius: st::EraserRadius::new(self.eraser_radius),
+                pressure_enabled: self.pressure_enabled,
+                mouse_draws: self.mouse_draws,
             },
-            fountain: crate::settings::InkToolState {
-                color: self.fountain_color,
-                width: self.fountain_width,
-                soak: self.fountain_soak,
-                grain: self.fountain_grain,
+            pen: st::PenState {
+                ink: st::InkToolState {
+                    color: self.pen_color,
+                    width: st::InkWidth::new(self.pen_width),
+                    soak: self.pen_soak,
+                    grain: self.pen_grain,
+                },
+                profile: self.pen_profile,
             },
-            highlighter: crate::settings::HighlighterState {
+            fountain: st::FountainState {
+                ink: st::InkToolState {
+                    color: self.fountain_color,
+                    width: st::InkWidth::new(self.fountain_width),
+                    soak: self.fountain_soak,
+                    grain: self.fountain_grain,
+                },
+                profile: self.fountain_profile,
+            },
+            highlighter: st::HighlighterState {
                 color: self.hi_color,
-                width: self.hi_width,
+                width: st::HighlighterWidth::new(self.hi_width),
             },
-            eraser_radius: self.eraser_radius,
-            pressure_enabled: self.pressure_enabled,
-            debug_hud: self.debug_hud,
-            left_handed: self.left_handed,
-            pen_profile: self.pen_profile,
-            fountain_profile: self.fountain_profile,
-            view: crate::settings::ViewState {
-                zoom: self.view.zoom,
+            view: st::ViewState {
+                zoom: st::Zoom::new(self.view.zoom),
                 pan_x: self.view.pan_x,
                 pan_y: self.view.pan_y,
                 page_align: self.page_align,
+                zoom_lock: self.zoom_lock,
             },
-            paper: crate::settings::PaperState {
+            paper: st::PaperState {
                 style: self.paper_style,
                 color: self.paper_color,
                 size: self.paper_size,
-                custom_size: Some(self.custom_paper_size),
+                custom_size: Some([
+                    st::CustomPaperDim::new(self.custom_paper_size[0]),
+                    st::CustomPaperDim::new(self.custom_paper_size[1]),
+                ]),
                 canvas_color: self.canvas_color,
                 style_settings: self.paper_style_settings,
             },
-            texture: crate::settings::TextureState {
+            texture: st::TextureState {
                 enabled: self.paper_texture,
-                strength: self.paper_texture_strength,
-                level: self.paper_texture_level,
+                strength: st::TextureStrength::new(self.paper_texture_strength),
+                level: st::TextureLevel::new(self.paper_texture_level),
                 custom: self.paper_texture_custom,
                 surface: self.paper_surface,
             },
-            panels: crate::settings::PanelsState {
+            panels: st::PanelsState {
                 show_notes: self.show_library,
                 show_outline: self.show_outline,
                 show_palette: self.show_palette,
@@ -1950,26 +1971,38 @@ impl FreeDfApp {
                 text_highlight_snap: self.text_highlight_snap,
                 tool_order: self.tool_order.clone(),
             },
-            zoom_lock: self.zoom_lock,
-            smoothing: crate::settings::SmoothingState {
-                strength: self.smoothing,
+            smoothing: st::SmoothingState {
+                strength: st::SmoothingStrength::new(self.smoothing),
                 enabled: self.smoothing_enabled,
             },
-            edge_autoscroll: crate::settings::EdgeAutoscrollState {
+            edge_autoscroll: st::EdgeAutoscrollState {
                 enabled: self.edge_autoscroll,
                 pen_only: self.edge_autoscroll_pen_only,
-                zone: self.edge_zone,
-                speeds: self.edge_speeds,
-                overscroll: self.edge_overscroll,
+                zone: st::EdgeZone::new(self.edge_zone),
+                speeds: [
+                    st::EdgeSpeed::new(self.edge_speeds[0]),
+                    st::EdgeSpeed::new(self.edge_speeds[1]),
+                    st::EdgeSpeed::new(self.edge_speeds[2]),
+                    st::EdgeSpeed::new(self.edge_speeds[3]),
+                ],
+                overscroll: st::EdgeOverscroll::new(self.edge_overscroll),
                 pulse: self.edge_pulse,
-                delays: self.edge_delays,
+                delays: [
+                    st::EdgeDelay::new(self.edge_delays[0]),
+                    st::EdgeDelay::new(self.edge_delays[1]),
+                    st::EdgeDelay::new(self.edge_delays[2]),
+                    st::EdgeDelay::new(self.edge_delays[3]),
+                ],
             },
-            window_focus: crate::settings::WindowFocusState {
+            window_focus: st::WindowFocusState {
                 on_move: self.window_focus_on_move,
-                dwell_sec: self.window_focus_dwell_sec,
+                dwell_sec: st::FocusDwell::new(self.window_focus_dwell_sec),
             },
-            mouse_draws: self.mouse_draws,
-            dictionary_enabled: self.dictionary.enabled,
+            global: st::GlobalState {
+                debug_hud: self.debug_hud,
+                left_handed: self.left_handed,
+                dictionary_enabled: self.dictionary.enabled,
+            },
         }
     }
 
@@ -2314,46 +2347,46 @@ impl FreeDfApp {
     }
 
     /// 저장된 세션을 현재 문서에 적용합니다. `page_count`는 페이지 상한입니다.
-    /// (값 범위 검사는 `SessionState::sanitized()`에서 이미 적용됨.)
+    /// (스칼라 범위는 뉴타입이, 교차 필드 보정은 `sanitized()`가 이미 적용됨.)
     fn apply_session(&mut self, s: &crate::settings::SessionState, page_count: usize) {
         let s = s.clone().sanitized();
         self.current_page = s.page.min(page_count.saturating_sub(1));
-        self.tool = s.tool;
-        self.color_family = s.color_family;
-        self.pen_color = s.pen.color;
-        self.pen_width = s.pen.width;
-        self.fountain_color = s.fountain.color;
-        self.fountain_width = s.fountain.width;
+        self.tool = s.tool.active;
+        self.color_family = s.tool.color_family;
+        self.pen_color = s.pen.ink.color;
+        self.pen_width = s.pen.ink.width.get();
+        self.fountain_color = s.fountain.ink.color;
+        self.fountain_width = s.fountain.ink.width.get();
         self.hi_color = s.highlighter.color;
-        self.hi_width = s.highlighter.width;
-        self.eraser_radius = s.eraser_radius;
-        self.pressure_enabled = s.pressure_enabled;
-        self.debug_hud = s.debug_hud;
-        self.left_handed = s.left_handed;
-        self.pen_profile = s.pen_profile;
-        self.fountain_profile = s.fountain_profile;
+        self.hi_width = s.highlighter.width.get();
+        self.eraser_radius = s.tool.eraser_radius.get();
+        self.pressure_enabled = s.tool.pressure_enabled;
+        self.debug_hud = s.global.debug_hud;
+        self.left_handed = s.global.left_handed;
+        self.pen_profile = s.pen.profile;
+        self.fountain_profile = s.fountain.profile;
         self.page_align = s.view.page_align;
         self.paper_style = s.paper.style;
         self.paper_color = s.paper.color;
         self.paper_texture = s.texture.enabled;
-        self.paper_texture_strength = s.texture.strength;
-        self.paper_texture_level = s.texture.level;
+        self.paper_texture_strength = s.texture.strength.get();
+        self.paper_texture_level = s.texture.level.get();
         self.paper_texture_custom = s.texture.custom;
         self.paper_surface = s.texture.surface;
         self.paper_size = s.paper.size;
         self.canvas_color = s.paper.canvas_color;
         self.paper_style_settings = s.paper.style_settings;
-        self.zoom_lock = s.zoom_lock;
-        self.smoothing = s.smoothing.strength;
+        self.zoom_lock = s.view.zoom_lock;
+        self.smoothing = s.smoothing.strength.get();
         self.smoothing_enabled = s.smoothing.enabled;
-        self.pen_soak = s.pen.soak;
-        self.fountain_soak = s.fountain.soak;
-        self.pen_grain = s.pen.grain;
-        self.fountain_grain = s.fountain.grain;
-        self.mouse_draws = s.mouse_draws;
-        self.dictionary.enabled = s.dictionary_enabled;
+        self.pen_soak = s.pen.ink.soak;
+        self.fountain_soak = s.fountain.ink.soak;
+        self.pen_grain = s.pen.ink.grain;
+        self.fountain_grain = s.fountain.ink.grain;
+        self.mouse_draws = s.tool.mouse_draws;
+        self.dictionary.enabled = s.global.dictionary_enabled;
         if let Some(c) = s.paper.custom_size {
-            self.custom_paper_size = [c[0], c[1]];
+            self.custom_paper_size = [c[0].get(), c[1].get()];
         }
         self.show_library = s.panels.show_notes;
         self.show_outline = s.panels.show_outline;
@@ -2364,7 +2397,7 @@ impl FreeDfApp {
         }
         if let Some(doc) = &self.document {
             self.page_size_pts = doc.page_size_pts(self.current_page);
-            self.view.zoom = s.view.zoom;
+            self.view.zoom = s.view.zoom.get();
             self.view.pan_x = s.view.pan_x;
             self.view.pan_y = s.view.pan_y;
             self.view
