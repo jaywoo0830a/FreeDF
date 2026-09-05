@@ -47,7 +47,7 @@ pub(crate) fn poll_gamepad() -> Option<Gamepad> {
         // windows 0.62는 상수가 XINPUT_GAMEPAD_BUTTON_FLAGS(u16) newtype.
         let dz = XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE.0 as f32;
         Some(Gamepad {
-            stick: vec2(
+            stick: egui::vec2(
                 stick_axis(g.sThumbRX as f32, dz),
                 stick_axis(g.sThumbRY as f32, dz),
             ),
