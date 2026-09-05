@@ -487,11 +487,17 @@ impl FreeDfApp {
     /// 페이지의 **모든 완성 획**을 병합 잉크 메시 하나로 만듭니다.
     /// 진행 중 획과 **같은 리본 지오메트리**를 쓰므로 시각 차이가 없고,
     /// 드로우 콜은 페이지당 1개입니다.
+    ///
+    /// **뷰포트 컬링 금지**: 메시는 구운 뒤 팬/엣지 스크롤 중에는 정점 평행
+    /// 이동만으로 재사용됩니다(재구성 없음). 구울 때 현재 뷰포트로 컬링하면
+    /// 화면 밖이던 획은 팬으로 돌아와도 영원히 안 그려집니다 —
+    /// "직전 획이 뷰포트 밖으로 나가면 기존 필기의 일부가 사라지고
+    /// 줌해야 복귀하는" 간헐적 불일치 버그의 원인. 화면 클리핑은 egui가
+    /// 그릴 때 자동으로 처리하므로 구운 메시는 항상 페이지 전체여야 합니다.
     pub(crate) fn build_ink_mesh(
         &mut self,
         strokes: &[freedf_core::model::Stroke],
         origin: Pos2,
-        clip: Rect,
         now: u64,
     ) -> Option<std::sync::Arc<egui::Mesh>> {
         let view = self.view;
@@ -538,19 +544,6 @@ impl FreeDfApp {
         for s in strokes {
             if s.points.is_empty() {
                 continue;
-            }
-            // 뷰포트 컬링.
-            if let Some(bb) = s.bounding_box() {
-                let pad = (s.width * 0.7).max(6.0);
-                let a = view.page_to_view([bb[0] - pad, bb[1] - pad]);
-                let b = view.page_to_view([bb[2] + pad, bb[3] + pad]);
-                let rect = Rect::from_min_max(
-                    origin + egui::vec2(a[0], a[1]),
-                    origin + egui::vec2(b[0], b[1]),
-                );
-                if !rect.intersects(clip) {
-                    continue;
-                }
             }
             let color = Color32::from_rgba_unmultiplied(
                 s.color[0],

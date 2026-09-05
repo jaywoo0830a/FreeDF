@@ -86,6 +86,8 @@ pub(crate) use crate::server::{MediaClient, MediaObject, MediaServerConfig};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
 pub(crate) use egui_phosphor_icons::icons;
 pub(crate) use pdfium_render::prelude::Pdfium;
+// 캐시 레지스트리 — 툴바 메뉴가 이 목록을 순회합니다 (actions/cache.rs).
+pub(crate) use actions::cache::all_caches;
 use std::collections::HashSet;
 
 /// Canvas margin around the page
@@ -1151,6 +1153,8 @@ pub struct FreeDfApp {
     media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
     /// 서버 PDF 다운로드 결과 (백그라운드 스레드 → UI).
     pdf_dl_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// 다운로드 캐시 정리 결과 (백그라운드 스레드 → UI).
+    cache_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// 마지막 pen-up 시각 — 유휴 자동 저장 타이머 기준.
     last_pen_up_ms: u64,
     /// 진행 중인 마이크 녹음 (없으면 None).
@@ -1521,6 +1525,7 @@ impl FreeDfApp {
             loader_rx: None,
             media_rx: None,
             pdf_dl_rx: None,
+            cache_rx: None,
             last_pen_up_ms: 0,
             recording: None,
             player: None,
@@ -2174,6 +2179,30 @@ impl FreeDfApp {
                 self.pdf_dl_rx = Some(rx);
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
+    }
+
+    /// 다운로드 캐시 정리 결과 수신 (매 프레임 호출).
+    fn poll_cache_clear(&mut self) {
+        let Some(rx) = self.cache_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(msg)) => {
+                self.end_loading();
+                self.status = Some(msg);
+            }
+            Ok(Err(e)) => {
+                self.end_loading();
+                self.show_error(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.cache_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.end_loading();
+                self.show_error("Cache clearing was interrupted.".into());
+            }
         }
     }
 
@@ -3003,6 +3032,7 @@ impl eframe::App for FreeDfApp {
         self.poll_loader();
         self.poll_media();
         self.poll_pdf_download();
+        self.poll_cache_clear();
         self.poll_player();
         self.maybe_sync_pdfs();
         self.poll_pdf_sync();

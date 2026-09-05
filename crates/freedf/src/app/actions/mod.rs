@@ -12,6 +12,7 @@
 //! - [`save`]: 플러시(구조 델타)/수동 저장/로드
 //! - [`media`]: 녹음 업로드·재생·삭제
 //! - [`dialogs`]: 폴백 다이얼로그 액션 실행
+//! - [`cache`]: 다운로드/캔버스 캐시 정리
 
 pub(crate) use super::*;
 
@@ -86,6 +87,7 @@ impl FreeDfApp {
 }
 
 mod bookmarks;
+pub(crate) mod cache;
 mod dialogs;
 mod documents;
 mod history;

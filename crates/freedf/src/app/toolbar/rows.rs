@@ -121,6 +121,34 @@ impl FreeDfApp {
                         // 열릴 때 목록 갱신.
                         self.media_refresh();
                     }
+                    let cache_menu = ui.menu_button(
+                        icon_text(ui, "Cache", icons::HARD_DRIVES),
+                        |ui| {
+                            ui.set_min_width(260.0);
+                            // 등록된 캐시를 전부 순회 — 새 캐시는 actions/cache.rs의
+                            // all_caches()에 등록만 하면 여기에 자동으로 나타납니다.
+                            for (i, cache) in all_caches().iter().enumerate() {
+                                if i > 0 {
+                                    ui.separator();
+                                }
+                                ui.label(egui::RichText::new(cache.label()).strong());
+                                ui.label(
+                                    egui::RichText::new(cache.description())
+                                        .weak()
+                                        .small(),
+                                );
+                                if ui
+                                    .button(format!("Clear {}", cache.label().to_lowercase()))
+                                    .clicked()
+                                {
+                                    cache.clear(self);
+                                }
+                            }
+                        },
+                    );
+                    cache_menu
+                        .response
+                        .on_hover_text("Manage app caches — download (disk) / canvas (memory)");
                     ui.separator();
     
                     // 정렬(왼쪽/가운데/오른쪽) — 패널 상태와 무관하게 **항상 표시**

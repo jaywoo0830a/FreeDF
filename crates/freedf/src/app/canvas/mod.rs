@@ -630,7 +630,7 @@ impl FreeDfApp {
         let now = now_ms();
         if self.ink_needs_rebuild(now) {
             let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
-            if let Some(mesh) = self.build_ink_mesh(&strokes, origin, painter.clip_rect(), now) {
+            if let Some(mesh) = self.build_ink_mesh(&strokes, origin, now) {
                 self.ink_mesh = Some(mesh);
                 self.ink_key = (
                     self.current_page,
