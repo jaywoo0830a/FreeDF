@@ -615,17 +615,15 @@ impl FreeDfApp {
         key != self.ink_key
     }
 
-    /// 스밈 정착/번짐 후광 갱신이 필요한지 — **50ms 스로틀**로만 참.
-    /// 구조 재구성과 분리해, 정착 루프가 매 프레임 전체 재굽기를
-    /// 반복하던 문제를 막습니다 (후광은 느리게 자라 20Hz면 충분).
+    /// 스밈(잉크 포화)이 아직 진행 중인지 — 진행 중이면 **매 프레임**
+    /// 재굽기해 부드러운 진해짐 애니메이션을 만듭니다. 정착 후(MAX)엔
+    /// 멈춥니다. (50ms 스로틀을 걸면 애니메이션이 체감되지 않아 옛
+    /// 매-프레임 동작으로 복귀 — 깜빡임은 증분 append 우선 순서로 해결.)
     pub(crate) fn ink_halo_due(&self, now: u64) -> bool {
         if self.ink_next_settle_ms == u64::MAX || self.ink_mesh.is_none() {
             return false;
         }
-        // 마지막 재구성 시점이 아직 정착 전이면 — 번지는 동안 주기 갱신 +
-        // 정착 직후 마무리 렌더 한 번 더.
-        self.ink_built_at < self.ink_next_settle_ms
-            && now.saturating_sub(self.ink_built_at) >= HALO_GEOM_MS
+        now < self.ink_next_settle_ms
     }
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the
