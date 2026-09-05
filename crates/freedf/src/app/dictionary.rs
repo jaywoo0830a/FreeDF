@@ -204,12 +204,12 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(Stroke::new(1.0, stroke))
                     .corner_radius(8)
-                    .inner_margin(egui::Margin::same(10))
+                    .inner_margin(egui::Margin::same(12))
                     .show(ui, |ui| {
                         ui.set_max_width(340.0);
                         ui.horizontal(|ui| {
                             if let Some(q) = &self.dictionary.query {
-                                ui.label(egui::RichText::new(q).strong().size(17.0));
+                                ui.label(egui::RichText::new(q).strong().size(16.0));
                             }
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),

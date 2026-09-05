@@ -3,7 +3,7 @@
 use super::*;
 
 /// 깊이 1레벨당 들여쓰기(pt).
-const OUTLINE_INDENT: f32 = 14.0;
+const OUTLINE_INDENT: f32 = 16.0;
 /// 들여쓰기가 멈추는 최대 깊이 (이보다 깊으면 같은 깊이로 표시).
 const OUTLINE_MAX_DEPTH: usize = 6;
 /// 제목 표시 글자 수 상한 (넘으면 …으로 잘라 창 폭이 늘어나지 않게 함).
@@ -11,16 +11,16 @@ const OUTLINE_MAX_CHARS: usize = 56;
 
 impl FreeDfApp {
     pub(crate) fn outline_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 목차 트리부터.
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }
         if self.outline.is_empty() {
-            ui.add_space(2.0);
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.label(egui::RichText::new("No outline in this PDF.").weak().small());
             });
             return;

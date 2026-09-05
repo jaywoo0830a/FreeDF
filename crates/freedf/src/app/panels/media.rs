@@ -10,11 +10,11 @@ fn fmt_secs(d: std::time::Duration) -> String {
 impl FreeDfApp {
     /// 미디어 패널 — 현재 문서의 미디어 업로드/목록/재생/미리보기/삭제.
     pub(crate) fn media_panel(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         let page_no = self.current_page + 1;
         ui.horizontal(|ui| {
             ui.strong("Media");
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             if ui
                 .small_button(icon_text(ui, "", icons::ARROWS_CLOCKWISE))
                 .on_hover_text("Refresh list from server")
@@ -31,7 +31,7 @@ impl FreeDfApp {
             {
                 self.upload_media_dialog();
             }
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             let elapsed = self
                 .recording
                 .as_ref()
@@ -56,7 +56,7 @@ impl FreeDfApp {
             {
                 self.start_recording_action();
             }
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.separator();
             ui.label(egui::RichText::new(format!("Page {page_no}")).weak());
             ui.selectable_value(&mut self.media_all_pages, false, "This page");
@@ -138,7 +138,7 @@ impl FreeDfApp {
         }
         if let Some(status) = &self.media_status {
             ui.colored_label(ui.visuals().text_color(), status);
-            ui.add_space(2.0);
+            ui.add_space(4.0);
         }
 
         // ── 인앱 이미지 미리보기 ──
@@ -266,7 +266,7 @@ impl FreeDfApp {
             }
             let _ = ui
                 .add_sized(
-                    egui::vec2(150.0, 18.0),
+                    egui::vec2(152.0, 16.0),
                     egui::Label::new(egui::RichText::new(&item.name))
                         .truncate()
                         .sense(egui::Sense::hover()),

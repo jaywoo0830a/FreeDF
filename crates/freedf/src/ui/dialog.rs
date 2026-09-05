@@ -13,9 +13,9 @@ use eframe::egui;
 /// 콘텐츠 좌우 여백 (px).
 pub(crate) const PAD_X: f32 = 16.0;
 /// 콘텐츠 상하 여백 (px).
-pub(crate) const PAD_Y: f32 = 10.0;
+pub(crate) const PAD_Y: f32 = 12.0;
 /// 위젯 간격 — 다이얼로그 안에서 항상 동일.
-pub(crate) const ITEM_SPACING: (f32, f32) = (8.0, 6.0);
+pub(crate) const ITEM_SPACING: (f32, f32) = (8.0, 8.0);
 
 /// 부동 설정 창 — 공통 여백 리듬 적용.
 pub(crate) fn dialog(

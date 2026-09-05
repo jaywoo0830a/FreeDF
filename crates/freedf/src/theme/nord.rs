@@ -144,7 +144,7 @@ pub fn nord_style() -> egui::Style {
     style.spacing.scroll = egui::style::ScrollStyle {
         floating: true,
         bar_width: 8.0,               // 호버 시 최대 두께
-        floating_width: 2.0,          // 평소(비호버) 얇은 두께
+        floating_width: 4.0,          // 평소(비호버) 얇은 두께 (0.25rem)
         floating_allocated_width: 4.0, // 항상 얇은 바가 보이도록 4pt 할당
         handle_min_length: 20.0,
         foreground_color: false,
@@ -165,7 +165,7 @@ pub fn nord_style() -> egui::Style {
 /// Nord `Visuals` (dark mode).
 fn nord_visuals() -> egui::Visuals {
     use semantic::*;
-    // 창/메뉴만 더 둥글게 (8px) — 위젯(버튼 등)은 기존 4px 그대로.
+    // 창/메뉴/위젯 모두 8px(0.5rem) 라운드 — 4px 그리드 통일.
     let radius = CornerRadius::same(8);
     egui::Visuals {
         dark_mode: true,
@@ -195,8 +195,8 @@ fn nord_visuals() -> egui::Visuals {
         // - 더 부드러운 그림자 (깊이감)
         // - 최상위 창 제목 강조
         // - 터치/펜용 리사이즈 손잡이 확대
-        window_shadow: shadow(110, 6, 18),
-        popup_shadow: shadow(90, 4, 14),
+        window_shadow: shadow(110, 8, 16),
+        popup_shadow: shadow(90, 4, 16),
         window_corner_radius: radius,
         menu_corner_radius: radius,
         window_highlight_topmost: true,
@@ -221,7 +221,7 @@ fn widget(bg: Color32, fg: Color32, expansion: f32) -> egui::style::WidgetVisual
         weak_bg_fill: bg,
         bg_stroke: Stroke::new(1.0, semantic::BORDER_WEAK),
         fg_stroke: Stroke::new(1.0, fg),
-        corner_radius: CornerRadius::same(6),
+        corner_radius: CornerRadius::same(8),
         expansion,
     }
 }

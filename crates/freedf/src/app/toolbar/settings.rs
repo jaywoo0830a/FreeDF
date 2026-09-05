@@ -431,7 +431,7 @@ impl FreeDfApp {
             "The area behind the page (page surround).\n\
              Applies immediately and is saved with the session.",
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
                 let color = Color32::from_rgba_unmultiplied(
@@ -496,7 +496,7 @@ impl FreeDfApp {
                 self.insert_page_text = self.insert_page_count.to_string();
             }
         });
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         form::label(ui, "Insert blank pages at:");
         let insert = [
             (InsertTarget::FromCurrent, "From current page (copies size & paper)"),
@@ -643,7 +643,7 @@ impl FreeDfApp {
                 let s = &mut self.paper_surface;
                 egui::Grid::new("paper_surface_grid")
                     .num_columns(2)
-                    .spacing(egui::vec2(8.0, 2.0))
+                    .spacing(egui::vec2(8.0, 4.0))
                     .show(ui, |ui| {
                         changed |= form::range(
                             ui,
@@ -946,7 +946,7 @@ impl FreeDfApp {
             .show(ui, |ui| {
                 changed |= form::text(&mut self.media_config.base_url)
                     .hint("https://your-server.example.com")
-                    .width(230.0)
+                    .width(232.0)
                     .help("Sync v3 + media server address")
                     .show(ui)
                     .changed();
@@ -956,7 +956,7 @@ impl FreeDfApp {
             .show(ui, |ui| {
                 changed |= form::password(&mut self.media_config.api_key)
                     .hint("key")
-                    .width(230.0)
+                    .width(232.0)
                     .help("API key — guards snapshots, uploads, lists and deletes.")
                     .show(ui)
                     .changed();
@@ -988,7 +988,7 @@ impl FreeDfApp {
         } else if self.db_connected {
             ui.label(egui::RichText::new("Connected.").weak());
         }
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         ui.separator();
         form::check(
             ui,
@@ -1049,7 +1049,7 @@ impl FreeDfApp {
              below) close to the canvas edge pans the view in that direction. \
              It is ignored over the palette, the bottom bar and other floating UI.",
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if form::check(ui, &mut self.edge_autoscroll, "Enable edge auto-scroll", "").changed() {
             self.save_default_session();
             self.save_session();
@@ -1105,7 +1105,7 @@ impl FreeDfApp {
             let mut changed = false;
             egui::Grid::new("edge_dir_grid")
                 .num_columns(3)
-                .spacing(egui::vec2(8.0, 2.0))
+                .spacing(egui::vec2(8.0, 4.0))
                 .show(ui, |ui| {
                     for (i, label) in labels.iter().enumerate() {
                         ui.label(*label);
@@ -1157,7 +1157,7 @@ impl FreeDfApp {
             "In split view, focus this window when the cursor stays \
              over it for the dwell time below.",
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if form::check(ui, &mut self.window_focus_on_move, "Focus on cursor dwell", "").changed() {
             self.save_default_session();
         }
@@ -1190,7 +1190,7 @@ impl FreeDfApp {
                 ("Ballpen settings", false)
             };
             let mut open = self.tool_settings_open;
-            settings_window(ui.ctx(), &mut open, title, 330.0, true, true, |ui| {
+            settings_window(ui.ctx(), &mut open, title, 332.0, true, true, |ui| {
                 if is_fountain {
                     self.fountain_settings_ui(ui);
                 } else {
@@ -1203,7 +1203,7 @@ impl FreeDfApp {
         // ── Paper 세부 설정 플로팅 창 (툴바 Paper 옆 Settings 버튼) ──
         if self.paper_settings_open {
             let mut open = self.paper_settings_open;
-            settings_window(ui.ctx(), &mut open, "Paper settings", 330.0, true, true, |ui| {
+            settings_window(ui.ctx(), &mut open, "Paper settings", 332.0, true, true, |ui| {
                 self.paper_settings_ui(ui)
             });
             self.paper_settings_open = open;
@@ -1216,7 +1216,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Canvas settings",
-                330.0,
+                332.0,
                 false,
                 false,
                 |ui| self.canvas_settings_ui(ui),
@@ -1231,7 +1231,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Color wheel settings",
-                330.0,
+                332.0,
                 false,
                 false,
                 |ui| self.wheel_settings_ui(ui),
@@ -1246,7 +1246,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Edge auto-scroll",
-                330.0,
+                332.0,
                 false,
                 false,
                 |ui| self.edge_scroll_settings_ui(ui),
@@ -1261,7 +1261,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Window Focus",
-                330.0,
+                332.0,
                 false,
                 false,
                 |ui| self.window_focus_settings_ui(ui),

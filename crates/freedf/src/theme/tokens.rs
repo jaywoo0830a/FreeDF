@@ -72,7 +72,7 @@ pub mod spacing {
     /// Vertical gap between widgets.
     pub const ITEM_Y: f32 = 8.0;
     /// Window / panel margin.
-    pub const WINDOW_MARGIN: i8 = 14;
+    pub const WINDOW_MARGIN: i8 = 16;
     /// Button inner padding `(x, y)`.
     pub const BUTTON_PAD: (f32, f32) = (8.0, 4.0);
     /// Widget corner radius.
@@ -82,11 +82,11 @@ pub mod spacing {
     /// Slider width.
     pub const SLIDER_W: f32 = 120.0;
     /// Icon size.
-    pub const ICON: f32 = 18.0;
+    pub const ICON: f32 = 20.0;
     /// Icon inner size.
-    pub const ICON_INNER: f32 = 14.0;
+    pub const ICON_INNER: f32 = 16.0;
     /// Slider rail height.
-    pub const SLIDER_RAIL_H: f32 = 5.0;
+    pub const SLIDER_RAIL_H: f32 = 4.0;
 }
 
 /// Raw typography tokens (1rem = 16 px base).
@@ -94,13 +94,13 @@ pub mod typography {
     /// Base size (1rem).
     pub const BASE: f32 = 16.0;
     /// Small text.
-    pub const SMALL: f32 = 14.0;
+    pub const SMALL: f32 = 16.0;
     /// Body text.
     pub const BODY: f32 = 16.0;
     /// Button text.
-    pub const BUTTON: f32 = 15.0;
+    pub const BUTTON: f32 = 16.0;
     /// Heading text.
     pub const HEADING: f32 = 20.0;
     /// Monospace text.
-    pub const MONO: f32 = 15.0;
+    pub const MONO: f32 = 16.0;
 }

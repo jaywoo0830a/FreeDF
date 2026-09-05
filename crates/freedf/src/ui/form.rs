@@ -28,22 +28,28 @@ fn tip(resp: egui::Response, help: &str) -> egui::Response {
     }
 }
 
-/// 라벨 줄 — 필수 `*` / `(optional)` 표시.
+/// 라벨 줄 — 1rem, 필수 `*` / `(optional)` 표시 (1rem, 약간 흐리게).
 fn label_line(ui: &mut egui::Ui, label: &str, req: Option<bool>) {
     if label.is_empty() && req.is_none() {
         return;
     }
+    const REM: f32 = 16.0;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if !label.is_empty() {
-            ui.label(egui::RichText::new(label).strong().size(12.5));
+            ui.label(egui::RichText::new(label).strong().size(REM));
         }
         match req {
             Some(true) => {
-                ui.label(egui::RichText::new("*").strong().color(ui.visuals().error_fg_color));
+                // 필수 * — 1rem, 에러 색을 살짝 흐리게.
+                let faded = ui
+                    .visuals()
+                    .error_fg_color
+                    .gamma_multiply(0.85);
+                ui.label(egui::RichText::new("*").strong().size(REM).color(faded));
             }
             Some(false) => {
-                ui.label(egui::RichText::new("(optional)").weak().small());
+                ui.label(egui::RichText::new("(optional)").weak().size(REM));
             }
             None => {}
         }

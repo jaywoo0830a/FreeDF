@@ -206,7 +206,7 @@ pub(crate) fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Ico
             &format!("  {label}"),
             0.0,
             egui::TextFormat {
-                font_id: egui::FontId::proportional(14.0),
+                font_id: egui::FontId::proportional(16.0),
                 color,
                 ..Default::default()
             },
@@ -233,7 +233,7 @@ fn overlay_title(ui: &egui::Ui, icon: egui_phosphor_icons::Icon, title: &str) ->
         &format!("  {title}"),
         0.0,
         egui::TextFormat {
-            font_id: egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            font_id: egui::FontId::new(16.0, egui::FontFamily::Proportional),
             color,
             ..Default::default()
         },
@@ -253,7 +253,7 @@ fn overlay_header(
 ) -> bool {
     let mut close = false;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
         ui.label(overlay_title(ui, icon, title));
         ui.label(egui::RichText::new(count).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -273,7 +273,7 @@ fn overlay_header(
 /// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
 /// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
 fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
-    let height = 26.0;
+    let height = 28.0;
     let width = ui.available_width();
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
@@ -286,11 +286,11 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, 6.0, bg);
+    painter.rect_filled(rect, 4.0, bg);
     if selected {
         painter.rect_stroke(
             rect,
-            6.0,
+            4.0,
             egui::Stroke::new(1.0, visuals.selection.stroke.color),
             egui::StrokeKind::Inside,
         );
@@ -302,7 +302,7 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         painter
             .layout_no_wrap(
                 meta.to_string(),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(12.0),
                 egui::Color32::WHITE,
             )
             .rect
@@ -312,7 +312,7 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
     let max_title_w = (rect.width() - 20.0 - meta_w - 8.0).max(24.0);
     let mut t = title.to_string();
     {
-        let font = egui::FontId::proportional(14.0);
+        let font = egui::FontId::proportional(16.0);
         let w_of = |s: &str| {
             painter
                 .layout_no_wrap(s.to_string(), font.clone(), egui::Color32::WHITE)
@@ -333,18 +333,18 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         }
     }
     painter.text(
-        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::pos2(rect.left() + 12.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         t,
-        egui::FontId::proportional(14.0),
+        egui::FontId::proportional(16.0),
         visuals.text_color(),
     );
     if !meta.is_empty() {
         painter.text(
-            egui::pos2(rect.right() - 10.0, rect.center().y),
+            egui::pos2(rect.right() - 12.0, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             meta,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(12.0),
             visuals.weak_text_color(),
         );
     }
@@ -1913,14 +1913,14 @@ impl FreeDfApp {
                     .show(ui, |ui| {
                         crate::ui::form::text(&mut self.media_config.base_url)
                             .hint("https://your-server.example.com")
-                            .width(330.0)
+                            .width(332.0)
                             .show(ui);
                     });
                 crate::ui::form::group("API key")
                     .required()
                     .show(ui, |ui| {
                         crate::ui::form::password(&mut self.media_config.api_key)
-                            .width(330.0)
+                            .width(332.0)
                             .show(ui);
                     });
                 ui.horizontal(|ui| {
@@ -2591,11 +2591,11 @@ impl FreeDfApp {
                     return;
                 }
                 egui::Panel::bottom("status").show(ui, |ui| {
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(msg));
                     });
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
                 });
             }
         }
@@ -2754,8 +2754,8 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(10.0)
-                    .inner_margin(egui::Margin::same(6)),
+                    .corner_radius(12.0)
+                    .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
                 if self.minimal_sections_collapsed {
@@ -2840,12 +2840,12 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(10.0)
+                    .corner_radius(12.0)
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
                 ui.set_width(520.0);
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 let total = self.notes.list().len() + self.recents.sorted().len();
                 if overlay_header(
@@ -2880,12 +2880,12 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(10.0)
+                    .corner_radius(12.0)
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
                 ui.set_width(460.0);
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 // 개수가 첫 프레임부터 정확하도록 패널 표시 시점에 목차를 로드.
                 self.load_outline_if_needed();
@@ -2923,12 +2923,12 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(10.0)
+                    .corner_radius(12.0)
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
                 ui.set_width(420.0);
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 if overlay_header(
                     ui,
@@ -2944,11 +2944,11 @@ impl FreeDfApp {
                     .max_height(420.0)
                     .max_width(404.0)
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                         if pages.is_empty() {
-                            ui.add_space(2.0);
+                            ui.add_space(4.0);
                             ui.horizontal(|ui| {
-                                ui.add_space(6.0);
+                                ui.add_space(8.0);
                                 ui.label(
                                     egui::RichText::new("No bookmarks yet").weak().small(),
                                 );
@@ -2983,13 +2983,13 @@ impl FreeDfApp {
             .title_bar(false)
             .movable(true)
             .resizable(false)
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 8.0))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 8.0))
             .frame(
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(10.0)
-                    .inner_margin(egui::Margin::same(6)),
+                    .corner_radius(12.0)
+                    .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -3079,7 +3079,7 @@ impl FreeDfApp {
                         .width(360.0)
                         .show(ui);
                     if matches!(action, TextAction::NewNote) {
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                         ui.horizontal(|ui| {
                             ui.label("Pages:");
                             egui::ComboBox::from_id_salt("note_pages")

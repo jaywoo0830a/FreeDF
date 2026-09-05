@@ -14,12 +14,12 @@ fn pen_profile_preview(
     width: f32,
     profile: &BallPenProfile,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(152.0, 36.0), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
     let n = 48;
-    let x0 = rect.left() + 3.0;
-    let x1 = rect.right() - 3.0;
+    let x0 = rect.left() + 4.0;
+    let x1 = rect.right() - 4.0;
     let cy = rect.center().y;
     let amp = rect.height() * 0.30;
     // 필압 물결 + 속도 변화(느림→빠름)를 재현한 가상 스트로크.
@@ -59,12 +59,12 @@ fn fountain_profile_preview(
     max_width: f32,
     profile: &FountainProfile,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(152.0, 36.0), egui::Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
     let n = 48;
-    let x0 = rect.left() + 3.0;
-    let x1 = rect.right() - 3.0;
+    let x0 = rect.left() + 4.0;
+    let x1 = rect.right() - 4.0;
     let cy = rect.center().y;
     let amp = rect.height() * 0.30;
     // 가상 스트로크: 양끝 느림(굵게)·중간 빠름(가늘게), 필압 물결.
@@ -174,27 +174,27 @@ impl FreeDfApp {
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
             // Compact spacing + padding; uniform control height for tidy rows
-            ui.spacing_mut().button_padding = egui::vec2(9.0, 5.0);
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+            ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
             ui.add_space(4.0);
             self.row_top(ui);
 
             ui.add_space(4.0);
             ui.separator();
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             self.row_pages(ui);
 
             ui.add_space(4.0);
             ui.separator();
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             self.row_tools(ui);
 
             ui.add_space(4.0);
             ui.separator();
-            ui.add_space(2.0);
+            ui.add_space(4.0);
 
             // Row 4: search (only while Ctrl+F is pressed)
             self.search_row(ui);

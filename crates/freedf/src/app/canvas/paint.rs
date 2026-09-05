@@ -63,7 +63,7 @@ impl FreeDfApp {
             "evdev"
         };
         egui::Area::new(egui::Id::new("freedf_debug_hud"))
-            .fixed_pos(origin + egui::vec2(14.0, 14.0))
+            .fixed_pos(origin + egui::vec2(16.0, 16.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {

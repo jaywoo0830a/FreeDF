@@ -426,8 +426,8 @@ impl FreeDfApp {
 
     pub(crate) fn tabs_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("tabs_bar").show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
-            ui.add_space(3.0);
+            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(icon_text(ui, "New Note", icons::PLUS))
@@ -462,7 +462,7 @@ impl FreeDfApp {
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(5.0, 4.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                             for (i, tab) in self.tabs.iter().enumerate() {
                                 let selected = i == self.active;
                                 // The active tab's title lives in `self.file_name`
@@ -480,12 +480,12 @@ impl FreeDfApp {
                                     .painter()
                                     .layout_no_wrap(
                                         title.to_string(),
-                                        egui::FontId::proportional(14.0),
+                                        egui::FontId::proportional(16.0),
                                         egui::Color32::WHITE,
                                     )
                                     .rect
                                     .width()
-                                    .clamp(110.0, 190.0);
+                                    .clamp(112.0, 192.0);
                                 egui::Frame::new()
                                     .fill(if selected {
                                         active_fill
@@ -497,13 +497,13 @@ impl FreeDfApp {
                                     } else {
                                         Stroke::new(1.0, weak_border)
                                     })
-                                    .corner_radius(5)
-                                    .inner_margin(egui::Margin::symmetric(6, 3))
+                                    .corner_radius(4)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                                             let tr = ui.add_sized(
-                                                egui::vec2(title_w, 22.0),
+                                                egui::vec2(title_w, 24.0),
                                                 egui::Label::new(egui::RichText::new(title))
                                                     .truncate()
                                                     .sense(egui::Sense::click()),

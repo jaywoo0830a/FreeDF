@@ -6,9 +6,9 @@ pub(crate) use super::*;
 
 impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         crate::ui::form::text(&mut self.library_filter)
             .hint("Search notes & files…")
             .width(f32::INFINITY)
@@ -29,7 +29,7 @@ impl FreeDfApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // ── Notes (계층 2: 섹션 헤더 + 행) ──
                 let all_notes: Vec<(u64, String, usize)> = self
                     .notes
@@ -46,7 +46,7 @@ impl FreeDfApp {
                 ui.horizontal(|ui| {
                     section_header(ui, icons::NOTE_PENCIL, "Notes", all_notes.len());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(2.0, 0.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                         if ui
                             .add_enabled(
                                 has_note,
@@ -103,7 +103,7 @@ impl FreeDfApp {
                     let n_sel = self.sel_notes.len();
                     if n_sel > 0 {
                         ui.horizontal(|ui| {
-                            ui.add_space(22.0);
+                            ui.add_space(24.0);
                             if ui
                                 .button(format!("Delete selected ({n_sel})"))
                                 .on_hover_text(
@@ -185,7 +185,7 @@ impl FreeDfApp {
                     let n_sel = self.sel_pdfs.len();
                     if n_sel > 0 {
                         ui.horizontal(|ui| {
-                            ui.add_space(22.0);
+                            ui.add_space(24.0);
                             if ui
                                 .button(format!("Delete selected ({n_sel})"))
                                 .on_hover_text(
@@ -295,7 +295,7 @@ impl FreeDfApp {
 
 fn section_header(ui: &mut egui::Ui, ic: egui_phosphor_icons::Icon, name: &str, count: usize) {
     // 계층 2: 섹션 제목 — 아이콘 + 이름 + 개수(weak small).
-    ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+    ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
     ui.label(icon_text(ui, name, ic));
     ui.label(egui::RichText::new(count.to_string()).weak().small());
 }
@@ -303,7 +303,7 @@ fn section_header(ui: &mut egui::Ui, ic: egui_phosphor_icons::Icon, name: &str, 
 /// 섹션의 빈 상태 — 행과 같은 들여쓰기(체크박스 폭)에 맞춘 약한 안내 문구.
 fn empty_note(ui: &mut egui::Ui, text: &str) {
     ui.horizontal(|ui| {
-        ui.add_space(22.0);
+        ui.add_space(24.0);
         ui.label(egui::RichText::new(text).weak().small());
     });
 }

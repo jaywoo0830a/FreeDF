@@ -181,7 +181,7 @@ impl FreeDfApp {
                         );
                     }
                     for l in &lines {
-                        ui.label(egui::RichText::new(l).monospace().size(10.0));
+                        ui.label(egui::RichText::new(l).monospace().size(12.0));
                     }
                 });
         });
