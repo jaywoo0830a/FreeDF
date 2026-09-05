@@ -30,6 +30,8 @@ pub struct StrokePoint {
     pub pressure: f32,
     /// 이 점이 쓰인 시각 (epoch ms) — 번짐 나이 계산의 기준.
     pub t_ms: u64,
+    /// 입력 시점에 잠금된 폭 (pt) — 0이면 프로파일 모델로 계산.
+    pub width: f32,
 }
 
 /// 장면의 스트로크 하나.
@@ -37,6 +39,8 @@ pub struct StrokePoint {
 pub struct Stroke {
     pub id: StrokeId,
     pub kind: LayerKind,
+    /// 도구 종류 — 폭 모델/캡/알파 모델 선택의 기준.
+    pub tool: freedf_core::model::ToolType,
     /// [r, g, b, a] — 알파는 잉크 모델이 점별로 조절.
     pub color: [u8; 4],
     /// 기준 두께 (pt) — 실제 폭은 WidthModel이 필압/속도로 변조.
@@ -161,12 +165,14 @@ mod tests {
         Stroke {
             id: StrokeId(id),
             kind: LayerKind::Ink,
+            tool: freedf_core::model::ToolType::Pen,
             color: [0, 0, 0, 255],
             base_width: 2.0,
             points: vec![StrokePoint {
                 position: PagePoint::new(id as f32, 0.0),
                 pressure: 0.5,
                 t_ms: 0,
+                width: 0.0,
             }],
             created_ms: 0,
         }

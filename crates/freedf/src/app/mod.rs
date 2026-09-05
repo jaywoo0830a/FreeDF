@@ -49,7 +49,7 @@ pub(crate) use freedf_core::paper::{
 pub(crate) use freedf_core::pen::{
     BallPenProfile, ColorFamily, FountainProfile, InkSoak, OneEuroFilter, Palette,
 };
-pub(crate) use freedf_core::ink::{combine_saturation, stroke_ink_lr, InkGrain};
+pub(crate) use freedf_core::ink::InkGrain;
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::text::char_line_highlights;
 
@@ -898,13 +898,12 @@ pub struct FreeDfApp {
     last_finished_id: Option<u64>,
     /// LIFT-CUT 로그가 이번 획에서 이미 나왔는지 (스팸 방지).
     lift_cut_logged: bool,
-    /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (드로우 콜 1개).
-    ink_mesh: Option<std::sync::Arc<egui::Mesh>>,
+    /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (페이지 좌표, 드로우 콜 1개).
+    ink_mesh: Option<std::sync::Arc<freedf_canvas::Mesh>>,
     /// 병합 메시가 만들어진 시점의 (페이지, 스토어 세대, 줌, 잉크 설정).
-    /// 메시는 **항상 애니메이션 오프셋 없이**(origin 기준) 구워지고,
-    /// 페이지 전환/팬 중에는 그리기 시점에 정점만 평행 이동한 사본을 씁니다.
-    /// (pan은 키에 없음 — 팬만 바뀌면 재구성 대신 정점 이동으로 처리.
-    ///  rev도 키에 없음 — 신규 획은 증분 append로 붙이고, 증분 여부는
+    /// 메시는 **항상 페이지 좌표**로 구워지고(애니메이션 오프셋 없음),
+    /// 팬/줌은 아래 egui 변환 캐시에서만 적용합니다.
+    /// (rev는 키에 없음 — 신규 획은 증분 append로 붙이고, 증분 여부는
     ///  `ink_baked_rev`/`ink_baked_count`로 직접 비교합니다.)
     ink_key: (
         usize,
@@ -917,14 +916,23 @@ pub struct FreeDfApp {
         InkGrain,
         InkGrain,
     ),
-    /// 병합 메시가 구워진 시점의 pan — 팬만 바뀌면 재구성 없이 정점 이동.
-    ink_baked_pan: (f32, f32),
+    /// 페이지 좌표 메시를 화면 좌표로 변환한 egui 메시 캐시
+    /// (팬/줌/페이지가 바뀔 때만 재변환 — 프레임 비용이 획 수와 무관).
+    ink_egui_mesh: Option<std::sync::Arc<egui::Mesh>>,
+    /// 위 캐시의 키 (페이지, 줌, pan_x, pan_y).
+    ink_egui_key: Option<(usize, f32, f32, f32)>,
     /// 병합 메시를 만든 시각 (ms).
     ink_built_at: u64,
     /// 메시에 구워진 스토어 rev — 달라졌으면 증분 append 또는 재구성.
     ink_baked_rev: u64,
     /// 메시에 구워진 현재 페이지 스트로크 수 — append 경계.
     ink_baked_count: usize,
+    /// 전체 재굽기 — freedf-canvas BakeService (백그라운드 스레드, 무블록).
+    ink_baker: freedf_canvas::BakeService<canvas::InkBakeWorker>,
+    /// 워커가 읽는 메셔 설정 스냅샷 (요청 직전에 갱신).
+    ink_baker_mesher: std::sync::Arc<std::sync::RwLock<freedf_canvas::CoreRibbonMesher>>,
+    /// 진행 중인 전체 굽기 — (페이지, 세대, rev, 획 수, 요청 줌).
+    ink_bake_pending: Option<(usize, u64, u64, usize, f32)>,
     /// 다음 블리드 정착 시각 (젊은 후광 동안 매 프레임 재구성).
     ink_next_settle_ms: u64,
     /// 스토어 교체(문서 열기/탭 전환)마다 증가 — 캐시 키 충돌 방지.
@@ -1312,6 +1320,20 @@ impl FreeDfApp {
         let tool_order = s.panels.tool_order;
         let library_filter = String::new();
 
+        // 전체 재굽기 워커용 메셔 공유 스냅샷 (설정 변경 시 UI가 갱신).
+        let ink_baker_mesher = std::sync::Arc::new(std::sync::RwLock::new(
+            freedf_canvas::CoreRibbonMesher {
+                ball: pen_profile,
+                fountain: fountain_profile,
+                pen_soak,
+                fountain_soak,
+                pen_grain,
+                fountain_grain,
+                tilt_magnitude: 0.0,
+                feather_pt: 1.0,
+            },
+        ));
+
         // 미디어 서버 연결 설정 — 빌드타임이 아니라 `server.json`에서 런타임 로드.
         let media_config = MediaServerConfig::load(&MediaServerConfig::config_path());
 
@@ -1423,10 +1445,16 @@ impl FreeDfApp {
                 InkGrain::default(),
                 InkGrain::default(),
             ),
-            ink_baked_pan: (0.0, 0.0),
+            ink_egui_mesh: None,
+            ink_egui_key: None,
             ink_built_at: 0,
             ink_baked_rev: u64::MAX,
             ink_baked_count: 0,
+            ink_baker: freedf_canvas::BakeService::start(canvas::InkBakeWorker {
+                mesher: ink_baker_mesher.clone(),
+            }),
+            ink_baker_mesher,
+            ink_bake_pending: None,
             ink_next_settle_ms: u64::MAX,
             store_generation: 0,
             active_mesh: None,

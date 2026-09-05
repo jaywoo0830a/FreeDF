@@ -104,6 +104,8 @@ impl Cacheable for CanvasCache {
         app.prefetch = None;
         app.prefetch_pending = true;
         app.ink_mesh = None;
+        app.ink_egui_mesh = None;
+        app.ink_egui_key = None;
         app.active_mesh = None;
         app.ink_next_settle_ms = u64::MAX;
         app.render_dirty = true;

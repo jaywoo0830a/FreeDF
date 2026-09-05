@@ -127,85 +127,34 @@ fn pen_trace(msg: &str) {
 }
 
 // ── 캔버스 렌더 = 리본 단일 경로 ──────────────────────────────────────────────
-// 진행 중 획과 완성 획이 **같은 지오메트리 생성기(stroke_ribbon)** 를 씁니다.
-// 과거 완성 획은 귀 자르기 삼각분할(정확 경로)을 썼는데, 곡선 필기는 분할이
-// 실패해 폴백(딱딱한 quad, AA 없음)으로 바뀌며 진행 중과 시각 차이가 났음.
-// 정확 삼각분할 경로는 과거 PNG 내보내기 전용이었고 지금은 사용처가 없어
-// core에 pub API로만 유지됩니다.
+// 진행 중 획과 완성 획은 **같은 지오메트리 생성기**(freedf-core stroke_ribbon)를
+// freedf-canvas 경유로 씁니다 — 화면 변환은 아래 `canvas_mesh_to_egui`가 담당.
 
-/// 리본(근사) 지오메트리를 메시에 덧붙입니다 — 버텍스별 알파 램프
-/// (1 = 본체, 0 = 페더 바깥 가장자리)를 베이스 색에 곱해 칠합니다.
-fn append_ribbon(
-    mesh: &mut egui::Mesh,
-    ribbon: &freedf_core::pen::StrokeRibbon,
-    to_view: &impl Fn([f32; 2]) -> Pos2,
-    color: Color32,
-) {
-    let base = mesh.vertices.len() as u32;
-    for (p, a) in ribbon.verts.iter().zip(&ribbon.alphas) {
-        let alpha = (color.a() as f32 * a).clamp(0.0, 255.0) as u8;
-        let c = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
-        mesh.vertices.push(egui::epaint::Vertex::untextured(to_view(*p), c));
+/// freedf-canvas 메시(페이지 좌표) → egui 메시 (경계 어댑터).
+/// 팬/줌은 여기서만 적용됩니다 — 메시는 항상 페이지 좌표로 굽습니다.
+fn canvas_mesh_to_egui(
+    mesh: &freedf_canvas::Mesh,
+    origin: Pos2,
+    zoom: f32,
+    pan_x: f32,
+    pan_y: f32,
+) -> egui::Mesh {
+    let mut out = egui::Mesh::default();
+    for (p, c) in mesh.vertices.iter().zip(&mesh.colors) {
+        let x = origin.x + p[0] * zoom + pan_x;
+        let y = origin.y + p[1] * zoom + pan_y;
+        let a = (c[3] * 255.0).clamp(0.0, 255.0) as u8;
+        let col = Color32::from_rgba_unmultiplied(
+            (c[0] * 255.0).clamp(0.0, 255.0) as u8,
+            (c[1] * 255.0).clamp(0.0, 255.0) as u8,
+            (c[2] * 255.0).clamp(0.0, 255.0) as u8,
+            a,
+        );
+        out.vertices
+            .push(egui::epaint::Vertex::untextured(egui::pos2(x, y), col));
     }
-    for t in &ribbon.tris {
-        mesh.indices
-            .extend_from_slice(&[base + t[0], base + t[1], base + t[2]]);
-    }
-}
-
-/// 점별 절반 두께(pt) — 입력 시점에 잠금된 폭(`StrokePoint.width`)이 있으면
-/// 그대로 쓰고, 없으면(이전 데이터) 프로파일 배치 계산으로 폴백합니다.
-fn stroke_halves(
-    tool: ToolType,
-    width: f32,
-    points: &[StrokePoint],
-    ball: &BallPenProfile,
-    fountain: &FountainProfile,
-    tilt_mag: f32,
-) -> Vec<f32> {
-    let n = points.len();
-    let locked = !points.is_empty() && points.iter().all(|p| p.width > 0.0);
-    if tool == ToolType::Highlighter {
-        // 마커: 필압/테이퍼 없이 일정한 두께 (잠금 폭도 동일 규칙).
-        let mut halves = Vec::with_capacity(n);
-        if locked {
-            for p in points {
-                halves.push((p.width * 0.5).max(0.5));
-            }
-        } else {
-            halves.resize(n, (width * 0.5).max(0.5));
-        }
-        return halves;
-    }
-    let mut halves = Vec::with_capacity(n);
-    if locked {
-        for p in points {
-            // 바닥값은 기하학 퇴화 방지용 최소값 — 예전 0.3pt 바닥은
-            // 0.5pt 펜의 폭 변동(절반 0.22~0.30)을 **전부 삼켜** 굵기가
-            // 항상 0.6pt로 보였습니다 (사용자 보고 버그의 원인).
-            halves.push((p.width * 0.5).max(0.05));
-        }
-        return halves;
-    }
-    if tool == ToolType::Fountain {
-        for w in fountain.widths(width, points, tilt_mag) {
-            halves.push((w * 0.5).max(0.05));
-        }
-    } else {
-        for w in ball.widths(width, points, tilt_mag) {
-            halves.push((w * 0.5).max(0.05));
-        }
-    }
-    halves
-}
-
-/// 획별 질감 시드 — 획 시작 시각에서 유도해 **같은 획은 항상 같은 질감**,
-/// 다른 획은 거의 항상 다른 질감을 갖습니다 (질감이 프레임마다 깜빡이지 않음).
-fn ink_seed(grain: InkGrain, created_ms: u64) -> InkGrain {
-    InkGrain {
-        seed: grain.seed ^ created_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15),
-        ..grain
-    }
+    out.indices.extend_from_slice(&mesh.indices);
+    out
 }
 
 impl FreeDfApp {
@@ -622,65 +571,127 @@ impl FreeDfApp {
         // Search highlights (under ink so annotations stay readable)
         self.paint_search_highlights(&painter, draw_origin);
 
-        // Annotation strokes — 완성 획 전부를 병합 잉크 메시 하나로.
-        // 주의: 메시는 **오프셋 없는 origin 기준**으로 구워야 합니다.
-        // 과거에 draw_origin(페이지 전환 오프셋 포함)으로 구웠다가, 애니메이션
-        // 종료 후에도 오프셋이 구워진 메시가 캐시에 남아 스트로크가 페이지
-        // 옆으로 어긋나는 버그가 있었습니다 (Fit Width로 키가 바뀌면 복귀).
         let now = now_ms();
         let rev = self.store.rev();
         let count = self.store.stroke_count_on(self.current_page);
         // rev는 재구성 키에서 제외 — 신규 획만이면 증분 append(비용 O(신규)),
         // 삭제/id 교체(개수 불변 또는 감소)면 전체 재구성으로 정확성을 지킵니다.
-        if self.ink_needs_rebuild(now)
-            || (rev != self.ink_baked_rev && count <= self.ink_baked_count)
-        {
-            let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
-            if let Some(mesh) = self.build_ink_mesh(&strokes, origin, now) {
-                self.ink_mesh = Some(mesh);
-                self.ink_key = (
-                    self.current_page,
-                    self.store_generation,
-                    self.view.zoom,
-                    self.pen_soak,
-                    self.fountain_soak,
-                    self.pen_profile,
-                    self.fountain_profile,
-                    self.pen_grain,
-                    self.fountain_grain,
-                );
-                self.ink_baked_pan = (self.view.pan_x, self.view.pan_y);
-                self.ink_built_at = now;
-                self.ink_baked_rev = rev;
-                self.ink_baked_count = strokes.len();
+        // 메시는 **페이지 좌표**로 굽고(변환 없음 — 어긋남 원인 차단),
+        // 팬/줌은 아래 egui 변환 캐시에서만 적용합니다.
+        // 전체 재굽기는 **백그라운드 스레드**(freedf-canvas BakeService) —
+        // UI 스레드는 요청(try_send)/수신(try_recv)만 하고 테셀레이션 안 함.
+        let full_needed = self.ink_needs_rebuild(now)
+            || (rev != self.ink_baked_rev && count <= self.ink_baked_count);
+        if full_needed && self.ink_bake_pending.is_none() {
+            *self.ink_baker_mesher.write().expect("bake mesher lock") = self.core_mesher();
+            let strokes: Vec<freedf_canvas::Stroke> = self
+                .store
+                .strokes_on(self.current_page)
+                .iter()
+                .map(canvas_stroke)
+                .collect();
+            let snapshot = freedf_canvas::SceneSnapshot {
+                revision: freedf_canvas::Revision(rev),
+                strokes,
+            };
+            if self
+                .ink_baker
+                .request(
+                    snapshot,
+                    freedf_canvas::BakeParams {
+                        zoom: self.view.zoom,
+                    },
+                    now,
+                )
+                .is_ok()
+            {
+                self.ink_bake_pending =
+                    Some((self.current_page, self.store_generation, rev, count, self.view.zoom));
             }
-        } else if rev != self.ink_baked_rev && count > self.ink_baked_count {
-            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (필기 사이 버벅임 방지).
-            // 좌표 기준은 구운 시점의 pan — 그리는 쪽의 정점 이동과 일치.
+        } else if !full_needed && rev != self.ink_baked_rev && count > self.ink_baked_count {
+            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (UI 스레드, O(신규 획)).
             let new_strokes =
                 self.store.strokes_on(self.current_page)[self.ink_baked_count..].to_vec();
-            let baked_pan = [self.ink_baked_pan.0, self.ink_baked_pan.1];
-            self.append_ink_strokes(&new_strokes, origin, baked_pan, now);
+            self.append_ink_strokes(&new_strokes, now);
+        }
+        // ── 백그라운드 전체 굽기 결과 수신 (매 프레임 try_recv) ──
+        if let Some(result) = self.ink_baker.poll() {
+            let pending = self.ink_bake_pending.take();
+            match result {
+                Ok(page) => {
+                    let (req_page, req_gen, _req_rev, req_count, req_zoom) = pending
+                        .unwrap_or((usize::MAX, u64::MAX, 0, 0, self.view.zoom));
+                    let cur_rev = self.store.rev();
+                    let cur_count = self.store.stroke_count_on(self.current_page);
+                    let zoom_ok = (req_zoom - self.view.zoom).abs()
+                        / self.view.zoom.max(1e-3)
+                        <= 0.15;
+                    if req_page != self.current_page
+                        || req_gen != self.store_generation
+                        || !zoom_ok
+                        || (cur_rev != page.revision.0 && cur_count <= req_count)
+                    {
+                        // 문서/페이지/줌 변경 또는 삭제가 섞임 — 폐기 후
+                        // 다음 프레임에 다시 요청합니다.
+                    } else {
+                        let mut mesh = page.mesh;
+                        if cur_rev != page.revision.0 {
+                            // 요청 이후 **추가 획만** — 결과에 증분으로 붙입니다.
+                            let mesher = self.core_mesher();
+                            let tail: Vec<freedf_canvas::Stroke> = self
+                                .store
+                                .strokes_on(self.current_page)[req_count..]
+                                .iter()
+                                .map(canvas_stroke)
+                                .collect();
+                            for s in &tail {
+                                mesher.append_stroke(&mut mesh, s, now);
+                            }
+                        }
+                        self.install_ink_mesh(mesh, cur_rev, cur_count, now);
+                    }
+                }
+                Err(freedf_canvas::BakeError::Busy) => {
+                    self.ink_bake_pending = pending; // 다음 프레임 재수신.
+                }
+                Err(freedf_canvas::BakeError::WorkerStopped) => {
+                    // 워커 종료 — 다음 프레임의 request가 다시 Err를 반환해 무해.
+                }
+            }
         }
         if let Some(mesh) = &self.ink_mesh {
-            // 팬/페이지 전환 오프셋은 **재구성 없이** 정점만 평행 이동한 사본
-            // (O(V) 복사)으로 그립니다 — 획이 많이 쌓여도 팬/엣지 스크롤 중
-            // 전체 테셀레이션을 피해 프레임 비용이 스트로크 수와 무관해집니다.
-            let pan_dx = self.view.pan_x - self.ink_baked_pan.0;
-            let pan_dy = self.view.pan_y - self.ink_baked_pan.1;
-            let shifted = anim_dx.abs() > 0.5
-                || anim_dy.abs() > 0.5
-                || pan_dx.abs() > 0.5
-                || pan_dy.abs() > 0.5;
-            if shifted {
-                let mut m = (**mesh).clone();
-                let shift = egui::vec2(anim_dx + pan_dx, anim_dy + pan_dy);
-                for v in &mut m.vertices {
-                    v.pos += shift;
+            // 페이지 좌표 → 화면 좌표 변환은 **팬/줌/페이지가 바뀔 때만**
+            // (O(V)) — 팬/엣지 스크롤 중엔 변환된 egui 메시를 재사용해
+            // 프레임 비용이 스트로크 수와 무관하게 유지됩니다.
+            let key = (
+                self.current_page,
+                self.view.zoom,
+                self.view.pan_x,
+                self.view.pan_y,
+            );
+            if self.ink_egui_key != Some(key) {
+                self.ink_egui_mesh = Some(std::sync::Arc::new(canvas_mesh_to_egui(
+                    mesh,
+                    origin,
+                    self.view.zoom,
+                    self.view.pan_x,
+                    self.view.pan_y,
+                )));
+                self.ink_egui_key = Some(key);
+            }
+            if let Some(mesh) = &self.ink_egui_mesh {
+                // 페이지 전환 애니메이션 오프셋은 매 프레임 정점 이동.
+                let shifted = anim_dx.abs() > 0.5 || anim_dy.abs() > 0.5;
+                if shifted {
+                    let mut m = (**mesh).clone();
+                    let shift = egui::vec2(anim_dx, anim_dy);
+                    for v in &mut m.vertices {
+                        v.pos += shift;
+                    }
+                    painter.add(egui::Shape::mesh(std::sync::Arc::new(m)));
+                } else {
+                    painter.add(egui::Shape::mesh(mesh.clone()));
                 }
-                painter.add(egui::Shape::mesh(std::sync::Arc::new(m)));
-            } else {
-                painter.add(egui::Shape::mesh(mesh.clone()));
             }
         }
         if let Some(active) = self.active_stroke.clone() {
@@ -839,8 +850,7 @@ mod input;
 mod overlays;
 mod paint;
 mod wheel;
-#[cfg(test)]
-use paint::{append_stroke_ribbons, BakeParams};
+pub(crate) use paint::{canvas_stroke, InkBakeWorker};
 #[cfg(test)]
 mod tests;
 

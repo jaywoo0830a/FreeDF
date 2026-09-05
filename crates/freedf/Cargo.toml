@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 freedf-core = { path = "../freedf-core" }
+# 캔버스(잉크 메시) 파이프라인 — 순수 계산 레이어 (doc/architecture.md).
+freedf-canvas = { path = "../freedf-canvas" }
 # Sync v3 프로토콜 전용 객체 (Snapshot/Patch/SyncClient) — 서버와 공유.
 freedf-sync = { path = "../freedf-sync" }
 eframe.workspace = true

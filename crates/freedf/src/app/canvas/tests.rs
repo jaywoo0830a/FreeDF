@@ -1,12 +1,20 @@
     use super::*;
 
-    /// 실제 렌더 경로(리본 → 메시)를 돌려, 모든 정점이 유한하고
-    /// 스트로크 근처에 머무는지 확인합니다.
+    /// 실제 렌더 경로(리본 → freedf-canvas 메시 → egui)를 돌려, 모든
+    /// 정점이 유한하고 스트로크 근처에 머무는지 확인합니다.
     fn mesh_bounds(pts: &[[f32; 2]], halves: &[f32]) -> egui::Rect {
-        let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
-        let rb = freedf_core::pen::stroke_ribbon(pts, halves, 0.5, true, None);
-        let mut mesh = egui::Mesh::default();
-        append_ribbon(&mut mesh, &rb, &ident, Color32::RED);
+        let sp: Vec<freedf_canvas::StrokePoint> = pts
+            .iter()
+            .map(|p| freedf_canvas::StrokePoint {
+                position: freedf_canvas::PagePoint::new(p[0], p[1]),
+                pressure: 1.0,
+                t_ms: 0,
+                width: 0.0,
+            })
+            .collect();
+        let mut cm = freedf_canvas::Mesh::default();
+        freedf_canvas::append_stroke_ribbon(&mut cm, &sp, halves, 0.5, true, [255, 0, 0, 255], None);
+        let mesh = canvas_mesh_to_egui(&cm, egui::pos2(0.0, 0.0), 1.0, 0.0, 0.0);
         assert!(!mesh.indices.is_empty(), "빈 메시");
         let mut bounds = egui::Rect::NOTHING;
         for v in &mesh.vertices {
@@ -94,13 +102,30 @@
             t += 0.05;
         }
         let halves: Vec<f32> = vec![2.0; pts.len()];
-        let ident = |p: [f32; 2]| egui::pos2(p[0], p[1]);
         for feather in [0.0f32, 0.5] {
             let rb = freedf_core::pen::stroke_ribbon(&pts, &halves, feather, true, None);
             assert_eq!(rb.verts.len(), rb.alphas.len());
             assert!(!rb.tris.is_empty());
-            let mut mesh = egui::Mesh::default();
-            append_ribbon(&mut mesh, &rb, &ident, Color32::RED);
+            let sp: Vec<freedf_canvas::StrokePoint> = pts
+                .iter()
+                .map(|p| freedf_canvas::StrokePoint {
+                    position: freedf_canvas::PagePoint::new(p[0], p[1]),
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 0.0,
+                })
+                .collect();
+            let mut cm = freedf_canvas::Mesh::default();
+            freedf_canvas::append_stroke_ribbon(
+                &mut cm,
+                &sp,
+                &halves,
+                feather,
+                true,
+                [255, 0, 0, 255],
+                None,
+            );
+            let mesh = canvas_mesh_to_egui(&cm, egui::pos2(0.0, 0.0), 1.0, 0.0, 0.0);
             let mut bounds = egui::Rect::NOTHING;
             for v in &mesh.vertices {
                 assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
@@ -142,63 +167,29 @@
         assert!(rb.alphas.iter().all(|a| *a >= 0.0 && *a <= 1.0));
     }
 
-    /// 증분 append — 기존 메시에 새 획 리본만 붙여도 유한한 정점으로
-    /// 새 획 위치(x=100 근처)까지 커버해야 합니다 (필기 버벅임 수정 경로).
+    /// 증분 append와 좌표 변환은 freedf-canvas로 이전 — 여기서는 경계
+    /// 어댑터(canvas Mesh → egui Mesh)가 팬/줌을 올바르게 적용하는지 검증.
     #[test]
-    fn append_stroke_ribbons_grows_mesh_with_new_stroke() {
-        let mk = |id: u64, x: f32| freedf_core::model::Stroke {
-            id,
-            tool: ToolType::Pen,
-            color: [0, 0, 0, 255],
-            width: 2.0,
-            points: vec![
-                StrokePoint::new(x, 0.0, 0.5),
-                StrokePoint::new(x + 10.0, 0.0, 0.5),
-            ],
-            created_ms: 1,
+    fn canvas_mesh_to_egui_applies_pan_and_zoom() {
+        let mut mesh = freedf_canvas::Mesh {
+            vertices: vec![[10.0, 20.0]],
+            colors: vec![[0.0, 0.0, 0.0, 1.0]],
+            indices: Vec::new(),
         };
-        let params = BakeParams {
-            zoom: 1.0,
-            pen_soak: InkSoak::ballpoint_default(),
-            fountain_soak: InkSoak::fountain_default(),
-            ball: BallPenProfile::default(),
-            fountain: FountainProfile::default(),
-            pen_grain: InkGrain::default(),
-            fountain_grain: InkGrain::default(),
-            tilt: 0.0,
-        };
-        let mut mesh = egui::Mesh::default();
-        let mut last = None;
-        let _ = append_stroke_ribbons(
-            &mut mesh,
-            &[mk(1, 0.0)],
-            egui::pos2(0.0, 0.0),
-            [0.0, 0.0],
-            params,
-            &mut last,
-            0,
+        let out = canvas_mesh_to_egui(
+            &mesh,
+            egui::pos2(5.0, 6.0),
+            2.0,
+            100.0,
+            200.0,
         );
-        assert!(!mesh.vertices.is_empty());
-        let n0 = mesh.vertices.len();
-        let _ = append_stroke_ribbons(
-            &mut mesh,
-            &[mk(2, 100.0)],
-            egui::pos2(0.0, 0.0),
-            [0.0, 0.0],
-            params,
-            &mut last,
-            0,
-        );
-        assert!(mesh.vertices.len() > n0, "append가 정점을 추가해야 함");
-        let max_x = mesh
-            .vertices
-            .iter()
-            .map(|v| v.pos.x)
-            .fold(f32::MIN, f32::max);
-        assert!(max_x > 90.0, "새 획 위치까지 커버: max_x={max_x}");
-        for v in &mesh.vertices {
-            assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
-        }
+        assert_eq!(out.vertices.len(), 1);
+        let v = out.vertices[0];
+        assert!((v.pos.x - (5.0 + 10.0 * 2.0 + 100.0)).abs() < 1e-4, "x: {}", v.pos.x);
+        assert!((v.pos.y - (6.0 + 20.0 * 2.0 + 200.0)).abs() < 1e-4, "y: {}", v.pos.y);
+        mesh.indices = vec![0];
+        let out2 = canvas_mesh_to_egui(&mesh, egui::pos2(0.0, 0.0), 1.0, 0.0, 0.0);
+        assert_eq!(out2.indices, vec![0]);
     }
 
     #[test]

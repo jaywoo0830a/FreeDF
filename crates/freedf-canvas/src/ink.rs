@@ -191,11 +191,13 @@ mod tests {
     use super::*;
     use crate::geom::PagePoint;
     use crate::scene::{LayerKind, StrokePoint, StrokeId};
+    use freedf_core::model::ToolType;
 
     fn stroke_at(id: u64, x0: f32, x1: f32) -> Stroke {
         Stroke {
             id: StrokeId(id),
             kind: LayerKind::Ink,
+            tool: ToolType::Pen,
             color: [0, 0, 0, 255],
             base_width: 2.0,
             points: vec![
@@ -203,11 +205,13 @@ mod tests {
                     position: PagePoint::new(x0, 0.0),
                     pressure: 1.0,
                     t_ms: 1_000,
+                    width: 0.0,
                 },
                 StrokePoint {
                     position: PagePoint::new(x1, 0.0),
                     pressure: 1.0,
                     t_ms: 1_010,
+                    width: 0.0,
                 },
             ],
             created_ms: 1_000,

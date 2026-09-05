@@ -165,6 +165,7 @@ mod tests {
         Stroke {
             id: StrokeId(id),
             kind: LayerKind::Ink,
+            tool: freedf_core::model::ToolType::Pen,
             color: [0, 0, 0, 255],
             base_width: 2.0,
             points: vec![
@@ -172,11 +173,13 @@ mod tests {
                     position: PagePoint::new(0.0, 0.0),
                     pressure: 1.0,
                     t_ms: 0,
+                    width: 0.0,
                 },
                 StrokePoint {
                     position: PagePoint::new(10.0, 0.0),
                     pressure: 1.0,
                     t_ms: 10,
+                    width: 0.0,
                 },
             ],
             created_ms: 0,

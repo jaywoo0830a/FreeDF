@@ -1408,6 +1408,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_phosphor_icons",
+ "freedf-canvas",
  "freedf-core",
  "freedf-sync",
  "hound",
@@ -1423,6 +1424,9 @@ dependencies = [
 [[package]]
 name = "freedf-canvas"
 version = "0.1.0"
+dependencies = [
+ "freedf-core",
+]
 
 [[package]]
 name = "freedf-core"

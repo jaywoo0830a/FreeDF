@@ -263,11 +263,6 @@ pub(crate) fn app_data_dir() -> PathBuf {
     PathBuf::new()
 }
 
-// ---------- 캐싱 백엔드(레거시, 제거됨) ----------
-//
-// (PostgreSQL + 로컬 캐시/write-behind 구현은 Sync v3 서버
-// `sync_storage::SyncStorage`로 대체되었습니다.)
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,4 +5,6 @@ edition.workspace = true
 description = "FreeDF 캔버스 엔진 — UI 무블록·순수·컴포저블한 잉크 렌더링 코어 (인터페이스 골격)"
 
 [dependencies]
-# 의도적으로 0개 — 100% std. 시간/랜덤/IO 의존은 전부 트레이트/인자로 주입합니다.
+# 순수 계산 의존만 — 물리 모델(폭 리본/잉크 스밈/질감)은 freedf-core의
+# 검증된 구현을 재사용합니다. IO·GPU·스레드 의존은 없습니다.
+freedf-core = { path = "../freedf-core" }

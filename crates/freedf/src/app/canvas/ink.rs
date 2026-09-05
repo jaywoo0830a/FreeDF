@@ -58,7 +58,7 @@ impl FreeDfApp {
                     if p.width > 0.0 {
                         wmn = wmn.min(p.width);
                         wmx = wmx.max(p.width);
-                        // 실제 렌더에 쓰이는 절반 폭 (stroke_halves와 동일 규칙).
+                        // 실제 렌더에 쓰이는 절반 폭 (freedf_canvas::halves_for_stroke와 동일 규칙).
                         let h = (p.width * 0.5).max(0.05);
                         hmn = hmn.min(h);
                         hmx = hmx.max(h);
