@@ -117,13 +117,13 @@ impl FreeDfApp {
         while let Some(ev) = gilrs.next_event() {
             match ev.event {
                 gilrs::EventType::Connected => {
-                    gamepad_log_push(format!("패드 {} 연결됨", ev.id));
+                    gamepad_log_push(format!("Gamepad {} connected", ev.id));
                 }
                 gilrs::EventType::Disconnected => {
-                    gamepad_log_push(format!("패드 {} 연결 해제됨", ev.id));
+                    gamepad_log_push(format!("Gamepad {} disconnected", ev.id));
                 }
                 gilrs::EventType::ButtonChanged(btn, value, _) if value > 0.5 => {
-                    gamepad_log_push(format!("버튼 {btn:?} = {value:.2}"));
+                    gamepad_log_push(format!("Button {btn:?} = {value:.2}"));
                 }
                 _ => {}
             }
@@ -171,7 +171,7 @@ impl FreeDfApp {
         // 처음 인식되면 상태바로 알립니다 (연결 확인용).
         if !self.gamepad_notified {
             self.gamepad_notified = true;
-            gamepad_log_push("게임패드 인식됨");
+            gamepad_log_push("Gamepad detected");
             self.status = Some(
                 "Gamepad connected — L-stick = scroll, LB = CTRL (stick = zoom), LT = Ctrl+Z"
                     .to_string(),
@@ -233,12 +233,12 @@ impl FreeDfApp {
                 self.zoom_by(ZOOM_STEP);
                 self.gamepad_zoom_armed = true;
                 self.gamepad_zooms += 1;
-                gamepad_log_push("LB+스틱 위 — 확대 +5%");
+                gamepad_log_push("LB + stick up — zoom +5%");
             } else if push < -0.6 {
                 self.zoom_by(1.0 / ZOOM_STEP);
                 self.gamepad_zoom_armed = true;
                 self.gamepad_zooms += 1;
-                gamepad_log_push("LB+스틱 아래 — 축소 -5%");
+                gamepad_log_push("LB + stick down — zoom -5%");
             }
             // Ctrl+휠처럼 LB 동안 스크롤은 억제.
             self.scroll_vel = Vec2::ZERO;
@@ -253,11 +253,11 @@ impl FreeDfApp {
                     if stick.y > 0.0 {
                         self.prev_page();
                         self.gamepad_flips += 1;
-                        gamepad_log_push("스틱 아래 — 이전 페이지");
+                        gamepad_log_push("Stick down — previous page");
                     } else {
                         self.next_page();
                         self.gamepad_flips += 1;
-                        gamepad_log_push("스틱 위 — 다음 페이지");
+                        gamepad_log_push("Stick up — next page");
                     }
                     self.scroll_vel = Vec2::ZERO;
                 } else {
@@ -277,37 +277,37 @@ impl FreeDfApp {
         if lt_pressed && !self.gamepad_lt_held {
             self.undo();
             self.gamepad_undos += 1;
-            gamepad_log_push("LT — 되돌리기 (Ctrl+Z)");
+            gamepad_log_push("LT — undo (Ctrl+Z)");
         }
         self.gamepad_lt_held = lt_pressed;
     }
 
-    /// 게임패드 설정 창 내용 (수직 폼 — 한국어 라벨).
+    /// 게임패드 설정 창 내용 (수직 폼).
     pub(crate) fn gamepad_settings_ui(&mut self, ui: &mut egui::Ui) {
         form::help(
             ui,
-            "컨트롤러 입력은 Windows가 인식하는 게임패드면 자동으로 동작합니다.\n\
-             왼쪽 스틱 = 스크롤 · LB = CTRL(스틱=줌) · LT = Ctrl+Z ·\n\
-             D패드 = ←/→/PgUp/PgDn.",
+            "Gamepad input works automatically for any controller Windows sees.\n\
+             L-stick = scroll · LB = CTRL (stick = zoom) · LT = Ctrl+Z ·\n\
+             D-pad = arrows / PgUp / PgDn.",
         );
         form::check(
             ui,
             &mut self.gamepad_cfg.enabled,
-            "게임패드 입력 사용",
-            "끄면 컨트롤러 입력을 완전히 무시합니다.",
+            "Enable gamepad input",
+            "Turn off to ignore controller input entirely.",
         );
         form::number(&mut self.gamepad_cfg.speed)
             .range(200.0..=2400.0)
             .speed(40.0)
             .suffix(" pt/s")
-            .label("스크롤 속도")
-            .help("스틱 끝까지 밀었을 때의 속도 (줌 1배 기준)")
+            .label("Scroll speed")
+            .help("Speed at full stick deflection (at 1× zoom)")
             .show(ui);
         form::check(
             ui,
             &mut self.gamepad_cfg.invert_y,
-            "스틱 상하 반전",
-            "켜면 스틱 방향과 스크롤 방향이 반대가 됩니다.",
+            "Invert stick Y",
+            "Flip the stick direction against the scroll direction.",
         );
         ui.add_space(8.0);
         ui.separator();
@@ -315,8 +315,8 @@ impl FreeDfApp {
         if form::check(
             ui,
             &mut debug,
-            "디버그 패널 표시",
-            "연결 상태·원시 스틱/버튼 값·이벤트 로그를 보여줍니다.",
+            "Show debug panel",
+            "Connection status, raw stick/button values and the event log.",
         )
         .changed()
         {
@@ -326,7 +326,7 @@ impl FreeDfApp {
 
     /// 게임패드 디버그 패널 — 원시 값 + 액션 카운터 + 이벤트 로그.
     pub(crate) fn gamepad_debug_ui(&mut self, ui: &mut egui::Ui) {
-        egui::Window::new("게임패드 디버그")
+        egui::Window::new("Gamepad debug")
             .default_width(360.0)
             .collapsible(false)
             .show(ui.ctx(), |ui| {
@@ -335,18 +335,18 @@ impl FreeDfApp {
                         Some(g) => {
                             let green = crate::theme::nord::semantic::COLOR_SUCCESS;
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("● 연결됨").color(green));
+                                ui.label(egui::RichText::new("● Connected").color(green));
                                 ui.label(
-                                    egui::RichText::new(format!("속도 {} pt/s", self.gamepad_cfg.speed))
+                                    egui::RichText::new(format!("speed {} pt/s", self.gamepad_cfg.speed))
                                         .weak(),
                                 );
                             });
                             ui.label(format!(
-                                "왼쪽 스틱   X={:+.2}   Y={:+.2}",
+                                "Left stick   X={:+.2}   Y={:+.2}",
                                 g.stick.x, g.stick.y
                             ));
                             ui.label(format!(
-                                "D패드   ↑={} ↓={} ←={} →={}",
+                                "D-pad   up={} down={} left={} right={}",
                                 if g.d_up { "●" } else { "-" },
                                 if g.d_down { "●" } else { "-" },
                                 if g.d_left { "●" } else { "-" },
@@ -354,20 +354,20 @@ impl FreeDfApp {
                             ));
                             ui.label(format!(
                                 "LB(CTRL)={}   LT(Ctrl+Z)={:.2}",
-                                if g.lb { "눌림" } else { "-" },
+                                if g.lb { "held" } else { "-" },
                                 g.lt
                             ));
                         }
                         None => {
                             ui.label(
-                                egui::RichText::new("연결된 게임패드 없음")
+                                egui::RichText::new("No gamepad connected")
                                     .weak(),
                             );
                         }
                     }
                     ui.label(
                         egui::RichText::new(format!(
-                            "페이지 전환 {}회 · 줌 {}회 · 되돌리기 {}회",
+                            "Page flips {} · zooms {} · undos {}",
                             self.gamepad_flips, self.gamepad_zooms, self.gamepad_undos
                         ))
                         .weak(),
@@ -375,12 +375,12 @@ impl FreeDfApp {
                     ui.add_space(4.0);
                     ui.separator();
                     ui.horizontal(|ui| {
-                        ui.strong("이벤트 로그");
+                        ui.strong("Event log");
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("비우기").clicked() {
+                            if ui.button("Clear").clicked() {
                                 gamepad_log_clear();
                             }
-                            if ui.button("복사").clicked() {
+                            if ui.button("Copy").clicked() {
                                 let lines = gamepad_log_snapshot();
                                 ui.ctx()
                                     .copy_text(lines.join("\n"));
@@ -389,7 +389,7 @@ impl FreeDfApp {
                     });
                     let lines = gamepad_log_snapshot();
                     if lines.is_empty() {
-                        ui.label(egui::RichText::new("(이벤트 없음)").weak().small());
+                        ui.label(egui::RichText::new("(no events)").weak().small());
                     } else {
                         egui::ScrollArea::vertical()
                             .id_salt("gamepad_log_scroll")
