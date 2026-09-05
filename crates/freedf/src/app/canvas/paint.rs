@@ -286,9 +286,9 @@ impl FreeDfApp {
     }
 
     /// 진행 중인 스트로크(또는 단일 스트로크)를 그립니다. 완성된 스트로크는
-    /// 백그라운드 굽기(BakeService)의 병합 메시로 그려지고, 이 함수는
-    /// 활성(진행 중) 획 전용입니다. 점의 폭은 입력 시점에 이미 잠겨 있으므로
-    /// 여기서는 절대 다시 계산하지 않습니다.
+    /// 젊은(스밈 진행 중) 오버레이로 그려진 뒤 정착 시 백그라운드 굽기의
+    /// 병합 메시로 넘어가고, 이 함수는 활성(진행 중) 획 전용입니다. 점의
+    /// 폭은 입력 시점에 이미 잠겨 있으므로 여기서는 절대 다시 계산하지 않습니다.
     pub(crate) fn paint_stroke(
         &mut self,
         painter: &egui::Painter,
@@ -468,9 +468,11 @@ impl FreeDfApp {
         self.active_mesh = Some((now, n, view_key, mesh));
     }
 
-    /// 페이지의 **모든 완성 획**을 담은 병합 잉크 메시 하나를
+    /// 페이지의 **정착된 완성 획**을 담은 병합 잉크 메시 하나를
     /// **백그라운드 스레드**(BakeService + InkBakeWorker)로 굽습니다.
-    /// 드로우 콜은 페이지당 1개, 진행 중 획과 같은 리본 지오메트리를 씁니다.
+    /// (스밈이 진행 중인 젊은 획은 오버레이가 매 프레임 재굽기 — 이 스냅샷에
+    /// 포함하지 않습니다.) 드로우 콜은 페이지당 1개, 진행 중 획과 같은 리본
+    /// 지오메트리를 씁니다.
     ///
     /// **뷰포트 컬링 금지**: 메시는 페이지 좌표로 구운 뒤 팬/엣지 스크롤
     /// 중에는 변환만 바꿔 재사용됩니다(재구성 없음). 구울 때 현재 뷰포트로
@@ -484,56 +486,40 @@ impl FreeDfApp {
     /// 정착되면 [`sweep_ink_young`]이 병합 메시(최종 색)로 이동시킵니다.
     /// 병합 메시는 정착분만 담으므로 전체 재굽기가 필요 없어집니다.
     pub(crate) fn add_ink_young(&mut self, strokes: &[freedf_core::model::Stroke], now: u64) {
-        if self.ink_young_page != self.current_page {
-            // 페이지가 바뀌면 이전 페이지의 젊은 획을 버립니다.
-            self.ink_young.clear();
-            self.ink_young_page = self.current_page;
-        }
         let mesher = self.core_mesher();
         for s in strokes {
             self.trace_settled_if_due(s, &mesher);
-            // 비-잉크 도구/스밈 꺼짐은 next_settle이 MAX → 곧바로 정착 처리됨.
-            self.ink_young.push(s.clone());
         }
         let _ = now;
-        self.ink_baked_rev = self.store.rev();
+        let canvas_strokes: Vec<freedf_canvas::Stroke> =
+            strokes.iter().map(canvas_stroke).collect();
+        self.ink_settling
+            .add(self.current_page, canvas_strokes, self.store.rev());
     }
 
     /// 정착된 젊은 획을 병합 메시로 이동합니다 (최종 알파로 굽힘 — 매 획 1회,
     /// O(그 획)). 스밈이 남은 획은 젊은 목록에 두고 오버레이가 담당합니다.
     pub(crate) fn sweep_ink_young(&mut self, now: u64) {
-        if self.ink_young.is_empty() {
-            return;
-        }
-        if self.ink_bake_pending.is_some() {
-            // 전체 재굽기가 진행 중 — 정착분 이동은 결과 설치 시점에 한 번에
-            // (도중에 메시를 바꾸면 설치가 덮어써 유실될 수 있음).
+        if self.ink_settling.young.is_empty() || self.ink_bake_pending.is_some() {
+            // 전체 재굽기가 진행 중이면 정착분 이동은 설치 시점에 한 번에.
             return;
         }
         let mesher = self.core_mesher();
-        let mut moved = false;
-        let mut i = 0;
-        while i < self.ink_young.len() {
-            let cs = canvas_stroke(&self.ink_young[i]);
-            if mesher.next_settle(&cs, now) == u64::MAX {
-                let s = self.ink_young.remove(i);
-                if let Some(arc) = self.ink_mesh.as_mut() {
-                    let mesh = std::sync::Arc::make_mut(arc);
-                    mesher.append_stroke(mesh, &canvas_stroke(&s), now);
-                }
-                self.ink_baked_count = self.ink_baked_count.saturating_add(1);
-                moved = true;
-            } else {
-                i += 1;
+        let settled = self.ink_settling.sweep(|s| mesher.next_settle(s, now), now);
+        if settled.is_empty() {
+            return;
+        }
+        if let Some(arc) = self.ink_mesh.as_mut() {
+            let mesh = std::sync::Arc::make_mut(arc);
+            for s in &settled {
+                mesher.append_stroke(mesh, s, now);
             }
         }
-        if moved {
-            self.ink_baked_rev = self.store.rev();
-            // 메시 내용이 바뀌었으므로 egui 변환 캐시를 무효화 — 안 하면
-            // 정착된 획이 낡은 화면에 남습니다.
-            self.ink_egui_mesh = None;
-            self.ink_egui_key = None;
-        }
+        self.ink_settling.rev = freedf_canvas::Revision(self.store.rev());
+        // 메시 내용이 바뀌었으므로 egui 변환 캐시를 무효화 — 안 하면
+        // 정착된 획이 낡은 화면에 남습니다.
+        self.ink_egui_mesh = None;
+        self.ink_egui_key = None;
     }
 
     /// 병합 굽기에 쓰는 조합형 메셔 스냅샷 — freedf-canvas 경계로 넘깁니다.
@@ -572,17 +558,16 @@ impl FreeDfApp {
             self.pen_grain,
             self.fountain_grain,
         );
-        self.ink_baked_rev = rev;
         let mesher = self.core_mesher();
-        self.ink_young = self
+        let young: Vec<freedf_canvas::Stroke> = self
             .store
             .strokes_on(self.current_page)
             .iter()
             .filter(|s| mesher.next_settle(&canvas_stroke(s), now) != u64::MAX)
-            .cloned()
+            .map(canvas_stroke)
             .collect();
-        self.ink_young_page = self.current_page;
-        self.ink_baked_count = count.saturating_sub(self.ink_young.len());
+        self.ink_settling
+            .resync(self.current_page, count, rev, young);
         // 메시가 교체됐으므로 egui 변환 캐시를 무효화 — 낡은 화면 출력 방지.
         self.ink_egui_mesh = None;
         self.ink_egui_key = None;

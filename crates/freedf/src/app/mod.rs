@@ -165,8 +165,7 @@ impl FreeDfApp {
     pub(crate) fn set_store(&mut self, store: AnnotationStore) {
         self.store_generation = self.store_generation.wrapping_add(1);
         self.ink_mesh = None;
-        self.ink_young.clear();
-        self.ink_young_page = usize::MAX;
+        self.ink_settling.reset();
         self.store = store;
     }
 }
@@ -925,15 +924,9 @@ pub struct FreeDfApp {
     ink_egui_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 위 캐시의 키 (페이지, 줌, pan_x, pan_y).
     ink_egui_key: Option<(usize, f32, f32, f32)>,
-    /// 스밈(진해짐)이 아직 진행 중인 젊은 획 — 매 프레임 오버레이로 재굽어
-    /// 부드러운 애니메이션을 만들고, 정착되면 병합 메시로 이동합니다.
-    ink_young: Vec<freedf_core::model::Stroke>,
-    /// `ink_young`이 속한 페이지 (다른 페이지로 넘어가면 초기화).
-    ink_young_page: usize,
-    /// 병합 메시와 일치하는 스토어 rev — 달라졌으면 증분/재구성 판정.
-    ink_baked_rev: u64,
-    /// 병합 메시에 들어간(정착된) 현재 페이지 스트로크 수.
-    ink_baked_count: usize,
+    /// 스밈 정착 추적기 — 병합 메시(정착분)와 젊은 획(스밈 진행분) 북킹.
+    /// 순수 규칙은 freedf-canvas `soak::InkSettling` (계약 테스트 포함).
+    ink_settling: freedf_canvas::InkSettling,
     /// 전체 재굽기 — freedf-canvas BakeService (백그라운드 스레드, 무블록).
     ink_baker: freedf_canvas::BakeService<canvas::InkBakeWorker>,
     /// 워커가 읽는 메셔 설정 스냅샷 (요청 직전에 갱신).
@@ -1453,10 +1446,7 @@ impl FreeDfApp {
             ),
             ink_egui_mesh: None,
             ink_egui_key: None,
-            ink_young: Vec::new(),
-            ink_young_page: usize::MAX,
-            ink_baked_rev: u64::MAX,
-            ink_baked_count: 0,
+            ink_settling: freedf_canvas::InkSettling::new(),
             ink_baker: freedf_canvas::BakeService::start(canvas::InkBakeWorker {
                 mesher: ink_baker_mesher.clone(),
             }),

@@ -31,6 +31,7 @@ pub mod core_mesh;
 pub mod geom;
 pub mod ink;
 pub mod scene;
+pub mod soak;
 pub mod surface;
 
 pub use bake::{BakeError, BakeParams, BakeService, BakeWorker, BakedPage, SimpleWorker};
@@ -46,4 +47,5 @@ pub use ink::{
 pub use scene::{
     Changes, LayerKind, Revision, SceneSnapshot, SceneStore, Stroke, StrokeId, StrokePoint,
 };
+pub use soak::InkSettling;
 pub use surface::{DrawCommand, FrameAssembler, RecordingSurface, Surface, Transform};
