@@ -1,0 +1,8 @@
+[package]
+name = "freedf-canvas"
+version.workspace = true
+edition.workspace = true
+description = "FreeDF 캔버스 엔진 — UI 무블록·순수·컴포저블한 잉크 렌더링 코어 (인터페이스 골격)"
+
+[dependencies]
+# 의도적으로 0개 — 100% std. 시간/랜덤/IO 의존은 전부 트레이트/인자로 주입합니다.

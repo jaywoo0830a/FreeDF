@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/freedf-canvas",
     "crates/freedf-core",
     "crates/freedf",
     "crates/freedf-sync",
@@ -12,6 +13,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
+# freedf-canvas는 **무의존성**(100% std) 크레이트 — 순수성/결정성 보장.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 egui = "0.36"
