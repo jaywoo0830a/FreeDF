@@ -3072,7 +3072,7 @@ impl FreeDfApp {
 
         match &modal.kind {
             ModalKind::AskText { title, hint, action } => {
-                crate::ui::dialog::modal(ctx, title, 400.0, |ui| {
+                crate::ui::dialog::modal(ctx, title, 480.0, |ui| {
                     ui.label(hint);
                     let resp = crate::ui::form::text(&mut text)
                         .hint("Type here...")
@@ -3105,7 +3105,7 @@ impl FreeDfApp {
                 });
             }
             ModalKind::Confirm { title, message, .. } => {
-                crate::ui::dialog::modal(ctx, title, 360.0, |ui| {
+                crate::ui::dialog::modal(ctx, title, 440.0, |ui| {
                     ui.label(message);
                     crate::ui::dialog::actions(ui, |ui| {
                         cancel = crate::ui::action(ui, "Cancel", "").clicked();
@@ -3114,7 +3114,7 @@ impl FreeDfApp {
                 });
             }
             ModalKind::Alert { title, message } => {
-                crate::ui::dialog::modal(ctx, title, 320.0, |ui| {
+                crate::ui::dialog::modal(ctx, title, 400.0, |ui| {
                     ui.label(message);
                     crate::ui::dialog::actions(ui, |ui| {
                         ok = crate::ui::action(ui, "OK", "").clicked();

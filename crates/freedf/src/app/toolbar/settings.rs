@@ -1190,7 +1190,7 @@ impl FreeDfApp {
                 ("Ballpen settings", false)
             };
             let mut open = self.tool_settings_open;
-            settings_window(ui.ctx(), &mut open, title, 332.0, true, true, |ui| {
+            settings_window(ui.ctx(), &mut open, title, 400.0, true, true, |ui| {
                 if is_fountain {
                     self.fountain_settings_ui(ui);
                 } else {
@@ -1203,7 +1203,7 @@ impl FreeDfApp {
         // ── Paper 세부 설정 플로팅 창 (툴바 Paper 옆 Settings 버튼) ──
         if self.paper_settings_open {
             let mut open = self.paper_settings_open;
-            settings_window(ui.ctx(), &mut open, "Paper settings", 332.0, true, true, |ui| {
+            settings_window(ui.ctx(), &mut open, "Paper settings", 400.0, true, true, |ui| {
                 self.paper_settings_ui(ui)
             });
             self.paper_settings_open = open;
@@ -1216,7 +1216,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Canvas settings",
-                332.0,
+                400.0,
                 false,
                 false,
                 |ui| self.canvas_settings_ui(ui),
@@ -1231,7 +1231,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Color wheel settings",
-                332.0,
+                400.0,
                 false,
                 false,
                 |ui| self.wheel_settings_ui(ui),
@@ -1246,7 +1246,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Edge auto-scroll",
-                332.0,
+                400.0,
                 false,
                 false,
                 |ui| self.edge_scroll_settings_ui(ui),
@@ -1261,7 +1261,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Window Focus",
-                332.0,
+                400.0,
                 false,
                 false,
                 |ui| self.window_focus_settings_ui(ui),
@@ -1272,7 +1272,7 @@ impl FreeDfApp {
         // ── Insert Page 플로팅 창 (메뉴 대신 — 타이핑이 유지됨) ──
         if self.insert_page_open {
             let mut open = self.insert_page_open;
-            settings_window(ui.ctx(), &mut open, "Insert pages", 300.0, false, false, |ui| {
+            settings_window(ui.ctx(), &mut open, "Insert pages", 400.0, false, false, |ui| {
                 self.insert_page_ui(ui)
             });
             self.insert_page_open = open;
@@ -1281,7 +1281,7 @@ impl FreeDfApp {
         // ── 미디어 서버 연결 설정 창 (툴바 Server 버튼) ──
         if self.server_settings_open {
             let mut open = self.server_settings_open;
-            settings_window(ui.ctx(), &mut open, "Media server", 380.0, false, false, |ui| {
+            settings_window(ui.ctx(), &mut open, "Media server", 440.0, false, false, |ui| {
                 self.server_settings_ui(ui)
             });
             self.server_settings_open = open;
@@ -1294,7 +1294,7 @@ impl FreeDfApp {
                 ui.ctx(),
                 &mut open,
                 "Macro settings",
-                440.0,
+                480.0,
                 false,
                 false,
                 |ui| {
