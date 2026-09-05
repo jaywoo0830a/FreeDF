@@ -629,6 +629,85 @@ impl MacroKey {
             _ => return None,
         })
     }
+
+    /// rdev 키 → 매크로 키 (전역 데스크탑 리스너용). 지원 안 하는 키는 None.
+    #[cfg(target_os = "windows")]
+    pub fn from_rdev(k: rdev::Key) -> Option<Self> {
+        use rdev::Key as R;
+        Some(match k {
+            R::KeyA => Self::A,
+            R::KeyB => Self::B,
+            R::KeyC => Self::C,
+            R::KeyD => Self::D,
+            R::KeyE => Self::E,
+            R::KeyF => Self::F,
+            R::KeyG => Self::G,
+            R::KeyH => Self::H,
+            R::KeyI => Self::I,
+            R::KeyJ => Self::J,
+            R::KeyK => Self::K,
+            R::KeyL => Self::L,
+            R::KeyM => Self::M,
+            R::KeyN => Self::N,
+            R::KeyO => Self::O,
+            R::KeyP => Self::P,
+            R::KeyQ => Self::Q,
+            R::KeyR => Self::R,
+            R::KeyS => Self::S,
+            R::KeyT => Self::T,
+            R::KeyU => Self::U,
+            R::KeyV => Self::V,
+            R::KeyW => Self::W,
+            R::KeyX => Self::X,
+            R::KeyY => Self::Y,
+            R::KeyZ => Self::Z,
+            R::Num0 => Self::Num0,
+            R::Num1 => Self::Num1,
+            R::Num2 => Self::Num2,
+            R::Num3 => Self::Num3,
+            R::Num4 => Self::Num4,
+            R::Num5 => Self::Num5,
+            R::Num6 => Self::Num6,
+            R::Num7 => Self::Num7,
+            R::Num8 => Self::Num8,
+            R::Num9 => Self::Num9,
+            R::F1 => Self::F1,
+            R::F2 => Self::F2,
+            R::F3 => Self::F3,
+            R::F4 => Self::F4,
+            R::F5 => Self::F5,
+            R::F6 => Self::F6,
+            R::F7 => Self::F7,
+            R::F8 => Self::F8,
+            R::F9 => Self::F9,
+            R::F10 => Self::F10,
+            R::F11 => Self::F11,
+            R::F12 => Self::F12,
+            R::Space => Self::Space,
+            R::Tab => Self::Tab,
+            R::Return => Self::Enter,
+            R::LeftArrow => Self::Left,
+            R::RightArrow => Self::Right,
+            R::UpArrow => Self::Up,
+            R::DownArrow => Self::Down,
+            R::PageUp => Self::PageUp,
+            R::PageDown => Self::PageDown,
+            R::Home => Self::Home,
+            R::End => Self::End,
+            R::LeftBracket => Self::BracketLeft,
+            R::RightBracket => Self::BracketRight,
+            R::Comma => Self::Comma,
+            R::Dot => Self::Period,
+            R::Slash => Self::Slash,
+            R::BackSlash => Self::Backslash,
+            R::SemiColon => Self::Semicolon,
+            R::Quote => Self::Apostrophe,
+            R::Minus => Self::Minus,
+            R::Equal => Self::Equals,
+            R::BackQuote => Self::Backtick,
+            _ => return None,
+        })
+    }
 }
 
 /// 전역 보조 기능 묶음.
@@ -676,6 +755,10 @@ pub struct MacroState {
     pub desktop_enabled: bool,
     pub desktop_prev: MacroKey,
     pub desktop_next: MacroKey,
+    /// 데스크탑 키를 **FreeDF 포커스일 때만** 활성화 (기본 켜짐).
+    /// 끄면 다른 앱 포커스에서도 동작합니다 (물리 키보드 한정 —
+    /// 화상 키보드는 OS 수준 이벤트가 없어 전역 감지 불가).
+    pub desktop_focus_only: bool,
 }
 
 impl Default for MacroState {
@@ -690,6 +773,7 @@ impl Default for MacroState {
             desktop_enabled: false,
             desktop_prev: MacroKey::Q,
             desktop_next: MacroKey::W,
+            desktop_focus_only: true,
         }
     }
 }

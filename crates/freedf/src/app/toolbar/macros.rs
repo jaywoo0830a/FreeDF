@@ -132,11 +132,21 @@ impl FreeDfApp {
                 ui.label("Next desktop");
                 self.key_button(ui, MacroSlot::DesktopNext, &dn);
             });
+            if ui
+                .checkbox(
+                    &mut self.macro_cfg.desktop_focus_only,
+                    "Activate on focus",
+                )
+                .changed()
+            {
+                self.macro_changed();
+            }
         });
         ui.label(
             egui::RichText::new(
-                "While FreeDF is focused, these keys switch Windows virtual desktops \
-                 (enigo injection). Requires 2+ virtual desktops (Win+Tab).",
+                "On: keys switch desktops only while FreeDF is focused. \
+                 Off: they work from any app (physical keyboard only — on-screen \
+                 keyboards bypass OS hooks). Requires 2+ virtual desktops (Win+Tab).",
             )
             .weak()
             .small(),

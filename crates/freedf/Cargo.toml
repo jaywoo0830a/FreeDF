@@ -35,6 +35,14 @@ rfd = "0.15"
 # 매크로 출력 — enigo 키 주입 (Windows는 SendInput 기반).
 # 입력은 egui 이벤트를 씁니다 (화상 키보드는 LL 훅을 우회하므로).
 enigo = "0.6"
+# 전역 데스크탑 리스너 (Activate on focus 꺼짐 — 비포커스에서도 q/w 감지).
+rdev = "0.5"
+# 전경(foreground) 검사 — 포커스 모드에서 전역 리스너의 이중 주입 방지.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # 마이크 캡처 — Windows(WASAPI)/macOS(CoreAudio)에서 자동 포함.
 # Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.

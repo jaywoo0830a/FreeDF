@@ -909,6 +909,9 @@ pub struct FreeDfApp {
     last_focus_request_ms: u64,
     /// 매크로/단축키 매핑 (Macro 설정 창) — 세션 영속.
     macro_cfg: crate::settings::MacroState,
+    /// 전역 데스크탑 리스너 스레드 — "Activate on focus" 꺼짐 전용.
+    /// 프로세스 수명 동안 유지 (비 Windows는 None).
+    _desktop_listener: Option<std::thread::JoinHandle<()>>,
     /// Macro 설정 창 표시.
     macro_settings_open: bool,
     /// 키 캡처 중인 매핑 슬롯 (버튼 클릭 → 다음 키 입력).
@@ -1600,6 +1603,7 @@ impl FreeDfApp {
             recording_page: None,
             media_all_pages: false,
             macro_cfg: s.macros.clone(),
+            _desktop_listener: key_hook::spawn_global_listener(),
             macro_settings_open: false,
             macro_capture: None,
             asking_close: false,
@@ -1628,20 +1632,33 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
-    /// 매크로 매핑 요약을 디버그 로그에 남깁니다 (키 입력은 egui가 직접 처리).
+    /// 매크로 매핑 요약을 디버그 로그에 남기고, 전역 리스너에
+    /// 데스크탑 설정을 반영합니다 (키 입력은 egui가 직접 처리).
     pub(crate) fn push_macro_config(&self) {
         let n = |m: crate::settings::MacroKey, on: bool| {
             if on { m.label().to_string() } else { "off".into() }
         };
         key_hook::hook_log(format!(
-            "macro config → page {}/{} · tab {}/{} · desktop {}/{}",
+            "macro config → page {}/{} · tab {}/{} · desktop {}/{} (focus_only={})",
             n(self.macro_cfg.page_prev, self.macro_cfg.page_enabled),
             n(self.macro_cfg.page_next, self.macro_cfg.page_enabled),
             n(self.macro_cfg.tab_prev, self.macro_cfg.tab_enabled),
             n(self.macro_cfg.tab_next, self.macro_cfg.tab_enabled),
             n(self.macro_cfg.desktop_prev, self.macro_cfg.desktop_enabled),
             n(self.macro_cfg.desktop_next, self.macro_cfg.desktop_enabled),
+            self.macro_cfg.desktop_focus_only,
         ));
+        key_hook::update_desktop_cfg(key_hook::DesktopCfg {
+            prev: self
+                .macro_cfg
+                .desktop_enabled
+                .then_some(self.macro_cfg.desktop_prev),
+            next: self
+                .macro_cfg
+                .desktop_enabled
+                .then_some(self.macro_cfg.desktop_next),
+            focus_only: self.macro_cfg.desktop_focus_only,
+        });
     }
 
     /// 풀 보충을 백그라운드 스레드로 예약 — 원격 왕복이 UI 스레드를 막지 않음.
@@ -2630,23 +2647,28 @@ impl FreeDfApp {
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
         let typing = ctx.egui_wants_keyboard_input();
         if !typing && !ctrl && !shift {
-            if ctx.input(|i| i.key_pressed(egui::Key::PageDown))
-                || (self.macro_cfg.page_enabled
-                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_next))
-            {
-                // 브라우저식: 한 뷰포트만 아래로, 끝나면 다음 페이지.
-                // (실제 페이지 전환이면 세로 애니메이션)
+            // 물리 PgDn/PgUp — 브라우저식(한 뷰포트 아래로, 끝나면 다음 페이지).
+            if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
                 self.transition_vertical = true;
                 self.page_key(true);
                 self.transition_vertical = false; // (스크롤만 했다면 누수 방지)
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::PageUp))
-                || (self.macro_cfg.page_enabled
-                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_prev))
-            {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
                 self.transition_vertical = true;
                 self.page_key(false);
                 self.transition_vertical = false;
+            }
+            // 매크로 페이지 키(z/x) — 화살표 키와 같은 **단순 이전/다음** 이동
+            // (PgUp/PgDn의 뷰포트 스크롤 단계 없음, 가로 슬라이드).
+            if self.macro_cfg.page_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_next)
+            {
+                self.next_page();
+            }
+            if self.macro_cfg.page_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_prev)
+            {
+                self.prev_page();
             }
             // 가상 데스크탑 매크로 — enigo로 OS에 주입 (검증 순서: Win→Ctrl→화살표).
             if self.macro_cfg.desktop_enabled
