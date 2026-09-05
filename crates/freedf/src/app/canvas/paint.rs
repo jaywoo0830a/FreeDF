@@ -503,6 +503,10 @@ impl FreeDfApp {
         self.ink_built_at = now;
         self.ink_baked_rev = self.store.rev();
         self.ink_baked_count = self.store.stroke_count_on(self.current_page);
+        // 메시 내용이 바뀌었으므로 egui 변환 캐시를 무효화 — 안 하면
+        // 방금 쓴 획이 화면에 안 나타남 (줌해야 다시 보이던 버그의 원인).
+        self.ink_egui_mesh = None;
+        self.ink_egui_key = None;
     }
 
     /// 병합 굽기에 쓰는 조합형 메셔 스냅샷 — freedf-canvas 경계로 넘깁니다.
@@ -543,6 +547,9 @@ impl FreeDfApp {
         self.ink_built_at = now;
         self.ink_baked_rev = rev;
         self.ink_baked_count = count;
+        // 메시가 교체됐으므로 egui 변환 캐시를 무효화 — 낡은 화면 출력 방지.
+        self.ink_egui_mesh = None;
+        self.ink_egui_key = None;
         let mesher = self.core_mesher();
         let mut settle = u64::MAX;
         for s in self.store.strokes_on(self.current_page) {
