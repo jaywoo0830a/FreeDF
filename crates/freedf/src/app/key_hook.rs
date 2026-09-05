@@ -127,8 +127,8 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-        KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG, PostThreadMessageW,
-        SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, MSG, PostThreadMessageW, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN,
+        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     // 번역 중인 키 집합 — 반복(repeat)은 1회만 처리.
@@ -298,15 +298,15 @@ mod imp {
         }
         let cfg = hook_config();
         let vk = info.vkCode as u16;
-        // 주입된 조합 키(Ctrl/Win/화살표)가 훅을 통과하는지 디버그 로그에 기록.
-        if down && (info.flags & LLKHF_INJECTED) != KBDLLHOOKSTRUCT_FLAGS(0) {
-            if vk == VK_LCONTROL.0 as u16
-                || vk == VK_LWIN.0 as u16
-                || vk == VK_LEFT.0 as u16
-                || vk == VK_RIGHT.0 as u16
-            {
-                hook_log(format!("injected combo key down vk={vk}"));
-            }
+        // 디버그: 훅이 받은 **모든** 키다운을 기록합니다 — 매핑이 되지 않는
+        // 키도 보이므로, 훅 콜백이 아예 호출되지 않는지 즉시 알 수 있습니다.
+        if down {
+            hook_log(format!(
+                "key down vk={} scan={} flags=0x{:x}",
+                info.vkCode,
+                info.scanCode,
+                info.flags.0
+            ));
         }
         let matched_page = cfg
             .page_prev
@@ -390,6 +390,10 @@ mod imp {
             // LL 훅 콜백은 훅을 설치한 스레드의 메시지 루프에서 호출됩니다.
             // (스레드가 끝나면 시스템이 훅을 자동 해제 — 프로세스 수명 동안 유지)
             // 데스크탑 매크로 요청 메시지는 콜백 밖인 여기서 처리합니다.
+            hook_log(format!(
+                "hook loop running (tid={})",
+                GetCurrentThreadId()
+            ));
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 if msg.message == WM_DESKTOP_MACRO {
                     let prev = msg.wParam.0 != 0;

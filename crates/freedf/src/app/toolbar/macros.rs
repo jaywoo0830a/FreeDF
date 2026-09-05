@@ -160,6 +160,10 @@ impl FreeDfApp {
                 if ui.button("Clear").clicked() {
                     crate::app::key_hook::hook_log_clear();
                 }
+                if ui.button("Copy").clicked() {
+                    let text = crate::app::key_hook::hook_log_snapshot().join("\n");
+                    ui.ctx().copy_text(text);
+                }
             });
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(300));
