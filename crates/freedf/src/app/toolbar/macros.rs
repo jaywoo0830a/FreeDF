@@ -1,10 +1,10 @@
 //! Macro 설정 — 페이지/탭/가상 데스크탑 단축키 매핑 창 + 키 캡처 UI.
 //!
 //! 툴바 Row1의 "Macro" 버튼이 창을 열고, 매핑은 `MacroState`(세션 영속)에
-//! 저장됩니다. 각 그룹(페이지/탭/데스크탑)은 독립 토글로 켜고 끌 수 있고,
-//! 페이지/데스크탑 키는 전역 리스너(key_hook — rdev 입력, enigo 출력)에
-//! 반영되어 IME/포커스와 무관하게 동작합니다. 기본 배치: q/w = 데스크탑,
-//! a/s = 탭, z/x = 페이지 (왼손 홈 로우).
+//! 저장됩니다. 각 그룹(페이지/탭/데스크탑)은 독립 토글로 켜고 끌 수 있습니다.
+//! 키 입력은 **egui 이벤트**로 받고(화상 키보드·물리 키보드 모두 도달),
+//! 데스크탑 조합만 enigo(key_hook)로 OS에 주입합니다.
+//! 기본 배치: q/w = 데스크탑, a/s = 탭, z/x = 페이지 (왼손 홈 로우).
 
 use super::*;
 use crate::settings::MacroKey;
@@ -87,8 +87,8 @@ impl FreeDfApp {
         });
         ui.label(
             egui::RichText::new(
-                "Works while the pen is in your right hand — on Windows these keys are \
-                 translated at the OS level (IME-safe).",
+                "Works while the pen is in your right hand — these keys work with \
+                 both physical and on-screen keyboards.",
             )
             .weak()
             .small(),
@@ -135,8 +135,8 @@ impl FreeDfApp {
         });
         ui.label(
             egui::RichText::new(
-                "While FreeDF is running, these keys switch Windows virtual desktops — \
-                 even from the FreeDF window. Other apps are never hijacked.",
+                "While FreeDF is focused, these keys switch Windows virtual desktops \
+                 (enigo injection). Requires 2+ virtual desktops (Win+Tab).",
             )
             .weak()
             .small(),
@@ -151,10 +151,10 @@ impl FreeDfApp {
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let status = if crate::app::key_hook::hook_alive() {
-                    "hook: running"
+                let status = if crate::app::key_hook::pipeline_enabled() {
+                    "desktop keys: enigo (Windows)"
                 } else {
-                    "hook: not running"
+                    "desktop keys: disabled (Windows only)"
                 };
                 ui.label(egui::RichText::new(status).strong().small());
                 if ui.button("Clear").clicked() {

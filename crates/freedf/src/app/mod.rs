@@ -905,8 +905,6 @@ pub struct FreeDfApp {
     /// 방금 끝난 획의 id — 병합 메시에서 그 획의 정착 렌더 폭을 대조 로그로
     /// 남기기 위한 표식 (진단용).
     last_finished_id: Option<u64>,
-    /// 전역 키 리스너(rdev) + enigo 주입 — 프로세스 수명 동안 유지.
-    _key_hook: key_hook::KeyHook,
     /// 마지막 포커스 요청 시각 — 두 창의 포커스 경쟁(깜빡임) 방지용 쿨다운.
     last_focus_request_ms: u64,
     /// 매크로/단축키 매핑 (Macro 설정 창) — 세션 영속.
@@ -1456,7 +1454,6 @@ impl FreeDfApp {
             pen_verdict: None,
             pen_flat_log_ms: 0,
             last_finished_id: None,
-            _key_hook: key_hook::spawn(),
             last_focus_request_ms: 0,
             lift_cut_logged: false,
             ink_mesh: None,
@@ -1608,7 +1605,7 @@ impl FreeDfApp {
             asking_close: false,
             quitting: false,
         };
-        // Macro 설정을 전역 리스너(rdev)에 반영합니다 (시작 시점).
+        // Macro 매핑 요약을 디버그 로그에 남깁니다 (패널 확인용).
         app.push_macro_config();
         app
     }
@@ -1631,26 +1628,20 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
-    /// 매크로 매핑을 전역 리스너(rdev)에 반영합니다.
+    /// 매크로 매핑 요약을 디버그 로그에 남깁니다 (키 입력은 egui가 직접 처리).
     pub(crate) fn push_macro_config(&self) {
-        key_hook::update_config(key_hook::HookConfig {
-            page_prev: self
-                .macro_cfg
-                .page_enabled
-                .then_some(self.macro_cfg.page_prev),
-            page_next: self
-                .macro_cfg
-                .page_enabled
-                .then_some(self.macro_cfg.page_next),
-            desktop_prev: self
-                .macro_cfg
-                .desktop_enabled
-                .then_some(self.macro_cfg.desktop_prev),
-            desktop_next: self
-                .macro_cfg
-                .desktop_enabled
-                .then_some(self.macro_cfg.desktop_next),
-        });
+        let n = |m: crate::settings::MacroKey, on: bool| {
+            if on { m.label().to_string() } else { "off".into() }
+        };
+        key_hook::hook_log(format!(
+            "macro config → page {}/{} · tab {}/{} · desktop {}/{}",
+            n(self.macro_cfg.page_prev, self.macro_cfg.page_enabled),
+            n(self.macro_cfg.page_next, self.macro_cfg.page_enabled),
+            n(self.macro_cfg.tab_prev, self.macro_cfg.tab_enabled),
+            n(self.macro_cfg.tab_next, self.macro_cfg.tab_enabled),
+            n(self.macro_cfg.desktop_prev, self.macro_cfg.desktop_enabled),
+            n(self.macro_cfg.desktop_next, self.macro_cfg.desktop_enabled),
+        ));
     }
 
     /// 풀 보충을 백그라운드 스레드로 예약 — 원격 왕복이 UI 스레드를 막지 않음.
@@ -2633,26 +2624,40 @@ impl FreeDfApp {
         }
         // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
         // 페이지 키는 Macro 설정 창에서 지정할 수 있고(기본 z/x — 왼손 근거리),
-        // key_hook(rdev → enigo)이 IME/포커스와 무관하게 PgUp/PgDn으로
-        // 번역해 아래 동일 경로로 전달합니다. 마지막 페이지에서는 더 이상
-        // 넘어가지 않습니다 (새 페이지 자동 추가 없음).
+        // 화상 키보드·물리 키보드 모두 egui 이벤트로 도달하므로 여기서 직접
+        // 처리합니다. 마지막 페이지에서는 더 이상 넘어가지 않습니다
+        // (새 페이지 자동 추가 없음).
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
         let typing = ctx.egui_wants_keyboard_input();
         if !typing && !ctrl && !shift {
-            // 매핑된 페이지 키(z/x 등)는 key_hook이 PgUp/PgDn으로 번역해
-            // 주므로, 여기서는 실제 PgUp/PgDn 이벤트만 처리합니다
-            // (이중 페이지 이동 방지).
-            if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageDown))
+                || (self.macro_cfg.page_enabled
+                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_next))
+            {
                 // 브라우저식: 한 뷰포트만 아래로, 끝나면 다음 페이지.
                 // (실제 페이지 전환이면 세로 애니메이션)
                 self.transition_vertical = true;
                 self.page_key(true);
                 self.transition_vertical = false; // (스크롤만 했다면 누수 방지)
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageUp))
+                || (self.macro_cfg.page_enabled
+                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_prev))
+            {
                 self.transition_vertical = true;
                 self.page_key(false);
                 self.transition_vertical = false;
+            }
+            // 가상 데스크탑 매크로 — enigo로 OS에 주입 (검증 순서: Win→Ctrl→화살표).
+            if self.macro_cfg.desktop_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.desktop_next)
+            {
+                key_hook::send_desktop(false);
+            }
+            if self.macro_cfg.desktop_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.desktop_prev)
+            {
+                key_hook::send_desktop(true);
             }
             if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) {
                 self.next_page();
@@ -3178,12 +3183,7 @@ impl eframe::App for FreeDfApp {
             }
             StartupOpenAction::Wait => {}
         }
-        // 텍스트 입력 중이면 Windows 훅이 키를 변환하지 않게 합니다
-        // (z/x/a/s를 타이핑 중에도 그대로 칠 수 있게).
-        key_hook::KEY_TEXT_ACTIVE.store(
-            ctx.egui_wants_keyboard_input(),
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        // (매크로 키는 handle_shortcuts가 egui 이벤트로 직접 처리합니다.)
         self.handle_shortcuts(&ctx);
 
         // ── 스플릿 뷰: 커서가 이 창 위에서 일정 시간(dwell) 활성화되면
