@@ -43,9 +43,11 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_XboxController",
     "Win32_Graphics_Dwm",
 ] }
+# 게임패드 — gilrs의 WGI(Windows.Gaming.Input) 백엔드.
+# XInput보다 넓은 기기 지원(Xbox 외 DualSense·8BitDo 등 WGI 패드).
+gilrs = "0.11"
 # winit 창 → OS hwnd 추출 (winstyle 적용용).
 raw-window-handle = "0.6"
 

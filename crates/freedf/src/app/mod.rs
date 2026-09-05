@@ -27,8 +27,8 @@
 mod actions;
 pub(crate) mod canvas;
 mod dictionary;
+mod gamepad;
 mod input;
-mod xinput;
 pub(crate) mod key_hook;
 pub(crate) mod winstyle;
 mod panels;
@@ -1111,6 +1111,11 @@ pub struct FreeDfApp {
     gamepad_lt_held: bool,
     /// XInput LB+스틱 줌의 히스테리시스 상태 (armed = 한 스텝 사용함).
     gamepad_zoom_armed: bool,
+    /// 게임패드가 처음 인식됐을 때 상태바 안내를 이미 띄웠는지.
+    gamepad_notified: bool,
+    /// 게임패드 인스턴스 (gilrs/WGI) — Windows 전용, 첫 폴링에서 지연 생성.
+    #[cfg(target_os = "windows")]
+    gamepad: Option<gilrs::Gilrs>,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// 다음 페이지 전환을 세로로 할지 (PgUp/PgDn 키가 세팅) — 시작 시 소비
@@ -1570,6 +1575,9 @@ impl FreeDfApp {
             scroll_vel: Vec2::ZERO,
             gamepad_lt_held: false,
             gamepad_zoom_armed: false,
+            gamepad_notified: false,
+            #[cfg(target_os = "windows")]
+            gamepad: None,
             page_anim: None,
             transition_vertical: false,
             prev_texture: None,
