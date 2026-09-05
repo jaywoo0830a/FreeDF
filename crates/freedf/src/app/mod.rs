@@ -28,6 +28,7 @@ mod actions;
 pub(crate) mod canvas;
 mod dictionary;
 mod input;
+mod xinput;
 pub(crate) mod key_hook;
 pub(crate) mod winstyle;
 mod panels;
@@ -1106,6 +1107,10 @@ pub struct FreeDfApp {
     smooth_active: bool,
     /// Trackpad/wheel momentum (points/sec) for inertial panning
     scroll_vel: Vec2,
+    /// XInput LT 트리거가 깊게 당겨진 상태 (에지 감지용).
+    gamepad_lt_held: bool,
+    /// XInput LB+스틱 줌의 히스테리시스 상태 (armed = 한 스텝 사용함).
+    gamepad_zoom_armed: bool,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// 다음 페이지 전환을 세로로 할지 (PgUp/PgDn 키가 세팅) — 시작 시 소비
@@ -1563,6 +1568,8 @@ impl FreeDfApp {
             smooth_p: OneEuroFilter::from_smoothing(0.4),
             smooth_active: false,
             scroll_vel: Vec2::ZERO,
+            gamepad_lt_held: false,
+            gamepad_zoom_armed: false,
             page_anim: None,
             transition_vertical: false,
             prev_texture: None,
@@ -3231,6 +3238,8 @@ impl eframe::App for FreeDfApp {
             StartupOpenAction::Wait => {}
         }
         // (매크로 키는 handle_shortcuts가 egui 이벤트로 직접 처리합니다.)
+        // XInput 컨트롤러 폴링 — 프로세스가 살아있는 동안 매 프레임.
+        self.poll_gamepad(&ctx);
         self.handle_shortcuts(&ctx);
 
         // ── 스플릿 뷰: 커서가 이 창 위에서 일정 시간(dwell) 활성화되면
