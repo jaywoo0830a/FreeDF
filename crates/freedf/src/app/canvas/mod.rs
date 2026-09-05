@@ -142,11 +142,14 @@ fn composite_paper_texture(
     const TEX: usize = 256;
     const SEED: u64 = 0x0B5E_E5ED;
     let tex = freedf_core::paper::paper_texture_rgba(TEX, base, strength, surface, SEED);
-    // 계수 정규화: 타일의 **채널별 평균**이 1.0(=256)이 되도록 맞춥니다.
-    // 프리셋(특히 Lowest)에 따라 텍스처 평균이 어두우면 곱셈이 페이지 전체
-    // 밝기를 깎아 "검은색이 많은" 모습이 되는데, 평균 기준으로 나누면
-    // 흰 배경은 종이 색(base)을 유지하고 그레인은 명암 변조로만 남습니다.
-    // 검은 텍스트는 (0 × x = 0) 그대로 보존됩니다.
+    // 계수 = 256 × (텍셀/타일 평균), 범위 [192, 320]으로 클램프.
+    // - 평균이 정확히 256(=1.0)이라 **페이지 전체 밝기가 절대 드리프트하지
+    //   않습니다** (프리셋과 무관).
+    // - 밝은/어두운 클램프가 대칭이라 비대칭 분포에서도 페이지가 통째로
+    //   검어지지 않습니다 (이전 공식은 종이색(base)을 곱하면서 어두운
+    //   클램프가 비대칭으로 작용해 페이지가 검어졌음).
+    // - 종이 색은 이 합성이 아니라 기존 틴트(노트)가 담당 — 이중 적용 없음.
+    // - 검은 텍스트는 (0 × x = 0) 그대로 보존됩니다.
     let n = (TEX * TEX) as u64;
     let mut mean = [0u64; 3];
     for px in tex.chunks_exact(4) {
@@ -157,9 +160,9 @@ fn composite_paper_texture(
     let mut ratio: Vec<u8> = Vec::with_capacity(TEX * TEX * 3);
     for px in tex.chunks_exact(4) {
         for c in 0..3 {
-            let m = (mean[c] / n.max(1)).max(1) * 255;
-            let r = (px[c] as u64 * base[c] as u64 * 256 / m).min(256);
-            ratio.push(r as u8);
+            let m = (mean[c] / n.max(1)).max(1) as f32;
+            let r = (256.0 * px[c] as f32 / m).clamp(192.0, 320.0);
+            ratio.push(r.round() as u8);
         }
     }
     // 256px 타일 = 페이지 72pt(1인치) — 줌과 함께 확대되고 반복 주기가 넓어
@@ -562,11 +565,10 @@ impl FreeDfApp {
 
         // Paper color tint applied to the page image (colored paper).
         // **노트에만 적용** — 스탠드얼론 PDF는 원본 배경색을 유지합니다.
-        // 종이 질감 합성이 켜져 있으면 질감이 이미 종이 색을 담으므로
-        // 틴트를 이중 적용하지 않습니다.
+        // 종이 질감 합성은 밝기/색을 바꾸지 않으므로(평균 보존 그레인)
+        // 틴트를 항상 적용해도 이중 적용되지 않습니다.
         let paper = self.current_page_paper();
-        let texture_on = self.paper_texture && self.paper_texture_strength > 0.001;
-        let paper_tint = if self.current_note.is_some() && !texture_on {
+        let paper_tint = if self.current_note.is_some() {
             Color32::from_rgba_unmultiplied(
                 paper.color[0],
                 paper.color[1],
