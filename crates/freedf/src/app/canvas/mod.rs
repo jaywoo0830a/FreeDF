@@ -69,10 +69,6 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
     }
 }
 
-/// 진행 중 획 지오메트리 재구성 스로틀 (ms) — 10ms면 100Hz. 사람 눈에는
-/// 충분히 부드럽고(리본이 O(n)으로 저렴), 재구성 비용을 아낍니다.
-const ACTIVE_STROKE_GEOM_MS: u64 = 10;
-
 /// 펜 진단 로그 활성 스위치 — **Debug HUD가 켜져 있을 때만** 로그를 남깁니다
 /// (평소에는 로그 파일/콘솔 I/O 비용 0).
 static PEN_TRACE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

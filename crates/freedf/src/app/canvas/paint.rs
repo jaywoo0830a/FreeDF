@@ -102,7 +102,11 @@ impl FreeDfApp {
                     if let Some(v) = &self.pen_verdict {
                         ui.label(format!("verdict: {v}"));
                     }
-                    ui.label("render: ribbon ≈ O(n) · 10ms 스로틀  (완성 획: 동일 리본)");
+                    let pacing = self.ink_pacing();
+                    ui.label(format!(
+                        "render: ribbon ≈ O(n) · {}Hz preset (re-bake {:.0}ms, soak ×{:.2})",
+                        self.refresh_hz, pacing.active_geom_ms, pacing.soak_scale
+                    ));
                     ui.label(format!("fps: {fps:.0}"));
                     ui.separator();
                     ui.label(format!(
@@ -361,8 +365,8 @@ impl FreeDfApp {
                 ));
             }
         }
-        // ── 10ms 스로틀: 지오메트리 재구성은 최대 100Hz — 그 사이엔
-        // 캐시된 메시를 그대로 다시 그립니다.
+        // ── 재구성 스로틀: 주사율 프리셋을 따릅니다 (60Hz=16ms, 120=8,
+        // 144=7, 240=4) — 그 사이엔 캐시된 메시를 그대로 다시 그립니다.
         let now = now_ms();
         let view_key = (
             self.view.zoom,
@@ -402,7 +406,10 @@ impl FreeDfApp {
                 || k0.2 != view_key.2
                 || k0.3 != view_key.3
                 || k0.4 != view_key.4;
-            if !view_changed && now.saturating_sub(*built_ms) < ACTIVE_STROKE_GEOM_MS {
+            // 스로틀은 주사율 프리셋을 따릅니다 (고주사율 → 더 자주 재구성).
+            if !view_changed
+                && now.saturating_sub(*built_ms) < self.ink_pacing().active_geom_ms
+            {
                 // 새 점이 왔지만 스로틀 안 — 이번 프레임은 기존 메시 그대로.
                 painter.add(egui::Shape::mesh(mesh.clone()));
                 return;
@@ -522,13 +529,26 @@ impl FreeDfApp {
         self.ink_egui_key = None;
     }
 
+    /// 주사율 프리셋 → 페이싱 파라미터 (freedf-canvas 계약).
+    pub(crate) fn ink_pacing(&self) -> freedf_canvas::InkPacing {
+        freedf_canvas::ink_pacing_for(self.refresh_hz)
+    }
+
     /// 병합 굽기에 쓰는 조합형 메셔 스냅샷 — freedf-canvas 경계로 넘깁니다.
+    /// 스밈 정착 시간은 주사율 프리셋으로 배율 조정됩니다 (고주사율에서
+    /// 더 촘촘한 그라데이션 — 정착 판정/알파 계산이 같은 스냅샷을 쓰므로
+    /// 오버레이·워커·sweep이 전부 일관됩니다).
     pub(crate) fn core_mesher(&self) -> freedf_canvas::CoreRibbonMesher {
+        let pacing = self.ink_pacing();
+        let scale_soak = |s: InkSoak| InkSoak {
+            saturate_sec: (s.saturate_sec * pacing.soak_scale).max(0.05),
+            ..s
+        };
         freedf_canvas::CoreRibbonMesher {
             ball: self.pen_profile,
             fountain: self.fountain_profile,
-            pen_soak: self.pen_soak,
-            fountain_soak: self.fountain_soak,
+            pen_soak: scale_soak(self.pen_soak),
+            fountain_soak: scale_soak(self.fountain_soak),
             pen_grain: self.pen_grain,
             fountain_grain: self.fountain_grain,
             tilt_magnitude: tilt_magnitude(&self.pen_tilt),

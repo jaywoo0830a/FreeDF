@@ -47,5 +47,7 @@ pub use ink::{
 pub use scene::{
     Changes, LayerKind, Revision, SceneSnapshot, SceneStore, Stroke, StrokeId, StrokePoint,
 };
-pub use soak::InkSettling;
+pub use soak::{
+    ink_pacing_for, snap_refresh_hz, InkPacing, InkSettling, REFRESH_PRESETS,
+};
 pub use surface::{DrawCommand, FrameAssembler, RecordingSurface, Surface, Transform};

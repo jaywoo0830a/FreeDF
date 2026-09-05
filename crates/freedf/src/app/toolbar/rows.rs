@@ -682,6 +682,35 @@ impl FreeDfApp {
                         }
                         ToolType::Pan => {}
                     }
+                    ui.separator();
+                    // 모니터 주사율 프리셋 — 필기 관련 페이싱(진행 획 재구성
+                    // 주기·잉크 스밈 그라데이션)을 한 번에 바꿉니다.
+                    let mut hz = self.refresh_hz;
+                    let combo = egui::ComboBox::from_id_salt("refresh_hz")
+                        .selected_text(format!("{hz}Hz"))
+                        .show_ui(ui, |ui| {
+                            for preset in freedf_canvas::REFRESH_PRESETS {
+                                let desc = freedf_canvas::ink_pacing_for(preset);
+                                ui.selectable_value(
+                                    &mut hz,
+                                    preset,
+                                    format!(
+                                        "{preset}Hz — re-bake every {:.0}ms, soak ×{:.2}",
+                                        desc.active_geom_ms, desc.soak_scale
+                                    ),
+                                );
+                            }
+                        });
+                    combo.response.on_hover_text(
+                        "Monitor refresh rate — tunes all ink pacing:\n\
+                         higher = smoother strokes & finer soak gradient\n\
+                         (more computation). Match your display's Hz.",
+                    );
+                    if hz != self.refresh_hz {
+                        self.refresh_hz = hz;
+                        self.save_default_session();
+                        self.save_session();
+                    }
                     });
                 });
     }

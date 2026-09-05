@@ -839,6 +839,8 @@ pub struct FreeDfApp {
     debug_hud: bool,
     /// 왼손잡이 여부 — 펜 커서 배럴 방향을 왼쪽 반평면으로 제한.
     left_handed: bool,
+    /// 모니터 주사율 프리셋 (Hz) — 잉크 페이싱(재구성 주기·스밈 시간) 기준.
+    refresh_hz: u32,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
     pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
@@ -935,7 +937,7 @@ pub struct FreeDfApp {
     ink_bake_pending: Option<(usize, u64, u64, usize, f32)>,
     /// 스토어 교체(문서 열기/탭 전환)마다 증가 — 캐시 키 충돌 방지.
     store_generation: u64,
-    /// 진행 중 획의 캐시된 렌더 메시 (본체+후광 합본) — **100ms 스로틀**로
+    /// 진행 중 획의 캐시된 렌더 메시 — **주사율 프리셋 스로틀**(60/120/144/240Hz)로
     /// 재구성하고, 그 사이엔 이 메시를 그대로 다시 그립니다.
     /// (빌드 시각 ms, 점 수, 뷰/설정 키, 메시)
     active_mesh: Option<(
@@ -1259,6 +1261,7 @@ impl FreeDfApp {
         let pressure_enabled = s.tool.pressure_enabled;
         let debug_hud = s.global.debug_hud;
         let left_handed = s.global.left_handed;
+        let refresh_hz = s.global.refresh_hz;
         // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
         let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
@@ -1422,6 +1425,7 @@ impl FreeDfApp {
             pen_tilt: [0.0, 0.0],
             debug_hud,
             left_handed,
+            refresh_hz,
             width_locker: None,
             pen_monitor,
             live_pressure: None,
@@ -2037,6 +2041,7 @@ impl FreeDfApp {
                 debug_hud: self.debug_hud,
                 left_handed: self.left_handed,
                 dictionary_enabled: self.dictionary.enabled,
+                refresh_hz: self.refresh_hz,
             },
         }
     }
@@ -2422,6 +2427,7 @@ impl FreeDfApp {
         self.pressure_enabled = s.tool.pressure_enabled;
         self.debug_hud = s.global.debug_hud;
         self.left_handed = s.global.left_handed;
+        self.refresh_hz = s.global.refresh_hz;
         self.pen_profile = s.pen.profile;
         self.fountain_profile = s.fountain.profile;
         self.page_align = s.view.page_align;

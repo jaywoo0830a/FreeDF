@@ -26,6 +26,54 @@
 
 use crate::scene::{Revision, Stroke};
 
+/// 지원하는 모니터 주사율 프리셋 (Hz) — 낮음 → 높음 순.
+pub const REFRESH_PRESETS: [u32; 4] = [60, 120, 144, 240];
+
+/// 주사율 프리셋 → 잉크 파이프라인 페이싱 파라미터 (계약 테스트로 고정).
+///
+/// 주사율이 높을수록 **더 많은 연산**으로 더 부드러운 필기감을 만듭니다:
+/// - `active_geom_ms` — 진행 중 획 재구성 스로틀 (주사율과 같은 주기).
+/// - `soak_scale` — 스밈 정착 시간 배율. 커지면 같은 진해짐이 더 많은
+///   프레임에 걸쳐 그라데이션되므로 고주사율에서 더 촘촘하게 보입니다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InkPacing {
+    /// 진행 중 획 지오메트리 재구성 스로틀 (ms).
+    pub active_geom_ms: u64,
+    /// 스밈(진해짐) 정착 시간 배율 (60Hz = 1.0 기준).
+    pub soak_scale: f32,
+}
+
+/// 주사율 프리셋의 페이싱 파라미터 (60Hz가 기존 동작과 같은 기준선).
+pub fn ink_pacing_for(hz: u32) -> InkPacing {
+    match hz {
+        120 => InkPacing {
+            active_geom_ms: 8,
+            soak_scale: 1.15,
+        },
+        144 => InkPacing {
+            active_geom_ms: 7,
+            soak_scale: 1.25,
+        },
+        h if h >= 240 => InkPacing {
+            active_geom_ms: 4,
+            soak_scale: 1.5,
+        },
+        _ => InkPacing {
+            active_geom_ms: 16,
+            soak_scale: 1.0,
+        },
+    }
+}
+
+/// 가장 가까운 지원 주사율 프리셋으로 스냅 (저장된 값 보정용).
+pub fn snap_refresh_hz(hz: u32) -> u32 {
+    REFRESH_PRESETS
+        .iter()
+        .copied()
+        .min_by_key(|p| p.abs_diff(hz))
+        .unwrap_or(60)
+}
+
 /// 스밈 정착 추적기 — 앱(`freedf`)의 병합 메시와 스토어 사이의 조정자.
 #[derive(Debug, Clone, Default)]
 pub struct InkSettling {
@@ -220,5 +268,35 @@ mod tests {
         assert_eq!(st.settled, 0);
         assert_eq!(st.rev.0, u64::MAX);
         assert_eq!(st.page, None);
+    }
+
+    #[test]
+    fn pacing_trades_more_work_for_smoothness_as_hz_rises() {
+        let mut prev = ink_pacing_for(60);
+        // 60Hz = 기존 동작과 동일한 기준선.
+        assert_eq!(prev.active_geom_ms, 16);
+        assert_eq!(prev.soak_scale, 1.0);
+        for hz in [120, 144, 240] {
+            let p = ink_pacing_for(hz);
+            assert!(
+                p.active_geom_ms < prev.active_geom_ms,
+                "{hz}Hz는 재구성 주기가 더 짧아야 함"
+            );
+            assert!(
+                p.soak_scale > prev.soak_scale,
+                "{hz}Hz는 스밈 그라데이션이 더 촘촘해야 함"
+            );
+            prev = p;
+        }
+    }
+
+    #[test]
+    fn snap_refresh_returns_nearest_preset() {
+        assert_eq!(snap_refresh_hz(0), 60);
+        assert_eq!(snap_refresh_hz(61), 60);
+        assert_eq!(snap_refresh_hz(100), 120);
+        assert_eq!(snap_refresh_hz(130), 120);
+        assert_eq!(snap_refresh_hz(135), 144);
+        assert_eq!(snap_refresh_hz(999), 240);
     }
 }
