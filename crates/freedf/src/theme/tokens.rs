@@ -72,7 +72,7 @@ pub mod spacing {
     /// Vertical gap between widgets.
     pub const ITEM_Y: f32 = 8.0;
     /// Window / panel margin.
-    pub const WINDOW_MARGIN: i8 = 12;
+    pub const WINDOW_MARGIN: i8 = 14;
     /// Button inner padding `(x, y)`.
     pub const BUTTON_PAD: (f32, f32) = (8.0, 4.0);
     /// Widget corner radius.

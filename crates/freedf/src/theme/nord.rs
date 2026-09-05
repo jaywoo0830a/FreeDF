@@ -54,8 +54,10 @@ pub mod semantic {
     pub const COLOR_SUCCESS: Color32 = colors::NORD14;
 
     // --- Borders -------------------------------------------------------
-    /// Weak border (widget frames, window outline).
+    /// Weak border (widget frames).
     pub const BORDER_WEAK: Color32 = colors::NORD3;
+    /// Window outline — 약간 더 또렷한 경계 (창↔패널 계층 구분).
+    pub const BORDER_WINDOW: Color32 = colors::NORD2;
 
     // --- Page ----------------------------------------------------------
     /// The PDF page background stays white even in dark mode.
@@ -140,7 +142,8 @@ pub fn nord_style() -> egui::Style {
 /// Nord `Visuals` (dark mode).
 fn nord_visuals() -> egui::Visuals {
     use semantic::*;
-    let radius = CornerRadius::same(spacing::CORNER_RADIUS);
+    // 창/메뉴만 더 둥글게 (8px) — 위젯(버튼 등)은 기존 4px 그대로.
+    let radius = CornerRadius::same(8);
     egui::Visuals {
         dark_mode: true,
         hyperlink_color: ACCENT_LINK,
@@ -151,7 +154,7 @@ fn nord_visuals() -> egui::Visuals {
         error_fg_color: COLOR_ERROR,
         window_fill: BG_WINDOW,
         panel_fill: BG_PANEL,
-        window_stroke: Stroke::new(1.0, BORDER_WEAK),
+        window_stroke: Stroke::new(1.0, BORDER_WINDOW),
         widgets: egui::style::Widgets {
             noninteractive: widget(BG_PANEL, TEXT_FAINT),
             inactive: widget(BG_SURFACE, TEXT_PRIMARY),
@@ -163,10 +166,16 @@ fn nord_visuals() -> egui::Visuals {
             bg_fill: ACCENT_SELECT,
             stroke: Stroke::new(1.0, ACCENT_ACTIVE),
         },
-        window_shadow: shadow(96),
-        popup_shadow: shadow(80),
+        // 창 스타일 — 공식 API (Visuals::window_*):
+        // - 더 부드러운 그림자 (깊이감)
+        // - 최상위 창 제목 강조
+        // - 터치/펜용 리사이즈 손잡이 확대
+        window_shadow: shadow(110, 6, 18),
+        popup_shadow: shadow(90, 4, 14),
         window_corner_radius: radius,
         menu_corner_radius: radius,
+        window_highlight_topmost: true,
+        resize_corner_size: 16.0,
         ..Default::default()
     }
 }
@@ -184,11 +193,11 @@ fn widget(bg: Color32, fg: Color32) -> egui::style::WidgetVisuals {
 }
 
 /// Soft drop shadow from black at the given alpha.
-fn shadow(alpha: u8) -> egui::epaint::Shadow {
+fn shadow(alpha: u8, offset_y: i8, blur: u8) -> egui::epaint::Shadow {
     egui::epaint::Shadow {
         color: Color32::from_black_alpha(alpha),
-        offset: [0, 4],
-        blur: 12,
+        offset: [0, offset_y],
+        blur,
         spread: 0,
     }
 }
