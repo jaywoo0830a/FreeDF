@@ -5,6 +5,7 @@
 //! 도구 피커의 드래그 재정렬은 특수 로직이라 원본 egui 코드를 유지합니다.
 
 use super::*;
+use crate::ui::form;
 use crate::ui::{icon_button, icon_label, icon_select, icon_toggle, IconButton};
 
 impl FreeDfApp {
@@ -359,9 +360,13 @@ impl FreeDfApp {
                 // page**; new pages use these values as their defaults.
                 // "Apply to all" pushes the current values onto every page.
                 icon_label(ui, icons::NOTEBOOK, "Paper");
-                egui::ComboBox::from_id_salt("paper_style")
-                    .selected_text(self.paper_style.label())
-                    .show_ui(ui, |ui| {
+                form::select(
+                    ui,
+                    "paper_style",
+                    self.paper_style.label(),
+                    "Paper style for the current page.\n\
+                     New pages & new notes use it as their default.",
+                    |ui| {
                         for style in PaperStyle::all() {
                             let changed = ui
                                 .selectable_value(&mut self.paper_style, style, style.label())
@@ -372,12 +377,8 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
-                    })
-                    .response
-                    .on_hover_text(
-                        "Paper style for the current page.\n\
-                         New pages & new notes use it as their default.",
-                    );
+                    },
+                );
                 for (i, paper) in PAPER_COLORS.iter().enumerate() {
                     let color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
@@ -399,10 +400,7 @@ impl FreeDfApp {
                     self.paper_color[2],
                     self.paper_color[3],
                 );
-                if ui
-                    .color_edit_button_srgba(&mut paper_color)
-                    .on_hover_text("Custom paper color (current page)")
-                    .changed()
+                if form::color(ui, &mut paper_color, "Custom paper color (current page)").changed()
                 {
                     self.paper_color = paper_color.to_array();
                     self.apply_paper_to_current_page();
@@ -500,22 +498,20 @@ impl FreeDfApp {
 
                 match self.tool {
                     ToolType::Pen => {
-                        egui::ComboBox::from_id_salt("family")
-                            .selected_text(self.color_family.label())
-                            .show_ui(ui, |ui| {
-                                for family in ColorFamily::all() {
-                                    if ui
-                                        .selectable_value(
-                                            &mut self.color_family,
-                                            family,
-                                            family.label(),
-                                        )
-                                        .changed()
-                                    {
-                                        self.save_session();
-                                    }
+                        form::select(ui, "family", self.color_family.label(), "", |ui| {
+                            for family in ColorFamily::all() {
+                                if ui
+                                    .selectable_value(
+                                        &mut self.color_family,
+                                        family,
+                                        family.label(),
+                                    )
+                                    .changed()
+                                {
+                                    self.save_session();
                                 }
-                            });
+                            }
+                        });
                         let swatches = Palette::swatches(self.color_family);
                         // Round color swatches forming a neat color bar.
                         for (i, swatch) in swatches.iter().enumerate() {
@@ -542,22 +538,20 @@ impl FreeDfApp {
                             self.pen_color[2],
                             self.pen_color[3],
                         );
-                        if ui
-                            .color_edit_button_srgba(&mut pen_color)
-                            .on_hover_text("Custom pen color")
-                            .changed()
-                        {
+                        if form::color(ui, &mut pen_color, "Custom pen color").changed() {
                             self.pen_color = pen_color.to_array();
                             self.save_default_session();
                             self.save_session();
                         }
                         // Width 슬라이더 툴팁.
-                        let width_resp = ui
-                            .add(egui::Slider::new(&mut self.pen_width, 0.5..=12.0).text("Width"))
-                            .on_hover_text(
-                                "Base line width (pt). The ballpen model varies it only \
-                                 a little (±30%) by pressure & speed.",
-                            );
+                        let width_resp = form::range(
+                            ui,
+                            &mut self.pen_width,
+                            0.5..=12.0,
+                            "Width",
+                            "Base line width (pt). The ballpen model varies it only \
+                             a little (±30%) by pressure & speed.",
+                        );
                         if width_resp.changed() {
                             self.save_session();
                         }
@@ -573,22 +567,24 @@ impl FreeDfApp {
                         {
                             self.tool_settings_open = true;
                         }
-                        if ui
-                            .checkbox(&mut self.pressure_enabled, "Pressure")
-                            .on_hover_text(
-                                "Use pen/tablet pressure. Off = always full pressure.",
-                            )
-                            .changed()
+                        if form::check(
+                            ui,
+                            &mut self.pressure_enabled,
+                            "Pressure",
+                            "Use pen/tablet pressure. Off = always full pressure.",
+                        )
+                        .changed()
                         {
                             self.save_session();
                         }
-                        if ui
-                            .checkbox(&mut self.left_handed, "Left-handed")
-                            .on_hover_text(
-                                "Pen cursor barrel points to the LEFT half-plane\n\
-                                 (right-handed = right half-plane).",
-                            )
-                            .changed()
+                        if form::check(
+                            ui,
+                            &mut self.left_handed,
+                            "Left-handed",
+                            "Pen cursor barrel points to the LEFT half-plane\n\
+                             (right-handed = right half-plane).",
+                        )
+                        .changed()
                         {
                             self.save_default_session();
                             self.save_session();
@@ -620,24 +616,19 @@ impl FreeDfApp {
                             self.fountain_color[2],
                             self.fountain_color[3],
                         );
-                        if ui
-                            .color_edit_button_srgba(&mut fountain_color)
-                            .on_hover_text("Custom ink color")
-                            .changed()
-                        {
+                        if form::color(ui, &mut fountain_color, "Custom ink color").changed() {
                             self.fountain_color = fountain_color.to_array();
                             self.save_default_session();
                             self.save_session();
                         }
-                        let nib_resp = ui
-                            .add(
-                                egui::Slider::new(&mut self.fountain_width, 0.5..=12.0)
-                                    .text("Nib"),
-                            )
-                            .on_hover_text(
-                                "Nib width = maximum line width (pt).\n\
-                                 The model varies it by pressure, speed and tilt.",
-                            );
+                        let nib_resp = form::range(
+                            ui,
+                            &mut self.fountain_width,
+                            0.5..=12.0,
+                            "Nib",
+                            "Nib width = maximum line width (pt).\n\
+                             The model varies it by pressure, speed and tilt.",
+                        );
                         if nib_resp.changed() {
                             self.save_session();
                         }
@@ -680,31 +671,29 @@ impl FreeDfApp {
                             self.hi_color[2],
                             self.hi_color[3],
                         );
-                        if ui.color_edit_button_srgba(&mut color).changed() {
+                        if form::color(ui, &mut color, "").changed() {
                             self.hi_color = color.to_array();
                             self.save_session();
                         }
-                        if ui
-                            .add(egui::Slider::new(&mut self.hi_width, 4.0..=40.0).text("Width"))
-                            .changed()
+                        if form::range(ui, &mut self.hi_width, 4.0..=40.0, "Width", "").changed()
                         {
                             self.save_session();
                         }
-                        if ui
-                            .checkbox(&mut self.text_highlight_snap, "Snap to text")
-                            .on_hover_text(
-                                "Highlight the recognized document text your stroke touches\n\
-                                 (off = freehand translucent stroke)",
-                            )
-                            .changed()
+                        if form::check(
+                            ui,
+                            &mut self.text_highlight_snap,
+                            "Snap to text",
+                            "Highlight the recognized document text your stroke touches\n\
+                             (off = freehand translucent stroke)",
+                        )
+                        .changed()
                         {
                             self.save_default_session();
                             self.save_session();
                         }
                     }
                     ToolType::Eraser => {
-                        if ui
-                            .add(egui::Slider::new(&mut self.eraser_radius, 4.0..=60.0).text("Radius"))
+                        if form::range(ui, &mut self.eraser_radius, 4.0..=60.0, "Radius", "")
                             .changed()
                         {
                             self.save_session();
@@ -716,9 +705,14 @@ impl FreeDfApp {
                 // 모니터 주사율 프리셋 — 필기 관련 페이싱(진행 획 재구성
                 // 주기·잉크 스밈 그라데이션)을 한 번에 바꿉니다.
                 let mut hz = self.refresh_hz;
-                let combo = egui::ComboBox::from_id_salt("refresh_hz")
-                    .selected_text(format!("{hz}Hz"))
-                    .show_ui(ui, |ui| {
+                form::select(
+                    ui,
+                    "refresh_hz",
+                    format!("{hz}Hz"),
+                    "Monitor refresh rate — tunes all ink pacing:\n\
+                     higher = smoother strokes & finer soak gradient\n\
+                     (more computation). Match your display's Hz.",
+                    |ui| {
                         for preset in freedf_canvas::REFRESH_PRESETS {
                             let desc = freedf_canvas::ink_pacing_for(preset);
                             ui.selectable_value(
@@ -730,11 +724,7 @@ impl FreeDfApp {
                                 ),
                             );
                         }
-                    });
-                combo.response.on_hover_text(
-                    "Monitor refresh rate — tunes all ink pacing:\n\
-                     higher = smoother strokes & finer soak gradient\n\
-                     (more computation). Match your display's Hz.",
+                    },
                 );
                 if hz != self.refresh_hz {
                     self.refresh_hz = hz;

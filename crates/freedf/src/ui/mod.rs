@@ -17,6 +17,8 @@
 //! 모든 컴포넌트는 툴팁(`hint`)을 내장합니다 — 호출부에서 반복하던
 //! `.on_hover_text(...)`를 props로 옮겼습니다.
 
+pub(crate) mod form;
+
 use eframe::egui;
 use egui_phosphor_icons::Icon;
 
@@ -106,4 +108,46 @@ pub(crate) fn icon_select(
 /// 아이콘+라벨 텍스트 (그룹 제목).
 pub(crate) fn icon_label(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
     ui.label(crate::app::icon_text(ui, label, icon))
+}
+
+/// 체크박스 + 툴팁 — `.changed()`로 판정.
+pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool, label: &str, hint: &str) -> egui::Response {
+    ui.checkbox(on, label).on_hover_text(hint)
+}
+
+/// 슬라이더 + 툴팁 — `.changed()`로 판정.
+#[allow(dead_code)] // 설정 창 리팩토링에서 사용.
+pub(crate) fn slider(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    text: &str,
+    hint: &str,
+) -> egui::Response {
+    ui.add(egui::Slider::new(value, range).text(text))
+        .on_hover_text(hint)
+}
+
+/// 일반 텍스트 버튼 + 툴팁 — `.clicked()`로 판정.
+pub(crate) fn action(ui: &mut egui::Ui, label: &str, hint: &str) -> egui::Response {
+    ui.button(label).on_hover_text(hint)
+}
+
+/// 펼침 섹션 (CollapsingHeader 래퍼 — id/default_open을 props로).
+pub(crate) fn section<R>(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    title: &str,
+    default_open: bool,
+    children: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::collapsing_header::CollapsingResponse<R> {
+    egui::CollapsingHeader::new(title)
+        .id_salt(id_salt)
+        .default_open(default_open)
+        .show(ui, children)
+}
+
+/// 약한 설명 텍스트 — 반복되던 `.weak().small()` 패턴의 컴포넌트.
+pub(crate) fn hint(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(egui::RichText::new(text).weak().small())
 }

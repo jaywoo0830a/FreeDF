@@ -9,11 +9,10 @@ impl FreeDfApp {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
         ui.add_space(2.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.library_filter)
-                .hint_text("Search notes & files…")
-                .desired_width(f32::INFINITY),
-        );
+        crate::ui::form::text(&mut self.library_filter)
+            .hint("Search notes & files…")
+            .width(f32::INFINITY)
+            .show(ui);
         ui.add_space(4.0);
         ui.separator();
 
@@ -81,9 +80,7 @@ impl FreeDfApp {
                         let mut sel = self.sel_notes.contains(&(*id as i64));
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                            if ui
-                                .checkbox(&mut sel, "")
-                                .on_hover_text("Select for multi-delete")
+                            if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
                                 if sel {
@@ -147,9 +144,7 @@ impl FreeDfApp {
                         let mut sel = f.doc_id.is_some_and(|d| self.sel_pdfs.contains(&d));
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                            if ui
-                                .checkbox(&mut sel, "")
-                                .on_hover_text("Select for multi-delete")
+                            if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
                                 if let Some(d) = f.doc_id {

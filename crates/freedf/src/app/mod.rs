@@ -1633,6 +1633,15 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
+    /// 설정 UI 공용 — 변경이 있으면 기본 세션 + 문서 세션을 함께 저장.
+    /// (설정 창마다 반복되던 save 쌍을 한 곳으로.)
+    pub(crate) fn persist_if(&mut self, changed: bool) {
+        if changed {
+            self.save_default_session();
+            self.save_session();
+        }
+    }
+
     /// 매크로 매핑 요약을 디버그 로그에 남기고, 전역 리스너에
     /// 데스크탑 설정을 반영합니다 (키 입력은 egui가 직접 처리).
     pub(crate) fn push_macro_config(&self) {
@@ -1899,19 +1908,16 @@ impl FreeDfApp {
             }
             ui.horizontal(|ui| {
                 ui.label("Server URL");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.media_config.base_url)
-                        .hint_text("https://your-server.example.com")
-                        .desired_width(330.0),
-                );
+                crate::ui::form::text(&mut self.media_config.base_url)
+                    .hint("https://your-server.example.com")
+                    .width(330.0)
+                    .show(ui);
             });
             ui.horizontal(|ui| {
                 ui.label("API key");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.media_config.api_key)
-                        .password(true)
-                        .desired_width(330.0),
-                );
+                crate::ui::form::password(&mut self.media_config.api_key)
+                    .width(330.0)
+                    .show(ui);
             });
             ui.horizontal(|ui| {
                 let label = if self.db_connected {
@@ -3068,11 +3074,10 @@ impl FreeDfApp {
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
                         ui.label(hint);
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut text)
-                                .hint_text("Type here...")
-                                .desired_width(360.0),
-                        );
+                        let resp = crate::ui::form::text(&mut text)
+                            .hint("Type here...")
+                            .width(360.0)
+                            .show(ui);
                         if matches!(action, TextAction::NewNote) {
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {

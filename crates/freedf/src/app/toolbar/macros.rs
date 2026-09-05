@@ -5,9 +5,12 @@
 //! 키 입력은 **egui 이벤트**로 받고(화상 키보드·물리 키보드 모두 도달),
 //! 데스크탑 조합만 enigo(key_hook)로 OS에 주입합니다.
 //! 기본 배치: q/w = 데스크탑, a/s = 탭, z/x = 페이지 (왼손 홈 로우).
+//!
+//! 컨트롤은 공용 컴포넌트(`crate::ui`)로 렌더링합니다 — 여기는 상태 연결만.
 
 use super::*;
 use crate::settings::MacroKey;
+use crate::ui::{action, check, hint, section};
 
 /// 캡처 중인 매핑 슬롯 (어떤 단축키를 다시 지정하는 중인지).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,19 +45,17 @@ impl FreeDfApp {
                 .strong()
                 .size(16.0),
         );
-        ui.label(
-            egui::RichText::new(
-                "Click a key button, then press the key to assign it (Esc cancels).",
-            )
-            .weak()
-            .small(),
+        hint(
+            ui,
+            "Click a key button, then press the key to assign it (Esc cancels).",
         );
         {
             let (dp, dn) = (self.macro_cfg.desktop_prev, self.macro_cfg.desktop_next);
             let (tp, tn) = (self.macro_cfg.tab_prev, self.macro_cfg.tab_next);
             let (pp, pn) = (self.macro_cfg.page_prev, self.macro_cfg.page_next);
-            ui.label(
-                egui::RichText::new(format!(
+            hint(
+                ui,
+                &format!(
                     "{}/{} → desktop · {}/{} → tab · {}/{} → page",
                     dp.label(),
                     dn.label(),
@@ -62,17 +63,19 @@ impl FreeDfApp {
                     tn.label(),
                     pp.label(),
                     pn.label()
-                ))
-                .weak()
-                .small(),
+                ),
             );
         }
         ui.separator();
 
         // ── 페이지 이동 (왼손 키보드 + 오른손 펜) ──
-        if ui
-            .checkbox(&mut self.macro_cfg.page_enabled, "Enable page keys")
-            .changed()
+        if check(
+            ui,
+            &mut self.macro_cfg.page_enabled,
+            "Enable page keys",
+            "",
+        )
+        .changed()
         {
             self.macro_changed();
         }
@@ -85,21 +88,15 @@ impl FreeDfApp {
                 self.key_button(ui, MacroSlot::PageNext, &pn);
             });
         });
-        ui.label(
-            egui::RichText::new(
-                "Works while the pen is in your right hand — these keys work with \
-                 both physical and on-screen keyboards.",
-            )
-            .weak()
-            .small(),
+        hint(
+            ui,
+            "Works while the pen is in your right hand — these keys work with \
+             both physical and on-screen keyboards.",
         );
         ui.separator();
 
         // ── 탭 전환 (이 창 안에서) ──
-        if ui
-            .checkbox(&mut self.macro_cfg.tab_enabled, "Enable tab keys")
-            .changed()
-        {
+        if check(ui, &mut self.macro_cfg.tab_enabled, "Enable tab keys", "").changed() {
             self.macro_changed();
         }
         ui.add_enabled_ui(self.macro_cfg.tab_enabled, |ui| {
@@ -115,12 +112,13 @@ impl FreeDfApp {
 
         // ── Windows 가상 데스크탑 전환 ──
         ui.label(egui::RichText::new("Virtual desktops (Windows)").strong());
-        if ui
-            .checkbox(
-                &mut self.macro_cfg.desktop_enabled,
-                "Send Ctrl+Win+←/→ to switch virtual desktops",
-            )
-            .changed()
+        if check(
+            ui,
+            &mut self.macro_cfg.desktop_enabled,
+            "Send Ctrl+Win+←/→ to switch virtual desktops",
+            "",
+        )
+        .changed()
         {
             self.macro_changed();
         }
@@ -132,34 +130,27 @@ impl FreeDfApp {
                 ui.label("Next desktop");
                 self.key_button(ui, MacroSlot::DesktopNext, &dn);
             });
-            if ui
-                .checkbox(
-                    &mut self.macro_cfg.desktop_focus_only,
-                    "Activate on focus",
-                )
-                .changed()
+            if check(
+                ui,
+                &mut self.macro_cfg.desktop_focus_only,
+                "Activate on focus",
+                "",
+            )
+            .changed()
             {
                 self.macro_changed();
             }
         });
-        ui.label(
-            egui::RichText::new(
-                "On: keys switch desktops only while FreeDF is focused. \
-                 Off: they work from any app (physical keyboard only — on-screen \
-                 keyboards bypass OS hooks). Requires 2+ virtual desktops (Win+Tab).",
-            )
-            .weak()
-            .small(),
+        hint(
+            ui,
+            "On: keys switch desktops only while FreeDF is focused. \
+             Off: they work from any app (physical keyboard only — on-screen \
+             keyboards bypass OS hooks). Requires 2+ virtual desktops (Win+Tab).",
         );
         ui.separator();
 
         // ── Hook 디버그 로그 ──
-        egui::CollapsingHeader::new(
-            egui::RichText::new("Hook debug log")
-                .strong()
-                .size(13.0),
-        )
-        .show(ui, |ui| {
+        section(ui, "hook_log_section", "Hook debug log", false, |ui| {
             ui.horizontal(|ui| {
                 let status = if crate::app::key_hook::pipeline_enabled() {
                     "desktop keys: enigo (Windows)"
@@ -167,10 +158,10 @@ impl FreeDfApp {
                     "desktop keys: disabled (Windows only)"
                 };
                 ui.label(egui::RichText::new(status).strong().small());
-                if ui.button("Clear").clicked() {
+                if action(ui, "Clear", "Clear the log").clicked() {
                     crate::app::key_hook::hook_log_clear();
                 }
-                if ui.button("Copy").clicked() {
+                if action(ui, "Copy", "Copy the log to the clipboard").clicked() {
                     let text = crate::app::key_hook::hook_log_snapshot().join("\n");
                     ui.ctx().copy_text(text);
                 }
@@ -184,11 +175,9 @@ impl FreeDfApp {
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
                     if lines.is_empty() {
-                        ui.label(
-                            egui::RichText::new(
-                                "(no events yet — press a mapped key while FreeDF is focused)",
-                            )
-                            .weak(),
+                        hint(
+                            ui,
+                            "(no events yet — press a mapped key while FreeDF is focused)",
                         );
                     }
                     for l in &lines {
@@ -240,8 +229,7 @@ impl FreeDfApp {
     /// 매핑 변경 공통 처리 — 훅 반영 + 세션 저장.
     fn macro_changed(&mut self) {
         self.push_macro_config();
-        self.save_default_session();
-        self.save_session();
+        self.persist_if(true);
     }
 
     /// 단일 키 캡처 버튼.

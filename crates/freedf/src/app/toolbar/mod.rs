@@ -5,6 +5,7 @@
 //! - [`settings`]: 설정 창 내용(펜/만년필/휠/캔버스/종이/서버)과 창 렌더
 
 pub(crate) use super::*;
+use crate::ui::form;
 
 /// 일반 펜(볼펜) 물리 모델의 실제 결과를 보여주는 미니 스트로크 미리보기.
 fn pen_profile_preview(
@@ -99,36 +100,49 @@ fn fountain_profile_preview(
 /// 잉크 질감(입체적 불균일) 커스텀 컨트롤 — 볼펜/만년필 공용.
 /// 변경이 있으면 `true`를 반환합니다 (호출자가 세션 저장).
 fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
-    let mut changed = ui
-        .checkbox(&mut grain.enabled, "Ink grain")
-        .on_hover_text(
-            "Real ink is never perfectly uniform — enable a subtle, stable \
-             texture: flow waves, fiber wicking, start blobs and darker edges.",
+    let mut changed = form::check(
+        ui,
+        &mut grain.enabled,
+        "Ink grain",
+        "Real ink is never perfectly uniform — enable a subtle, stable \
+         texture: flow waves, fiber wicking, start blobs and darker edges.",
+    )
+    .changed();
+    if grain.enabled {
+        changed |= form::range(
+            ui,
+            &mut grain.flow_amp,
+            0.0..=0.4,
+            "Flow",
+            "Low-frequency ink-flow waves along the stroke (amplitude).",
         )
         .changed();
-    if grain.enabled {
-        changed |= ui
-            .add(egui::Slider::new(&mut grain.flow_amp, 0.0..=0.4).text("Flow"))
-            .on_hover_text("Low-frequency ink-flow waves along the stroke (amplitude).")
-            .changed();
-        changed |= ui
-            .add(egui::Slider::new(&mut grain.wick_amp, 0.0..=0.4).text("Wick"))
-            .on_hover_text(
-                "Fine fiber-wicking speckle (amplitude) — typically bigger \
-                 for fountain ink than ballpen ink.",
-            )
-            .changed();
-        changed |= ui
-            .add(egui::Slider::new(&mut grain.pooling, 0.0..=0.6).text("Pooling"))
-            .on_hover_text(
-                "Ink pooling strength: start blob / end bead (ballpen), \
-                 start & end pools (fountain).",
-            )
-            .changed();
-        changed |= ui
-            .add(egui::Slider::new(&mut grain.starvation, 0.0..=0.6).text("Starvation"))
-            .on_hover_text("How much fast writing lightens the ink (mainly fountain).")
-            .changed();
+        changed |= form::range(
+            ui,
+            &mut grain.wick_amp,
+            0.0..=0.4,
+            "Wick",
+            "Fine fiber-wicking speckle (amplitude) — typically bigger \
+             for fountain ink than ballpen ink.",
+        )
+        .changed();
+        changed |= form::range(
+            ui,
+            &mut grain.pooling,
+            0.0..=0.6,
+            "Pooling",
+            "Ink pooling strength: start blob / end bead (ballpen), \
+             start & end pools (fountain).",
+        )
+        .changed();
+        changed |= form::range(
+            ui,
+            &mut grain.starvation,
+            0.0..=0.6,
+            "Starvation",
+            "How much fast writing lightens the ink (mainly fountain).",
+        )
+        .changed();
         changed |= ui
             .add(egui::DragValue::new(&mut grain.seed).range(0..=65535))
             .on_hover_text(
