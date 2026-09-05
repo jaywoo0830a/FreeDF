@@ -59,11 +59,10 @@ fn stick_axis_x(v: f32) -> f32 {
     }
 }
 
-/// 스틱 Y 축 — gilrs 규약은 아래=+(evdev ABS_Y)라 위=+로 뒤집고,
-/// 데드존을 잘라냅니다.
+/// 스틱 Y 축 — gilrs 규약은 위=+ (WGI 백엔드가 -1.0 곱해 통일)라
+/// 그대로 쓰고 데드존만 잘라냅니다.
 #[cfg(target_os = "windows")]
 fn stick_axis_y(v: f32) -> f32 {
-    let v = -v;
     if v.abs() < 0.06 {
         0.0
     } else {
@@ -133,13 +132,15 @@ impl FreeDfApp {
             }
         }
         let (_, pad) = gilrs.gamepads().next()?;
+        // gilrs 이름 주의: `LeftTrigger` = BTN_TL = **범퍼(LB)**,
+        // `LeftTrigger2` = BTN_TL2 = **아날로그 트리거(LT)** — Xbox 규약과 반대.
         Some(Gamepad {
             stick: egui::vec2(
                 stick_axis_x(pad.value(Axis::LeftStickX)),
                 stick_axis_y(pad.value(Axis::LeftStickY)),
             ),
-            lb: pad.is_pressed(Button::LeftTrigger2),
-            lt: pad.button_data(Button::LeftTrigger).map(|d| d.value()).unwrap_or(0.0),
+            lb: pad.is_pressed(Button::LeftTrigger),
+            lt: pad.button_data(Button::LeftTrigger2).map(|d| d.value()).unwrap_or(0.0),
             d_up: pad.is_pressed(Button::DPadUp),
             d_down: pad.is_pressed(Button::DPadDown),
             d_left: pad.is_pressed(Button::DPadLeft),
