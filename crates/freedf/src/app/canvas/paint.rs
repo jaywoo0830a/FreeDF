@@ -500,148 +500,80 @@ impl FreeDfApp {
         origin: Pos2,
         now: u64,
     ) -> Option<std::sync::Arc<egui::Mesh>> {
-        let view = self.view;
-        let to_view = |p: [f32; 2]| -> Pos2 {
-            let v = view.page_to_view(p);
-            egui::pos2(origin.x + v[0], origin.y + v[1])
-        };
-        let pen_soak = self.pen_soak;
-        let fountain_soak = self.fountain_soak;
-        let ball = self.pen_profile;
-        let fountain = self.fountain_profile;
-        let pen_grain = self.pen_grain;
-        let fountain_grain = self.fountain_grain;
-        let tilt = tilt_magnitude(&self.pen_tilt);
-        let feather_pt = 1.0 / view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
-
-        // 1차 패스: 다음 재구성 시각 — **점별** (그 점이 닿은 시각 +
-        // 포화 시간). 스밈이 켜진 볼펜/만년필 획 전부 포함.
-        let mut next_settle = u64::MAX;
-        for s in strokes {
-            let soak = if s.tool == ToolType::Fountain {
-                fountain_soak
-            } else if s.tool == ToolType::Pen {
-                pen_soak
-            } else {
-                continue;
-            };
-            if !soak.enabled {
-                continue;
-            }
-            let deadline = (soak.saturate_sec.max(1e-3) * 1000.0) as u64;
-            for p in &s.points {
-                if p.t_ms > 0 {
-                    let settle_ms = p.t_ms.saturating_add(deadline);
-                    if now < settle_ms {
-                        next_settle = next_settle.min(settle_ms);
-                    }
-                }
-            }
-        }
-        self.ink_next_settle_ms = next_settle;
-
+        let params = self.bake_params();
+        let pan = [self.view.pan_x, self.view.pan_y];
         let mut mesh = egui::Mesh::default();
-        for s in strokes {
-            if s.points.is_empty() {
-                continue;
-            }
-            let color = Color32::from_rgba_unmultiplied(
-                s.color[0],
-                s.color[1],
-                s.color[2],
-                s.color[3],
-            );
-            let pts_pt: Vec<[f32; 2]> = s.points.iter().map(|p| [p.x, p.y]).collect();
-            let halves = stroke_halves(s.tool, s.width, &s.points, &ball, &fountain, tilt);
-            let round_caps = matches!(s.tool, ToolType::Pen | ToolType::Fountain);
-            if Some(s.id) == self.last_finished_id {
-                self.last_finished_id = None;
-                if pen_trace_on() {
-                    // 진단: 방금 끝난 획의 **정착 렌더** 폭 — ACTIVE-RENDER 로그와
-                    // 대조해서 펜업 순간 뭐가 바뀌는지 확인.
-                    let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
-                    for h in &halves {
-                        hmn = hmn.min(*h);
-                        hmx = hmx.max(*h);
-                    }
-                    pen_trace(&format!(
-                        "SETTLED-RENDER: id={} n={} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
-                        s.id,
-                        s.points.len(),
-                        s.points[0].width,
-                        s.points[s.points.len() - 1].width
-                    ));
-                }
-            }
-            // 잉크 스밈(도구별) + 질감 불균일 합성 — 좌우 정점 알파에
-            // [포화 램프 × 밀도]를 곱합니다. 굵기는 쓴 그대로.
-            let soak = if s.tool == ToolType::Fountain {
-                fountain_soak
-            } else {
-                pen_soak
-            };
-            let soak_on = soak.enabled;
-            let alphas: Option<Vec<[f32; 2]>> =
-                if matches!(s.tool, ToolType::Pen | ToolType::Fountain) {
-                    let grain = if s.tool == ToolType::Fountain {
-                        fountain_grain
-                    } else {
-                        pen_grain
-                    };
-                    let created = if s.created_ms > 0 { s.created_ms } else { s.id };
-                    let grain = ink_seed(grain, created);
-                    let dens = stroke_ink_lr(s.tool, &s.points, grain);
-                    Some(
-                        s.points
-                            .iter()
-                            .enumerate()
-                            .map(|(i, p)| {
-                                let sat = if soak_on {
-                                    let age = if p.t_ms == 0 {
-                                        soak.saturate_sec
-                                    } else {
-                                        (now.saturating_sub(p.t_ms)) as f32 / 1000.0
-                                    };
-                                    soak.sat_at(age)
-                                } else {
-                                    1.0
-                                };
-                                [
-                                    combine_saturation(sat, dens[i][0]),
-                                    combine_saturation(sat, dens[i][1]),
-                                ]
-                            })
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
-            append_ribbon(
-                &mut mesh,
-                &freedf_core::pen::stroke_ribbon_lr(
-                    &pts_pt,
-                    &halves,
-                    feather_pt,
-                    round_caps,
-                    alphas.as_deref(),
-                ),
-                &to_view,
-                color,
-            );
-        }
+        let settle = append_stroke_ribbons(
+            &mut mesh,
+            strokes,
+            origin,
+            pan,
+            params,
+            &mut self.last_finished_id,
+            now,
+        );
+        self.ink_next_settle_ms = settle;
         Some(std::sync::Arc::new(mesh))
     }
 
-    /// 병합 잉크 메시를 다시 만들어야 하는지 — 뷰/페이지/스트로크/설정이
+    /// 이미 구워진 병합 메시에 **새 획만** 증분 추가합니다 — 획 커밋마다
+    /// 페이지 전체를 재테셀레이션하면(이전 컬링 제거 후 발생) 필기 사이
+    /// 버벅임이 생기므로, 새 리본만 붙여 O(신규 획) 비용으로 유지합니다.
+    /// 좌표는 **구운 시점의 pan**(`ink_baked_pan`) 기준 — 그리는 쪽이
+    /// (현재 pan − baked pan)만큼 정점을 평행 이동하므로 어긋나지 않습니다.
+    pub(crate) fn append_ink_strokes(
+        &mut self,
+        strokes: &[freedf_core::model::Stroke],
+        origin: Pos2,
+        baked_pan: [f32; 2],
+        now: u64,
+    ) {
+        let params = self.bake_params();
+        let settle = {
+            let Some(arc) = self.ink_mesh.as_mut() else {
+                return;
+            };
+            let mesh = std::sync::Arc::make_mut(arc);
+            append_stroke_ribbons(
+                mesh,
+                strokes,
+                origin,
+                baked_pan,
+                params,
+                &mut self.last_finished_id,
+                now,
+            )
+        };
+        self.ink_next_settle_ms = self.ink_next_settle_ms.min(settle);
+        self.ink_built_at = now;
+        self.ink_baked_rev = self.store.rev();
+        self.ink_baked_count = self.store.stroke_count_on(self.current_page);
+    }
+
+    /// 리본 굽기 스냅샷 파라미터 (전체/증분 경로가 같은 값으로 구워야 함).
+    fn bake_params(&self) -> BakeParams {
+        BakeParams {
+            zoom: self.view.zoom,
+            pen_soak: self.pen_soak,
+            fountain_soak: self.fountain_soak,
+            ball: self.pen_profile,
+            fountain: self.fountain_profile,
+            pen_grain: self.pen_grain,
+            fountain_grain: self.fountain_grain,
+            tilt: tilt_magnitude(&self.pen_tilt),
+        }
+    }
+
+    /// 병합 잉크 메시를 다시 만들어야 하는지 — 뷰/페이지/세대/설정이
     /// 바뀌었거나, 아직 번지고 있는(젊은) 블리드가 있거나, 방금 정착된
     /// 블리드가 있을 때만 재구성합니다.
+    /// (rev는 키에 없음 — 신규 획은 `append_ink_strokes` 증분으로 처리.)
     pub(crate) fn ink_needs_rebuild(&self, now: u64) -> bool {
         if self.ink_mesh.is_none() {
             return true;
         }
         let key = (
             self.current_page,
-            self.store.rev(),
             self.store_generation,
             self.view.zoom,
             self.pen_soak,
@@ -907,4 +839,159 @@ impl FreeDfApp {
             }
         }
     }
+}
+
+/// 리본 굽기에 필요한 스냅샷 파라미터 — 전체/증분 경로가 같은 값으로
+/// 구워야 화면이 갈라지지 않습니다 (전부 Copy).
+#[derive(Clone, Copy)]
+pub(crate) struct BakeParams {
+    pub(crate) zoom: f32,
+    pub(crate) pen_soak: InkSoak,
+    pub(crate) fountain_soak: InkSoak,
+    pub(crate) ball: BallPenProfile,
+    pub(crate) fountain: FountainProfile,
+    pub(crate) pen_grain: InkGrain,
+    pub(crate) fountain_grain: InkGrain,
+    /// 펜 틸트 크기 (도) — 리본 폭 모델에 반영.
+    pub(crate) tilt: f32,
+}
+
+/// 스트로크들을 리본 지오메트리로 변환해 `mesh`에 추가하고, 이 스트로크들의
+/// 다음 블리드 정착 시각(u64::MAX = 없음)을 반환합니다.
+///
+/// 좌표는 **전달받은 `pan` 기준**(구운 시점의 pan) — 그리는 쪽이
+/// (현재 pan − baked pan)만큼 정점을 평행 이동하므로, 증분 append 때도
+/// `ink_baked_pan`을 그대로 전달해야 어긋나지 않습니다.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn append_stroke_ribbons(
+    mesh: &mut egui::Mesh,
+    strokes: &[freedf_core::model::Stroke],
+    origin: Pos2,
+    pan: [f32; 2],
+    params: BakeParams,
+    last_finished_id: &mut Option<u64>,
+    now: u64,
+) -> u64 {
+    let zoom = params.zoom;
+    let to_view = |p: [f32; 2]| -> Pos2 {
+        egui::pos2(origin.x + p[0] * zoom + pan[0], origin.y + p[1] * zoom + pan[1])
+    };
+    let feather_pt = 1.0 / zoom.max(1e-3); // 화면 1px에 해당하는 pt
+
+    let mut next_settle = u64::MAX;
+    for s in strokes {
+        // 다음 재구성 시각 — **점별** (그 점이 닿은 시각 + 포화 시간).
+        if matches!(s.tool, ToolType::Pen | ToolType::Fountain) {
+            let soak = if s.tool == ToolType::Fountain {
+                params.fountain_soak
+            } else {
+                params.pen_soak
+            };
+            if soak.enabled {
+                let deadline = (soak.saturate_sec.max(1e-3) * 1000.0) as u64;
+                for p in &s.points {
+                    if p.t_ms > 0 {
+                        let settle_ms = p.t_ms.saturating_add(deadline);
+                        if now < settle_ms {
+                            next_settle = next_settle.min(settle_ms);
+                        }
+                    }
+                }
+            }
+        }
+        if s.points.is_empty() {
+            continue;
+        }
+        let color = Color32::from_rgba_unmultiplied(
+            s.color[0],
+            s.color[1],
+            s.color[2],
+            s.color[3],
+        );
+        let pts_pt: Vec<[f32; 2]> = s.points.iter().map(|p| [p.x, p.y]).collect();
+        let halves = stroke_halves(
+            s.tool,
+            s.width,
+            &s.points,
+            &params.ball,
+            &params.fountain,
+            params.tilt,
+        );
+        let round_caps = matches!(s.tool, ToolType::Pen | ToolType::Fountain);
+        if Some(s.id) == *last_finished_id {
+            *last_finished_id = None;
+            if pen_trace_on() {
+                // 진단: 방금 끝난 획의 **정착 렌더** 폭 — ACTIVE-RENDER 로그와
+                // 대조해서 펜업 순간 뭐가 바뀌는지 확인.
+                let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
+                for h in &halves {
+                    hmn = hmn.min(*h);
+                    hmx = hmx.max(*h);
+                }
+                pen_trace(&format!(
+                    "SETTLED-RENDER: id={} n={} half=[{hmn:.3}..{hmx:.3}] first_w={:.3} tip_w={:.3}",
+                    s.id,
+                    s.points.len(),
+                    s.points[0].width,
+                    s.points[s.points.len() - 1].width
+                ));
+            }
+        }
+        // 잉크 스밈(도구별) + 질감 불균일 합성 — 좌우 정점 알파에
+        // [포화 램프 × 밀도]를 곱합니다. 굵기는 쓴 그대로.
+        let soak = if s.tool == ToolType::Fountain {
+            params.fountain_soak
+        } else {
+            params.pen_soak
+        };
+        let soak_on = soak.enabled;
+        let alphas: Option<Vec<[f32; 2]>> =
+            if matches!(s.tool, ToolType::Pen | ToolType::Fountain) {
+                let grain = if s.tool == ToolType::Fountain {
+                    params.fountain_grain
+                } else {
+                    params.pen_grain
+                };
+                let created = if s.created_ms > 0 { s.created_ms } else { s.id };
+                let grain = ink_seed(grain, created);
+                let dens = stroke_ink_lr(s.tool, &s.points, grain);
+                Some(
+                    s.points
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let sat = if soak_on {
+                                let age = if p.t_ms == 0 {
+                                    soak.saturate_sec
+                                } else {
+                                    (now.saturating_sub(p.t_ms)) as f32 / 1000.0
+                                };
+                                soak.sat_at(age)
+                            } else {
+                                1.0
+                            };
+                            [
+                                combine_saturation(sat, dens[i][0]),
+                                combine_saturation(sat, dens[i][1]),
+                            ]
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
+        append_ribbon(
+            mesh,
+            &freedf_core::pen::stroke_ribbon_lr(
+                &pts_pt,
+                &halves,
+                feather_pt,
+                round_caps,
+                alphas.as_deref(),
+            ),
+            &to_view,
+            color,
+        );
+    }
+    next_settle
 }

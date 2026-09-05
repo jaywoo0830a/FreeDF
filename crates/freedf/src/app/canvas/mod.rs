@@ -628,13 +628,18 @@ impl FreeDfApp {
         // 종료 후에도 오프셋이 구워진 메시가 캐시에 남아 스트로크가 페이지
         // 옆으로 어긋나는 버그가 있었습니다 (Fit Width로 키가 바뀌면 복귀).
         let now = now_ms();
-        if self.ink_needs_rebuild(now) {
+        let rev = self.store.rev();
+        let count = self.store.stroke_count_on(self.current_page);
+        // rev는 재구성 키에서 제외 — 신규 획만이면 증분 append(비용 O(신규)),
+        // 삭제/id 교체(개수 불변 또는 감소)면 전체 재구성으로 정확성을 지킵니다.
+        if self.ink_needs_rebuild(now)
+            || (rev != self.ink_baked_rev && count <= self.ink_baked_count)
+        {
             let strokes: Vec<_> = self.store.strokes_on(self.current_page).to_vec();
             if let Some(mesh) = self.build_ink_mesh(&strokes, origin, now) {
                 self.ink_mesh = Some(mesh);
                 self.ink_key = (
                     self.current_page,
-                    self.store.rev(),
                     self.store_generation,
                     self.view.zoom,
                     self.pen_soak,
@@ -646,7 +651,16 @@ impl FreeDfApp {
                 );
                 self.ink_baked_pan = (self.view.pan_x, self.view.pan_y);
                 self.ink_built_at = now;
+                self.ink_baked_rev = rev;
+                self.ink_baked_count = strokes.len();
             }
+        } else if rev != self.ink_baked_rev && count > self.ink_baked_count {
+            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (필기 사이 버벅임 방지).
+            // 좌표 기준은 구운 시점의 pan — 그리는 쪽의 정점 이동과 일치.
+            let new_strokes =
+                self.store.strokes_on(self.current_page)[self.ink_baked_count..].to_vec();
+            let baked_pan = [self.ink_baked_pan.0, self.ink_baked_pan.1];
+            self.append_ink_strokes(&new_strokes, origin, baked_pan, now);
         }
         if let Some(mesh) = &self.ink_mesh {
             // 팬/페이지 전환 오프셋은 **재구성 없이** 정점만 평행 이동한 사본
@@ -825,6 +839,8 @@ mod input;
 mod overlays;
 mod paint;
 mod wheel;
+#[cfg(test)]
+use paint::{append_stroke_ribbons, BakeParams};
 #[cfg(test)]
 mod tests;
 

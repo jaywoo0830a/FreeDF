@@ -142,6 +142,65 @@
         assert!(rb.alphas.iter().all(|a| *a >= 0.0 && *a <= 1.0));
     }
 
+    /// 증분 append — 기존 메시에 새 획 리본만 붙여도 유한한 정점으로
+    /// 새 획 위치(x=100 근처)까지 커버해야 합니다 (필기 버벅임 수정 경로).
+    #[test]
+    fn append_stroke_ribbons_grows_mesh_with_new_stroke() {
+        let mk = |id: u64, x: f32| freedf_core::model::Stroke {
+            id,
+            tool: ToolType::Pen,
+            color: [0, 0, 0, 255],
+            width: 2.0,
+            points: vec![
+                StrokePoint::new(x, 0.0, 0.5),
+                StrokePoint::new(x + 10.0, 0.0, 0.5),
+            ],
+            created_ms: 1,
+        };
+        let params = BakeParams {
+            zoom: 1.0,
+            pen_soak: InkSoak::ballpoint_default(),
+            fountain_soak: InkSoak::fountain_default(),
+            ball: BallPenProfile::default(),
+            fountain: FountainProfile::default(),
+            pen_grain: InkGrain::default(),
+            fountain_grain: InkGrain::default(),
+            tilt: 0.0,
+        };
+        let mut mesh = egui::Mesh::default();
+        let mut last = None;
+        let _ = append_stroke_ribbons(
+            &mut mesh,
+            &[mk(1, 0.0)],
+            egui::pos2(0.0, 0.0),
+            [0.0, 0.0],
+            params,
+            &mut last,
+            0,
+        );
+        assert!(!mesh.vertices.is_empty());
+        let n0 = mesh.vertices.len();
+        let _ = append_stroke_ribbons(
+            &mut mesh,
+            &[mk(2, 100.0)],
+            egui::pos2(0.0, 0.0),
+            [0.0, 0.0],
+            params,
+            &mut last,
+            0,
+        );
+        assert!(mesh.vertices.len() > n0, "append가 정점을 추가해야 함");
+        let max_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v.pos.x)
+            .fold(f32::MIN, f32::max);
+        assert!(max_x > 90.0, "새 획 위치까지 커버: max_x={max_x}");
+        for v in &mesh.vertices {
+            assert!(v.pos.x.is_finite() && v.pos.y.is_finite(), "NaN: {:?}", v.pos);
+        }
+    }
+
     #[test]
     fn tilt_azimuth_maps_direction() {
         let (az, cos) = tilt_azimuth(&[20.0, 0.0]);

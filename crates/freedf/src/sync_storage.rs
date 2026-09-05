@@ -610,8 +610,28 @@ impl StorageBackend for SyncStorage {
     }
 
     fn load_bundle(&self, doc_id: i64) -> LoadedBundle {
+        // 미러가 서버보다 오래됐는지 먼저 판정합니다 — 다른 창/기기가
+        // 서버에 더 새 revision을 올린 경우엔 스냅샷을 다시 받아야 최신
+        // 획/undo가 보입니다 (미러를 그대로 쓰면 "Load Edits"로만 복구되던
+        // 데이터 누락이 재현됨). dirty(미플러시 로컬 변경)면 로컬이 우선입니다.
+        let use_mirror = {
+            let local = {
+                let g = self.inner.lock().unwrap();
+                g.docs.get(&doc_id).map(|m| (m.dirty, m.revision))
+            };
+            match local {
+                None => false, // 미러 없음 → 서버에서.
+                Some((true, _)) => true, // 미플러시 로컬 변경 우선 (유실 방지).
+                Some((false, rev)) => self
+                    .client
+                    .revision(doc_id)
+                    .ok()
+                    .map(|r| r.revision <= rev)
+                    .unwrap_or(true), // 오프라인/오류 시 미러 유지.
+            }
+        };
         // 1) 로컬 미러 (가장 최신 상태 — dirty 포함).
-        {
+        if use_mirror {
             let g = self.inner.lock().unwrap();
             if let Some(m) = g.docs.get(&doc_id) {
                 return LoadedBundle {
@@ -902,12 +922,12 @@ mod tests {
             .into_iter()
             .find(|d| d.pdf_digest.is_some())
         {
-            let n = storage.prefetch_pdfs().expect("prefetch");
-            assert!(n >= 1, "prefetch가 서버 PDF를 내려받아야 함");
-            let bytes = storage.load_pdf(doc.id).expect("cached pdf");
-            assert!(!bytes.is_empty());
+            // 첫 주기는 캐시 상태에 따라 0 또는 1+ (이전 실행 캐시가 따뜻하면 0).
+            let _ = storage.prefetch_pdfs().expect("prefetch");
             // 두 번째 주기는 전부 캐시 적중 — 다운로드 0.
             assert_eq!(storage.prefetch_pdfs().expect("prefetch 2"), 0);
+            let bytes = storage.load_pdf(doc.id).expect("cached pdf");
+            assert!(!bytes.is_empty());
         }
 
         // 생성
@@ -963,6 +983,47 @@ mod tests {
         storage.invalidate_document(id);
         let fresh = storage.load_bundle(id);
         assert_eq!(fresh.store.total_stroke_count(), 2);
+
+        // ── 다른 창/기기 변경 감지 — 미러가 남아 있어도 서버 revision이
+        //    더 새로우면 load_bundle이 스냅샷을 다시 받아야 합니다.
+        {
+            // "다른 기기"가 스트로크 하나를 더 올립니다 (base = 현재 서버 revision).
+            let rev = storage.client.revision(id).expect("rev").revision;
+            let mut wire: Vec<freedf_sync::Stroke> = fresh
+                .store
+                .strokes_on(0)
+                .iter()
+                .map(|s| core_to_wire(0, s))
+                .collect();
+            wire.push(freedf_sync::Stroke {
+                id: 1_000_000 + id,
+                page_index: 0,
+                tool: "pen".into(),
+                color: vec![0, 0, 0, 255],
+                width: 2.0,
+                points: vec![freedf_sync::StrokePoint {
+                    x: 9.0,
+                    y: 9.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                }],
+                created_at: 0,
+            });
+            let snap = freedf_sync::Snapshot::for_upload(rev, 2, wire, vec![], None);
+            let st = storage
+                .client
+                .save_and_wait(id, &snap, std::time::Duration::from_secs(30))
+                .expect("other-device save");
+            assert_eq!(st.state, freedf_sync::UploadState::Applied);
+            // storage 미러는 dirty가 아니지만 서버보다 낡음 → 재다운로드.
+            let reloaded = storage.load_bundle(id);
+            assert_eq!(
+                reloaded.store.total_stroke_count(),
+                3,
+                "다른 기기/창이 올린 스트로크가 보여야 함 (Load Edits 없이)"
+            );
+        }
 
         // 제목/목록
         storage.update_title(id, "renamed").expect("rename");
