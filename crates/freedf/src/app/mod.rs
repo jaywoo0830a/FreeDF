@@ -189,7 +189,7 @@ fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
 /// current theme's text color. The icon uses the Phosphor font family so the
 /// glyph renders correctly; the label uses the UI font. This gives each button
 /// a recognizable icon *and* a text label (WCAG: text alternative + contrast).
-fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui::WidgetText {
+pub(crate) fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui::WidgetText {
     let color = ui.visuals().text_color();
     let mut job = egui::text::LayoutJob::default();
     job.append(

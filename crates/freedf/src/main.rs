@@ -19,6 +19,7 @@ mod storage;
 mod sync_client;
 mod sync_storage;
 mod theme;
+mod ui;
 
 use eframe::egui;
 use freedf_core::logging::Logger;
