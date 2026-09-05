@@ -70,8 +70,8 @@ mod imp {
     use windows::Win32::System::Threading::GetCurrentProcessId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-        KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR,
-        VK_RIGHT, VK_RWIN, VK_SHIFT,
+        KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VIRTUAL_KEY, VK_CONTROL,
+        VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RWIN, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
@@ -109,15 +109,40 @@ mod imp {
         }
     }
 
+    /// 스캔코드 기반 키 이벤트 — Win/화살표처럼 레이아웃과 무관한 키는
+    /// VK 변환보다 스캔코드가 안정적으로 인식됩니다.
+    fn keybd(scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+        INPUT {
+            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: VIRTUAL_KEY(0),
+                    wScan: scan,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
     /// Ctrl+Win+←/→ — Windows 가상 데스크탑 전환.
+    /// 모든 이벤트를 **한 번의 SendInput**으로 배치 전송해야 OS 핫키가
+    /// 조합으로 인식합니다 (개별 전송은 사이에 다른 입력이 끼면 무시됨).
     fn send_desktop(prev: bool) {
-        let tap = if prev { VK_LEFT } else { VK_RIGHT };
-        send_key(VK_CONTROL, KEYBD_EVENT_FLAGS(0));
-        send_key(VK_LWIN, KEYBD_EVENT_FLAGS(0));
-        send_key(tap, KEYBD_EVENT_FLAGS(0));
-        send_key(tap, KEYEVENTF_KEYUP);
-        send_key(VK_LWIN, KEYEVENTF_KEYUP);
-        send_key(VK_CONTROL, KEYEVENTF_KEYUP);
+        let tap = if prev { 0x4B } else { 0x4D }; // ← / → (Set 1 스캔코드)
+        let ext = KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY;
+        let inputs = [
+            keybd(0x1D, KEYEVENTF_SCANCODE),                    // Ctrl down
+            keybd(0x5B, ext),                                   // LWin down
+            keybd(tap, ext),                                    // ←/→ down
+            keybd(tap, ext | KEYEVENTF_KEYUP),                  // ←/→ up
+            keybd(0x5B, ext | KEYEVENTF_KEYUP),                 // LWin up
+            keybd(0x1D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP),  // Ctrl up
+        ];
+        unsafe {
+            let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        }
     }
 
     /// PgUp/PgDn 탭 — 앱 단축키 파이프라인이 받아 처리.

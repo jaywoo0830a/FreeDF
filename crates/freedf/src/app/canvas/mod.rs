@@ -151,18 +151,33 @@ fn composite_paper_texture(
     }
     // 256px 타일 = 페이지 72pt(1인치) — 줌과 함께 확대되고 반복 주기가 넓어
     // 규칙성이 눈에 띄지 않습니다. 페이지별 위상(황금비)으로 타일 반복 위장.
+    // 계수는 **쌍선형(bilinear) 샘플링** — 최근접이면 블록형 정적 노이즈처럼
+    // 보여 페이지가 이상하게 변합니다.
     let phase = (page as f32 * 0.6180339).fract();
     let scale = (72.0 * px_per_pt).max(1.0);
     let mut i = 0usize;
     for y in 0..h {
-        let ty = (((y as f32 / scale + phase * 1.31).fract()) * TEX as f32) as usize % TEX;
-        let row = ty * TEX * 3;
+        let fy = ((y as f32 / scale + phase * 1.31).fract()) * TEX as f32;
+        let y0 = fy as usize % TEX;
+        let y1 = (y0 + 1) % TEX;
+        let ty = fy.fract();
+        let row0 = y0 * TEX * 3;
+        let row1 = y1 * TEX * 3;
         for x in 0..w {
-            let tx = (((x as f32 / scale + phase * 0.71).fract()) * TEX as f32) as usize % TEX;
-            let t = row + tx * 3;
-            rgba[i] = ((rgba[i] as u32 * ratio[t] as u32) >> 8) as u8;
-            rgba[i + 1] = ((rgba[i + 1] as u32 * ratio[t + 1] as u32) >> 8) as u8;
-            rgba[i + 2] = ((rgba[i + 2] as u32 * ratio[t + 2] as u32) >> 8) as u8;
+            let fx = ((x as f32 / scale + phase * 0.71).fract()) * TEX as f32;
+            let x0 = fx as usize % TEX;
+            let x1 = (x0 + 1) % TEX;
+            let tx = fx.fract();
+            for c in 0..3 {
+                let a = ratio[row0 + x0 * 3 + c] as f32;
+                let b = ratio[row0 + x1 * 3 + c] as f32;
+                let d = ratio[row1 + x0 * 3 + c] as f32;
+                let e = ratio[row1 + x1 * 3 + c] as f32;
+                let top = a + (b - a) * tx;
+                let bot = d + (e - d) * tx;
+                let r = top + (bot - top) * ty;
+                rgba[i + c] = ((rgba[i + c] as f32 * r / 256.0).round() as u32).min(255) as u8;
+            }
             i += 4;
         }
     }
