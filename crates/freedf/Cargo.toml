@@ -32,6 +32,13 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = "0.15"
+# 키보드 LL 훅 + SendInput — 페이지 단축키(z/x·a/s)를 IME/포커스와 무관하게.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # 마이크 캡처 — Windows(WASAPI)/macOS(CoreAudio)에서 자동 포함.
 # Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.

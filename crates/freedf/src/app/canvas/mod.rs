@@ -123,6 +123,51 @@ fn pen_trace(msg: &str) {
 // 진행 중 획과 완성 획은 **같은 지오메트리 생성기**(freedf-core stroke_ribbon)를
 // freedf-canvas 경유로 씁니다 — 화면 변환은 아래 `canvas_mesh_to_egui`가 담당.
 
+/// 페이지 래스터에 종이 질감을 **곱셈 합성**합니다.
+///
+/// 반투명 오버레이(기존 방식)는 텍스트 위를 베일로 덮어 콘텐츠를 방해하지만,
+/// 곱셈은 흰 배경에만 질감을 입히고 어두운 텍스트는 그대로 남깁니다
+/// (black × x = black). 계수 타일 = `texture / base` 비율을 8비트(256=1.0)로
+/// 정규화 — 원래 배경보다 **밝아지지 않습니다**.
+fn composite_paper_texture(
+    rgba: &mut [u8],
+    w: usize,
+    h: usize,
+    strength: f32,
+    base: [u8; 3],
+    surface: &freedf_core::paper::PaperSurfaceSettings,
+    page: usize,
+    px_per_pt: f32,
+) {
+    const TEX: usize = 256;
+    const SEED: u64 = 0x0B5E_E5ED;
+    let tex = freedf_core::paper::paper_texture_rgba(TEX, base, strength, surface, SEED);
+    let mut ratio: Vec<u8> = Vec::with_capacity(TEX * TEX * 3);
+    for px in tex.chunks_exact(4) {
+        for c in 0..3 {
+            let r = ((px[c] as u32 * 256) / base[c].max(1) as u32).min(256);
+            ratio.push(r as u8);
+        }
+    }
+    // 256px 타일 = 페이지 72pt(1인치) — 줌과 함께 확대되고 반복 주기가 넓어
+    // 규칙성이 눈에 띄지 않습니다. 페이지별 위상(황금비)으로 타일 반복 위장.
+    let phase = (page as f32 * 0.6180339).fract();
+    let scale = (72.0 * px_per_pt).max(1.0);
+    let mut i = 0usize;
+    for y in 0..h {
+        let ty = (((y as f32 / scale + phase * 1.31).fract()) * TEX as f32) as usize % TEX;
+        let row = ty * TEX * 3;
+        for x in 0..w {
+            let tx = (((x as f32 / scale + phase * 0.71).fract()) * TEX as f32) as usize % TEX;
+            let t = row + tx * 3;
+            rgba[i] = ((rgba[i] as u32 * ratio[t] as u32) >> 8) as u8;
+            rgba[i + 1] = ((rgba[i + 1] as u32 * ratio[t + 1] as u32) >> 8) as u8;
+            rgba[i + 2] = ((rgba[i + 2] as u32 * ratio[t + 2] as u32) >> 8) as u8;
+            i += 4;
+        }
+    }
+}
+
 /// freedf-canvas 메시(페이지 좌표) → egui 메시 (경계 어댑터).
 /// 팬/줌은 여기서만 적용됩니다 — 메시는 항상 페이지 좌표로 굽습니다.
 fn canvas_mesh_to_egui(
@@ -200,17 +245,39 @@ impl FreeDfApp {
         };
         let ppp = ctx.pixels_per_point();
         let target_w = self.page_size_pts[0] * self.view.zoom * ppp;
+        // 종이 질감은 페이지 래스터에 **곱셈 합성**되므로, 질감 설정이 바뀌면
+        // 재렌더가 필요합니다 (강도는 2% 단위 양자화 — 슬라이더 폭주 방지).
+        let tex_key = if self.paper_texture && self.paper_texture_strength > 0.001 {
+            let p = self.current_page_paper().color;
+            let q = (self.paper_texture_strength * 50.0).round() / 50.0;
+            Some((q, [p[0], p[1], p[2]], self.paper_surface))
+        } else {
+            None
+        };
         let needs_render = self.render_dirty
             || self.texture.is_none()
             || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) > 0.15
-            || (self.last_render_ppp - ppp).abs() > 0.01;
+            || (self.last_render_ppp - ppp).abs() > 0.01
+            || self.last_render_tex_key != tex_key;
 
         if !needs_render {
             return;
         }
 
         match doc.render_page(self.current_page, target_w, 4096.0 * ppp) {
-            Ok(rendered) => {
+            Ok(mut rendered) => {
+                if let Some((strength, base, surface)) = &tex_key {
+                    composite_paper_texture(
+                        &mut rendered.rgba,
+                        rendered.width,
+                        rendered.height,
+                        *strength,
+                        *base,
+                        surface,
+                        self.current_page,
+                        self.view.zoom * ppp,
+                    );
+                }
                 let img = egui::ColorImage::from_rgba_unmultiplied(
                     [rendered.width, rendered.height],
                     &rendered.rgba,
@@ -223,6 +290,7 @@ impl FreeDfApp {
                 }
                 self.last_render_zoom = self.view.zoom;
                 self.last_render_ppp = ppp;
+                self.last_render_tex_key = tex_key;
                 self.render_dirty = false;
             }
             Err(e) => self.status = Some(format!("Render error: {e}")),
@@ -466,8 +534,11 @@ impl FreeDfApp {
 
         // Paper color tint applied to the page image (colored paper).
         // **노트에만 적용** — 스탠드얼론 PDF는 원본 배경색을 유지합니다.
+        // 종이 질감 합성이 켜져 있으면 질감이 이미 종이 색을 담으므로
+        // 틴트를 이중 적용하지 않습니다.
         let paper = self.current_page_paper();
-        let paper_tint = if self.current_note.is_some() {
+        let texture_on = self.paper_texture && self.paper_texture_strength > 0.001;
+        let paper_tint = if self.current_note.is_some() && !texture_on {
             Color32::from_rgba_unmultiplied(
                 paper.color[0],
                 paper.color[1],
@@ -560,8 +631,8 @@ impl FreeDfApp {
                 Stroke::new(1.0, Color32::from_gray(120)),
                 egui::StrokeKind::Inside,
             );
-            // 종이 질감 — 페이지 위, 잉크/줄보다 아래 (설정: Paper settings).
-            self.paint_paper_texture(&ctx, &painter, draw_rect);
+            // 종이 질감은 이미 페이지 래스터에 곱셈 합성되어 있습니다
+            // (ensure_texture) — 오버레이를 따로 그리지 않습니다.
             // Paper grid / ruling (only for notes)
             if self.current_note.is_some() {
                 self.paint_paper(&painter, draw_origin);

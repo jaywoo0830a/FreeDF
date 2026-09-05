@@ -120,80 +120,10 @@ impl FreeDfApp {
             });
     }
 
-    /// 종이 질감 — 물리 기반 표면 모델(docs/paper-texture-model.md)을
-    /// 페이지 위에 깔아줍니다. 색 텍스처는 페이지 좌표 기준이라 줌과 함께
-    /// 확대/축소되고, 배경색·강도·조명 설정이 바뀔 때만 다시 굽습니다.
-    pub(crate) fn paint_paper_texture(
-        &mut self,
-        ctx: &egui::Context,
-        painter: &egui::Painter,
-        page_rect: Rect,
-    ) {
-        if !self.paper_texture || self.paper_texture_strength <= 0.001 {
-            return;
-        }
-        const TEX_SIZE: usize = 256;
-        const NOISE_SEED: u64 = 0x0B5E_E5ED;
-        let base: [u8; 3] = {
-            let p = self.current_page_paper().color;
-            [p[0], p[1], p[2]]
-        };
-        let cfg = (self.paper_texture_strength, base, self.paper_surface);
-        let stale = self
-            .paper_noise_tex
-            .as_ref()
-            .map(|t| t.size() != [TEX_SIZE, TEX_SIZE])
-            .unwrap_or(true)
-            || self.paper_noise_cfg != Some(cfg);
-        if stale {
-            let rgba = freedf_core::paper::paper_texture_rgba(
-                TEX_SIZE,
-                base,
-                self.paper_texture_strength,
-                &self.paper_surface,
-                NOISE_SEED,
-            );
-            let img = egui::ColorImage::from_rgba_unmultiplied([TEX_SIZE, TEX_SIZE], &rgba);
-            self.paper_noise_tex = Some(ctx.load_texture(
-                "paper_noise",
-                img,
-                egui::TextureOptions {
-                    magnification: egui::TextureFilter::Linear,
-                    minification: egui::TextureFilter::Linear,
-                    wrap_mode: egui::TextureWrapMode::Repeat,
-                    mipmap_mode: Some(egui::TextureFilter::Linear),
-                },
-            ));
-            self.paper_noise_cfg = Some(cfg);
-        }
-        let Some(tex) = &self.paper_noise_tex else {
-            return;
-        };
-        // 256px 타일이 페이지 72pt(1인치)에 해당 → 줌해도 질감이 페이지와
-        // 함께 확대되고, 반복 주기가 넓어 규칙성이 눈에 띄지 않습니다.
-        let tile_pt = 72.0;
-        let reps = egui::vec2(
-            page_rect.width() / (tile_pt * self.view.zoom),
-            page_rect.height() / (tile_pt * self.view.zoom),
-        );
-        // 페이지별 위상 오프셋(황금비 무리수) — 같은 타일이어도 페이지마다
-        // 다른 부분이 보여 반복 패턴이 눈에 띄지 않습니다.
-        let phase = (self.current_page as f32 * 0.6180339).fract();
-        let uv0 = Pos2::new(phase * 0.71, phase * 1.31);
-        // 노트: 불투명 절차적 종이(원본은 흰 종이뿐이므로 덮어씀).
-        // 외부 PDF: 원본 콘텐츠 보존을 위해 반투명 오버레이.
-        let tint = if self.current_note.is_some() {
-            Color32::WHITE
-        } else {
-            Color32::from_white_alpha(96)
-        };
-        painter.image(
-            tex.id(),
-            page_rect,
-            Rect::from_min_max(uv0, uv0 + egui::vec2(reps.x, reps.y)),
-            tint,
-        );
-    }
+    /// 종이 질감은 이제 **페이지 래스터에 곱셈 합성**됩니다
+    /// (`canvas::composite_paper_texture` — ensure_texture 경로). 오버레이가
+    /// 아니라서 어두운 텍스트/콘텐츠는 그대로 유지되고 흰 배경만 질감을
+    /// 얻습니다.
 
     pub(crate) fn paint_search_highlights(&self, painter: &egui::Painter, origin: Pos2) {
         let match_fill = Color32::from_rgba_unmultiplied(255, 235, 60, 80);

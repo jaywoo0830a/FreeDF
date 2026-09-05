@@ -121,6 +121,20 @@ impl FreeDfApp {
                         // 열릴 때 목록 갱신.
                         self.media_refresh();
                     }
+                    if ui
+                        .toggle_value(
+                            &mut self.macro_settings_open,
+                            icon_text(ui, "Macro", icons::KEYBOARD),
+                        )
+                        .on_hover_text(
+                            "Shortcuts & macros — page/tab keys and Windows virtual \
+                             desktop switching (Ctrl+Win+←/→).",
+                        )
+                        .changed()
+                    {
+                        // 창이 닫히면 캡처도 함께 취소.
+                        self.macro_capture = None;
+                    }
                     let cache_menu = ui.menu_button(
                         icon_text(ui, "Cache", icons::HARD_DRIVES),
                         |ui| {

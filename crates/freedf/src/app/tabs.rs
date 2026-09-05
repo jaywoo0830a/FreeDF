@@ -323,6 +323,24 @@ impl FreeDfApp {
         self.active = idx;
     }
 
+    /// 다음 탭으로 순환 전환 (마지막이면 처음으로).
+    pub(crate) fn next_tab(&mut self) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        let idx = (self.active + 1) % self.tabs.len();
+        self.switch_tab(idx);
+    }
+
+    /// 이전 탭으로 순환 전환 (처음이면 마지막으로).
+    pub(crate) fn prev_tab(&mut self) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        let idx = (self.active + self.tabs.len() - 1) % self.tabs.len();
+        self.switch_tab(idx);
+    }
+
     /// 탭을 닫습니다. 활성 탭이면 인접 탭으로 전환합니다.
     pub(crate) fn close_tab(&mut self, idx: usize) {
         if idx >= self.tabs.len() {

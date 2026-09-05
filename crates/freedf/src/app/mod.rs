@@ -28,6 +28,7 @@ mod actions;
 pub(crate) mod canvas;
 mod dictionary;
 mod input;
+pub(crate) mod key_hook;
 mod panels;
 mod tabs;
 mod toolbar;
@@ -99,6 +100,9 @@ const TOP_MARGIN: f32 = 16.0;
 const STROKE_ID_POOL_BATCH: usize = 256;
 /// pen-up 후 이 시간(ms) 동안 무입력이면 백그라운드 자동 저장.
 const AUTO_FLUSH_IDLE_MS: u64 = 2_000;
+/// 포커스 요청 쿨다운 — 스플릿 뷰에서 두 창이 포커스를 주고받으며
+/// 제목줄이 깜빡이는 경쟁을 막습니다.
+const FOCUS_REQUEST_COOLDOWN_MS: u64 = 300;
 /// 서버의 새 PDF를 자동으로 내려받는 주기 (ms).
 const PDF_SYNC_INTERVAL_MS: u64 = 20_000;
 /// Page transition animation duration (seconds)
@@ -901,6 +905,16 @@ pub struct FreeDfApp {
     /// 방금 끝난 획의 id — 병합 메시에서 그 획의 정착 렌더 폭을 대조 로그로
     /// 남기기 위한 표식 (진단용).
     last_finished_id: Option<u64>,
+    /// Windows 키보드 훅(z/x·a/s → PgUp/PgDn) — 프로세스 수명 동안 유지.
+    _key_hook: key_hook::KeyHook,
+    /// 마지막 포커스 요청 시각 — 두 창의 포커스 경쟁(깜빡임) 방지용 쿨다운.
+    last_focus_request_ms: u64,
+    /// 매크로/단축키 매핑 (Macro 설정 창) — 세션 영속.
+    macro_cfg: crate::settings::MacroState,
+    /// Macro 설정 창 표시.
+    macro_settings_open: bool,
+    /// 키 캡처 중인 매핑 슬롯 (버튼 클릭 → 다음 키 입력).
+    macro_capture: Option<toolbar::macros::MacroSlot>,
     /// LIFT-CUT 로그가 이번 획에서 이미 나왔는지 (스팸 방지).
     lift_cut_logged: bool,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (페이지 좌표, 드로우 콜 1개).
@@ -973,8 +987,8 @@ pub struct FreeDfApp {
     /// 종이 표면 물리 모델 (요철·조명·반사율) — 문서 §6.
     paper_surface: freedf_core::paper::PaperSurfaceSettings,
     /// 종이 질감 노이즈 텍스처 캐시 (강도·배경색·표면 설정 변경 시 재생성).
-    paper_noise_tex: Option<egui::TextureHandle>,
-    paper_noise_cfg: Option<(f32, [u8; 3], freedf_core::paper::PaperSurfaceSettings)>,
+    /// 페이지 래스터에 종이 질감을 합성했던 설정 키 — 바뀌면 재렌더.
+    last_render_tex_key: Option<(f32, [u8; 3], freedf_core::paper::PaperSurfaceSettings)>,
     /// 종이 크기 (새 페이지/노트 기본값)
     paper_size: PaperSize,
     /// 캔버스(페이지 뒤 서라운드) 배경색.
@@ -1366,7 +1380,7 @@ impl FreeDfApp {
                 .collect(),
         };
 
-        Self {
+        let app = Self {
             notes,
             tabs: Vec::new(),
             active: 0,
@@ -1435,6 +1449,8 @@ impl FreeDfApp {
             pen_verdict: None,
             pen_flat_log_ms: 0,
             last_finished_id: None,
+            _key_hook: key_hook::spawn(),
+            last_focus_request_ms: 0,
             lift_cut_logged: false,
             ink_mesh: None,
             ink_key: (
@@ -1465,8 +1481,7 @@ impl FreeDfApp {
             paper_texture_level,
             paper_texture_custom,
             paper_surface,
-            paper_noise_tex: None,
-            paper_noise_cfg: None,
+            last_render_tex_key: None,
             paper_size,
             canvas_color,
             paper_style_settings,
@@ -1580,9 +1595,15 @@ impl FreeDfApp {
             media_preview: None,
             recording_page: None,
             media_all_pages: false,
+            macro_cfg: s.macros.clone(),
+            macro_settings_open: false,
+            macro_capture: None,
             asking_close: false,
             quitting: false,
-        }
+        };
+        // Macro 설정을 Windows 키보드 훅에 반영합니다 (시작 시점).
+        app.push_macro_config();
+        app
     }
 
     /// 플랫폼 훅: 펜 기울기 벡터를 주입합니다 (도, 각 축 ±90).
@@ -1601,6 +1622,28 @@ impl FreeDfApp {
         state.page = 0;
         state.view = crate::settings::ViewState::default();
         self.db.set_app_state("session", &state.to_json_value());
+    }
+
+    /// 매크로 매핑을 Windows 키보드 훅에 반영합니다.
+    pub(crate) fn push_macro_config(&self) {
+        key_hook::update_config(key_hook::HookConfig {
+            page_prev: self
+                .macro_cfg
+                .page_enabled
+                .then_some(self.macro_cfg.page_prev),
+            page_next: self
+                .macro_cfg
+                .page_enabled
+                .then_some(self.macro_cfg.page_next),
+            desktop_prev: self
+                .macro_cfg
+                .desktop_enabled
+                .then_some(self.macro_cfg.desktop_prev),
+            desktop_next: self
+                .macro_cfg
+                .desktop_enabled
+                .then_some(self.macro_cfg.desktop_next),
+        });
     }
 
     /// 풀 보충을 백그라운드 스레드로 예약 — 원격 왕복이 UI 스레드를 막지 않음.
@@ -2043,6 +2086,7 @@ impl FreeDfApp {
                 dictionary_enabled: self.dictionary.enabled,
                 refresh_hz: self.refresh_hz,
             },
+            macros: self.macro_cfg.clone(),
         }
     }
 
@@ -2428,6 +2472,8 @@ impl FreeDfApp {
         self.debug_hud = s.global.debug_hud;
         self.left_handed = s.global.left_handed;
         self.refresh_hz = s.global.refresh_hz;
+        self.macro_cfg = s.macros.clone();
+        self.push_macro_config();
         self.pen_profile = s.pen.profile;
         self.fountain_profile = s.fountain.profile;
         self.page_align = s.view.page_align;
@@ -2579,18 +2625,27 @@ impl FreeDfApp {
             self.save_session();
         }
         // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
-        // 마지막 페이지에서는 더 이상 넘어가지 않습니다 (새 페이지 자동 추가 없음).
+        // 페이지 키는 Macro 설정 창에서 지정할 수 있고(기본 z/x — 왼손 근거리),
+        // Windows에서는 키보드 훅이 IME/포커스와 무관하게 PgUp/PgDn으로
+        // 번역해 동일 경로로 전달합니다. 마지막 페이지에서는 더 이상
+        // 넘어가지 않습니다 (새 페이지 자동 추가 없음).
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
         let typing = ctx.egui_wants_keyboard_input();
-        if !typing {
-            if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+        if !typing && !ctrl && !shift {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageDown))
+                || (self.macro_cfg.page_enabled
+                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_next))
+            {
                 // 브라우저식: 한 뷰포트만 아래로, 끝나면 다음 페이지.
                 // (실제 페이지 전환이면 세로 애니메이션)
                 self.transition_vertical = true;
                 self.page_key(true);
                 self.transition_vertical = false; // (스크롤만 했다면 누수 방지)
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageUp))
+                || (self.macro_cfg.page_enabled
+                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_prev))
+            {
                 self.transition_vertical = true;
                 self.page_key(false);
                 self.transition_vertical = false;
@@ -2621,6 +2676,17 @@ impl FreeDfApp {
             }
             if ctx.input(|i| i.key_pressed(egui::Key::V)) {
                 self.tool = ToolType::Pan;
+            }
+            // 탭 전환 (Macro 설정 — 기본 a/s, 텍스트 입력 중엔 비활성).
+            if self.macro_cfg.tab_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.tab_next)
+            {
+                self.next_tab();
+            }
+            if self.macro_cfg.tab_enabled
+                && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.tab_prev)
+            {
+                self.prev_tab();
             }
         }
     }
@@ -3108,13 +3174,25 @@ impl eframe::App for FreeDfApp {
             }
             StartupOpenAction::Wait => {}
         }
+        // 텍스트 입력 중이면 Windows 훅이 키를 변환하지 않게 합니다
+        // (z/x/a/s를 타이핑 중에도 그대로 칠 수 있게).
+        key_hook::KEY_TEXT_ACTIVE.store(
+            ctx.egui_wants_keyboard_input(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         self.handle_shortcuts(&ctx);
 
         // ── 스플릿 뷰: 커서가 이 창 위에서 일정 시간(dwell) 활성화되면
         //    이 창에 포커스 — 0초면 즉시, 그 이상이면 머문 시간 기준.
+        //    펜으로 쓰는 중(contact)에는 포커스 이동을 멈추고, 짧은 쿨다운으로
+        //    두 창이 포커스를 주고받는 경쟁(제목줄 깜빡임)을 막습니다.
+        let focus_cooled_down = now_ms().saturating_sub(self.last_focus_request_ms)
+            >= FOCUS_REQUEST_COOLDOWN_MS;
         if self.window_focus_on_move
             && ctx.input(|i| i.pointer.hover_pos().is_some())
             && ctx.input(|i| i.viewport().focused == Some(false))
+            && !self.input_sources.pen_contact()
+            && focus_cooled_down
         {
             let now = now_ms();
             if self.window_hover_since_ms == 0 {
@@ -3122,6 +3200,7 @@ impl eframe::App for FreeDfApp {
             }
             if dwell_focus_due(now, self.window_hover_since_ms, self.window_focus_dwell_sec) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.last_focus_request_ms = now;
             }
         } else {
             self.window_hover_since_ms = 0;

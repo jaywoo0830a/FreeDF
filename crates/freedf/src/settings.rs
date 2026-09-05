@@ -398,6 +398,276 @@ impl Default for WindowFocusState {
     }
 }
 
+/// 매크로/단축키 매핑에 쓰는 물리 키 코드 — 세션에 저장되므로
+/// egui::Key 대신 자체 enum을 씁니다 (Windows 가상 키 코드도 함께 제공).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroKey {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Num0,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Space,
+    Tab,
+    Enter,
+    Left,
+    Right,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    BracketLeft,
+    BracketRight,
+    Comma,
+    Period,
+    Slash,
+    Backslash,
+    Semicolon,
+    Apostrophe,
+    Minus,
+    Equals,
+    Backtick,
+}
+
+impl MacroKey {
+    /// 표시용 라벨.
+    pub fn label(&self) -> &'static str {
+        match self {
+            MacroKey::A => "A",
+            MacroKey::B => "B",
+            MacroKey::C => "C",
+            MacroKey::D => "D",
+            MacroKey::E => "E",
+            MacroKey::F => "F",
+            MacroKey::G => "G",
+            MacroKey::H => "H",
+            MacroKey::I => "I",
+            MacroKey::J => "J",
+            MacroKey::K => "K",
+            MacroKey::L => "L",
+            MacroKey::M => "M",
+            MacroKey::N => "N",
+            MacroKey::O => "O",
+            MacroKey::P => "P",
+            MacroKey::Q => "Q",
+            MacroKey::R => "R",
+            MacroKey::S => "S",
+            MacroKey::T => "T",
+            MacroKey::U => "U",
+            MacroKey::V => "V",
+            MacroKey::W => "W",
+            MacroKey::X => "X",
+            MacroKey::Y => "Y",
+            MacroKey::Z => "Z",
+            MacroKey::Num0 => "0",
+            MacroKey::Num1 => "1",
+            MacroKey::Num2 => "2",
+            MacroKey::Num3 => "3",
+            MacroKey::Num4 => "4",
+            MacroKey::Num5 => "5",
+            MacroKey::Num6 => "6",
+            MacroKey::Num7 => "7",
+            MacroKey::Num8 => "8",
+            MacroKey::Num9 => "9",
+            MacroKey::F1 => "F1",
+            MacroKey::F2 => "F2",
+            MacroKey::F3 => "F3",
+            MacroKey::F4 => "F4",
+            MacroKey::F5 => "F5",
+            MacroKey::F6 => "F6",
+            MacroKey::F7 => "F7",
+            MacroKey::F8 => "F8",
+            MacroKey::F9 => "F9",
+            MacroKey::F10 => "F10",
+            MacroKey::F11 => "F11",
+            MacroKey::F12 => "F12",
+            MacroKey::Space => "Space",
+            MacroKey::Tab => "Tab",
+            MacroKey::Enter => "Enter",
+            MacroKey::Left => "←",
+            MacroKey::Right => "→",
+            MacroKey::Up => "↑",
+            MacroKey::Down => "↓",
+            MacroKey::PageUp => "PgUp",
+            MacroKey::PageDown => "PgDn",
+            MacroKey::Home => "Home",
+            MacroKey::End => "End",
+            MacroKey::BracketLeft => "[",
+            MacroKey::BracketRight => "]",
+            MacroKey::Comma => ",",
+            MacroKey::Period => ".",
+            MacroKey::Slash => "/",
+            MacroKey::Backslash => "\\",
+            MacroKey::Semicolon => ";",
+            MacroKey::Apostrophe => "'",
+            MacroKey::Minus => "-",
+            MacroKey::Equals => "=",
+            MacroKey::Backtick => "`",
+        }
+    }
+
+    /// Windows 가상 키 코드 (VK_*) — SendInput/LL 훅용.
+    /// 변형 순서(선언 순서)가 A..Z(0..25), 0..9(26..35), F1..F12(36..47)입니다.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub fn vk(self) -> u16 {
+        let i = self as u16;
+        match i {
+            0..=25 => 0x41 + i,         // A..Z
+            26..=35 => 0x30 + (i - 26), // 0..9
+            36..=47 => 0x70 + (i - 36), // F1..F12
+            _ => match self {
+                MacroKey::Space => 0x20,
+                MacroKey::Tab => 0x09,
+                MacroKey::Enter => 0x0D,
+                MacroKey::Left => 0x25,
+                MacroKey::Up => 0x26,
+                MacroKey::Right => 0x27,
+                MacroKey::Down => 0x28,
+                MacroKey::PageUp => 0x21,
+                MacroKey::PageDown => 0x22,
+                MacroKey::End => 0x23,
+                MacroKey::Home => 0x24,
+                MacroKey::BracketLeft => 0xDB,
+                MacroKey::BracketRight => 0xDD,
+                MacroKey::Comma => 0xBC,
+                MacroKey::Period => 0xBE,
+                MacroKey::Slash => 0xBF,
+                MacroKey::Backslash => 0xDC,
+                MacroKey::Semicolon => 0xBA,
+                MacroKey::Apostrophe => 0xDE,
+                MacroKey::Minus => 0xBD,
+                MacroKey::Equals => 0xBB,
+                MacroKey::Backtick => 0xC0,
+                _ => 0,
+            },
+        }
+    }
+
+    /// egui 키 → 매크로 키 (캡처 UI용). 지원 안 하는 키는 None.
+    pub fn from_egui(k: egui::Key) -> Option<Self> {
+        use egui::Key as K;
+        Some(match k {
+            K::A => Self::A,
+            K::B => Self::B,
+            K::C => Self::C,
+            K::D => Self::D,
+            K::E => Self::E,
+            K::F => Self::F,
+            K::G => Self::G,
+            K::H => Self::H,
+            K::I => Self::I,
+            K::J => Self::J,
+            K::K => Self::K,
+            K::L => Self::L,
+            K::M => Self::M,
+            K::N => Self::N,
+            K::O => Self::O,
+            K::P => Self::P,
+            K::Q => Self::Q,
+            K::R => Self::R,
+            K::S => Self::S,
+            K::T => Self::T,
+            K::U => Self::U,
+            K::V => Self::V,
+            K::W => Self::W,
+            K::X => Self::X,
+            K::Y => Self::Y,
+            K::Z => Self::Z,
+            K::Num0 => Self::Num0,
+            K::Num1 => Self::Num1,
+            K::Num2 => Self::Num2,
+            K::Num3 => Self::Num3,
+            K::Num4 => Self::Num4,
+            K::Num5 => Self::Num5,
+            K::Num6 => Self::Num6,
+            K::Num7 => Self::Num7,
+            K::Num8 => Self::Num8,
+            K::Num9 => Self::Num9,
+            K::F1 => Self::F1,
+            K::F2 => Self::F2,
+            K::F3 => Self::F3,
+            K::F4 => Self::F4,
+            K::F5 => Self::F5,
+            K::F6 => Self::F6,
+            K::F7 => Self::F7,
+            K::F8 => Self::F8,
+            K::F9 => Self::F9,
+            K::F10 => Self::F10,
+            K::F11 => Self::F11,
+            K::F12 => Self::F12,
+            K::Space => Self::Space,
+            K::Tab => Self::Tab,
+            K::Enter => Self::Enter,
+            K::ArrowLeft => Self::Left,
+            K::ArrowRight => Self::Right,
+            K::ArrowUp => Self::Up,
+            K::ArrowDown => Self::Down,
+            K::PageUp => Self::PageUp,
+            K::PageDown => Self::PageDown,
+            K::Home => Self::Home,
+            K::End => Self::End,
+            K::OpenBracket => Self::BracketLeft,
+            K::CloseBracket => Self::BracketRight,
+            K::Comma => Self::Comma,
+            K::Period => Self::Period,
+            K::Slash => Self::Slash,
+            K::Backslash => Self::Backslash,
+            K::Semicolon => Self::Semicolon,
+            K::Quote => Self::Apostrophe,
+            K::Minus => Self::Minus,
+            K::Equals => Self::Equals,
+            K::Backtick => Self::Backtick,
+            _ => return None,
+        })
+    }
+}
+
 /// 전역 보조 기능 묶음.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -421,6 +691,42 @@ impl Default for GlobalState {
             left_handed: false,
             dictionary_enabled: false,
             refresh_hz: 60,
+        }
+    }
+}
+
+/// 매크로/단축키 매핑 묶음 (Macro 설정 창에서 지정) — 전역 프리퍼런스.
+/// 왼손 홈 로우 배치: q/w = 데스크탑, a/s = 탭, z/x = 페이지.
+/// 각 그룹은 `*_enabled` 토글로 독립적으로 켜고 끌 수 있습니다.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MacroState {
+    /// 페이지 키 활성화 (기본 켜짐 — z / x).
+    pub page_enabled: bool,
+    pub page_prev: MacroKey,
+    pub page_next: MacroKey,
+    /// 탭 키 활성화 (기본 켜짐 — a / s, 이 창 안에서).
+    pub tab_enabled: bool,
+    pub tab_prev: MacroKey,
+    pub tab_next: MacroKey,
+    /// Windows 가상 데스크탑 전환(Ctrl+Win+←/→) 활성화 (기본 꺼짐 — q / w).
+    pub desktop_enabled: bool,
+    pub desktop_prev: MacroKey,
+    pub desktop_next: MacroKey,
+}
+
+impl Default for MacroState {
+    fn default() -> Self {
+        Self {
+            page_enabled: true,
+            page_prev: MacroKey::Z,
+            page_next: MacroKey::X,
+            tab_enabled: true,
+            tab_prev: MacroKey::A,
+            tab_next: MacroKey::S,
+            desktop_enabled: false,
+            desktop_prev: MacroKey::Q,
+            desktop_next: MacroKey::W,
         }
     }
 }
@@ -467,6 +773,8 @@ pub struct SessionState {
     pub edge_autoscroll: EdgeAutoscrollState,
     /// 창 포커스 추적 (전역).
     pub window_focus: WindowFocusState,
+    /// 매크로/단축키 매핑 (전역).
+    pub macros: MacroState,
     /// 전역 보조 기능 (HUD/왼손잡이/사전).
     pub global: GlobalState,
 }
@@ -503,6 +811,7 @@ impl Default for SessionState {
             smoothing: SmoothingState::default(),
             edge_autoscroll: EdgeAutoscrollState::default(),
             window_focus: WindowFocusState::default(),
+            macros: MacroState::default(),
             global: GlobalState::default(),
         }
     }

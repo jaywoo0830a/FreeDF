@@ -192,3 +192,4 @@ impl FreeDfApp {
 
 mod rows;
 mod settings;
+pub(crate) mod macros;

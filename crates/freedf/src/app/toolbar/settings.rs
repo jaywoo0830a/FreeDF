@@ -1334,5 +1334,19 @@ impl FreeDfApp {
                     });
                 self.server_settings_open = open;
             }
+
+            // ── Macro 단축키 매핑 창 (Row1의 Macro 버튼) ──
+            if self.macro_settings_open {
+                let mut open = self.macro_settings_open;
+                egui::Window::new("Macro settings")
+                    .open(&mut open)
+                    .resizable(false)
+                    .default_width(440.0)
+                    .show(ui.ctx(), |ui| {
+                        self.macro_settings_ui(ui);
+                        self.macro_capture_finish(ui.ctx());
+                    });
+                self.macro_settings_open = open;
+            }
     }
 }
