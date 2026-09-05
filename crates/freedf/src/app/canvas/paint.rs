@@ -594,11 +594,10 @@ impl FreeDfApp {
         ));
     }
 
-    /// 병합 잉크 메시를 다시 만들어야 하는지 — 뷰/페이지/세대/설정이
-    /// 바뀌었거나, 아직 번지고 있는(젊은) 블리드가 있거나, 방금 정착된
-    /// 블리드가 있을 때만 재구성합니다.
+    /// 병합 잉크 메시를 **구조적으로** 다시 만들어야 하는지 — 뷰/페이지/
+    /// 세대/설정이 바뀐 경우에만 참입니다.
     /// (rev는 키에 없음 — 신규 획은 `append_ink_strokes` 증분으로 처리.)
-    pub(crate) fn ink_needs_rebuild(&self, now: u64) -> bool {
+    pub(crate) fn ink_needs_rebuild(&self) -> bool {
         if self.ink_mesh.is_none() {
             return true;
         }
@@ -613,23 +612,20 @@ impl FreeDfApp {
             self.pen_grain,
             self.fountain_grain,
         );
-        if key != self.ink_key {
-            return true;
+        key != self.ink_key
+    }
+
+    /// 스밈 정착/번짐 후광 갱신이 필요한지 — **50ms 스로틀**로만 참.
+    /// 구조 재구성과 분리해, 정착 루프가 매 프레임 전체 재굽기를
+    /// 반복하던 문제를 막습니다 (후광은 느리게 자라 20Hz면 충분).
+    pub(crate) fn ink_halo_due(&self, now: u64) -> bool {
+        if self.ink_next_settle_ms == u64::MAX || self.ink_mesh.is_none() {
+            return false;
         }
-        if self.ink_next_settle_ms != u64::MAX {
-            // 방금 정착된 획이 있으면 이번 프레임에 한 번 더 재구성합니다.
-            if self.ink_built_at < self.ink_next_settle_ms {
-                return true;
-            }
-            // 아직 번지고 있으면 **50ms 스로틀**로만 재구성 (후광은 느리게
-            // 자라므로 20Hz 갱신으로도 충분 — 사람은 못 느낍니다).
-            if now < self.ink_next_settle_ms
-                && now.saturating_sub(self.ink_built_at) >= HALO_GEOM_MS
-            {
-                return true;
-            }
-        }
-        false
+        // 마지막 재구성 시점이 아직 정착 전이면 — 번지는 동안 주기 갱신 +
+        // 정착 직후 마무리 렌더 한 번 더.
+        self.ink_built_at < self.ink_next_settle_ms
+            && now.saturating_sub(self.ink_built_at) >= HALO_GEOM_MS
     }
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the

@@ -116,6 +116,9 @@ impl FreeDfApp {
                     let session = crate::settings::SessionState::from_json_value(value);
                     self.apply_session(&session, page_count);
                     self.pending_fit = None;
+                    // 저장된 pan은 이전 창 크기 기준 — 다음 프레임에 현재
+                    // 정렬 설정으로 재정렬합니다 (줌 유지).
+                    self.pending_align = true;
                 } else {
                     // 새 문서(저장된 세션 없음) — 캐시가 아니라 **기본값** 때문에
                     // 라이브러리가 열려 보이던 것을 정리: 패널 없이 깨끗한

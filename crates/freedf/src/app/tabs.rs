@@ -263,6 +263,9 @@ impl FreeDfApp {
         self.current_page = current_page;
         self.page_size_pts = page_size_pts;
         self.view = view;
+        // 저장된 pan은 이전 창 크기 기준 — 다음 프레임에 현재 정렬 설정으로
+        // 재정렬합니다 (줌 유지).
+        self.pending_align = true;
         self.page_align = page_align;
         self.set_store(store);
         self.history = history;

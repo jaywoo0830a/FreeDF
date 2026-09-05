@@ -806,6 +806,9 @@ pub struct FreeDfApp {
     /// Canvas 좌상단(origin) 직전 프레임 좌표 — 리사이즈 시 화면 고정 보정용.
     prev_canvas_origin: egui::Pos2,
     pending_fit: Option<FitMode>,
+    /// 다음 프레임에 현재 정렬 설정으로 재정렬 (줌 유지) — 세션 복원 시
+    /// 저장된 pan이 창 크기와 어긋나는 문제 보정용.
+    pending_align: bool,
     texture: Option<egui::TextureHandle>,
     render_dirty: bool,
     last_render_zoom: f32,
@@ -1383,6 +1386,7 @@ impl FreeDfApp {
             prev_canvas: [1280.0, 600.0],
             prev_canvas_origin: egui::Pos2::ZERO,
             pending_fit: None,
+            pending_align: false,
             texture: None,
             render_dirty: true,
             last_render_zoom: 0.0,

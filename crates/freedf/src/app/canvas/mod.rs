@@ -283,6 +283,13 @@ impl FreeDfApp {
 
         // Apply pending fit + render cache
         self.apply_pending_fit(canvas_size);
+        // 세션 복원 직후 — 저장된 pan 대신 현재 정렬 설정으로 재정렬 (줌 유지).
+        if self.pending_align && canvas_size[0] > 1.0 && canvas_size[1] > 1.0 {
+            self.pending_align = false;
+            self.view
+                .align_page(self.page_size_pts, canvas_size, TOP_MARGIN, self.page_align);
+            self.render_dirty = true;
+        }
         self.ensure_texture(&ctx);
 
         // evdev/OTD 펜 입력 폴링 — egui가 노출하지 않는 틸트/필압 공급원.
@@ -580,7 +587,16 @@ impl FreeDfApp {
         // 팬/줌은 아래 egui 변환 캐시에서만 적용합니다.
         // 전체 재굽기는 **백그라운드 스레드**(freedf-canvas BakeService) —
         // UI 스레드는 요청(try_send)/수신(try_recv)만 하고 테셀레이션 안 함.
-        let full_needed = self.ink_needs_rebuild(now)
+        // 증분을 먼저 실행합니다 — 전체 재굽기 대기 중에도 방금 끝난 획이
+        // 즉시 보여서 "나타났다 사라지는" 깜빡임이 없습니다.
+        if rev != self.ink_baked_rev && count > self.ink_baked_count {
+            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (UI 스레드, O(신규 획)).
+            let new_strokes =
+                self.store.strokes_on(self.current_page)[self.ink_baked_count..].to_vec();
+            self.append_ink_strokes(&new_strokes, now);
+        }
+        let full_needed = self.ink_needs_rebuild()
+            || self.ink_halo_due(now)
             || (rev != self.ink_baked_rev && count <= self.ink_baked_count);
         if full_needed && self.ink_bake_pending.is_none() {
             *self.ink_baker_mesher.write().expect("bake mesher lock") = self.core_mesher();
@@ -608,11 +624,6 @@ impl FreeDfApp {
                 self.ink_bake_pending =
                     Some((self.current_page, self.store_generation, rev, count, self.view.zoom));
             }
-        } else if !full_needed && rev != self.ink_baked_rev && count > self.ink_baked_count {
-            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (UI 스레드, O(신규 획)).
-            let new_strokes =
-                self.store.strokes_on(self.current_page)[self.ink_baked_count..].to_vec();
-            self.append_ink_strokes(&new_strokes, now);
         }
         // ── 백그라운드 전체 굽기 결과 수신 (매 프레임 try_recv) ──
         if let Some(result) = self.ink_baker.poll() {

@@ -32,10 +32,13 @@ impl FreeDfApp {
         let Some(mode) = self.pending_fit else {
             return;
         };
-        self.pending_fit = None;
+        // 캔버스가 아직 잡히지 않았으면(창 초기화 등) 소비하지 말고
+        // 다음 프레임에 재시도 — 첫 프레임에서 fit이 유실돼 정렬이
+        // 어긋나던 버그 방지.
         if canvas[0] <= 1.0 || canvas[1] <= 1.0 {
             return;
         }
+        self.pending_fit = None;
         match mode {
             FitMode::Width => {
                 self.view.zoom =
