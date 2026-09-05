@@ -197,6 +197,7 @@ pub(crate) fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Ico
         0.0,
         egui::TextFormat {
             font_id: egui::FontId::new(16.0, egui::FontFamily::Name("phosphor-regular".into())),
+            valign: egui::Align::Center,
             color,
             ..Default::default()
         },
@@ -207,6 +208,7 @@ pub(crate) fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Ico
             0.0,
             egui::TextFormat {
                 font_id: egui::FontId::proportional(16.0),
+                valign: egui::Align::Center,
                 color,
                 ..Default::default()
             },
@@ -225,6 +227,7 @@ fn overlay_title(ui: &egui::Ui, icon: egui_phosphor_icons::Icon, title: &str) ->
         0.0,
         egui::TextFormat {
             font_id: egui::FontId::new(16.0, egui::FontFamily::Name("phosphor-regular".into())),
+            valign: egui::Align::Center,
             color,
             ..Default::default()
         },
@@ -234,6 +237,7 @@ fn overlay_title(ui: &egui::Ui, icon: egui_phosphor_icons::Icon, title: &str) ->
         0.0,
         egui::TextFormat {
             font_id: egui::FontId::new(16.0, egui::FontFamily::Proportional),
+            valign: egui::Align::Center,
             color,
             ..Default::default()
         },
