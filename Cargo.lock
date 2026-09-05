@@ -1546,6 +1546,7 @@ dependencies = [
  "hound",
  "image",
  "pdfium-render",
+ "raw-window-handle",
  "rdev",
  "rfd",
  "rodio",

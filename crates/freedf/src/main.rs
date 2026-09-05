@@ -100,6 +100,23 @@ fn main() -> eframe::Result<()> {
             fonts::install_inter(&cc.egui_ctx);
             theme::nord::install(&cc.egui_ctx);
 
+            // OS 네이티브 창 — Windows 11 스타일 (다크 타이틀바·라운드 코너·Mica).
+            #[cfg(target_os = "windows")]
+            {
+                use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+                if let Some(hwnd) = cc.winit_window().and_then(|w| match w.window_handle() {
+                    Ok(h) => match h.as_raw() {
+                        RawWindowHandle::Win32(wh) => {
+                            Some(wh.hwnd.get() as *mut std::ffi::c_void)
+                        }
+                        _ => None,
+                    },
+                    Err(_) => None,
+                }) {
+                    app::winstyle::apply(hwnd);
+                }
+            }
+
             Ok(Box::new(app::FreeDfApp::new(
                 cc,
                 db,

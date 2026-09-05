@@ -29,6 +29,7 @@ pub(crate) mod canvas;
 mod dictionary;
 mod input;
 pub(crate) mod key_hook;
+pub(crate) mod winstyle;
 mod panels;
 mod tabs;
 mod toolbar;

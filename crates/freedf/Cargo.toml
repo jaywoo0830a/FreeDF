@@ -38,11 +38,15 @@ enigo = "0.6"
 # 전역 데스크탑 리스너 (Activate on focus 꺼짐 — 비포커스에서도 q/w 감지).
 rdev = "0.5"
 # 전경(foreground) 검사 — 포커스 모드에서 전역 리스너의 이중 주입 방지.
+# DWM — 네이티브 창 스타일(다크 타이틀바/라운드 코너/Mica).
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Dwm",
 ] }
+# winit 창 → OS hwnd 추출 (winstyle 적용용).
+raw-window-handle = "0.6"
 
 # 마이크 캡처 — Windows(WASAPI)/macOS(CoreAudio)에서 자동 포함.
 # Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.
