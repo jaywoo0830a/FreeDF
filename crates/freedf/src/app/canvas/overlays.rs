@@ -397,17 +397,24 @@ impl FreeDfApp {
                         } else {
                             self.pen_color
                         };
-                        let cur = Color32::from_rgba_unmultiplied(
+                        let mut cur = Color32::from_rgba_unmultiplied(
                             cur_rgba[0],
                             cur_rgba[1],
                             cur_rgba[2],
                             cur_rgba[3],
                         );
-                        if color_circle_swatch(ui, "current_color", cur, false)
-                            .on_hover_text("Current pen color")
-                            .clicked()
-                        {
+                        let (resp, changed) = swatch_with_picker(ui, "current_color", &mut cur, false);
+                        let resp = resp.on_hover_text("Current pen color — click to edit");
+                        if resp.clicked() {
                             self.tool = ToolType::Pen;
+                            self.save_session();
+                        } else if changed {
+                            if self.tool == ToolType::Fountain {
+                                self.fountain_color = cur.to_array();
+                            } else {
+                                self.pen_color = cur.to_array();
+                            }
+                            self.save_default_session();
                             self.save_session();
                         }
                         let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
@@ -435,24 +442,28 @@ impl FreeDfApp {
                         // 자주 쓰는 색상 (클릭 = 적용, 우클릭 = 제거).
                         for i in 0..self.favorite_colors.len() {
                             let c = self.favorite_colors[i]; // Copy
-                            let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+                            let mut col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
                             let selected = if self.tool == ToolType::Fountain {
                                 self.fountain_color == c
                             } else {
                                 self.pen_color == c
                             };
-                            let resp = color_circle_swatch(ui, ("fav_swatch", i), col, selected);
-                            if resp
-                                .clone()
-                                .on_hover_text("Set pen color (right-click to remove)")
-                                .clicked()
-                            {
+                            let (resp, changed) = swatch_with_picker(ui, ("fav_swatch", i), &mut col, selected);
+                            let resp = resp.on_hover_text(
+                                "Set pen color — click to edit (right-click to remove)",
+                            );
+                            if resp.clicked() {
                                 if self.tool == ToolType::Fountain {
                                     self.fountain_color = c;
                                 } else {
                                     self.pen_color = c;
                                     self.tool = ToolType::Pen;
                                 }
+                                self.save_default_session();
+                                self.save_session();
+                            } else if changed {
+                                // 픽커로 즐겨찾기 색 데이터를 직접 편집.
+                                self.favorite_colors[i] = col.to_array();
                                 self.save_default_session();
                                 self.save_session();
                             }

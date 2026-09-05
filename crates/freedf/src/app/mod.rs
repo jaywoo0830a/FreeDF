@@ -390,6 +390,32 @@ fn color_circle_swatch(
     ui.interact(rect, ui.id().with(id_salt), egui::Sense::click())
 }
 
+/// 스와치 + 클릭 시 컬러 픽커 팝업 — 색은 데이터: 팝업의 픽커가
+/// `color`를 직접 편집합니다. 반환: `(클릭 응답, 픽커로 바뀌었는지)`.
+/// 호출부는 클릭 = 적용, changed = 편집된 색 저장으로 연결하면 됩니다.
+fn swatch_with_picker(
+    ui: &mut egui::Ui,
+    id_salt: impl egui::AsIdSalt,
+    color: &mut egui::Color32,
+    selected: bool,
+) -> (egui::Response, bool) {
+    let resp = color_circle_swatch(ui, id_salt, *color, selected);
+    let mut changed = false;
+    egui::Popup::menu(&resp)
+        .id(resp.id.with("color_picker_popup"))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(280.0);
+            ui.spacing_mut().slider_width = 280.0;
+            changed |= egui::color_picker::color_picker_color32(
+                ui,
+                color,
+                egui::color_picker::Alpha::OnlyBlend,
+            );
+        });
+    (resp, changed)
+}
+
 // ---------- Fallback dialogs (non-Windows / when no native dialog) ----------
 
 /// 새 노트 페이지 수 프리셋 (1장 ~ 대량 노트).

@@ -434,18 +434,22 @@ impl FreeDfApp {
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
-                let color = Color32::from_rgba_unmultiplied(
+                let mut color = Color32::from_rgba_unmultiplied(
                     preset[0],
                     preset[1],
                     preset[2],
                     preset[3],
                 );
                 let selected = self.canvas_color == *preset;
-                if color_circle_swatch(ui, ("canvas_preset", i), color, selected)
-                    .on_hover_text("Preset")
-                    .clicked()
-                {
+                let (resp, changed) =
+                    swatch_with_picker(ui, ("canvas_preset", i), &mut color, selected);
+                let resp = resp.on_hover_text("Preset — click to edit");
+                if resp.clicked() {
                     self.canvas_color = *preset;
+                    self.save_default_session();
+                    self.save_session();
+                } else if changed {
+                    self.canvas_color = color.to_array();
                     self.save_default_session();
                     self.save_session();
                 }
@@ -556,14 +560,19 @@ impl FreeDfApp {
                 },
             );
             for (i, paper) in PAPER_COLORS.iter().enumerate() {
-                let color =
+                let mut color =
                     Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
                 let selected = self.paper_color == *paper;
-                if color_circle_swatch(ui, ("paper_swatch_win", i), color, selected)
-                    .on_hover_text("Paper color (current page)")
-                    .clicked()
-                {
+                let (resp, changed) =
+                    swatch_with_picker(ui, ("paper_swatch_win", i), &mut color, selected);
+                let resp = resp.on_hover_text("Paper color — click to edit (current page)");
+                if resp.clicked() {
                     self.paper_color = *paper;
+                    self.apply_paper_to_current_page();
+                    self.save_default_session();
+                    self.save_session();
+                } else if changed {
+                    self.paper_color = color.to_array();
                     self.apply_paper_to_current_page();
                     self.save_default_session();
                     self.save_session();
@@ -775,18 +784,21 @@ impl FreeDfApp {
                         .changed();
                     // 줄 색: 프리셋 스와치 + 커스텀 컬러.
                     for (i, preset) in LINE_COLOR_PRESETS.iter().enumerate() {
-                        let col = Color32::from_rgba_unmultiplied(
+                        let mut col = Color32::from_rgba_unmultiplied(
                             preset[0],
                             preset[1],
                             preset[2],
                             preset[3],
                         );
                         let selected = ls.color == *preset;
-                        if color_circle_swatch(ui, ("line_swatch_win", i), col, selected)
-                            .on_hover_text("Line color preset")
-                            .clicked()
-                        {
+                        let (resp, picker_changed) =
+                            swatch_with_picker(ui, ("line_swatch_win", i), &mut col, selected);
+                        let resp = resp.on_hover_text("Line color preset — click to edit");
+                        if resp.clicked() {
                             ls.color = *preset;
+                            changed = true;
+                        } else if picker_changed {
+                            ls.color = col.to_array();
                             changed = true;
                         }
                     }

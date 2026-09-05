@@ -378,14 +378,19 @@ impl FreeDfApp {
                          New pages & new notes use it as their default.",
                     );
                 for (i, paper) in PAPER_COLORS.iter().enumerate() {
-                    let color =
+                    let mut color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
                     let selected = self.paper_color == *paper;
-                    if color_circle_swatch(ui, ("paper_swatch", i), color, selected)
-                        .on_hover_text("Paper color (current page)")
-                        .clicked()
-                    {
+                    let (resp, changed) =
+                        swatch_with_picker(ui, ("paper_swatch", i), &mut color, selected);
+                    let resp = resp.on_hover_text("Paper color — click to edit (current page)");
+                    if resp.clicked() {
                         self.paper_color = *paper;
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    } else if changed {
+                        self.paper_color = color.to_array();
                         self.apply_paper_to_current_page();
                         self.save_default_session();
                         self.save_session();
@@ -518,18 +523,22 @@ impl FreeDfApp {
                         let swatches = Palette::swatches(self.color_family);
                         // Round color swatches forming a neat color bar.
                         for (i, swatch) in swatches.iter().enumerate() {
-                            let color = Color32::from_rgba_unmultiplied(
+                            let mut color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
                                 swatch[1],
                                 swatch[2],
                                 swatch[3],
                             );
                             let selected = *swatch == self.pen_color;
-                            if color_circle_swatch(ui, ("pen_swatch", i), color, selected)
-                                .on_hover_text("Pen color")
-                                .clicked()
-                            {
+                            let (resp, changed) =
+                                swatch_with_picker(ui, ("pen_swatch", i), &mut color, selected);
+                            let resp = resp.on_hover_text("Pen color — click to edit");
+                            if resp.clicked() {
                                 self.pen_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            } else if changed {
+                                self.pen_color = color.to_array();
                                 self.save_default_session();
                                 self.save_session();
                             }
@@ -601,18 +610,22 @@ impl FreeDfApp {
                         // 만년필: 색/두께 모두 볼펜과 **완전히 독립**.
                         let swatches = Palette::swatches(self.color_family);
                         for (i, swatch) in swatches.iter().enumerate() {
-                            let color = Color32::from_rgba_unmultiplied(
+                            let mut color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
                                 swatch[1],
                                 swatch[2],
                                 swatch[3],
                             );
                             let selected = *swatch == self.fountain_color;
-                            if color_circle_swatch(ui, ("fountain_swatch", i), color, selected)
-                                .on_hover_text("Ink color")
-                                .clicked()
-                            {
+                            let (resp, changed) =
+                                swatch_with_picker(ui, ("fountain_swatch", i), &mut color, selected);
+                            let resp = resp.on_hover_text("Ink color — click to edit");
+                            if resp.clicked() {
                                 self.fountain_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            } else if changed {
+                                self.fountain_color = color.to_array();
                                 self.save_default_session();
                                 self.save_session();
                             }
@@ -660,18 +673,22 @@ impl FreeDfApp {
                         // GoodNotes 풍 파스텔 프리셋.
                         let swatches = Palette::highlighter_swatches();
                         for (i, swatch) in swatches.iter().enumerate() {
-                            let color = Color32::from_rgba_unmultiplied(
+                            let mut color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
                                 swatch[1],
                                 swatch[2],
                                 swatch[3],
                             );
                             let selected = *swatch == self.hi_color;
-                            if color_circle_swatch(ui, ("hi_swatch", i), color, selected)
-                                .on_hover_text("Highlighter color")
-                                .clicked()
-                            {
+                            let (resp, changed) =
+                                swatch_with_picker(ui, ("hi_swatch", i), &mut color, selected);
+                            let resp = resp.on_hover_text("Highlighter color — click to edit");
+                            if resp.clicked() {
                                 self.hi_color = *swatch;
+                                self.save_default_session();
+                                self.save_session();
+                            } else if changed {
+                                self.hi_color = color.to_array();
                                 self.save_default_session();
                                 self.save_session();
                             }
