@@ -82,7 +82,8 @@ pub mod semantic {
 /// Builds the complete Nord `egui::Style`.
 pub fn nord_style() -> egui::Style {
     let mut style = egui::Style::default();
-    style.animation_time = 0.25; // smooth hover / selection transitions
+    // 모던 UI의 반응 속도 — 호버/선택 전환이 빠르고 또렷하게.
+    style.animation_time = 0.15;
 
     // --- Typography: 1rem base scale -----------------------------------
     style.text_styles.insert(
@@ -115,6 +116,28 @@ pub fn nord_style() -> egui::Style {
     style.spacing.icon_width_inner = spacing::ICON_INNER;
     style.spacing.slider_width = spacing::SLIDER_W;
     style.spacing.slider_rail_height = spacing::SLIDER_RAIL_H;
+    style.spacing.menu_margin = Margin::same(8);
+    style.spacing.indent = 16.0;
+    style.spacing.combo_width = 180.0;
+    style.spacing.text_edit_width = 280.0;
+    style.spacing.tooltip_width = 260.0;
+    style.spacing.menu_width = 220.0;
+
+    // --- Interaction — 펜/터치 친화 + 반응형 피드백 ---------------------
+    // (공식 문서 egui::style::Interaction — 사용자 요구: 인터렉션 최우선)
+    style.interaction = egui::style::Interaction {
+        // 히트 영역 확장 — 펜/터치로 작은 위젯도 편하게 누름.
+        interact_radius: 4.0,
+        // 창 리사이즈 손잡이 영역 확대 (모서리 12px).
+        resize_grab_radius_side: 8.0,
+        resize_grab_radius_corner: 12.0,
+        // 툴팁: 커서가 멈춘 뒤 표시, 인접 위젯은 유예 시간으로 즉시 표시.
+        show_tooltips_only_when_still: true,
+        tooltip_delay: 0.4,
+        tooltip_grace_time: 0.7,
+        selectable_labels: false,
+        multi_widget_text_select: false,
+    };
 
     // --- Scrollbars: 얇은 플로팅 스타일 (툴바 가로 스크롤 포함) ---------
     // 평소에는 2pt 두께의 얇은 바, 호버하면 8pt로 부드럽게 확장됩니다.
@@ -156,11 +179,13 @@ fn nord_visuals() -> egui::Visuals {
         panel_fill: BG_PANEL,
         window_stroke: Stroke::new(1.0, BORDER_WINDOW),
         widgets: egui::style::Widgets {
-            noninteractive: widget(BG_PANEL, TEXT_FAINT),
-            inactive: widget(BG_SURFACE, TEXT_PRIMARY),
-            hovered: widget(BG_MUTED, TEXT_STRONG),
-            active: widget(ACCENT_ACTIVE, TEXT_STRONG),
-            open: widget(BG_SURFACE, TEXT_PRIMARY),
+            noninteractive: widget(BG_PANEL, TEXT_FAINT, 0.0),
+            inactive: widget(BG_SURFACE, TEXT_PRIMARY, 0.0),
+            // 호버: 살짝 커지며 밝아짐 — 반응 피드백의 핵심.
+            hovered: widget(BG_MUTED, TEXT_STRONG, 1.0),
+            // 클릭: 안으로 눌리는 느낌.
+            active: widget(ACCENT_ACTIVE, TEXT_STRONG, -1.0),
+            open: widget(BG_SURFACE, TEXT_PRIMARY, 0.0),
         },
         selection: egui::style::Selection {
             bg_fill: ACCENT_SELECT,
@@ -176,19 +201,28 @@ fn nord_visuals() -> egui::Visuals {
         menu_corner_radius: radius,
         window_highlight_topmost: true,
         resize_corner_size: 16.0,
+        // 텍스트 커서 — 액센트 색·굵기 2·블링크 0.5/0.4s.
+        text_cursor: egui::style::TextCursorStyle {
+            stroke: Stroke::new(2.0, ACCENT_LINK),
+            preview: true,
+            blink: true,
+            on_duration: 0.5,
+            off_duration: 0.4,
+        },
         ..Default::default()
     }
 }
 
 /// Widget visuals for a given background + foreground role.
-fn widget(bg: Color32, fg: Color32) -> egui::style::WidgetVisuals {
+/// `expansion`으로 상태별 크기 피드백: 호버 +1.0(살짝 커짐), 클릭 -1.0(눌림).
+fn widget(bg: Color32, fg: Color32, expansion: f32) -> egui::style::WidgetVisuals {
     egui::style::WidgetVisuals {
         bg_fill: bg,
         weak_bg_fill: bg,
         bg_stroke: Stroke::new(1.0, semantic::BORDER_WEAK),
         fg_stroke: Stroke::new(1.0, fg),
-        corner_radius: CornerRadius::same(spacing::CORNER_RADIUS),
-        expansion: 0.0,
+        corner_radius: CornerRadius::same(6),
+        expansion,
     }
 }
 
