@@ -17,6 +17,7 @@
 //! 모든 컴포넌트는 툴팁(`hint`)을 내장합니다 — 호출부에서 반복하던
 //! `.on_hover_text(...)`를 props로 옮겼습니다.
 
+pub(crate) mod dialog;
 pub(crate) mod form;
 
 use eframe::egui;

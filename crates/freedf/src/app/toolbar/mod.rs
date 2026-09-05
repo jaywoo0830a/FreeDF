@@ -5,7 +5,7 @@
 //! - [`settings`]: 설정 창 내용(펜/만년필/휠/캔버스/종이/서버)과 창 렌더
 
 pub(crate) use super::*;
-use crate::ui::form;
+use crate::ui::{check, slider};
 
 /// 일반 펜(볼펜) 물리 모델의 실제 결과를 보여주는 미니 스트로크 미리보기.
 fn pen_profile_preview(
@@ -100,7 +100,7 @@ fn fountain_profile_preview(
 /// 잉크 질감(입체적 불균일) 커스텀 컨트롤 — 볼펜/만년필 공용.
 /// 변경이 있으면 `true`를 반환합니다 (호출자가 세션 저장).
 fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
-    let mut changed = form::check(
+    let mut changed = check(
         ui,
         &mut grain.enabled,
         "Ink grain",
@@ -109,7 +109,7 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
     )
     .changed();
     if grain.enabled {
-        changed |= form::range(
+        changed |= slider(
             ui,
             &mut grain.flow_amp,
             0.0..=0.4,
@@ -117,7 +117,7 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
             "Low-frequency ink-flow waves along the stroke (amplitude).",
         )
         .changed();
-        changed |= form::range(
+        changed |= slider(
             ui,
             &mut grain.wick_amp,
             0.0..=0.4,
@@ -126,7 +126,7 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
              for fountain ink than ballpen ink.",
         )
         .changed();
-        changed |= form::range(
+        changed |= slider(
             ui,
             &mut grain.pooling,
             0.0..=0.6,
@@ -135,7 +135,7 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
              start & end pools (fountain).",
         )
         .changed();
-        changed |= form::range(
+        changed |= slider(
             ui,
             &mut grain.starvation,
             0.0..=0.6,

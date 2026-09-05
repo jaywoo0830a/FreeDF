@@ -1899,63 +1899,67 @@ impl FreeDfApp {
             window = window.open(&mut open);
         }
         window.show(ctx, |ui| {
-            ui.label(egui::RichText::new("Sync server (v3)").strong());
-            if forced {
-                ui.label(
-                    "Enter the FreeDF server address — all documents are stored \
-                     through it (Sync v3 snapshots + media):",
-                );
-            }
-            ui.horizontal(|ui| {
-                ui.label("Server URL");
-                crate::ui::form::text(&mut self.media_config.base_url)
-                    .hint("https://your-server.example.com")
-                    .width(330.0)
-                    .show(ui);
-            });
-            ui.horizontal(|ui| {
-                ui.label("API key");
-                crate::ui::form::password(&mut self.media_config.api_key)
-                    .width(330.0)
-                    .show(ui);
-            });
-            ui.horizontal(|ui| {
-                let label = if self.db_connected {
-                    "Reconnect"
-                } else {
-                    "Connect"
-                };
-                if ui.button(label).clicked() {
-                    self.try_connect_server(false);
+            crate::ui::dialog::pad(ui, false, |ui| {
+                ui.label(egui::RichText::new("Sync server (v3)").strong());
+                if forced {
+                    ui.label(
+                        "Enter the FreeDF server address — all documents are stored \
+                         through it (Sync v3 snapshots + media):",
+                    );
                 }
-                if self.db_connected {
-                    ui.label(egui::RichText::new("✓ connected").weak());
+                crate::ui::form::group("Server URL")
+                    .required()
+                    .hint("Sync v3 snapshots + media share one address.")
+                    .show(ui, |ui| {
+                        crate::ui::form::text(&mut self.media_config.base_url)
+                            .hint("https://your-server.example.com")
+                            .width(330.0)
+                            .show(ui);
+                    });
+                crate::ui::form::group("API key")
+                    .required()
+                    .show(ui, |ui| {
+                        crate::ui::form::password(&mut self.media_config.api_key)
+                            .width(330.0)
+                            .show(ui);
+                    });
+                ui.horizontal(|ui| {
+                    let label = if self.db_connected {
+                        "Reconnect"
+                    } else {
+                        "Connect"
+                    };
+                    if ui.button(label).clicked() {
+                        self.try_connect_server(false);
+                    }
+                    if self.db_connected {
+                        ui.label(egui::RichText::new("✓ connected").weak());
+                    }
+                });
+                if self.pending_connect.is_some() {
+                    ui.label(egui::RichText::new("Connecting…").weak());
+                } else if let Some((ok, msg)) = &self.connect_status {
+                    let color = if *ok {
+                        ui.visuals().hyperlink_color
+                    } else {
+                        ui.visuals().error_fg_color
+                    };
+                    ui.colored_label(color, msg);
                 }
-            });
-            if self.pending_connect.is_some() {
-                ui.label(egui::RichText::new("Connecting…").weak());
-            } else if let Some((ok, msg)) = &self.connect_status {
-                let color = if *ok {
-                    ui.visuals().hyperlink_color
-                } else {
-                    ui.visuals().error_fg_color
-                };
-                ui.colored_label(color, msg);
-            }
-            ui.add_space(8.0);
-            ui.label(
-                egui::RichText::new(
-                    "The server hosts Sync v3 (document snapshots) and media \
-                     (recordings) behind one address and API key.",
-                )
-                .weak(),
-            );
-            if !forced {
                 ui.add_space(8.0);
-                if ui.button("Done").clicked() {
-                    done = true;
+                ui.label(
+                    egui::RichText::new(
+                        "The server hosts Sync v3 (document snapshots) and media \
+                         (recordings) behind one address and API key.",
+                    )
+                    .weak(),
+                );
+                if !forced {
+                    crate::ui::dialog::actions(ui, |ui| {
+                        done = crate::ui::action(ui, "Done", "").clicked();
+                    });
                 }
-            }
+            });
         });
         self.setup_open = open && !done;
     }
@@ -3068,72 +3072,57 @@ impl FreeDfApp {
 
         match &modal.kind {
             ModalKind::AskText { title, hint, action } => {
-                egui::Window::new(title)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(hint);
-                        let resp = crate::ui::form::text(&mut text)
-                            .hint("Type here...")
-                            .width(360.0)
-                            .show(ui);
-                        if matches!(action, TextAction::NewNote) {
-                            ui.add_space(6.0);
-                            ui.horizontal(|ui| {
-                                ui.label("Pages:");
-                                egui::ComboBox::from_id_salt("note_pages")
-                                    .selected_text(format!("{pages}"))
-                                    .show_ui(ui, |ui| {
-                                        for p in NOTE_PAGE_PRESETS {
-                                            ui.selectable_value(
-                                                &mut pages,
-                                                *p,
-                                                format!("{p} pages"),
-                                            );
-                                        }
-                                    });
-                            });
-                        }
+                crate::ui::dialog::modal(ctx, title, 400.0, |ui| {
+                    ui.label(hint);
+                    let resp = crate::ui::form::text(&mut text)
+                        .hint("Type here...")
+                        .width(360.0)
+                        .show(ui);
+                    if matches!(action, TextAction::NewNote) {
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
-                            ok = ui.button("OK").clicked();
-                            cancel = ui.button("Cancel").clicked();
+                            ui.label("Pages:");
+                            egui::ComboBox::from_id_salt("note_pages")
+                                .selected_text(format!("{pages}"))
+                                .show_ui(ui, |ui| {
+                                    for p in NOTE_PAGE_PRESETS {
+                                        ui.selectable_value(
+                                            &mut pages,
+                                            *p,
+                                            format!("{p} pages"),
+                                        );
+                                    }
+                                });
                         });
-                        if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            ok = true;
-                        }
+                    }
+                    crate::ui::dialog::actions(ui, |ui| {
+                        cancel = crate::ui::action(ui, "Cancel", "").clicked();
+                        ok = crate::ui::action(ui, "OK", "").clicked();
                     });
+                    if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        ok = true;
+                    }
+                });
             }
             ModalKind::Confirm { title, message, .. } => {
-                egui::Window::new(title)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(message);
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            ok = ui.button("Delete").clicked();
-                            cancel = ui.button("Cancel").clicked();
-                        });
+                crate::ui::dialog::modal(ctx, title, 360.0, |ui| {
+                    ui.label(message);
+                    crate::ui::dialog::actions(ui, |ui| {
+                        cancel = crate::ui::action(ui, "Cancel", "").clicked();
+                        ok = crate::ui::action(ui, "Delete", "").clicked();
                     });
+                });
             }
             ModalKind::Alert { title, message } => {
-                egui::Window::new(title)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(message);
-                        ui.add_space(6.0);
-                        if ui.button("OK").clicked() {
-                            ok = true;
-                        }
-                        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            ok = true;
-                        }
+                crate::ui::dialog::modal(ctx, title, 320.0, |ui| {
+                    ui.label(message);
+                    crate::ui::dialog::actions(ui, |ui| {
+                        ok = crate::ui::action(ui, "OK", "").clicked();
                     });
+                    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        ok = true;
+                    }
+                });
             }
         }
 

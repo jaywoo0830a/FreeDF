@@ -8,7 +8,8 @@ use super::*;
 use crate::ui::form;
 
 /// 플로팅 설정 창 boilerplate 제거 — 열림 상태를 바인딩합니다
-/// (React의 <Modal open={..}>와 같은 역할).
+/// (React의 <Modal open={..}>와 같은 역할). 실제 렌더링/여백은
+/// 공용 컴포넌트 `crate::ui::dialog::dialog`가 담당합니다.
 fn settings_window(
     ctx: &egui::Context,
     open: &mut bool,
@@ -18,17 +19,7 @@ fn settings_window(
     scroll: bool,
     content: impl FnOnce(&mut egui::Ui),
 ) {
-    egui::Window::new(title)
-        .open(open)
-        .resizable(resizable)
-        .default_width(width)
-        .show(ctx, |ui| {
-            if scroll {
-                egui::ScrollArea::vertical().show(ui, content);
-            } else {
-                content(ui);
-            }
-        });
+    crate::ui::dialog::dialog(ctx, open, title, width, resizable, scroll, content);
 }
 
 impl FreeDfApp {
@@ -138,6 +129,7 @@ impl FreeDfApp {
                 ui,
                 "pen_cursor_style_win",
                 self.pen_cursor_style.label(),
+                "Cursor",
                 "Pen cursor shape",
                 |ui| {
                     for style in PenCursorStyle::all() {
@@ -383,45 +375,46 @@ impl FreeDfApp {
         }
         // 새 색 추가 — **RGB 숫자 입력 + 팝업 컬러픽커** (최대 MAX_FAVORITE_COLORS).
         let full = self.favorite_colors.len() >= MAX_FAVORITE_COLORS;
-        ui.horizontal(|ui| {
-            ui.label("Add:");
-            ui.add(
-                egui::DragValue::new(&mut self.wheel_pick_color[0])
-                    .range(0..=255)
-                    .prefix("R "),
-            );
-            ui.add(
-                egui::DragValue::new(&mut self.wheel_pick_color[1])
-                    .range(0..=255)
-                    .prefix("G "),
-            );
-            ui.add(
-                egui::DragValue::new(&mut self.wheel_pick_color[2])
-                    .range(0..=255)
-                    .prefix("B "),
-            );
-            let mut pick = Color32::from_rgba_unmultiplied(
-                self.wheel_pick_color[0],
-                self.wheel_pick_color[1],
-                self.wheel_pick_color[2],
-                self.wheel_pick_color[3],
-            );
-            if form::color(ui, &mut pick, "Pick a color").changed() {
-                self.wheel_pick_color = pick.to_array();
-            }
-            // 휠 색은 불투명으로 유지 (알파는 팔레트에 의미 없음).
-            self.wheel_pick_color[3] = 255;
-            let picked = self.wheel_pick_color;
-            if ui
-                .add_enabled(!full, egui::Button::new("Add to wheel"))
-                .clicked()
-            {
-                if !self.favorite_colors.contains(&picked) {
-                    self.favorite_colors.push(picked);
-                    self.save_default_session();
-                    self.save_session();
+        form::group("Add").optional().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut self.wheel_pick_color[0])
+                        .range(0..=255)
+                        .prefix("R "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.wheel_pick_color[1])
+                        .range(0..=255)
+                        .prefix("G "),
+                );
+                ui.add(
+                    egui::DragValue::new(&mut self.wheel_pick_color[2])
+                        .range(0..=255)
+                        .prefix("B "),
+                );
+                let mut pick = Color32::from_rgba_unmultiplied(
+                    self.wheel_pick_color[0],
+                    self.wheel_pick_color[1],
+                    self.wheel_pick_color[2],
+                    self.wheel_pick_color[3],
+                );
+                if form::color(ui, &mut pick, "", "Pick a color").changed() {
+                    self.wheel_pick_color = pick.to_array();
                 }
-            }
+                // 휠 색은 불투명으로 유지 (알파는 팔레트에 의미 없음).
+                self.wheel_pick_color[3] = 255;
+                let picked = self.wheel_pick_color;
+                if ui
+                    .add_enabled(!full, egui::Button::new("Add to wheel"))
+                    .clicked()
+                {
+                    if !self.favorite_colors.contains(&picked) {
+                        self.favorite_colors.push(picked);
+                        self.save_default_session();
+                        self.save_session();
+                    }
+                }
+            });
         });
         if full {
             form::help(
@@ -465,7 +458,7 @@ impl FreeDfApp {
             self.canvas_color[2],
             self.canvas_color[3],
         );
-        if form::color(ui, &mut custom, "Custom canvas color").changed() {
+        if form::color(ui, &mut custom, "Color", "Custom canvas color").changed() {
             self.canvas_color = custom.to_array();
             self.save_default_session();
             self.save_session();
@@ -475,7 +468,7 @@ impl FreeDfApp {
     /// Insert Page 플로팅 창 내용 — 페이지 수 입력 + 위치 선택.
     pub(crate) fn insert_page_ui(&mut self, ui: &mut egui::Ui) {
         let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
-        form::input_group(ui, "Pages:", "", |ui| {
+        form::group("Pages").required().show(ui, |ui| {
             // 포커스가 없을 때만 카운트와 동기화 — 타이핑 중에는
             // 매 프레임 덮어쓰지 않습니다.
             if !self.insert_page_focus {
@@ -546,6 +539,7 @@ impl FreeDfApp {
                 ui,
                 "paper_style_win",
                 self.paper_style.label(),
+                "Style",
                 "Paper style for the current page.\n\
                  New pages & new notes use it as their default.",
                 |ui| {
@@ -582,7 +576,8 @@ impl FreeDfApp {
                 self.paper_color[2],
                 self.paper_color[3],
             );
-            if form::color(ui, &mut paper_color, "Custom paper color (current page)").changed() {
+            if form::color(ui, &mut paper_color, "Color", "Custom paper color (current page)").changed()
+            {
                 self.paper_color = paper_color.to_array();
                 self.apply_paper_to_current_page();
                 self.save_default_session();
@@ -762,19 +757,19 @@ impl FreeDfApp {
                     let mut ls = self.paper_style_settings.of(style).unwrap();
                     let mut changed = false;
                     changed |= form::number(&mut ls.spacing)
+                        .label("Spacing")
                         .range(12.0..=120.0)
                         .speed(1.0)
-                        .prefix("Spacing ")
-                        .suffix("pt")
+                        .suffix(" pt")
                         .help("Line / dot spacing (pt)")
                         .show(ui)
                         .changed();
                     changed |= form::number(&mut ls.width)
+                        .label("Line")
                         .range(0.25..=8.0)
                         .speed(0.05)
                         .decimals(2)
-                        .prefix("Line ")
-                        .suffix("pt")
+                        .suffix(" pt")
                         .help("Line / dot thickness (pt)")
                         .show(ui)
                         .changed();
@@ -801,7 +796,7 @@ impl FreeDfApp {
                         ls.color[2],
                         ls.color[3],
                     );
-                    if form::color(ui, &mut line_color, "Custom line color").changed() {
+                    if form::color(ui, &mut line_color, "Color", "Custom line color").changed() {
                         ls.color =
                             [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
                         changed = true;
@@ -823,6 +818,7 @@ impl FreeDfApp {
                 ui,
                 "paper_size_win",
                 self.paper_size.label(),
+                "Size",
                 "Size of new pages & new notes (existing pages keep their size).",
                 |ui| {
                     for size in PaperSize::all() {
@@ -860,16 +856,18 @@ impl FreeDfApp {
                 let mut w_mm = self.custom_paper_size[0] / MM_TO_PT;
                 let mut h_mm = self.custom_paper_size[1] / MM_TO_PT;
                 let w_changed = form::number(&mut w_mm)
+                    .label("Width (mm)")
+                    .optional()
                     .range(50.0..=1200.0)
                     .speed(1.0)
-                    .prefix("W ")
                     .help("Custom page width (mm)")
                     .show(ui)
                     .changed();
                 let h_changed = form::number(&mut h_mm)
+                    .label("Height (mm)")
+                    .optional()
                     .range(50.0..=1200.0)
                     .speed(1.0)
-                    .prefix("H ")
                     .help("Custom page height (mm)")
                     .show(ui)
                     .changed();
@@ -942,22 +940,27 @@ impl FreeDfApp {
              snapshots and media uploads share one address and API key.",
         );
         let mut changed = false;
-        form::input_group(ui, "Server URL", "", |ui| {
-            changed |= form::text(&mut self.media_config.base_url)
-                .hint("https://your-server.example.com")
-                .width(230.0)
-                .help("Sync v3 + media server address")
-                .show(ui)
-                .changed();
-        });
-        form::input_group(ui, "API key", "", |ui| {
-            changed |= form::password(&mut self.media_config.api_key)
-                .hint("key")
-                .width(230.0)
-                .help("API key — guards snapshots, uploads, lists and deletes.")
-                .show(ui)
-                .changed();
-        });
+        form::group("Server URL")
+            .required()
+            .hint("Sync v3 snapshots + media share one address.")
+            .show(ui, |ui| {
+                changed |= form::text(&mut self.media_config.base_url)
+                    .hint("https://your-server.example.com")
+                    .width(230.0)
+                    .help("Sync v3 + media server address")
+                    .show(ui)
+                    .changed();
+            });
+        form::group("API key")
+            .required()
+            .show(ui, |ui| {
+                changed |= form::password(&mut self.media_config.api_key)
+                    .hint("key")
+                    .width(230.0)
+                    .help("API key — guards snapshots, uploads, lists and deletes.")
+                    .show(ui)
+                    .changed();
+            });
         ui.horizontal(|ui| {
             if ui
                 .button(if self.db_connected { "Reconnect" } else { "Connect" })

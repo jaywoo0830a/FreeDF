@@ -28,6 +28,77 @@ fn tip(resp: egui::Response, help: &str) -> egui::Response {
     }
 }
 
+/// 라벨 줄 — 필수 `*` / `(optional)` 표시.
+fn label_line(ui: &mut egui::Ui, label: &str, req: Option<bool>) {
+    if label.is_empty() && req.is_none() {
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        if !label.is_empty() {
+            ui.label(egui::RichText::new(label).strong().size(12.5));
+        }
+        match req {
+            Some(true) => {
+                ui.label(egui::RichText::new("*").strong().color(ui.visuals().error_fg_color));
+            }
+            Some(false) => {
+                ui.label(egui::RichText::new("(optional)").weak().small());
+            }
+            None => {}
+        }
+    });
+}
+
+/// <FormGroup> — 라벨(위) + 힌트(선택) + 컨트롤(아래) **수직 배치** 빌더.
+pub(crate) struct Group<'a> {
+    label: &'a str,
+    req: Option<bool>,
+    hint: &'a str,
+}
+
+impl<'a> Group<'a> {
+    pub fn new(label: &'a str) -> Self {
+        Self {
+            label,
+            req: None,
+            hint: "",
+        }
+    }
+
+    /// 필수 표시 `*`.
+    pub fn required(mut self) -> Self {
+        self.req = Some(true);
+        self
+    }
+
+    /// 선택 표시 `(optional)`.
+    pub fn optional(mut self) -> Self {
+        self.req = Some(false);
+        self
+    }
+
+    /// 라벨과 컨트롤 사이 힌트 텍스트.
+    pub fn hint(mut self, h: &'a str) -> Self {
+        self.hint = h;
+        self
+    }
+
+    /// 수직 배치 렌더 — 라벨(+표시) → 힌트 → 컨트롤.
+    pub fn show<R>(self, ui: &mut egui::Ui, children: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        label_line(ui, self.label, self.req);
+        if !self.hint.is_empty() {
+            ui.label(egui::RichText::new(self.hint).weak().small());
+        }
+        children(ui)
+    }
+}
+
+/// <FormGroup> 생성 — `form::group("Server URL").required().hint(..).show(ui, ..)`.
+pub(crate) fn group(label: &str) -> Group<'_> {
+    Group::new(label)
+}
+
 /// <FormLabel> — 컨트롤 위/옆 작은 회색 제목.
 pub(crate) fn label(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.label(egui::RichText::new(text).weak().small());
@@ -115,23 +186,28 @@ pub(crate) fn password(value: &mut String) -> TextInput<'_> {
     TextInput::new(value).password(true)
 }
 
-/// <ColorPicker> — ColorEditButton, `.changed()`로 판정.
+/// <ColorPicker> — ColorEditButton (라벨 위 + 입력 아래; 라벨이 비면 인라인),
+/// `.changed()`로 판정.
 pub(crate) fn color(
     ui: &mut egui::Ui,
     value: &mut egui::Color32,
+    label: &str,
     help: &str,
 ) -> egui::Response {
+    label_line(ui, label, None);
     tip(ui.color_edit_button_srgba(value), help)
 }
 
-/// <FormSelect> — 콤보박스 (항목은 items 클로저로).
+/// <FormSelect> — 콤보박스 (라벨 위 + 입력 아래, 항목은 items 클로저로).
 pub(crate) fn select(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash + std::fmt::Debug,
     selected_text: impl Into<egui::WidgetText>,
+    label: &str,
     help: &str,
     items: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
+    label_line(ui, label, None);
     let resp = egui::ComboBox::from_id_salt(id_salt)
         .selected_text(selected_text)
         .show_ui(ui, items)
@@ -139,18 +215,20 @@ pub(crate) fn select(
     tip(resp, help)
 }
 
-/// <FormCheck> — 체크박스, `.changed()`로 판정.
+/// <FormCheck> — 체크박스 (라벨 위 + 입력 아래), `.changed()`로 판정.
 pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool, text: &str, help: &str) -> egui::Response {
-    tip(ui.checkbox(on, text), help)
+    label_line(ui, text, None);
+    tip(ui.checkbox(on, ""), help)
 }
 
-/// <FormSwitch> — 토글 버튼, `.changed()`로 판정.
+/// <FormSwitch> — 토글 버튼 (라벨 위 + 입력 아래), `.changed()`로 판정.
 #[allow(dead_code)] // 토글 입력은 현재 툴바 아이콘 토글(ui::icon_toggle)을 사용.
 pub(crate) fn switch(ui: &mut egui::Ui, on: &mut bool, text: &str, help: &str) -> egui::Response {
-    ui.toggle_value(on, text).on_hover_text(help)
+    label_line(ui, text, None);
+    tip(ui.toggle_value(on, ""), help)
 }
 
-/// <FormRange> — f32 슬라이더, `.changed()`로 판정.
+/// <FormRange> — f32 슬라이더 (라벨 위 + 입력 아래 수직 배치), `.changed()`로 판정.
 pub(crate) fn range(
     ui: &mut egui::Ui,
     value: &mut f32,
@@ -158,7 +236,8 @@ pub(crate) fn range(
     label_text: &str,
     help: &str,
 ) -> egui::Response {
-    tip(ui.add(egui::Slider::new(value, r).text(label_text)), help)
+    label_line(ui, label_text, None);
+    tip(ui.add(egui::Slider::new(value, r)), help)
 }
 
 /// <FormRange> 정수형 — 커스텀 포매터 지원 (프리셋 라벨 등).
@@ -170,10 +249,11 @@ pub(crate) fn range_i(
     help: &str,
     formatter: Option<fn(i32, std::ops::RangeInclusive<i32>) -> String>,
 ) -> egui::Response {
-    let mut slider = egui::Slider::new(value, r.clone()).text(label_text);
+    let mut slider = egui::Slider::new(value, r.clone());
     if let Some(f) = formatter {
         slider = slider.custom_formatter(move |v, _| f(v as i32, r.clone()));
     }
+    label_line(ui, label_text, None);
     tip(ui.add(slider), help)
 }
 
@@ -186,6 +266,10 @@ pub(crate) struct NumberInput<'a> {
     suffix: &'a str,
     decimals: Option<usize>,
     help: &'a str,
+    /// 수직 배치 라벨 (비어 있으면 인라인).
+    label: &'a str,
+    /// 필수 `*` / `(optional)` 표시.
+    req: Option<bool>,
 }
 
 impl<'a> NumberInput<'a> {
@@ -198,6 +282,8 @@ impl<'a> NumberInput<'a> {
             suffix: "",
             decimals: None,
             help: "",
+            label: "",
+            req: None,
         }
     }
 
@@ -211,6 +297,7 @@ impl<'a> NumberInput<'a> {
         self
     }
 
+    #[allow(dead_code)] // 빌더 API 예약 (현재 접두사는 사용처 없음).
     pub fn prefix(mut self, p: &'a str) -> Self {
         self.prefix = p;
         self
@@ -231,8 +318,28 @@ impl<'a> NumberInput<'a> {
         self
     }
 
+    /// 수직 배치 라벨 (위).
+    pub fn label(mut self, l: &'a str) -> Self {
+        self.label = l;
+        self
+    }
+
+    /// 필수 `*` 표시.
+    #[allow(dead_code)] // 현재 required 표시는 Group으로만 사용.
+    pub fn required(mut self) -> Self {
+        self.req = Some(true);
+        self
+    }
+
+    /// 선택 `(optional)` 표시.
+    pub fn optional(mut self) -> Self {
+        self.req = Some(false);
+        self
+    }
+
     /// 렌더 — `.changed()`로 판정.
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
+        label_line(ui, self.label, self.req);
         let mut dv = egui::DragValue::new(self.value);
         if let Some(r) = self.range {
             dv = dv.range(r);
