@@ -67,20 +67,26 @@ mod imp {
     use std::sync::atomic::Ordering;
 
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
-    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS,
         KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VIRTUAL_KEY, VK_CONTROL,
-        VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RIGHT, VK_RWIN, VK_SHIFT,
+        VK_LCONTROL, VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RIGHT, VK_RWIN, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-        KBDLLHOOKSTRUCT, MSG, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, MSG, PostThreadMessageW, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN,
+        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     // 번역 중인 키 집합 — 반복(repeat)은 1회만 처리.
     static ACTIVE: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
+
+    /// 훅 스레드 ID — 데스크탑 매크로를 훅 콜백 밖(메시지 루프)에서 보내도록
+    /// 자기 스레드에 요청 메시지를 게시할 때 사용.
+    static HOOK_THREAD_ID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    /// 훅 스레드 전용 데스크탑 매크로 요청 메시지 (WM_APP + 1).
+    const WM_DESKTOP_MACRO: u32 = 0x8001;
 
     fn hook_config() -> super::HookConfig {
         CONFIG
@@ -144,38 +150,46 @@ mod imp {
 
     /// Ctrl+Win+←/→ — Windows 가상 데스크탑 전환.
     ///
-    /// 공식 문서(winuser SendInput)의 ShowDesktop 예제와 같은 방식:
-    /// **wVk 기반** 이벤트를 한 번의 SendInput으로 배치 전송합니다
-    /// (이벤트는 직렬로 삽입되어 다른 입력과 섞이지 않음).
-    /// 실패 시 스캔코드 배치로 재시도합니다.
+    /// 사용자가 검증한 예제와 동일한 이벤트 구조:
+    /// - **Win → Ctrl → 화살표** 순서로 누름 (Ctrl 먼저가 아님)
+    /// - down/up을 **별도의 SendInput 호출**로 나눠 전송
+    /// - 떼는 순서는 화살표 → Ctrl → Win (누른 역순)
+    /// 1차가 전부 전달되지 않으면 스캔코드 배치(동일 순서)로 재시도합니다.
     fn send_desktop(prev: bool) {
         let arrow = if prev { VK_LEFT } else { VK_RIGHT };
-        // ── 1차: wVk 기반 (공식 예제 스타일) ──
-        let vk = [
-            keybd_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+        // ── 1차: wVk 기반 (검증된 예제 스타일) ──
+        let down = [
             keybd_vk(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+            keybd_vk(VK_LCONTROL, KEYBD_EVENT_FLAGS(0)),
             keybd_vk(arrow, KEYBD_EVENT_FLAGS(0)),
-            keybd_vk(arrow, KEYEVENTF_KEYUP),
-            keybd_vk(VK_LWIN, KEYEVENTF_KEYUP),
-            keybd_vk(VK_CONTROL, KEYEVENTF_KEYUP),
         ];
-        let sent = unsafe { SendInput(&vk, std::mem::size_of::<INPUT>() as i32) };
-        if sent as usize == vk.len() {
+        let up = [
+            keybd_vk(arrow, KEYEVENTF_KEYUP),
+            keybd_vk(VK_LCONTROL, KEYEVENTF_KEYUP),
+            keybd_vk(VK_LWIN, KEYEVENTF_KEYUP),
+        ];
+        let cb = std::mem::size_of::<INPUT>() as i32;
+        let n = unsafe { SendInput(&down, cb) };
+        let m = unsafe { SendInput(&up, cb) };
+        if n as usize == down.len() && m as usize == up.len() {
             return;
         }
         // ── 2차: 스캔코드 기반 (키보드 레이아웃과 무관한 하드웨어 수준) ──
         let tap = if prev { 0x4B } else { 0x4D }; // ← / → (Set 1 스캔코드)
         let ext = KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY;
-        let sc = [
-            keybd(0x1D, KEYEVENTF_SCANCODE),                    // Ctrl down
-            keybd(0x5B, ext),                                   // LWin down
-            keybd(tap, ext),                                    // ←/→ down
-            keybd(tap, ext | KEYEVENTF_KEYUP),                  // ←/→ up
-            keybd(0x5B, ext | KEYEVENTF_KEYUP),                 // LWin up
-            keybd(0x1D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP),  // Ctrl up
+        let down_sc = [
+            keybd(0x5B, ext),                  // LWin down
+            keybd(0x1D, KEYEVENTF_SCANCODE),   // Ctrl down
+            keybd(tap, ext),                   // ←/→ down
+        ];
+        let up_sc = [
+            keybd(tap, ext | KEYEVENTF_KEYUP),                 // ←/→ up
+            keybd(0x1D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP), // Ctrl up
+            keybd(0x5B, ext | KEYEVENTF_KEYUP),                // LWin up
         ];
         unsafe {
-            let _ = SendInput(&sc, std::mem::size_of::<INPUT>() as i32);
+            let _ = SendInput(&down_sc, cb);
+            let _ = SendInput(&up_sc, cb);
         }
     }
 
@@ -255,7 +269,17 @@ mod imp {
                 if let Some(prev) = matched_page {
                     send_page(prev);
                 } else if let Some(prev) = matched_desktop {
-                    send_desktop(prev);
+                    // 훅 콜백 안에서는 보내지 않고, 자기 스레드의 메시지
+                    // 루프에 요청을 게시합니다 — 검증된 예제처럼 훅 체인
+                    // 밖 컨텍스트에서 SendInput이 실행되도록 합니다.
+                    if let Some(&tid) = HOOK_THREAD_ID.get() {
+                        let _ = PostThreadMessageW(
+                            tid,
+                            WM_DESKTOP_MACRO,
+                            WPARAM(prev as usize),
+                            LPARAM(0),
+                        );
+                    }
                 }
             }
             // 매핑된 키는 원래 동작을 삼킵니다 (반복 포함 — 의도치 않은
@@ -271,6 +295,7 @@ mod imp {
 
     pub(super) fn hook_thread() {
         unsafe {
+            let _ = HOOK_THREAD_ID.set(GetCurrentThreadId());
             let hook = SetWindowsHookExW(
                 WH_KEYBOARD_LL,
                 Some(keyboard_cb),
@@ -283,7 +308,12 @@ mod imp {
             let mut msg: MSG = std::mem::zeroed();
             // LL 훅 콜백은 훅을 설치한 스레드의 메시지 루프에서 호출됩니다.
             // (스레드가 끝나면 시스템이 훅을 자동 해제 — 프로세스 수명 동안 유지)
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+            // 데스크탑 매크로 요청 메시지는 콜백 밖인 여기서 처리합니다.
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                if msg.message == WM_DESKTOP_MACRO {
+                    send_desktop(msg.wParam.0 != 0);
+                }
+            }
         }
     }
 }
