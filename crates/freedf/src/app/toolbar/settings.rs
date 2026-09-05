@@ -1316,5 +1316,14 @@ impl FreeDfApp {
             );
             self.macro_settings_open = open;
         }
+
+        // ── 게임패드 설정 창 (Row1의 Gamepad 버튼) ──
+        if self.gamepad_settings_open {
+            let mut open = self.gamepad_settings_open;
+            settings_window(ui.ctx(), &mut open, "Gamepad settings", 400.0, false, false, |ui| {
+                self.gamepad_settings_ui(ui);
+            });
+            self.gamepad_settings_open = open;
+        }
     }
 }

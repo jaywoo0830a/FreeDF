@@ -150,6 +150,15 @@ impl FreeDfApp {
                     // 창이 닫히면 캡처도 함께 취소.
                     self.macro_capture = None;
                 }
+                if icon_toggle(
+                    ui,
+                    &mut self.gamepad_settings_open,
+                    icons::JOYSTICK,
+                    "Gamepad",
+                    "Controller input — L-stick scroll · LB = CTRL · LT = Ctrl+Z ·\n\
+                     D-pad = arrows / PgUp / PgDn. Click to open settings & debug.",
+                )
+                .changed() {}
                 let cache_menu = ui.menu_button(
                     icon_text(ui, "Cache", icons::HARD_DRIVES),
                     |ui| {

@@ -1116,6 +1116,20 @@ pub struct FreeDfApp {
     /// 게임패드 인스턴스 (gilrs/WGI) — Windows 전용, 첫 폴링에서 지연 생성.
     #[cfg(target_os = "windows")]
     gamepad: Option<gilrs::Gilrs>,
+    /// 게임패드 설정 창 열림.
+    gamepad_settings_open: bool,
+    /// 게임패드 디버그 패널 표시.
+    gamepad_debug_open: bool,
+    /// 게임패드 런타임 설정 (설정 창에서 편집).
+    gamepad_cfg: gamepad::GamepadCfg,
+    /// 디버그 패널용 — 마지막 프레임 원시 상태.
+    gamepad_last: Option<gamepad::Gamepad>,
+    /// D패드 이전 프레임 상태 (키 에지 주입용).
+    gamepad_dpad_prev: [bool; 4],
+    /// 디버그 카운터.
+    gamepad_flips: u32,
+    gamepad_zooms: u32,
+    gamepad_undos: u32,
     /// Page change slide animation
     page_anim: Option<PageAnim>,
     /// 다음 페이지 전환을 세로로 할지 (PgUp/PgDn 키가 세팅) — 시작 시 소비
@@ -1578,6 +1592,14 @@ impl FreeDfApp {
             gamepad_notified: false,
             #[cfg(target_os = "windows")]
             gamepad: None,
+            gamepad_settings_open: false,
+            gamepad_debug_open: false,
+            gamepad_cfg: gamepad::GamepadCfg::default(),
+            gamepad_last: None,
+            gamepad_dpad_prev: [false; 4],
+            gamepad_flips: 0,
+            gamepad_zooms: 0,
+            gamepad_undos: 0,
             page_anim: None,
             transition_vertical: false,
             prev_texture: None,
@@ -3343,6 +3365,9 @@ impl eframe::App for FreeDfApp {
         self.connection_dialog(&ctx);
         self.fallback_dialog(&ctx);
         self.loading_overlay(&ctx);
+        if self.gamepad_debug_open {
+            self.gamepad_debug_ui(ui);
+        }
 
         // Close confirmation: ask whether to save before quitting.
         let close_requested = ctx.input(|i| i.viewport().close_requested());
