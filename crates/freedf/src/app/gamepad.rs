@@ -103,6 +103,10 @@ pub(crate) fn gamepad_log_clear() {
     }
 }
 
+/// 모든 게임패드 입력의 **공통 연타 리듬** (LB+스틱 줌 · LT undo · D패드 반복).
+/// 누르고 있으면 이 간격으로 계속 발사됩니다 — 모든 입력이 같은 성격을 가집니다.
+const GAMEPAD_REPEAT_MS: u64 = 100;
+
 impl FreeDfApp {
     /// gilrs에서 이번 프레임 상태를 읽습니다 — Windows만 실제 구현.
     #[cfg(target_os = "windows")]
@@ -178,8 +182,9 @@ impl FreeDfApp {
             );
         }
 
-        // D-pad = 화살표/PgUp·PgDn 키 — 에지에서 egui 키 이벤트로 주입해
-        // 기존 키보드 처리(페이지 전환/텍스트 커서 등)가 그대로 동작합니다.
+        // D-pad = 화살표/PgUp·PgDn 키 — 누르는 순간 주입하고, 누르고 있으면
+        // 다른 입력과 같은 100ms 리듬으로 연타(반복). 떼면 release 주입.
+        let now = now_ms();
         let dpad_keys = [
             (gp.d_up, egui::Key::PageUp, "D-pad up — PageUp"),
             (gp.d_down, egui::Key::PageDown, "D-pad down — PageDown"),
@@ -188,19 +193,34 @@ impl FreeDfApp {
         ];
         for (i, (down, key, msg)) in dpad_keys.iter().enumerate() {
             let was = self.gamepad_dpad_prev[i];
-            if *down != was {
+            if *down {
+                let due = now.saturating_sub(self.gamepad_dpad_last_ms[i]) >= GAMEPAD_REPEAT_MS;
+                if !was || due {
+                    ctx.input_mut(|inp| {
+                        inp.events.push(egui::Event::Key {
+                            key: *key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: was,
+                            modifiers: egui::Modifiers::default(),
+                        });
+                    });
+                    self.gamepad_dpad_last_ms[i] = now;
+                    if !was {
+                        gamepad_log_push(*msg);
+                    }
+                }
+            } else if was {
                 ctx.input_mut(|inp| {
                     inp.events.push(egui::Event::Key {
                         key: *key,
                         physical_key: None,
-                        pressed: *down,
+                        pressed: false,
                         repeat: false,
                         modifiers: egui::Modifiers::default(),
                     });
                 });
-                if *down {
-                    gamepad_log_push(*msg);
-                }
+                self.gamepad_dpad_last_ms[i] = 0;
             }
             self.gamepad_dpad_prev[i] = *down;
         }
@@ -222,28 +242,28 @@ impl FreeDfApp {
         };
 
         if gp.lb {
-            // CTRL + 스틱 상하 = 줌 스텝 (휠 노치처럼 히스테리시스 — 재래스터
-            // 비용이 크므로 한 번에 한 스텝, 복귀해야 다음 스텝 허용).
+            // CTRL + 스틱 상하 = 줌 (Ctrl+휠과 동일). 스틱을 밀고 있으면
+            // 공통 연타 리듬으로 계속 한 스텝씩 — 재래스터 비용을 감안한 간격.
+            const ZOOM_PUSH_THRESHOLD: f32 = 0.25;
             let push = gy;
-            if self.gamepad_zoom_armed {
-                if push.abs() < 0.3 {
-                    self.gamepad_zoom_armed = false;
+            if push.abs() > ZOOM_PUSH_THRESHOLD
+                && now.saturating_sub(self.gamepad_zoom_last_ms) >= GAMEPAD_REPEAT_MS
+            {
+                if push > 0.0 {
+                    self.zoom_by(ZOOM_STEP);
+                    self.gamepad_zooms += 1;
+                    gamepad_log_push("LB + stick up — zoom +5%");
+                } else {
+                    self.zoom_by(1.0 / ZOOM_STEP);
+                    self.gamepad_zooms += 1;
+                    gamepad_log_push("LB + stick down — zoom -5%");
                 }
-            } else if push > 0.6 {
-                self.zoom_by(ZOOM_STEP);
-                self.gamepad_zoom_armed = true;
-                self.gamepad_zooms += 1;
-                gamepad_log_push("LB + stick up — zoom +5%");
-            } else if push < -0.6 {
-                self.zoom_by(1.0 / ZOOM_STEP);
-                self.gamepad_zoom_armed = true;
-                self.gamepad_zooms += 1;
-                gamepad_log_push("LB + stick down — zoom -5%");
+                self.gamepad_zoom_last_ms = now;
             }
             // Ctrl+휠처럼 LB 동안 스크롤은 억제.
             self.scroll_vel = Vec2::ZERO;
         } else {
-            self.gamepad_zoom_armed = false;
+            self.gamepad_zoom_last_ms = 0;
             // 스틱 아래 = 스크롤 아래(이전 페이지/이전 내용), 오른쪽 = 오른쪽.
             let stick = Vec2::new(gp.stick.x, -gy);
             if stick.length_sq() > 0.02 {
@@ -272,11 +292,15 @@ impl FreeDfApp {
             }
         }
 
-        // LT = Ctrl+Z — 깊게 당기는 에지에서 한 번.
+        // LT = Ctrl+Z — 당기는 순간 한 번, 누르고 있으면 공통 리듬으로 연타.
         let lt_pressed = gp.lt > 0.75;
-        if lt_pressed && !self.gamepad_lt_held {
+        if lt_pressed
+            && (!self.gamepad_lt_held
+                || now.saturating_sub(self.gamepad_undo_last_ms) >= GAMEPAD_REPEAT_MS)
+        {
             self.undo();
             self.gamepad_undos += 1;
+            self.gamepad_undo_last_ms = now;
             gamepad_log_push("LT — undo (Ctrl+Z)");
         }
         self.gamepad_lt_held = lt_pressed;

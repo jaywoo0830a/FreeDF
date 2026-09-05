@@ -1109,8 +1109,10 @@ pub struct FreeDfApp {
     scroll_vel: Vec2,
     /// XInput LT 트리거가 깊게 당겨진 상태 (에지 감지용).
     gamepad_lt_held: bool,
-    /// XInput LB+스틱 줌의 히스테리시스 상태 (armed = 한 스텝 사용함).
-    gamepad_zoom_armed: bool,
+    /// LT 연타 마지막 실행 시각 (누르고 있으면 반복 undo).
+    gamepad_undo_last_ms: u64,
+    /// LB+스틱 줌 마지막 실행 시각 (반복 간격 제어 — LB 누른 채 유지하면 연속 줌).
+    gamepad_zoom_last_ms: u64,
     /// 게임패드가 처음 인식됐을 때 상태바 안내를 이미 띄웠는지.
     gamepad_notified: bool,
     /// 게임패드 인스턴스 (gilrs/WGI) — Windows 전용, 첫 폴링에서 지연 생성.
@@ -1126,6 +1128,8 @@ pub struct FreeDfApp {
     gamepad_last: Option<gamepad::Gamepad>,
     /// D패드 이전 프레임 상태 (키 에지 주입용).
     gamepad_dpad_prev: [bool; 4],
+    /// D패드 방향별 마지막 반복 발사 시각 (연타용).
+    gamepad_dpad_last_ms: [u64; 4],
     /// 디버그 카운터.
     gamepad_flips: u32,
     gamepad_zooms: u32,
@@ -1588,7 +1592,8 @@ impl FreeDfApp {
             smooth_active: false,
             scroll_vel: Vec2::ZERO,
             gamepad_lt_held: false,
-            gamepad_zoom_armed: false,
+            gamepad_undo_last_ms: 0,
+            gamepad_zoom_last_ms: 0,
             gamepad_notified: false,
             #[cfg(target_os = "windows")]
             gamepad: None,
@@ -1597,6 +1602,7 @@ impl FreeDfApp {
             gamepad_cfg: gamepad::GamepadCfg::default(),
             gamepad_last: None,
             gamepad_dpad_prev: [false; 4],
+            gamepad_dpad_last_ms: [0; 4],
             gamepad_flips: 0,
             gamepad_zooms: 0,
             gamepad_undos: 0,
