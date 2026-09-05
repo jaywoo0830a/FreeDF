@@ -113,7 +113,7 @@ pub(crate) fn gamepad_log_clear() {
 
 /// 모든 게임패드 입력의 **공통 연타 리듬** (LB+스틱 줌 · LT undo · D패드 반복).
 /// 누르고 있으면 이 간격으로 계속 발사됩니다 — 모든 입력이 같은 성격을 가집니다.
-const GAMEPAD_REPEAT_MS: u64 = 100;
+const GAMEPAD_REPEAT_MS: u64 = 250;
 
 impl FreeDfApp {
     /// gilrs에서 이번 프레임 상태를 읽습니다 — Windows만 실제 구현.
@@ -320,6 +320,20 @@ impl FreeDfApp {
             gamepad_log_push("LT — undo (Ctrl+Z)");
         }
         self.gamepad_lt_held = lt_pressed;
+
+        // 반복 리듬이 FPS와 무관하게 **확실히** 돌도록 — 게임패드 입력이
+        // 살아있는 동안 계속 프레임을 요청합니다. (egui는 OS 입력 이벤트가
+        // 없으면 repaint를 멈춰서, 줌/LT/D패드 반복 타이머가 멈추던 문제 수정.)
+        if gp.lb
+            || lt_pressed
+            || gp.d_up
+            || gp.d_down
+            || gp.d_left
+            || gp.d_right
+            || gp.stick.length_sq() > 0.02
+        {
+            ctx.request_repaint();
+        }
     }
 
     /// 게임패드 설정 창 내용 (수직 폼).
