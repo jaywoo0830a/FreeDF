@@ -142,10 +142,23 @@ fn composite_paper_texture(
     const TEX: usize = 256;
     const SEED: u64 = 0x0B5E_E5ED;
     let tex = freedf_core::paper::paper_texture_rgba(TEX, base, strength, surface, SEED);
+    // 계수 정규화: 타일의 **채널별 평균**이 1.0(=256)이 되도록 맞춥니다.
+    // 프리셋(특히 Lowest)에 따라 텍스처 평균이 어두우면 곱셈이 페이지 전체
+    // 밝기를 깎아 "검은색이 많은" 모습이 되는데, 평균 기준으로 나누면
+    // 흰 배경은 종이 색(base)을 유지하고 그레인은 명암 변조로만 남습니다.
+    // 검은 텍스트는 (0 × x = 0) 그대로 보존됩니다.
+    let n = (TEX * TEX) as u64;
+    let mut mean = [0u64; 3];
+    for px in tex.chunks_exact(4) {
+        for c in 0..3 {
+            mean[c] += px[c] as u64;
+        }
+    }
     let mut ratio: Vec<u8> = Vec::with_capacity(TEX * TEX * 3);
     for px in tex.chunks_exact(4) {
         for c in 0..3 {
-            let r = ((px[c] as u32 * 256) / base[c].max(1) as u32).min(256);
+            let m = (mean[c] / n.max(1)).max(1) * 255;
+            let r = (px[c] as u64 * base[c] as u64 * 256 / m).min(256);
             ratio.push(r as u8);
         }
     }

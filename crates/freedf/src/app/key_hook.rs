@@ -71,7 +71,7 @@ mod imp {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS,
         KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VIRTUAL_KEY, VK_CONTROL,
-        VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RWIN, VK_SHIFT,
+        VK_LEFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RIGHT, VK_RWIN, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
@@ -126,13 +126,47 @@ mod imp {
         }
     }
 
+    /// wVk 기반 키 이벤트 — 공식 SendInput 예제 스타일.
+    fn keybd_vk(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+        INPUT {
+            r#type: windows::Win32::UI::Input::KeyboardAndMouse::INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
     /// Ctrl+Win+←/→ — Windows 가상 데스크탑 전환.
-    /// 모든 이벤트를 **한 번의 SendInput**으로 배치 전송해야 OS 핫키가
-    /// 조합으로 인식합니다 (개별 전송은 사이에 다른 입력이 끼면 무시됨).
+    ///
+    /// 공식 문서(winuser SendInput)의 ShowDesktop 예제와 같은 방식:
+    /// **wVk 기반** 이벤트를 한 번의 SendInput으로 배치 전송합니다
+    /// (이벤트는 직렬로 삽입되어 다른 입력과 섞이지 않음).
+    /// 실패 시 스캔코드 배치로 재시도합니다.
     fn send_desktop(prev: bool) {
+        let arrow = if prev { VK_LEFT } else { VK_RIGHT };
+        // ── 1차: wVk 기반 (공식 예제 스타일) ──
+        let vk = [
+            keybd_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+            keybd_vk(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+            keybd_vk(arrow, KEYBD_EVENT_FLAGS(0)),
+            keybd_vk(arrow, KEYEVENTF_KEYUP),
+            keybd_vk(VK_LWIN, KEYEVENTF_KEYUP),
+            keybd_vk(VK_CONTROL, KEYEVENTF_KEYUP),
+        ];
+        let sent = unsafe { SendInput(&vk, std::mem::size_of::<INPUT>() as i32) };
+        if sent as usize == vk.len() {
+            return;
+        }
+        // ── 2차: 스캔코드 기반 (키보드 레이아웃과 무관한 하드웨어 수준) ──
         let tap = if prev { 0x4B } else { 0x4D }; // ← / → (Set 1 스캔코드)
         let ext = KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY;
-        let inputs = [
+        let sc = [
             keybd(0x1D, KEYEVENTF_SCANCODE),                    // Ctrl down
             keybd(0x5B, ext),                                   // LWin down
             keybd(tap, ext),                                    // ←/→ down
@@ -141,7 +175,7 @@ mod imp {
             keybd(0x1D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP),  // Ctrl up
         ];
         unsafe {
-            let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+            let _ = SendInput(&sc, std::mem::size_of::<INPUT>() as i32);
         }
     }
 
