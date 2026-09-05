@@ -670,6 +670,16 @@ impl FreeDfApp {
                 }
             }
         }
+        // 스밈(잉크 포화) 애니메이션 — egui는 이벤트 기반이라, 여기서 repaint를
+        // 요청하지 않으면 펜업 뒤 프레임이 멈춰 잉크가 옅은 채로 남습니다
+        // (다음 입력·줌이 와야 그제서야 진해짐 — "줌해야 진해져요"의 원인).
+        // 굽기 대기 중에도 repaint를 걸어 결과를 지체 없이 수신합니다.
+        if self.ink_bake_pending.is_some()
+            || self.active_stroke.is_some()
+            || (self.ink_next_settle_ms != u64::MAX && now < self.ink_next_settle_ms)
+        {
+            ctx.request_repaint();
+        }
         if let Some(mesh) = &self.ink_mesh {
             // 페이지 좌표 → 화면 좌표 변환은 **팬/줌/페이지가 바뀔 때만**
             // (O(V)) — 팬/엣지 스크롤 중엔 변환된 egui 메시를 재사용해
