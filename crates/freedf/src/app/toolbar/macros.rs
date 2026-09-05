@@ -141,6 +141,47 @@ impl FreeDfApp {
             .weak()
             .small(),
         );
+        ui.separator();
+
+        // ── Hook 디버그 로그 ──
+        egui::CollapsingHeader::new(
+            egui::RichText::new("Hook debug log")
+                .strong()
+                .size(13.0),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let status = if crate::app::key_hook::hook_alive() {
+                    "hook: running"
+                } else {
+                    "hook: not running"
+                };
+                ui.label(egui::RichText::new(status).strong().small());
+                if ui.button("Clear").clicked() {
+                    crate::app::key_hook::hook_log_clear();
+                }
+            });
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(300));
+            let lines = crate::app::key_hook::hook_log_snapshot();
+            egui::ScrollArea::vertical()
+                .id_salt("hook_log_scroll")
+                .max_height(220.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if lines.is_empty() {
+                        ui.label(
+                            egui::RichText::new(
+                                "(no events yet — press a mapped key while FreeDF is focused)",
+                            )
+                            .weak(),
+                        );
+                    }
+                    for l in &lines {
+                        ui.label(egui::RichText::new(l).monospace().size(10.0));
+                    }
+                });
+        });
     }
 
     /// 캡처를 마무리합니다 — 창을 그린 직후 호출해 다음 키 입력을 슬롯에 기록.

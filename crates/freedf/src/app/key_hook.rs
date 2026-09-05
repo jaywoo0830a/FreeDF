@@ -9,7 +9,45 @@
 //!
 //! 매핑은 [`HookConfig`]로 UI(Macro 설정 창)가 갱신합니다.
 
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
+use std::time::Instant;
+
+/// 훅/매크로 진단 로그 (최근 200줄, [경과초] 접두) — Macro 설정 창의
+/// 디버그 패널이 표시합니다. Windows 빌드에서만 실제 훅 이벤트가 기록됩니다.
+static HOOK_LOG: std::sync::Mutex<VecDeque<String>> = std::sync::Mutex::new(VecDeque::new());
+const HOOK_LOG_MAX: usize = 200;
+
+/// 훅 스레드가 설치에 성공했는지 (디버그 패널 상태줄).
+static HOOK_ALIVE: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn hook_alive() -> bool {
+    HOOK_ALIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn hook_log(msg: impl std::fmt::Display) {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let t = T0.get_or_init(Instant::now).elapsed().as_secs_f64();
+    if let Ok(mut q) = HOOK_LOG.lock() {
+        while q.len() >= HOOK_LOG_MAX {
+            q.pop_front();
+        }
+        q.push_back(format!("[{t:>8.3}s] {msg}"));
+    }
+}
+
+pub(crate) fn hook_log_snapshot() -> Vec<String> {
+    HOOK_LOG
+        .lock()
+        .map(|q| q.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+pub(crate) fn hook_log_clear() {
+    if let Ok(mut q) = HOOK_LOG.lock() {
+        q.clear();
+    }
+}
 
 /// FreeDF 창에서 텍스트 입력(검색창/제목 등)이 활성인지 — UI 스레드가 매
 /// 프레임 갱신합니다. true면 훅은 키를 그대로 통과시킵니다 (타이핑 보호).
@@ -32,6 +70,17 @@ static CONFIG: std::sync::OnceLock<std::sync::RwLock<HookConfig>> = std::sync::O
 
 /// 매핑을 훅에 반영합니다 (설정 변경 시 호출).
 pub(crate) fn update_config(cfg: HookConfig) {
+    let name = |m: Option<crate::settings::MacroKey>| {
+        m.map(|k| k.label().to_string())
+            .unwrap_or_else(|| "off".into())
+    };
+    hook_log(format!(
+        "macro config → page {}/{} · desktop {}/{}",
+        name(cfg.page_prev),
+        name(cfg.page_next),
+        name(cfg.desktop_prev),
+        name(cfg.desktop_next),
+    ));
     if let Some(lock) = CONFIG.get() {
         if let Ok(mut g) = lock.write() {
             *g = cfg;
@@ -57,16 +106,19 @@ pub(crate) fn spawn() -> KeyHook {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        hook_log("non-Windows build — hook disabled");
         KeyHook { _thread: None }
     }
 }
 
 #[cfg(target_os = "windows")]
 mod imp {
-    use super::{CONFIG, KEY_TEXT_ACTIVE};
+    use super::{hook_log, CONFIG, HOOK_ALIVE, KEY_TEXT_ACTIVE};
     use std::sync::atomic::Ordering;
 
-    use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{
+        GetLastError, HINSTANCE, LPARAM, LRESULT, WPARAM,
+    };
     use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS,
@@ -75,8 +127,8 @@ mod imp {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-        KBDLLHOOKSTRUCT, MSG, PostThreadMessageW, SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN,
-        WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSG, PostThreadMessageW,
+        SetWindowsHookExW, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     // 번역 중인 키 집합 — 반복(repeat)은 1회만 처리.
@@ -155,7 +207,8 @@ mod imp {
     /// - down/up을 **별도의 SendInput 호출**로 나눠 전송
     /// - 떼는 순서는 화살표 → Ctrl → Win (누른 역순)
     /// 1차가 전부 전달되지 않으면 스캔코드 배치(동일 순서)로 재시도합니다.
-    fn send_desktop(prev: bool) {
+    /// 반환값은 디버그 로그용 결과 요약.
+    fn send_desktop(prev: bool) -> String {
         let arrow = if prev { VK_LEFT } else { VK_RIGHT };
         // ── 1차: wVk 기반 (검증된 예제 스타일) ──
         let down = [
@@ -172,7 +225,7 @@ mod imp {
         let n = unsafe { SendInput(&down, cb) };
         let m = unsafe { SendInput(&up, cb) };
         if n as usize == down.len() && m as usize == up.len() {
-            return;
+            return format!("vk batch ok (down {n}/3, up {m}/3)");
         }
         // ── 2차: 스캔코드 기반 (키보드 레이아웃과 무관한 하드웨어 수준) ──
         let tap = if prev { 0x4B } else { 0x4D }; // ← / → (Set 1 스캔코드)
@@ -187,10 +240,9 @@ mod imp {
             keybd(0x1D, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP), // Ctrl up
             keybd(0x5B, ext | KEYEVENTF_KEYUP),                // LWin up
         ];
-        unsafe {
-            let _ = SendInput(&down_sc, cb);
-            let _ = SendInput(&up_sc, cb);
-        }
+        let n2 = unsafe { SendInput(&down_sc, cb) };
+        let m2 = unsafe { SendInput(&up_sc, cb) };
+        format!("vk partial (down {n}/3, up {m}/3) → scan fallback (down {n2}/3, up {m2}/3)")
     }
 
     /// PgUp/PgDn 탭 — 앱 단축키 파이프라인이 받아 처리.
@@ -246,6 +298,16 @@ mod imp {
         }
         let cfg = hook_config();
         let vk = info.vkCode as u16;
+        // 주입된 조합 키(Ctrl/Win/화살표)가 훅을 통과하는지 디버그 로그에 기록.
+        if down && (info.flags & LLKHF_INJECTED) != KBDLLHOOKSTRUCT_FLAGS(0) {
+            if vk == VK_LCONTROL.0 as u16
+                || vk == VK_LWIN.0 as u16
+                || vk == VK_LEFT.0 as u16
+                || vk == VK_RIGHT.0 as u16
+            {
+                hook_log(format!("injected combo key down vk={vk}"));
+            }
+        }
         let matched_page = cfg
             .page_prev
             .filter(|k| k.vk() == vk)
@@ -261,25 +323,34 @@ mod imp {
         if down && (is_page || is_desktop) {
             let repeat = key_is_down(vk);
             set_key_down(vk, true);
-            let allowed = !repeat
-                && !modifiers_held()
-                && !KEY_TEXT_ACTIVE.load(Ordering::Relaxed)
-                && foreground_is_ours();
-            if allowed {
-                if let Some(prev) = matched_page {
-                    send_page(prev);
-                } else if let Some(prev) = matched_desktop {
-                    // 훅 콜백 안에서는 보내지 않고, 자기 스레드의 메시지
-                    // 루프에 요청을 게시합니다 — 검증된 예제처럼 훅 체인
-                    // 밖 컨텍스트에서 SendInput이 실행되도록 합니다.
-                    if let Some(&tid) = HOOK_THREAD_ID.get() {
-                        let _ = PostThreadMessageW(
-                            tid,
-                            WM_DESKTOP_MACRO,
-                            WPARAM(prev as usize),
-                            LPARAM(0),
-                        );
-                    }
+            let mods = modifiers_held();
+            let typing = KEY_TEXT_ACTIVE.load(Ordering::Relaxed);
+            let fg = foreground_is_ours();
+            let allowed = !repeat && !mods && !typing && fg;
+            if !allowed {
+                hook_log(format!(
+                    "macro key vk={vk} BLOCKED repeat={repeat} mods={mods} typing={typing} fg={fg}"
+                ));
+            } else if let Some(prev) = matched_page {
+                send_page(prev);
+                hook_log(format!("macro key vk={vk} → send_page prev={prev}"));
+            } else if let Some(prev) = matched_desktop {
+                // 훅 콜백 안에서는 보내지 않고, 자기 스레드의 메시지
+                // 루프에 요청을 게시합니다 — 검증된 예제처럼 훅 체인
+                // 밖 컨텍스트에서 SendInput이 실행되도록 합니다.
+                if let Some(&tid) = HOOK_THREAD_ID.get() {
+                    let ok = PostThreadMessageW(
+                        tid,
+                        WM_DESKTOP_MACRO,
+                        WPARAM(prev as usize),
+                        LPARAM(0),
+                    );
+                    hook_log(format!(
+                        "macro key vk={vk} → desktop request prev={prev} posted={}",
+                        ok.is_ok()
+                    ));
+                } else {
+                    hook_log(format!("macro key vk={vk} → desktop request FAILED (no hook thread id)"));
                 }
             }
             // 매핑된 키는 원래 동작을 삼킵니다 (반복 포함 — 의도치 않은
@@ -302,18 +373,32 @@ mod imp {
                 Some(HINSTANCE::default()),
                 0,
             );
-            let Ok(_hook) = hook else {
-                return;
-            };
+            match hook {
+                Ok(_hook) => {
+                    HOOK_ALIVE.store(true, Ordering::Relaxed);
+                    hook_log("hook installed (WH_KEYBOARD_LL)");
+                }
+                Err(e) => {
+                    hook_log(format!(
+                        "hook install FAILED: {e:?} (GetLastError={})",
+                        GetLastError().0
+                    ));
+                    return;
+                }
+            }
             let mut msg: MSG = std::mem::zeroed();
             // LL 훅 콜백은 훅을 설치한 스레드의 메시지 루프에서 호출됩니다.
             // (스레드가 끝나면 시스템이 훅을 자동 해제 — 프로세스 수명 동안 유지)
             // 데스크탑 매크로 요청 메시지는 콜백 밖인 여기서 처리합니다.
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 if msg.message == WM_DESKTOP_MACRO {
-                    send_desktop(msg.wParam.0 != 0);
+                    let prev = msg.wParam.0 != 0;
+                    let res = send_desktop(prev);
+                    hook_log(format!("desktop macro prev={prev} → {res}"));
                 }
             }
+            HOOK_ALIVE.store(false, Ordering::Relaxed);
+            hook_log("hook thread exited");
         }
     }
 }
