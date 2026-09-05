@@ -905,7 +905,7 @@ pub struct FreeDfApp {
     /// 방금 끝난 획의 id — 병합 메시에서 그 획의 정착 렌더 폭을 대조 로그로
     /// 남기기 위한 표식 (진단용).
     last_finished_id: Option<u64>,
-    /// Windows 키보드 훅(z/x·a/s → PgUp/PgDn) — 프로세스 수명 동안 유지.
+    /// 전역 키 리스너(rdev) + enigo 주입 — 프로세스 수명 동안 유지.
     _key_hook: key_hook::KeyHook,
     /// 마지막 포커스 요청 시각 — 두 창의 포커스 경쟁(깜빡임) 방지용 쿨다운.
     last_focus_request_ms: u64,
@@ -1608,7 +1608,7 @@ impl FreeDfApp {
             asking_close: false,
             quitting: false,
         };
-        // Macro 설정을 Windows 키보드 훅에 반영합니다 (시작 시점).
+        // Macro 설정을 전역 리스너(rdev)에 반영합니다 (시작 시점).
         app.push_macro_config();
         app
     }
@@ -1631,7 +1631,7 @@ impl FreeDfApp {
         self.db.set_app_state("session", &state.to_json_value());
     }
 
-    /// 매크로 매핑을 Windows 키보드 훅에 반영합니다.
+    /// 매크로 매핑을 전역 리스너(rdev)에 반영합니다.
     pub(crate) fn push_macro_config(&self) {
         key_hook::update_config(key_hook::HookConfig {
             page_prev: self
@@ -2633,26 +2633,23 @@ impl FreeDfApp {
         }
         // PgDn / PgUp = 다음/이전 페이지 (스크롤이 아니라 페이지 이동).
         // 페이지 키는 Macro 설정 창에서 지정할 수 있고(기본 z/x — 왼손 근거리),
-        // Windows에서는 키보드 훅이 IME/포커스와 무관하게 PgUp/PgDn으로
-        // 번역해 동일 경로로 전달합니다. 마지막 페이지에서는 더 이상
+        // key_hook(rdev → enigo)이 IME/포커스와 무관하게 PgUp/PgDn으로
+        // 번역해 아래 동일 경로로 전달합니다. 마지막 페이지에서는 더 이상
         // 넘어가지 않습니다 (새 페이지 자동 추가 없음).
         // 텍스트 입력 중(검색창/제목)에는 가로채지 않습니다.
         let typing = ctx.egui_wants_keyboard_input();
         if !typing && !ctrl && !shift {
-            if ctx.input(|i| i.key_pressed(egui::Key::PageDown))
-                || (self.macro_cfg.page_enabled
-                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_next))
-            {
+            // 매핑된 페이지 키(z/x 등)는 key_hook이 PgUp/PgDn으로 번역해
+            // 주므로, 여기서는 실제 PgUp/PgDn 이벤트만 처리합니다
+            // (이중 페이지 이동 방지).
+            if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
                 // 브라우저식: 한 뷰포트만 아래로, 끝나면 다음 페이지.
                 // (실제 페이지 전환이면 세로 애니메이션)
                 self.transition_vertical = true;
                 self.page_key(true);
                 self.transition_vertical = false; // (스크롤만 했다면 누수 방지)
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::PageUp))
-                || (self.macro_cfg.page_enabled
-                    && toolbar::macros::macro_key_pressed(ctx, self.macro_cfg.page_prev))
-            {
+            if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
                 self.transition_vertical = true;
                 self.page_key(false);
                 self.transition_vertical = false;

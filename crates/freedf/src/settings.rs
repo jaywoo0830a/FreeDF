@@ -552,43 +552,6 @@ impl MacroKey {
         }
     }
 
-    /// Windows 가상 키 코드 (VK_*) — SendInput/LL 훅용.
-    /// 변형 순서(선언 순서)가 A..Z(0..25), 0..9(26..35), F1..F12(36..47)입니다.
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-    pub fn vk(self) -> u16 {
-        let i = self as u16;
-        match i {
-            0..=25 => 0x41 + i,         // A..Z
-            26..=35 => 0x30 + (i - 26), // 0..9
-            36..=47 => 0x70 + (i - 36), // F1..F12
-            _ => match self {
-                MacroKey::Space => 0x20,
-                MacroKey::Tab => 0x09,
-                MacroKey::Enter => 0x0D,
-                MacroKey::Left => 0x25,
-                MacroKey::Up => 0x26,
-                MacroKey::Right => 0x27,
-                MacroKey::Down => 0x28,
-                MacroKey::PageUp => 0x21,
-                MacroKey::PageDown => 0x22,
-                MacroKey::End => 0x23,
-                MacroKey::Home => 0x24,
-                MacroKey::BracketLeft => 0xDB,
-                MacroKey::BracketRight => 0xDD,
-                MacroKey::Comma => 0xBC,
-                MacroKey::Period => 0xBE,
-                MacroKey::Slash => 0xBF,
-                MacroKey::Backslash => 0xDC,
-                MacroKey::Semicolon => 0xBA,
-                MacroKey::Apostrophe => 0xDE,
-                MacroKey::Minus => 0xBD,
-                MacroKey::Equals => 0xBB,
-                MacroKey::Backtick => 0xC0,
-                _ => 0,
-            },
-        }
-    }
-
     /// egui 키 → 매크로 키 (캡처 UI용). 지원 안 하는 키는 None.
     pub fn from_egui(k: egui::Key) -> Option<Self> {
         use egui::Key as K;
@@ -663,6 +626,85 @@ impl MacroKey {
             K::Minus => Self::Minus,
             K::Equals => Self::Equals,
             K::Backtick => Self::Backtick,
+            _ => return None,
+        })
+    }
+
+    /// rdev 키 → 매크로 키 (전역 리스너용). 지원 안 하는 키는 None.
+    #[cfg(target_os = "windows")]
+    pub fn from_rdev(k: rdev::Key) -> Option<Self> {
+        use rdev::Key as R;
+        Some(match k {
+            R::KeyA => Self::A,
+            R::KeyB => Self::B,
+            R::KeyC => Self::C,
+            R::KeyD => Self::D,
+            R::KeyE => Self::E,
+            R::KeyF => Self::F,
+            R::KeyG => Self::G,
+            R::KeyH => Self::H,
+            R::KeyI => Self::I,
+            R::KeyJ => Self::J,
+            R::KeyK => Self::K,
+            R::KeyL => Self::L,
+            R::KeyM => Self::M,
+            R::KeyN => Self::N,
+            R::KeyO => Self::O,
+            R::KeyP => Self::P,
+            R::KeyQ => Self::Q,
+            R::KeyR => Self::R,
+            R::KeyS => Self::S,
+            R::KeyT => Self::T,
+            R::KeyU => Self::U,
+            R::KeyV => Self::V,
+            R::KeyW => Self::W,
+            R::KeyX => Self::X,
+            R::KeyY => Self::Y,
+            R::KeyZ => Self::Z,
+            R::Num0 => Self::Num0,
+            R::Num1 => Self::Num1,
+            R::Num2 => Self::Num2,
+            R::Num3 => Self::Num3,
+            R::Num4 => Self::Num4,
+            R::Num5 => Self::Num5,
+            R::Num6 => Self::Num6,
+            R::Num7 => Self::Num7,
+            R::Num8 => Self::Num8,
+            R::Num9 => Self::Num9,
+            R::F1 => Self::F1,
+            R::F2 => Self::F2,
+            R::F3 => Self::F3,
+            R::F4 => Self::F4,
+            R::F5 => Self::F5,
+            R::F6 => Self::F6,
+            R::F7 => Self::F7,
+            R::F8 => Self::F8,
+            R::F9 => Self::F9,
+            R::F10 => Self::F10,
+            R::F11 => Self::F11,
+            R::F12 => Self::F12,
+            R::Space => Self::Space,
+            R::Tab => Self::Tab,
+            R::Return => Self::Enter,
+            R::LeftArrow => Self::Left,
+            R::RightArrow => Self::Right,
+            R::UpArrow => Self::Up,
+            R::DownArrow => Self::Down,
+            R::PageUp => Self::PageUp,
+            R::PageDown => Self::PageDown,
+            R::Home => Self::Home,
+            R::End => Self::End,
+            R::LeftBracket => Self::BracketLeft,
+            R::RightBracket => Self::BracketRight,
+            R::Comma => Self::Comma,
+            R::Dot => Self::Period,
+            R::Slash => Self::Slash,
+            R::BackSlash => Self::Backslash,
+            R::SemiColon => Self::Semicolon,
+            R::Quote => Self::Apostrophe,
+            R::Minus => Self::Minus,
+            R::Equal => Self::Equals,
+            R::BackQuote => Self::Backtick,
             _ => return None,
         })
     }

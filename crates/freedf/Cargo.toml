@@ -32,11 +32,14 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]
 rfd = "0.15"
-# 키보드 LL 훅 + SendInput — 페이지 단축키(z/x·a/s)를 IME/포커스와 무관하게.
+# 매크로 파이프라인 — 전역 키 입력 리스너(rdev) + 키 주입(enigo).
+# (rdev의 Linux 백엔드가 x11 빌드 의존성을 요구해 Windows 전용으로 둡니다.)
+rdev = "0.5"
+enigo = "0.6"
+# 전경(foreground) 검사용 — 다른 앱의 키를 번역하지 않게.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
-    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
