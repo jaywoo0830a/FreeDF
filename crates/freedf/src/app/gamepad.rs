@@ -35,8 +35,14 @@ pub(crate) struct GamepadCfg {
     pub enabled: bool,
     /// 스틱 끝 스크롤 속도 (pt/s, 줌 1배 기준).
     pub speed: f32,
-    /// 스틱 상하 반전.
+    /// 평소 X축 반전 (컨트롤러마다 규약이 다름).
+    pub invert_x: bool,
+    /// 평소 Y축 반전.
     pub invert_y: bool,
+    /// CTRL(LB) 중 X축 반전 (줌 방향).
+    pub invert_x_ctrl: bool,
+    /// CTRL(LB) 중 Y축 반전 (줌 방향).
+    pub invert_y_ctrl: bool,
 }
 
 impl Default for GamepadCfg {
@@ -44,7 +50,10 @@ impl Default for GamepadCfg {
         Self {
             enabled: true,
             speed: 720.0,
+            invert_x: false,
             invert_y: false,
+            invert_x_ctrl: false,
+            invert_y_ctrl: false,
         }
     }
 }
@@ -235,29 +244,35 @@ impl FreeDfApp {
         let page_h_px = self.page_size_pts[1] * self.view.zoom;
         let page_w_px = self.page_size_pts[0] * self.view.zoom;
 
-        // 스틱 Y: 위=+ 규약. 설정의 반전 토글 적용 (왼쪽 스틱 = 스크롤).
-        let gy = if self.gamepad_cfg.invert_y {
-            -gp.stick.y
+        // 스틱 축: 반전 토글 — 평소(X/Y)와 CTRL(LB) 중(X/Y)을 따로 적용.
+        // 컨트롤러마다 축 규약이 달라 설정 창에서 뒤집을 수 있습니다.
+        let cfg = self.gamepad_cfg;
+        let (sx, sy) = if gp.lb {
+            let x = if cfg.invert_x_ctrl { -gp.stick.x } else { gp.stick.x };
+            let y = if cfg.invert_y_ctrl { -gp.stick.y } else { gp.stick.y };
+            (x, y)
         } else {
-            gp.stick.y
+            let x = if cfg.invert_x { -gp.stick.x } else { gp.stick.x };
+            let y = if cfg.invert_y { -gp.stick.y } else { gp.stick.y };
+            (x, y)
         };
 
         if gp.lb {
-            // CTRL + 스틱 상하 = 줌 (Ctrl+휠과 동일). 스틱을 밀고 있으면
-            // 공통 연타 리듬으로 계속 한 스텝씩 — 재래스터 비용을 감안한 간격.
+            // CTRL + 스틱 = 줌 (Ctrl+휠과 동일). 어느 축이든 밀고 있으면
+            // 공통 연타 리듬으로 계속 한 스텝씩 — 더 크게 움직인 축이 방향 결정.
             const ZOOM_PUSH_THRESHOLD: f32 = 0.25;
-            let push = gy;
+            let push = if sy.abs() > sx.abs() { sy } else { sx };
             if push.abs() > ZOOM_PUSH_THRESHOLD
                 && now.saturating_sub(self.gamepad_zoom_last_ms) >= GAMEPAD_REPEAT_MS
             {
                 if push > 0.0 {
                     self.zoom_by(ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick up — zoom +5%");
+                    gamepad_log_push("LB + stick — zoom +5%");
                 } else {
                     self.zoom_by(1.0 / ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick down — zoom -5%");
+                    gamepad_log_push("LB + stick — zoom -5%");
                 }
                 self.gamepad_zoom_last_ms = now;
             }
@@ -266,7 +281,7 @@ impl FreeDfApp {
         } else {
             self.gamepad_zoom_last_ms = 0;
             // 스틱 아래 = 스크롤 아래(이전 페이지/이전 내용), 오른쪽 = 오른쪽.
-            let stick = Vec2::new(gp.stick.x, -gy);
+            let stick = Vec2::new(sx, -sy);
             if stick.length_sq() > 0.02 {
                 if page_h_px <= canvas[1] && stick.y.abs() > stick.x.abs() {
                     // 페이지 높이가 전부 보이면 세로 스크롤 = 페이지 전환
@@ -330,9 +345,27 @@ impl FreeDfApp {
             .show(ui);
         form::check(
             ui,
+            &mut self.gamepad_cfg.invert_x,
+            "Invert stick X",
+            "Flip the horizontal scroll direction (controllers differ).",
+        );
+        form::check(
+            ui,
             &mut self.gamepad_cfg.invert_y,
             "Invert stick Y",
-            "Flip the stick direction against the scroll direction.",
+            "Flip the vertical scroll direction (controllers differ).",
+        );
+        form::check(
+            ui,
+            &mut self.gamepad_cfg.invert_x_ctrl,
+            "Invert stick X with CTRL (LB)",
+            "Flip the horizontal zoom direction while LB is held.",
+        );
+        form::check(
+            ui,
+            &mut self.gamepad_cfg.invert_y_ctrl,
+            "Invert stick Y with CTRL (LB)",
+            "Flip the vertical zoom direction while LB is held.",
         );
         ui.add_space(8.0);
         ui.separator();
