@@ -479,34 +479,61 @@ impl FreeDfApp {
     /// 줌해야 복귀하는" 간헐적 불일치 버그의 원인. 화면 클리핑은 egui가
     /// 그릴 때 자동으로 처리하므로 구운 메시는 항상 페이지 전체여야 합니다.
 
-    /// 이미 구워진 병합 메시에 **새 획만** 증분 추가합니다 — 획 커밋마다
-    /// 페이지 전체를 재테셀레이션하면(이전 컬링 제거 후 발생) 필기 사이
-    /// 버벅임이 생기므로, 새 리본만 붙여 O(신규 획) 비용으로 유지합니다.
-    /// 메시는 페이지 좌표라 좌표 기준은 불변 — 팬/줌은 그리기 단계 변환.
-    pub(crate) fn append_ink_strokes(&mut self, strokes: &[freedf_core::model::Stroke], now: u64) {
+    /// 방금 끝난 획을 **젊은(스밈 진행 중) 목록**에 넣습니다. 젊은 획은
+    /// 매 프레임 현재 나이로 오버레이 재굽기되어 부드럽게 진해지고,
+    /// 정착되면 [`sweep_ink_young`]이 병합 메시(최종 색)로 이동시킵니다.
+    /// 병합 메시는 정착분만 담으므로 전체 재굽기가 필요 없어집니다.
+    pub(crate) fn add_ink_young(&mut self, strokes: &[freedf_core::model::Stroke], now: u64) {
+        if self.ink_young_page != self.current_page {
+            // 페이지가 바뀌면 이전 페이지의 젊은 획을 버립니다.
+            self.ink_young.clear();
+            self.ink_young_page = self.current_page;
+        }
         let mesher = self.core_mesher();
         for s in strokes {
             self.trace_settled_if_due(s, &mesher);
+            // 비-잉크 도구/스밈 꺼짐은 next_settle이 MAX → 곧바로 정착 처리됨.
+            self.ink_young.push(s.clone());
         }
-        let mut settle = u64::MAX;
-        {
-            let Some(arc) = self.ink_mesh.as_mut() else {
-                return;
-            };
-            let mesh = std::sync::Arc::make_mut(arc);
-            for s in strokes {
-                let cs = canvas_stroke(s);
-                settle = settle.min(mesher.append_stroke(mesh, &cs, now));
+        let _ = now;
+        self.ink_baked_rev = self.store.rev();
+    }
+
+    /// 정착된 젊은 획을 병합 메시로 이동합니다 (최종 알파로 굽힘 — 매 획 1회,
+    /// O(그 획)). 스밈이 남은 획은 젊은 목록에 두고 오버레이가 담당합니다.
+    pub(crate) fn sweep_ink_young(&mut self, now: u64) {
+        if self.ink_young.is_empty() {
+            return;
+        }
+        if self.ink_bake_pending.is_some() {
+            // 전체 재굽기가 진행 중 — 정착분 이동은 결과 설치 시점에 한 번에
+            // (도중에 메시를 바꾸면 설치가 덮어써 유실될 수 있음).
+            return;
+        }
+        let mesher = self.core_mesher();
+        let mut moved = false;
+        let mut i = 0;
+        while i < self.ink_young.len() {
+            let cs = canvas_stroke(&self.ink_young[i]);
+            if mesher.next_settle(&cs, now) == u64::MAX {
+                let s = self.ink_young.remove(i);
+                if let Some(arc) = self.ink_mesh.as_mut() {
+                    let mesh = std::sync::Arc::make_mut(arc);
+                    mesher.append_stroke(mesh, &canvas_stroke(&s), now);
+                }
+                self.ink_baked_count = self.ink_baked_count.saturating_add(1);
+                moved = true;
+            } else {
+                i += 1;
             }
         }
-        self.ink_next_settle_ms = self.ink_next_settle_ms.min(settle);
-        self.ink_built_at = now;
-        self.ink_baked_rev = self.store.rev();
-        self.ink_baked_count = self.store.stroke_count_on(self.current_page);
-        // 메시 내용이 바뀌었으므로 egui 변환 캐시를 무효화 — 안 하면
-        // 방금 쓴 획이 화면에 안 나타남 (줌해야 다시 보이던 버그의 원인).
-        self.ink_egui_mesh = None;
-        self.ink_egui_key = None;
+        if moved {
+            self.ink_baked_rev = self.store.rev();
+            // 메시 내용이 바뀌었으므로 egui 변환 캐시를 무효화 — 안 하면
+            // 정착된 획이 낡은 화면에 남습니다.
+            self.ink_egui_mesh = None;
+            self.ink_egui_key = None;
+        }
     }
 
     /// 병합 굽기에 쓰는 조합형 메셔 스냅샷 — freedf-canvas 경계로 넘깁니다.
@@ -523,8 +550,9 @@ impl FreeDfApp {
         }
     }
 
-    /// 백그라운드 굽기 결과를 병합 메시로 설치하고 카운터/키/정착 시각을
-    /// 갱신합니다 (정착 시각은 산술만 — UI 스레드 부담 없음).
+    /// 백그라운드 굽기 결과(정착된 획만)를 병합 메시로 설치합니다.
+    /// 젊은(스밈 진행 중) 획은 스토어에서 다시 모아 오버레이 목록으로 —
+    /// 요청~설치 사이에 새로 쓴 획도 이 목록이 흡수합니다.
     pub(crate) fn install_ink_mesh(
         &mut self,
         mesh: freedf_canvas::Mesh,
@@ -544,18 +572,20 @@ impl FreeDfApp {
             self.pen_grain,
             self.fountain_grain,
         );
-        self.ink_built_at = now;
         self.ink_baked_rev = rev;
-        self.ink_baked_count = count;
+        let mesher = self.core_mesher();
+        self.ink_young = self
+            .store
+            .strokes_on(self.current_page)
+            .iter()
+            .filter(|s| mesher.next_settle(&canvas_stroke(s), now) != u64::MAX)
+            .cloned()
+            .collect();
+        self.ink_young_page = self.current_page;
+        self.ink_baked_count = count.saturating_sub(self.ink_young.len());
         // 메시가 교체됐으므로 egui 변환 캐시를 무효화 — 낡은 화면 출력 방지.
         self.ink_egui_mesh = None;
         self.ink_egui_key = None;
-        let mesher = self.core_mesher();
-        let mut settle = u64::MAX;
-        for s in self.store.strokes_on(self.current_page) {
-            settle = settle.min(mesher.next_settle(&canvas_stroke(s), now));
-        }
-        self.ink_next_settle_ms = settle;
     }
 
     /// 방금 끝난 획의 **정착 렌더** 폭을 대조 로그로 남깁니다 (진단용).
@@ -596,7 +626,7 @@ impl FreeDfApp {
 
     /// 병합 잉크 메시를 **구조적으로** 다시 만들어야 하는지 — 뷰/페이지/
     /// 세대/설정이 바뀐 경우에만 참입니다.
-    /// (rev는 키에 없음 — 신규 획은 `append_ink_strokes` 증분으로 처리.)
+    /// (rev는 키에 없음 — 신규 획은 젊은 목록이, 정착분은 sweep이 처리.)
     pub(crate) fn ink_needs_rebuild(&self) -> bool {
         if self.ink_mesh.is_none() {
             return true;
@@ -613,17 +643,6 @@ impl FreeDfApp {
             self.fountain_grain,
         );
         key != self.ink_key
-    }
-
-    /// 스밈(잉크 포화)이 아직 진행 중인지 — 진행 중이면 **매 프레임**
-    /// 재굽기해 부드러운 진해짐 애니메이션을 만듭니다. 정착 후(MAX)엔
-    /// 멈춥니다. (50ms 스로틀을 걸면 애니메이션이 체감되지 않아 옛
-    /// 매-프레임 동작으로 복귀 — 깜빡임은 증분 append 우선 순서로 해결.)
-    pub(crate) fn ink_halo_due(&self, now: u64) -> bool {
-        if self.ink_next_settle_ms == u64::MAX || self.ink_mesh.is_none() {
-            return false;
-        }
-        now < self.ink_next_settle_ms
     }
 
     /// Draws a custom cursor sprite confined to the canvas, previewing the

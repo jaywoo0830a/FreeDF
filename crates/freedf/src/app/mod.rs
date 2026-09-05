@@ -165,7 +165,8 @@ impl FreeDfApp {
     pub(crate) fn set_store(&mut self, store: AnnotationStore) {
         self.store_generation = self.store_generation.wrapping_add(1);
         self.ink_mesh = None;
-        self.ink_next_settle_ms = u64::MAX;
+        self.ink_young.clear();
+        self.ink_young_page = usize::MAX;
         self.store = store;
     }
 }
@@ -906,8 +907,8 @@ pub struct FreeDfApp {
     /// 병합 메시가 만들어진 시점의 (페이지, 스토어 세대, 줌, 잉크 설정).
     /// 메시는 **항상 페이지 좌표**로 구워지고(애니메이션 오프셋 없음),
     /// 팬/줌은 아래 egui 변환 캐시에서만 적용합니다.
-    /// (rev는 키에 없음 — 신규 획은 증분 append로 붙이고, 증분 여부는
-    ///  `ink_baked_rev`/`ink_baked_count`로 직접 비교합니다.)
+    /// (rev는 키에 없음 — 신규 획은 `ink_young` 오버레이가, 정착분은
+    ///  sweep이 처리하고, 삭제/구조 변경만 전체 재구성으로 갑니다.)
     ink_key: (
         usize,
         u64,
@@ -924,11 +925,14 @@ pub struct FreeDfApp {
     ink_egui_mesh: Option<std::sync::Arc<egui::Mesh>>,
     /// 위 캐시의 키 (페이지, 줌, pan_x, pan_y).
     ink_egui_key: Option<(usize, f32, f32, f32)>,
-    /// 병합 메시를 만든 시각 (ms).
-    ink_built_at: u64,
-    /// 메시에 구워진 스토어 rev — 달라졌으면 증분 append 또는 재구성.
+    /// 스밈(진해짐)이 아직 진행 중인 젊은 획 — 매 프레임 오버레이로 재굽어
+    /// 부드러운 애니메이션을 만들고, 정착되면 병합 메시로 이동합니다.
+    ink_young: Vec<freedf_core::model::Stroke>,
+    /// `ink_young`이 속한 페이지 (다른 페이지로 넘어가면 초기화).
+    ink_young_page: usize,
+    /// 병합 메시와 일치하는 스토어 rev — 달라졌으면 증분/재구성 판정.
     ink_baked_rev: u64,
-    /// 메시에 구워진 현재 페이지 스트로크 수 — append 경계.
+    /// 병합 메시에 들어간(정착된) 현재 페이지 스트로크 수.
     ink_baked_count: usize,
     /// 전체 재굽기 — freedf-canvas BakeService (백그라운드 스레드, 무블록).
     ink_baker: freedf_canvas::BakeService<canvas::InkBakeWorker>,
@@ -936,8 +940,6 @@ pub struct FreeDfApp {
     ink_baker_mesher: std::sync::Arc<std::sync::RwLock<freedf_canvas::CoreRibbonMesher>>,
     /// 진행 중인 전체 굽기 — (페이지, 세대, rev, 획 수, 요청 줌).
     ink_bake_pending: Option<(usize, u64, u64, usize, f32)>,
-    /// 다음 블리드 정착 시각 (젊은 후광 동안 매 프레임 재구성).
-    ink_next_settle_ms: u64,
     /// 스토어 교체(문서 열기/탭 전환)마다 증가 — 캐시 키 충돌 방지.
     store_generation: u64,
     /// 진행 중 획의 캐시된 렌더 메시 (본체+후광 합본) — **100ms 스로틀**로
@@ -1451,7 +1453,8 @@ impl FreeDfApp {
             ),
             ink_egui_mesh: None,
             ink_egui_key: None,
-            ink_built_at: 0,
+            ink_young: Vec::new(),
+            ink_young_page: usize::MAX,
             ink_baked_rev: u64::MAX,
             ink_baked_count: 0,
             ink_baker: freedf_canvas::BakeService::start(canvas::InkBakeWorker {
@@ -1459,7 +1462,6 @@ impl FreeDfApp {
             }),
             ink_baker_mesher,
             ink_bake_pending: None,
-            ink_next_settle_ms: u64::MAX,
             store_generation: 0,
             active_mesh: None,
             paper_style,

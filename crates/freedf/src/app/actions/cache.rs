@@ -107,7 +107,8 @@ impl Cacheable for CanvasCache {
         app.ink_egui_mesh = None;
         app.ink_egui_key = None;
         app.active_mesh = None;
-        app.ink_next_settle_ms = u64::MAX;
+        app.ink_young.clear();
+        app.ink_young_page = usize::MAX;
         app.render_dirty = true;
         app.status = Some("Canvas cache cleared — pages will re-render.".into());
     }

@@ -578,29 +578,32 @@ impl FreeDfApp {
         let now = now_ms();
         let rev = self.store.rev();
         let count = self.store.stroke_count_on(self.current_page);
-        // rev는 재구성 키에서 제외 — 신규 획만이면 증분 append(비용 O(신규)),
-        // 삭제/id 교체(개수 불변 또는 감소)면 전체 재구성으로 정확성을 지킵니다.
-        // 메시는 **페이지 좌표**로 굽고(변환 없음 — 어긋남 원인 차단),
-        // 팬/줌은 아래 egui 변환 캐시에서만 적용합니다.
-        // 전체 재굽기는 **백그라운드 스레드**(freedf-canvas BakeService) —
-        // UI 스레드는 요청(try_send)/수신(try_recv)만 하고 테셀레이션 안 함.
-        // 증분을 먼저 실행합니다 — 전체 재굽기 대기 중에도 방금 끝난 획이
-        // 즉시 보여서 "나타났다 사라지는" 깜빡임이 없습니다.
-        if rev != self.ink_baked_rev && count > self.ink_baked_count {
-            // 증분 — 방금 끝난 획만 리본으로 붙입니다 (UI 스레드, O(신규 획)).
+        // 병합 메시는 **정착된 획만** 담고, 스밈(진해짐)이 진행 중인 젊은
+        // 획은 `ink_young` 목록이 매 프레임 현재 나이로 오버레이 재굽기합니다
+        // (O(젊은 획) — 전체 재굽기 불필요, 펜업 순간에도 끊김 없음).
+        // rev는 재구성 키에서 제외 — 신규 획은 젊은 목록으로, 정착분은
+        // sweep이 병합 메시로 이동시키며, 삭제/구조 변경만 전체 재구성.
+        if rev != self.ink_baked_rev && count > self.ink_baked_count + self.ink_young.len() {
+            // 방금 끝난 획 → 젊은 목록 (오버레이가 즉시 그려줘 깜빡임 없음).
+            let from = self.ink_baked_count + self.ink_young.len();
             let new_strokes =
-                self.store.strokes_on(self.current_page)[self.ink_baked_count..].to_vec();
-            self.append_ink_strokes(&new_strokes, now);
+                self.store.strokes_on(self.current_page)[from..].to_vec();
+            self.add_ink_young(&new_strokes, now);
         }
+        // 정착된 젊은 획을 병합 메시로 이동 (최종 알파, 획당 1회).
+        self.sweep_ink_young(now);
         let full_needed = self.ink_needs_rebuild()
-            || self.ink_halo_due(now)
-            || (rev != self.ink_baked_rev && count <= self.ink_baked_count);
+            || (rev != self.ink_baked_rev && count <= self.ink_baked_count + self.ink_young.len());
         if full_needed && self.ink_bake_pending.is_none() {
             *self.ink_baker_mesher.write().expect("bake mesher lock") = self.core_mesher();
+            let mesher = self.core_mesher();
+            // 스냅샷은 **정착된 획만** — 젊은 획은 오버레이가 담당하므로
+            // 결과 메시와 오버레이가 겹치지 않습니다.
             let strokes: Vec<freedf_canvas::Stroke> = self
                 .store
                 .strokes_on(self.current_page)
                 .iter()
+                .filter(|s| mesher.next_settle(&canvas_stroke(s), now) == u64::MAX)
                 .map(canvas_stroke)
                 .collect();
             let snapshot = freedf_canvas::SceneSnapshot {
@@ -642,19 +645,18 @@ impl FreeDfApp {
                         // 문서/페이지/줌 변경 또는 삭제가 섞임 — 폐기 후
                         // 다음 프레임에 다시 요청합니다.
                     } else {
+                        // 요청 시점엔 젊어서 스냅샷에 없었지만 도중에 정착된
+                        // 획을 결과 메시에 붙여 유실을 막습니다.
+                        let mesher = self.core_mesher();
                         let mut mesh = page.mesh;
-                        if cur_rev != page.revision.0 {
-                            // 요청 이후 **추가 획만** — 결과에 증분으로 붙입니다.
-                            let mesher = self.core_mesher();
-                            let tail: Vec<freedf_canvas::Stroke> = self
-                                .store
-                                .strokes_on(self.current_page)[req_count..]
-                                .iter()
-                                .map(canvas_stroke)
-                                .collect();
-                            for s in &tail {
-                                mesher.append_stroke(&mut mesh, s, now);
-                            }
+                        let late: Vec<freedf_core::model::Stroke> = self
+                            .ink_young
+                            .iter()
+                            .filter(|s| mesher.next_settle(&canvas_stroke(s), now) == u64::MAX)
+                            .cloned()
+                            .collect();
+                        for s in &late {
+                            mesher.append_stroke(&mut mesh, &canvas_stroke(s), now);
                         }
                         self.install_ink_mesh(mesh, cur_rev, cur_count, now);
                     }
@@ -667,13 +669,11 @@ impl FreeDfApp {
                 }
             }
         }
-        // 스밈(잉크 포화) 애니메이션 — egui는 이벤트 기반이라, 여기서 repaint를
-        // 요청하지 않으면 펜업 뒤 프레임이 멈춰 잉크가 옅은 채로 남습니다
-        // (다음 입력·줌이 와야 그제서야 진해짐 — "줌해야 진해져요"의 원인).
-        // 굽기 대기 중에도 repaint를 걸어 결과를 지체 없이 수신합니다.
+        // 스밈 애니메이션/굽기 대기 동안 연속 repaint — egui는 이벤트 기반이라
+        // 요청하지 않으면 프레임이 멈춰 잉크가 옅은 채로 남습니다.
         if self.ink_bake_pending.is_some()
             || self.active_stroke.is_some()
-            || (self.ink_next_settle_ms != u64::MAX && now < self.ink_next_settle_ms)
+            || !self.ink_young.is_empty()
         {
             ctx.request_repaint();
         }
@@ -711,6 +711,30 @@ impl FreeDfApp {
                     painter.add(egui::Shape::mesh(mesh.clone()));
                 }
             }
+        }
+        // 젊은(스밈 진행 중) 획 오버레이 — 매 프레임 현재 나이로 재굽어
+        // 부드러운 진해짐 애니메이션. O(젊은 획)라 펜업 직후에도 끊김이
+        // 없고, 정착분 병합 메시는 건드리지 않아 egui 변환 캐시도 유지됩니다.
+        if !self.ink_young.is_empty() && self.ink_young_page == self.current_page {
+            let mesher = self.core_mesher();
+            let mut cm = freedf_canvas::Mesh::default();
+            for s in self.ink_young.clone() {
+                mesher.append_stroke(&mut cm, &canvas_stroke(&s), now);
+            }
+            let mut ym = canvas_mesh_to_egui(
+                &cm,
+                origin,
+                self.view.zoom,
+                self.view.pan_x,
+                self.view.pan_y,
+            );
+            if anim_dx.abs() > 0.5 || anim_dy.abs() > 0.5 {
+                let shift = egui::vec2(anim_dx, anim_dy);
+                for v in &mut ym.vertices {
+                    v.pos += shift;
+                }
+            }
+            painter.add(egui::Shape::mesh(std::sync::Arc::new(ym)));
         }
         if let Some(active) = self.active_stroke.clone() {
             self.paint_active(&painter, &active, draw_origin);
