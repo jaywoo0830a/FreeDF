@@ -1082,8 +1082,15 @@ pub struct FreeDfApp {
     prev_texture: Option<egui::TextureHandle>,
     /// Page index before the latest page change (drives the animation direction)
     transition_last_page: usize,
-    /// 다음/이전 페이지를 미리 렌더한 텍스처 (페이지 전환을 부드럽게)
-    prefetch: Option<(usize, f32, egui::TextureHandle)>,
+    /// 다음/이전 페이지를 미리 렌더한 텍스처 (페이지 전환을 부드럽게).
+    /// 마지막 요소는 합성 당시의 종이 질감 키 — 설정이 바뀐 텍스처를
+    /// 그대로 쓰지 않도록 전환 시점에 대조합니다.
+    prefetch: Option<(
+        usize,
+        f32,
+        egui::TextureHandle,
+        Option<(f32, [u8; 3], freedf_core::paper::PaperSurfaceSettings)>,
+    )>,
     /// 프리페치가 필요한지 (페이지 변경/애니메이션 종료 시 세팅)
     prefetch_pending: bool,
 

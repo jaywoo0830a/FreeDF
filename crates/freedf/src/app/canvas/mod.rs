@@ -270,6 +270,28 @@ impl FreeDfApp {
         }
     }
 
+    /// 종이 질감 합성 설정 키 (페이지별 종이색 반영) — 바뀌면 재렌더.
+    pub(crate) fn paper_tex_key_for(
+        &self,
+        page: usize,
+    ) -> Option<(f32, [u8; 3], freedf_core::paper::PaperSurfaceSettings)> {
+        if !(self.paper_texture && self.paper_texture_strength > 0.001) {
+            return None;
+        }
+        let p = self
+            .store
+            .paper_on_or(
+                page,
+                PagePaper {
+                    style: self.paper_style,
+                    color: self.paper_color,
+                },
+            )
+            .color;
+        let q = (self.paper_texture_strength * 50.0).round() / 50.0;
+        Some((q, [p[0], p[1], p[2]], self.paper_surface))
+    }
+
     pub(crate) fn ensure_texture(&mut self, ctx: &egui::Context) {
         let Some(doc) = &self.document else {
             return;
@@ -278,13 +300,7 @@ impl FreeDfApp {
         let target_w = self.page_size_pts[0] * self.view.zoom * ppp;
         // 종이 질감은 페이지 래스터에 **곱셈 합성**되므로, 질감 설정이 바뀌면
         // 재렌더가 필요합니다 (강도는 2% 단위 양자화 — 슬라이더 폭주 방지).
-        let tex_key = if self.paper_texture && self.paper_texture_strength > 0.001 {
-            let p = self.current_page_paper().color;
-            let q = (self.paper_texture_strength * 50.0).round() / 50.0;
-            Some((q, [p[0], p[1], p[2]], self.paper_surface))
-        } else {
-            None
-        };
+        let tex_key = self.paper_tex_key_for(self.current_page);
         let needs_render = self.render_dirty
             || self.texture.is_none()
             || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) > 0.15
@@ -965,7 +981,7 @@ impl FreeDfApp {
             return;
         };
         // 이미 같은 페이지를 같은 줌으로 프리페치해 두었으면 스킵.
-        if let Some((p, z, _)) = &self.prefetch {
+        if let Some((p, z, _, _)) = &self.prefetch {
             if *p == next && (*z - self.view.zoom).abs() < 1e-3 {
                 return;
             }
@@ -973,7 +989,23 @@ impl FreeDfApp {
         let size = doc.page_size_pts(next);
         let ppp = ctx.pixels_per_point();
         let target_w = size[0] * self.view.zoom * ppp;
-        if let Ok(rendered) = doc.render_page(next, target_w, 4096.0 * ppp) {
+        if let Ok(mut rendered) = doc.render_page(next, target_w, 4096.0 * ppp) {
+            // 현재 페이지 렌더와 동일하게 종이 질감을 곱셈 합성합니다 —
+            // 프리페치 텍스처를 그대로 쓰는 전환 경로에서 질감이 빠지지 않게
+            // 합니다 (이전에는 다음 페이지에 질감이 없어서 줌 재렌더가 필요했음).
+            let tex_key = self.paper_tex_key_for(next);
+            if let Some((strength, base, surface)) = &tex_key {
+                composite_paper_texture(
+                    &mut rendered.rgba,
+                    rendered.width,
+                    rendered.height,
+                    *strength,
+                    *base,
+                    surface,
+                    next,
+                    self.view.zoom * ppp,
+                );
+            }
             let img = egui::ColorImage::from_rgba_unmultiplied(
                 [rendered.width, rendered.height],
                 &rendered.rgba,
@@ -982,6 +1014,7 @@ impl FreeDfApp {
                 next,
                 self.view.zoom,
                 ctx.load_texture("prefetch", img, egui::TextureOptions::LINEAR),
+                tex_key,
             ));
         }
     }

@@ -96,12 +96,16 @@ impl FreeDfApp {
         }
         let vertical = std::mem::take(&mut self.transition_vertical);
         // 프리페치된 새 페이지 텍스처가 있으면 즉시 사용 → 렌더 대기 없는 전환.
+        // 프리페치 이후 질감 설정이 바뀌었으면(키 불일치) 무효 — 아래 경로로
+        // 재렌더해 새 설정을 적용합니다.
         let hit = self
             .prefetch
             .as_ref()
-            .is_some_and(|(p, z, _)| *p == to && (*z - self.view.zoom).abs() < 1e-3);
+            .is_some_and(|(p, z, _, k)| {
+                *p == to && (*z - self.view.zoom).abs() < 1e-3 && *k == self.paper_tex_key_for(to)
+            });
         if hit {
-            let (_, _, tex) = self.prefetch.take().expect("hit");
+            let (_, _, tex, _) = self.prefetch.take().expect("hit");
             self.prev_texture = self.texture.take();
             self.texture = Some(tex);
             self.render_dirty = false;
