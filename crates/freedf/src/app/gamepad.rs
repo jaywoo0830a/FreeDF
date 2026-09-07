@@ -111,9 +111,13 @@ pub(crate) fn gamepad_log_clear() {
     }
 }
 
-/// 모든 게임패드 입력의 **공통 연타 리듬** (LB+스틱 줌 · LT undo · D패드 반복).
-/// 누르고 있으면 이 간격으로 계속 발사됩니다 — 모든 입력이 같은 성격을 가집니다.
+/// 모든 게임패드 입력의 **공통 연타 리듬** (LT undo · D패드 반복).
+/// 누르고 있으면 이 간격으로 계속 발사됩니다.
 const GAMEPAD_REPEAT_MS: u64 = 250;
+
+/// LB+스틱 줌의 **별도 연타 리듬** — 줌은 더 잦게 발사해 부드럽게
+/// 움직입니다 (사용자 요청: 컨트롤러 줌 빈도 상향).
+const GAMEPAD_ZOOM_REPEAT_MS: u64 = 100;
 
 impl FreeDfApp {
     /// gilrs에서 이번 프레임 상태를 읽습니다 — Windows만 실제 구현.
@@ -263,16 +267,16 @@ impl FreeDfApp {
             const ZOOM_PUSH_THRESHOLD: f32 = 0.25;
             let push = if sy.abs() > sx.abs() { sy } else { sx };
             if push.abs() > ZOOM_PUSH_THRESHOLD
-                && now.saturating_sub(self.gamepad_zoom_last_ms) >= GAMEPAD_REPEAT_MS
+                && now.saturating_sub(self.gamepad_zoom_last_ms) >= GAMEPAD_ZOOM_REPEAT_MS
             {
                 if push > 0.0 {
                     self.zoom_by(ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick — zoom +10%");
+                    gamepad_log_push("LB + stick — zoom +5%");
                 } else {
                     self.zoom_by(1.0 / ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick — zoom -10%");
+                    gamepad_log_push("LB + stick — zoom -5%");
                 }
                 self.gamepad_zoom_last_ms = now;
             }

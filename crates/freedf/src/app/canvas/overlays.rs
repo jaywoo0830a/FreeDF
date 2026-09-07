@@ -267,7 +267,7 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_MINUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom out 10% (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom out 5% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(1.0 / ZOOM_STEP);
@@ -282,7 +282,7 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_PLUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom in 10% (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom in 5% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(ZOOM_STEP);

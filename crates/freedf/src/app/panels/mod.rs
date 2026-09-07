@@ -232,19 +232,39 @@ impl FreeDfApp {
                 } else {
                     let mut register: Option<freedf_sync::Digest> = None;
                     for o in &orphans {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                            let meta = format!("{}", o.size);
-                            let title = format!("{}…", &o.digest.as_str()[7..15]);
-                            let _ = library_row(ui, false, &title, &meta);
-                            if ui
-                                .add(egui::Button::new("Register").small())
-                                .on_hover_text("Create a document from this PDF")
-                                .clicked()
-                            {
-                                register = Some(o.digest.clone());
-                            }
-                        });
+                        // 가로 오버플로 방지: 한 행을 **오른쪽→왼쪽**으로 배치해
+                        // Register(우) → 크기 → 다이제스트(좌, 잘림) 순으로
+                        // 놓습니다. (이전엔 library_row가 전체 폭을 차지해
+                        // Register 버튼이 화면 밖으로 밀려났습니다.)
+                        let meta = format_bytes(o.size);
+                        // 다이제스트 접두어(hex 8자리)만 표시 — 전체는 툴팁으로.
+                        let ds = o.digest.as_str();
+                        let title = if ds.len() > 15 {
+                            format!("{}…", &ds[7..15])
+                        } else {
+                            ds.to_string()
+                        };
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                                if ui
+                                    .add(egui::Button::new("Register").small())
+                                    .on_hover_text("Create a document from this PDF")
+                                    .clicked()
+                                {
+                                    register = Some(o.digest.clone());
+                                }
+                                ui.label(egui::RichText::new(meta).weak().small());
+                                // 다이제스트 — 전체는 툴팁으로, 화면엔 잘려서.
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&title))
+                                        .truncate()
+                                        .sense(egui::Sense::hover()),
+                                )
+                                .on_hover_text(o.digest.as_str());
+                            },
+                        );
                     }
                     if let Some(d) = register {
                         self.register_orphan_pdf(d);

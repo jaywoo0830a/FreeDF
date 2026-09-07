@@ -115,11 +115,11 @@ const PAGE_ANIM_SECS: f32 = 0.28;
 const COMPACT_MIN_WIDTH: f32 = 640.0;
 /// Smoothing rate (1/second) for animated wheel scroll.
 const SCROLL_SMOOTH_RATE: f32 = 14.0;
-/// 줌 한 스텝 = **10%**. PDF 렌더러 특성상 연속(애니메이션) 줌은 매 프레임
+/// 줄 한 스텝 = **5%**. PDF 렌더러 특성상 연속(애니메이션) 줌은 매 프레임
 /// 재래스터로 렉이 걸리므로, 모든 줌 입력(버튼/Ctrl+휠/핀치/단축키)을
-/// 이 고정 스텝으로 양자화해 한 번에 적용합니다. (5%보다 빠른 10% —
-/// 사용자 요청으로 한 단계에 더 크게 움직이게 함.)
-const ZOOM_STEP: f32 = 1.10;
+/// 이 고정 스텝으로 양자화해 한 번에 적용합니다. (핀치/게임패드는
+/// 같은 5% 스텝을 **더 자주** 발사합니다 — §빈도 참고.)
+const ZOOM_STEP: f32 = 1.05;
 
 /// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -868,6 +868,11 @@ pub struct FreeDfApp {
     zoom_settle_deadline_ms: u64,
     /// 줌 정착 후 해야 할 재렌더가 남아 있는지.
     zoom_render_pending: bool,
+    /// 핀치 줌의 **프레임 간 잔여 스텝 누적** — 핀치는 프레임당 델타가 작아
+    /// 한 프레임 단위로 반올림하면 자잘한 움직임이 유실됩니다. 이 누적값이
+    /// 한 스텝(5%)을 넘으면 그만큼 발사하고 나머지만 남겨, 핀치 줌 빈도를
+    /// 높입니다 (사용자 요청).
+    pinch_accum_steps: f32,
 
     // ---------- Annotations ----------
     store: AnnotationStore,
@@ -1500,6 +1505,7 @@ impl FreeDfApp {
             last_render_ppp: 0.0,
             zoom_settle_deadline_ms: 0,
             zoom_render_pending: false,
+            pinch_accum_steps: 0.0,
             store: AnnotationStore::new(),
             history: History::new(256),
             stroke_id_pool: (0, 0),
