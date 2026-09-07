@@ -238,7 +238,10 @@ impl CoreRibbonMesher {
             &self.fountain_grain,
             now_ms,
         );
-        let round_caps = matches!(stroke.tool, ToolType::Pen | ToolType::Fountain);
+        let round_caps = matches!(
+            stroke.tool,
+            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
+        );
         append_stroke_ribbon(
             mesh,
             &stroke.points,

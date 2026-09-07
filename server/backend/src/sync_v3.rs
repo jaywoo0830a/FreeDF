@@ -22,7 +22,7 @@ use axum::{
 };
 use freedf_sync::{
     ChangeRecord, Conflict, CreateDocument, CreatedDocument, Digest, DigestProbe,
-    DigestProbeResult, DocumentInfo, Page, Patch, RenameDocument, RevisionInfo,
+    DigestProbeResult, DocumentInfo, OrphanPdf, Page, Patch, RenameDocument, RevisionInfo,
     Snapshot, SnapshotMeta, Stroke, StrokePoint, UploadReceipt, UploadState, UploadStatus,
     SNAPSHOT_MIME,
 };
@@ -527,6 +527,47 @@ pub async fn list_documents(
         })
         .collect();
     Json(docs).into_response()
+}
+
+/// GET /v3/orphan-pdfs — 어떤 documents 행도 참조하지 않는 CAS PDF 객체 목록.
+///
+/// PDF가 먼저 업로드됐지만 아직 문서가 안 만들어졌거나, 문서가 삭제되고
+/// CAS 객체만 남은 경우 — 라이브러리에 노출해 재등록할 수 있게 합니다.
+pub async fn list_orphan_pdfs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if !check_auth(&state, &headers).await {
+        return unauthorized();
+    }
+    let db = state.db.lock().await;
+    let rows = match db
+        .query(
+            "SELECT ca.digest, ca.size, ca.created_at \
+             FROM cas_objects ca \
+             LEFT JOIN documents d ON d.pdf_digest = ca.digest \
+             WHERE d.id IS NULL \
+             ORDER BY ca.created_at DESC",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return db_err(e).into_response(),
+    };
+    let orphans: Vec<OrphanPdf> = rows
+        .iter()
+        .filter_map(|r| {
+            let digest: String = r.get(0);
+            let d = Digest::parse(&digest).ok()?;
+            Some(OrphanPdf {
+                digest: d,
+                size: r.get(1),
+                created_at: r.get(2),
+            })
+        })
+        .collect();
+    Json(orphans).into_response()
 }
 
 /// POST /v3/documents — 문서 생성 (PDF는 CAS 다이제스트 참조).

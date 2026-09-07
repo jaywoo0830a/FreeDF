@@ -193,6 +193,30 @@ impl FreeDfApp {
         });
     }
 
+    /// 커서(펜 닙) 설정 — 전용 플로팅 창 내용 (툴바 Cursor 버튼으로 열림).
+    /// 볼펜/만년필의 금속 닙 커서 크기를 조절합니다.
+    pub(crate) fn cursor_settings_ui(&mut self, ui: &mut egui::Ui) {
+        form::help(
+            ui,
+            "Pen nib cursor size for the ballpen/fountain pen tools.\n\
+             The cursor previews the tip at the exact point ink will land.",
+        );
+        if form::range(
+            ui,
+            &mut self.cursor_scale,
+            0.5..=2.0,
+            "Cursor size",
+            "Scale of the metal nib cursor (length & thickness).\n\
+             1.0 = default, 2.0 = twice as large, 0.5 = half.",
+        )
+        .changed()
+        {
+            self.cursor_scale = self.cursor_scale.clamp(0.5, 2.0);
+            self.save_default_session();
+            self.save_session();
+        }
+    }
+
     /// 만년필 세부 설정 — 전용 플로팅 창 내용.
     pub(crate) fn fountain_settings_ui(&mut self, ui: &mut egui::Ui) {
         let preview_color = Color32::from_rgba_unmultiplied(
@@ -443,7 +467,7 @@ impl FreeDfApp {
                 let selected = self.canvas_color == *preset;
                 let (resp, changed) =
                     swatch_with_picker(ui, ("canvas_preset", i), &mut color, selected);
-                let resp = resp.on_hover_text("Preset — click to edit");
+                let resp = resp.on_hover_text("Preset — click to apply, double-click to edit");
                 if resp.clicked() {
                     self.canvas_color = *preset;
                     self.save_default_session();
@@ -565,7 +589,7 @@ impl FreeDfApp {
                 let selected = self.paper_color == *paper;
                 let (resp, changed) =
                     swatch_with_picker(ui, ("paper_swatch_win", i), &mut color, selected);
-                let resp = resp.on_hover_text("Paper color — click to edit (current page)");
+                let resp = resp.on_hover_text("Paper color — click to apply, double-click to edit (current page)");
                 if resp.clicked() {
                     self.paper_color = *paper;
                     self.apply_paper_to_current_page();
@@ -793,7 +817,7 @@ impl FreeDfApp {
                         let selected = ls.color == *preset;
                         let (resp, picker_changed) =
                             swatch_with_picker(ui, ("line_swatch_win", i), &mut col, selected);
-                        let resp = resp.on_hover_text("Line color preset — click to edit");
+                        let resp = resp.on_hover_text("Line color preset — click to apply, double-click to edit");
                         if resp.clicked() {
                             ls.color = *preset;
                             changed = true;
@@ -1210,6 +1234,21 @@ impl FreeDfApp {
                 }
             });
             self.tool_settings_open = open;
+        }
+
+        // ── 커서(펜 닙) 설정 플로팅 창 (툴바 Cursor 버튼) ──
+        if self.cursor_settings_open {
+            let mut open = self.cursor_settings_open;
+            settings_window(
+                ui.ctx(),
+                &mut open,
+                "Cursor settings",
+                320.0,
+                false,
+                false,
+                |ui| self.cursor_settings_ui(ui),
+            );
+            self.cursor_settings_open = open;
         }
 
         // ── Paper 세부 설정 플로팅 창 (툴바 Paper 옆 Settings 버튼) ──

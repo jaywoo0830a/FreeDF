@@ -130,6 +130,9 @@ pub struct DocumentView {
     /// 페이지별 크기(포인트) — `Some`이면 캐시됨. 1,000쪽이 넘는 문서도
     /// 열 때 전체 페이지를 건드리지 않도록 **지연 계산**합니다.
     pub page_sizes_pts: RefCell<Vec<Option<[f32; 2]>>>,
+    /// 재사용 렌더 비트맵 — 같은 크기로 연속 렌더할 때 버퍼 재할당을 피합니다
+    /// (ZOON-OPT.md §Bitmap Reuse). `Some((w,h,bitmap))`는 마지막 렌더 크기.
+    render_bitmap: RefCell<Option<(Pixels, Pixels, PdfBitmap<'static>)>>,
 }
 
 /// 렌더링 결과 (RGBA, top-down).
@@ -166,6 +169,7 @@ impl DocumentView {
             document,
             file_name,
             page_sizes_pts: sizes,
+            render_bitmap: RefCell::new(None),
         })
     }
 
@@ -218,6 +222,7 @@ impl DocumentView {
             document,
             file_name: name.to_string(),
             page_sizes_pts: RefCell::new(vec![Some(size_pts); count]),
+            render_bitmap: RefCell::new(None),
         })
     }
 
@@ -282,13 +287,27 @@ impl DocumentView {
             .render_annotations(true)
             .use_lcd_text_rendering(true);
 
-        let bitmap = page
-            .render_with_config(&config)
+        // ── 비트맵 재사용 (ZOON-OPT.md §Bitmap Reuse) ──
+        // 같은 크기로 연속 렌더하면 버퍼를 재사용해 재할당을 피하고,
+        // 크기가 바뀌면(줌 변경) 새 버퍼로 교체합니다.
+        let mut bitmap = self.render_bitmap.borrow_mut();
+        if bitmap.as_ref().map(|(bw, bh, _)| (*bw, *bh)) != Some((w, h)) {
+            *bitmap = Some((
+                w,
+                h,
+                PdfBitmap::empty(w, h, PdfBitmapFormat::default())
+                    .map_err(|e| format!("Could not allocate render bitmap: {e}"))?,
+            ));
+        }
+        let (_, _, bmp) = bitmap.as_mut().expect("bitmap just ensured");
+        page.render_into_bitmap_with_config(bmp, &config)
             .map_err(|e| format!("Page render failed: {e}"))?;
 
-        let width = bitmap.width() as usize;
-        let height = bitmap.height() as usize;
-        let rgba = bitmap.as_rgba_bytes();
+        let width = bmp.width() as usize;
+        let height = bmp.height() as usize;
+        // as_rgba_bytes()는 자체 버퍼를 반환(Vec<u8>) — RefMut 대여가 끝나기 전에
+        // 복사가 끝나도록 합니다.
+        let rgba = bmp.as_rgba_bytes();
 
         if width == 0 || height == 0 || rgba.len() != width * height * 4 {
             return Err("Render result is invalid.".to_string());

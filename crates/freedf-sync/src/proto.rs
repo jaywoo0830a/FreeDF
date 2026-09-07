@@ -231,6 +231,16 @@ pub struct RenameDocument {
     pub title: String,
 }
 
+/// GET /v3/orphan-pdfs 목록 항목 — 서버 CAS에 PDF 바이트는 있지만
+/// 어떤 documents 행도 참조하지 않는 "고아 PDF" (문서가 삭제됐거나
+/// PDF만 먼저 올라간 경우). 라이브러리에 노출해 재등록하게 합니다.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OrphanPdf {
+    pub digest: Digest,
+    pub size: i64,
+    pub created_at: i64,
+}
+
 /// PUT /v3/objects/{digest} 응답.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ObjectInfo {

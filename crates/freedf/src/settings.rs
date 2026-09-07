@@ -724,6 +724,9 @@ pub struct GlobalState {
     /// 모니터 주사율 프리셋 (Hz) — 잉크 페이싱(진행 획 재구성 주기·
     /// 스밈 시간 배율)의 기준. 높을수록 더 부드럽고 연산은 늘어납니다.
     pub refresh_hz: u32,
+    /// 커서(펜 닙) 크기 배율 (0.5..2.0, 기본 1.0) — 볼펜/만년필 금속
+    /// 닙 커서의 길이·두께에 곱해집니다.
+    pub cursor_scale: f32,
 }
 
 impl Default for GlobalState {
@@ -733,6 +736,7 @@ impl Default for GlobalState {
             left_handed: false,
             dictionary_enabled: false,
             refresh_hz: 60,
+            cursor_scale: 1.0,
         }
     }
 }
@@ -884,6 +888,8 @@ impl SessionState {
         }
         // 주사율 프리셋은 지원 값(60/120/144/240) 중 가장 가까운 값으로.
         self.global.refresh_hz = freedf_canvas::snap_refresh_hz(self.global.refresh_hz);
+        // 커서 크기 배율은 0.5..2.0으로 제한 (NaN 방지 포함).
+        self.global.cursor_scale = self.global.cursor_scale.clamp(0.5, 2.0);
         // 저장된 순서에 새로 추가된 도구(예: 만년필)가 없으면 기본 위치에 보충.
         for t in ToolType::default_order() {
             if !self.panels.tool_order.contains(&t) {

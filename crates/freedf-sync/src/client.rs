@@ -245,6 +245,28 @@ impl SyncClient {
         Ok(serde_json::from_str::<CreatedDocument>(&text)?)
     }
 
+    /// 서버 CAS에서 어떤 문서도 참조하지 않는 "고아 PDF" 목록.
+    pub fn list_orphan_pdfs(&self) -> Result<Vec<OrphanPdf>> {
+        let resp = self
+            .request("GET", "/v3/orphan-pdfs")
+            .call()
+            .map_err(|e| self.error_of(e))?;
+        let text = Self::into_string(resp)?;
+        Ok(serde_json::from_str::<Vec<OrphanPdf>>(&text)?)
+    }
+
+    /// 고아 PDF에 대한 documents 행을 새로 만들어 재등록합니다.
+    /// (CAS 다이제스트를 참조하는 빈 문서 생성 — 이후 스냅샷 업로드로 페이지·획 진행.)
+    pub fn register_orphan_pdf(&self, digest: &Digest, title: &str) -> Result<CreatedDocument> {
+        self.create_document(&CreateDocument {
+            kind: "pdf".to_string(),
+            title: title.to_string(),
+            origin_path: None,
+            page_count: 0,
+            pdf_digest: Some(digest.clone()),
+        })
+    }
+
     /// 문서 제목 변경.
     pub fn rename_document(&self, doc_id: i64, title: &str) -> Result<()> {
         let body = serde_json::to_vec(&RenameDocument {

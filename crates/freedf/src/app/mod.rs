@@ -115,10 +115,11 @@ const PAGE_ANIM_SECS: f32 = 0.28;
 const COMPACT_MIN_WIDTH: f32 = 640.0;
 /// Smoothing rate (1/second) for animated wheel scroll.
 const SCROLL_SMOOTH_RATE: f32 = 14.0;
-/// 줌 한 스텝 = **5%**. PDF 렌더러 특성상 연속(애니메이션) 줌은 매 프레임
+/// 줌 한 스텝 = **10%**. PDF 렌더러 특성상 연속(애니메이션) 줌은 매 프레임
 /// 재래스터로 렉이 걸리므로, 모든 줌 입력(버튼/Ctrl+휠/핀치/단축키)을
-/// 이 고정 스텝으로 양자화해 한 번에 적용합니다.
-const ZOOM_STEP: f32 = 1.05;
+/// 이 고정 스텝으로 양자화해 한 번에 적용합니다. (5%보다 빠른 10% —
+/// 사용자 요청으로 한 단계에 더 크게 움직이게 함.)
+const ZOOM_STEP: f32 = 1.10;
 
 /// Fit mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -391,9 +392,10 @@ fn color_circle_swatch(
     ui.interact(rect, ui.id().with(id_salt), egui::Sense::click())
 }
 
-/// 스와치 + 클릭 시 컬러 픽커 팝업 — 색은 데이터: 팝업의 픽커가
+/// 스와치 + **더블클릭** 시 컬러 픽커 팝업 — 색은 데이터: 팝업의 픽커가
 /// `color`를 직접 편집합니다. 반환: `(클릭 응답, 픽커로 바뀌었는지)`.
-/// 호출부는 클릭 = 적용, changed = 편집된 색 저장으로 연결하면 됩니다.
+/// 호출부는 클릭 = 적용(프리셋), changed = 편집된 색 저장으로 연결하면 됩니다.
+/// (단일 클릭은 프리셋 적용만, 픽커는 더블클릭에만 표시 — 사용자 요청.)
 fn swatch_with_picker(
     ui: &mut egui::Ui,
     id_salt: impl egui::AsIdSalt,
@@ -402,18 +404,20 @@ fn swatch_with_picker(
 ) -> (egui::Response, bool) {
     let resp = color_circle_swatch(ui, id_salt, *color, selected);
     let mut changed = false;
-    egui::Popup::menu(&resp)
-        .id(resp.id.with("color_picker_popup"))
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.set_min_width(280.0);
-            ui.spacing_mut().slider_width = 280.0;
-            changed |= egui::color_picker::color_picker_color32(
-                ui,
-                color,
-                egui::color_picker::Alpha::OnlyBlend,
-            );
-        });
+    if resp.double_clicked() {
+        egui::Popup::menu(&resp)
+            .id(resp.id.with("color_picker_popup"))
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_min_width(280.0);
+                ui.spacing_mut().slider_width = 280.0;
+                changed |= egui::color_picker::color_picker_color32(
+                    ui,
+                    color,
+                    egui::color_picker::Alpha::OnlyBlend,
+                );
+            });
+    }
     (resp, changed)
 }
 
@@ -666,6 +670,14 @@ pub(crate) enum MediaOutcome {
     OpenedExternally { name: String },
 }
 
+/// 서버 CAS의 "고아 PDF" 작업 결과 (라이브러리 미등록 PDF 섹션).
+pub(crate) enum OrphanOutcome {
+    /// 고아 PDF 목록 수신 완료.
+    Listed(Vec<freedf_sync::OrphanPdf>),
+    /// 고아 PDF를 문서로 재등록 완료 (새 문서 id).
+    Registered(i64),
+}
+
 /// 인앱 이미지 미리보기 상태 (미디어 패널에 표시).
 pub(crate) struct MediaPreview {
     pub id: i64,
@@ -849,6 +861,13 @@ pub struct FreeDfApp {
     render_dirty: bool,
     last_render_zoom: f32,
     last_render_ppp: f32,
+    /// 줌이 마지막으로 바뀐 후 **정착까지의 시각(ms)** — 이 시각 전까지는
+    /// 고품질 재렌더를 미루고 이전 텍스처를 스케일해 표시합니다 (부드러운 줌).
+    /// `zoom_render_pending`과 함께, 연속 줌 시 "초당 수십 번 재렌더"가
+    /// 쌓여 멈추던 문제를 해결합니다 (ZOON-OPT.md §연속 줌).
+    zoom_settle_deadline_ms: u64,
+    /// 줌 정착 후 해야 할 재렌더가 남아 있는지.
+    zoom_render_pending: bool,
 
     // ---------- Annotations ----------
     store: AnnotationStore,
@@ -877,6 +896,8 @@ pub struct FreeDfApp {
     left_handed: bool,
     /// 모니터 주사율 프리셋 (Hz) — 잉크 페이싱(재구성 주기·스밈 시간) 기준.
     refresh_hz: u32,
+    /// 커서(펜 닙) 크기 배율 (0.5..2.0) — 금속 닙 커서 길이·두께에 곱함.
+    cursor_scale: f32,
     /// 일반 펜(볼펜/젤펜) 물리 모델 프로파일.
     pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
@@ -892,6 +913,8 @@ pub struct FreeDfApp {
     paper_settings_open: bool,
     /// Canvas(서라운드 배경색) 설정 플로팅 창 표시 여부 (임시)
     canvas_settings_open: bool,
+    /// 커서(펜 닙) 설정 플로팅 창 표시 여부 (임시)
+    cursor_settings_open: bool,
     /// Color wheel(원형 팔레트 색 지정) 설정 플로팅 창 표시 여부 (임시)
     wheel_settings_open: bool,
     /// Insert Page 플로팅 창 표시 여부 (임시 — 메뉴 대신 창이라 타이핑 유지)
@@ -1245,6 +1268,10 @@ pub struct FreeDfApp {
     loader_rx: Option<std::sync::mpsc::Receiver<LoaderMsg>>,
     /// 미디어 작업(목록/업로드/삭제) 수신 채널.
     media_rx: Option<std::sync::mpsc::Receiver<Result<MediaOutcome, String>>>,
+    /// 고아(미등록) PDF 작업(목록/재등록) 수신 채널.
+    orphan_rx: Option<std::sync::mpsc::Receiver<Result<OrphanOutcome, String>>>,
+    /// 서버 CAS의 고아 PDF 목록 캐시 (라이브러리 미등록 PDF 섹션).
+    orphan_pdfs: Vec<freedf_sync::OrphanPdf>,
     /// 서버 PDF 다운로드 결과 (백그라운드 스레드 → UI).
     pdf_dl_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// 다운로드 캐시 정리 결과 (백그라운드 스레드 → UI).
@@ -1343,6 +1370,7 @@ impl FreeDfApp {
         let debug_hud = s.global.debug_hud;
         let left_handed = s.global.left_handed;
         let refresh_hz = s.global.refresh_hz;
+        let cursor_scale = s.global.cursor_scale;
         // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
         let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
@@ -1470,6 +1498,8 @@ impl FreeDfApp {
             render_dirty: true,
             last_render_zoom: 0.0,
             last_render_ppp: 0.0,
+            zoom_settle_deadline_ms: 0,
+            zoom_render_pending: false,
             store: AnnotationStore::new(),
             history: History::new(256),
             stroke_id_pool: (0, 0),
@@ -1492,6 +1522,7 @@ impl FreeDfApp {
             tool_settings_open: false,
             paper_settings_open: false,
             canvas_settings_open: false,
+            cursor_settings_open: false,
             wheel_settings_open: false,
             insert_page_open: false,
             input_device: InputDevice::Mouse,
@@ -1507,6 +1538,7 @@ impl FreeDfApp {
             debug_hud,
             left_handed,
             refresh_hz,
+            cursor_scale,
             width_locker: None,
             pen_monitor,
             live_pressure: None,
@@ -1654,6 +1686,8 @@ impl FreeDfApp {
             loading_started: None,
             loader_rx: None,
             media_rx: None,
+            orphan_rx: None,
+            orphan_pdfs: Vec::new(),
             pdf_dl_rx: None,
             cache_rx: None,
             last_pen_up_ms: 0,
@@ -1883,6 +1917,8 @@ impl FreeDfApp {
                 self.request_stroke_pool_refill();
                 // 연결 즉시 서버 PDF들을 로컬 캐시로 받아옵니다 (다음 프레임).
                 self.pdf_sync_last_ms = 0;
+                // 고아(미등록) PDF 목록도 연결 시 1회 조회.
+                self.refresh_orphan_pdfs();
                 if auto {
                     self.setup_open = false;
                 }
@@ -2184,6 +2220,7 @@ impl FreeDfApp {
                 left_handed: self.left_handed,
                 dictionary_enabled: self.dictionary.enabled,
                 refresh_hz: self.refresh_hz,
+                cursor_scale: self.cursor_scale,
             },
             macros: self.macro_cfg.clone(),
         }
@@ -2342,6 +2379,34 @@ impl FreeDfApp {
                 self.end_loading();
                 self.media_status = Some("Media operation was interrupted.".into());
             }
+        }
+    }
+
+    /// 고아(미등록) PDF 작업 결과 수신 (매 프레임 호출).
+    fn poll_orphan_pdfs(&mut self) {
+        let Some(rx) = self.orphan_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(outcome)) => {
+                match outcome {
+                    OrphanOutcome::Listed(list) => {
+                        self.orphan_pdfs = list;
+                    }
+                    OrphanOutcome::Registered(doc_id) => {
+                        self.orphan_pdfs.retain(|_| false); // 재조회 예정.
+                        self.refresh_orphan_pdfs();
+                        self.open_document(doc_id);
+                    }
+                }
+            }
+            Ok(Err(e)) => {
+                self.status = Some(e);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.orphan_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
         }
     }
 
@@ -2571,6 +2636,7 @@ impl FreeDfApp {
         self.debug_hud = s.global.debug_hud;
         self.left_handed = s.global.left_handed;
         self.refresh_hz = s.global.refresh_hz;
+        self.cursor_scale = s.global.cursor_scale;
         self.macro_cfg = s.macros.clone();
         self.push_macro_config();
         self.pen_profile = s.pen.profile;
@@ -3232,6 +3298,7 @@ impl eframe::App for FreeDfApp {
         self.poll_connect_result();
         self.poll_loader();
         self.poll_media();
+        self.poll_orphan_pdfs();
         self.poll_pdf_download();
         self.poll_cache_clear();
         self.poll_player();

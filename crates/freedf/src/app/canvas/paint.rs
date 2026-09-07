@@ -257,7 +257,10 @@ impl FreeDfApp {
                 return;
             }
         }
-        let round_caps = matches!(tool, ToolType::Pen | ToolType::Fountain);
+        let round_caps = matches!(
+            tool,
+            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
+        );
         let tilt = tilt_magnitude(&self.pen_tilt);
         let halves_pt = freedf_canvas::halves_for_stroke(
             tool,
@@ -629,13 +632,15 @@ impl FreeDfApp {
                 // 손잡이 반평면 제한 — 오른손잡이는 오른쪽, 왼손잡이는 왼쪽만.
                 let az = clamp_azimuth_hand(az_raw, self.left_handed);
                 let pitch = cos_pitch.acos();
+                // 커서 크기 배율 (사용자 설정 — 0.5..2.0).
+                let cs = self.cursor_scale;
                 // 눕힐수록 배럴은 길게, 폭은 원근으로 좁아집니다.
-                let len = 24.0 + 30.0 * pitch.sin();
-                let w = (5.5 * cos_pitch).max(1.8);
+                let len = (24.0 + 30.0 * pitch.sin()) * cs;
+                let w = ((5.5 * cos_pitch).max(1.8)) * cs;
                 let dir = egui::vec2(az.cos(), az.sin());
                 let perp = egui::vec2(-dir.y, dir.x);
                 // 볼펜은 볼 반지름만큼 뒤에서 배럴이 시작 (볼이 좌표에 놓임).
-                let ball_r = if is_fountain { 0.0 } else { 1.2 };
+                let ball_r = if is_fountain { 0.0 } else { 1.2 * cs };
                 let tip = pos - dir * ball_r;
                 let tail = pos + dir * len;
                 let tl = tail + perp * w;
@@ -717,18 +722,26 @@ impl FreeDfApp {
                 // 3) 닙 끝.
                 if is_fountain {
                     // 뾰족한 밝은 금속 팁 + 좌우로 미끄러지는 반짝임 점.
-                    let t_len = 8.0;
-                    let t1 = pos + dir * t_len + perp * 2.4;
-                    let t2 = pos + dir * t_len - perp * 2.4;
+                    let t_len = 8.0 * cs;
+                    let t1 = pos + dir * t_len + perp * (2.4 * cs);
+                    let t2 = pos + dir * t_len - perp * (2.4 * cs);
                     painter.add(egui::Shape::convex_polygon(
                         vec![pos, t2, t1],
                         bright,
                         Stroke::new(1.0, dark),
                     ));
                     // 닙 숨구멍(원형 홀) — 만년필 특유의 디테일.
-                    painter.circle_stroke(pos + dir * 5.0, 1.1, Stroke::new(1.0, dark));
-                    let gx = (time * 3.0).sin() * 1.2;
-                    painter.circle_filled(pos + dir * 2.5 + perp * gx, 1.1, Color32::WHITE);
+                    painter.circle_stroke(
+                        pos + dir * (5.0 * cs),
+                        1.1 * cs,
+                        Stroke::new(1.0, dark),
+                    );
+                    let gx = (time * 3.0).sin() * (1.2 * cs);
+                    painter.circle_filled(
+                        pos + dir * (2.5 * cs) + perp * gx,
+                        1.1 * cs,
+                        Color32::WHITE,
+                    );
                 } else {
                     // 볼 — 방사형 그라데이션 팬(어두운 림 → 밝은 코어) + 회전 반사점.
                     let mut bm = egui::Mesh::default();
@@ -795,11 +808,27 @@ impl FreeDfApp {
                 );
             }
             ToolType::Eraser => {
-                // 그림자 없는 깔끔한 반투명 지우개 — 흰 원 + 테두리 + 중심점.
-                let r = self.eraser_radius.max(6.0);
-                painter.circle_filled(pos, r, Color32::from_white_alpha(85));
-                painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(215)));
-                painter.circle_filled(pos, 2.0, Color32::from_gray(140));
+                // 도넛(링) 지우개 — 가운데가 뻥 뚫린 링 형태로, 구멍으로
+                // 어떤 내용이 지워질지(아래 내용)가 그대로 보입니다.
+                // 지우개는 링(테두리)로만 그려지고, 가운데는 비어 있습니다.
+                let r = self.eraser_radius.max(8.0);
+                let hole = r * 0.45; // 도넛 구멍 반지름.
+                // 링 (도넛) — 구멍이 뚫린 메시 (삼각형 스트립으로 빈틈 없이).
+                painter.add(egui::Shape::mesh(donut_ring_mesh(
+                    pos,
+                    r,
+                    hole,
+                    48,
+                    Color32::from_white_alpha(70),
+                )));
+                painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(220)));
+                painter.circle_stroke(
+                    pos,
+                    hole,
+                    Stroke::new(1.5, Color32::from_white_alpha(200)),
+                );
+                // 구멍 중심의 작은 점 — 정렬 기준점.
+                painter.circle_filled(pos, 2.0, Color32::from_gray(160));
             }
             ToolType::Pan => {
                 // Small, compact "move" crosshair (much smaller than the OS grab hand).
@@ -817,6 +846,33 @@ impl FreeDfApp {
             }
         }
     }
+}
+
+/// 중심 `c`, 바깥 반지름 `r`, 구멍 반지름 `hole`의 **도넛(링) 메시**.
+/// 바깥 원과 안쪽 구멍 사이를 삼각형 스트립으로 이어 가운데가 빈 링을
+/// 채웁니다 (볼록 다각형 팬 대신 직접 인덱스 — 비볼록 링도 안전).
+fn donut_ring_mesh(c: Pos2, r: f32, hole: f32, segments: usize, color: Color32) -> egui::Mesh {
+    let mut m = egui::Mesh::default();
+    for i in 0..=segments {
+        let a = std::f32::consts::TAU * (i as f32 / segments as f32);
+        let (ca, sa) = (a.cos(), a.sin());
+        m.vertices.push(egui::epaint::Vertex::untextured(
+            c + egui::vec2(ca * r, sa * r),
+            color,
+        ));
+        m.vertices.push(egui::epaint::Vertex::untextured(
+            c + egui::vec2(ca * hole, sa * hole),
+            color,
+        ));
+    }
+    for i in 0..segments {
+        let a = (i * 2) as u32;
+        let b = a + 1;
+        let cc = a + 2;
+        let d = a + 3;
+        m.indices.extend_from_slice(&[a, b, cc, b, d, cc]);
+    }
+    m
 }
 
 /// freedf-core 스트로크 → freedf-canvas 스트로크 (경계 어댑터).

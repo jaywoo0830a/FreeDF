@@ -1,4 +1,4 @@
-//! 캔버스 입력 — 팬/줌(5% 스텝)/스크롤/필기 시작/포커스 제스처.
+//! 캔버스 입력 — 팬/줌(10% 스텝)/스크롤/필기 시작/포커스 제스처.
 
 use super::*;
 
@@ -42,14 +42,14 @@ impl FreeDfApp {
         // 줌 잠금이면 모든 줌 입력(핀치/Ctrl+휠/트랙패드)을 무시합니다.
         if !self.zoom_lock {
             // PDF 렌더러 특성상 연속 줌(애니메이션)은 매 프레임 재래스터라
-            // 뭘 해도 렉이 걸립니다. 모든 줌 입력을 **고정 5% 스텝**으로
+            // 뭘 해도 렉이 걸립니다. 모든 줌 입력을 **고정 10% 스텝**으로
             // 양자화해 한 번에 적용합니다 — 스텝당 재렌더 1회만 발생합니다.
             let mut steps = 0.0f32;
             // 1) 핀치/트랙패드 핀치 (연속 배율) → ln으로 스텝 수 환산 후 반올림.
             if (zoom_delta - 1.0).abs() > 1e-4 {
                 steps += (zoom_delta.ln() / ZOOM_STEP.ln()).round();
             }
-            // 2) Ctrl+휠 노치 → 노치당 1스텝 (±5%).
+            // 2) Ctrl+휠 노치 → 노치당 1스텝 (±10%).
             let mut ctrl_notches = 0.0f32;
             if ctrl_down {
                 // egui의 smooth_scroll_delta는 스무딩돼 노치 1개가 크게
@@ -83,7 +83,7 @@ impl FreeDfApp {
                     .map(|abs| [abs.x - origin.x, abs.y - origin.y])
                     .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
                 self.view.zoom_at(anchor_ui, ZOOM_STEP.powf(steps), MIN_ZOOM, MAX_ZOOM);
-                self.render_dirty = true;
+                self.mark_zoom_dirty();
                 ctx.request_repaint();
             }
         } // end !zoom_lock (줌 잠금)

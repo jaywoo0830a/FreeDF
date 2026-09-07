@@ -203,6 +203,57 @@ impl FreeDfApp {
                 ui.add_space(4.0);
                 ui.separator();
 
+                // ── Unregistered PDFs (서버 CAS 고아 PDF — 문서 행 없음) ──
+                ui.add_space(4.0);
+                let orphans = self.orphan_pdfs.clone();
+                ui.horizontal(|ui| {
+                    section_header(
+                        ui,
+                        icons::CLOUD_ARROW_DOWN,
+                        "Unregistered PDFs",
+                        orphans.len(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(icon_text(ui, "", icons::ARROWS_CLOCKWISE))
+                                    .frame(false)
+                                    .small(),
+                            )
+                            .on_hover_text("Refresh the list of server PDFs with no document")
+                            .clicked()
+                        {
+                            self.refresh_orphan_pdfs();
+                        }
+                    });
+                });
+                if orphans.is_empty() {
+                    empty_note(ui, "No unregistered PDFs on the server.");
+                } else {
+                    let mut register: Option<freedf_sync::Digest> = None;
+                    for o in &orphans {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            let meta = format!("{}", o.size);
+                            let title = format!("{}…", &o.digest.as_str()[7..15]);
+                            let _ = library_row(ui, false, &title, &meta);
+                            if ui
+                                .add(egui::Button::new("Register").small())
+                                .on_hover_text("Create a document from this PDF")
+                                .clicked()
+                            {
+                                register = Some(o.digest.clone());
+                            }
+                        });
+                    }
+                    if let Some(d) = register {
+                        self.register_orphan_pdf(d);
+                    }
+                }
+
+                ui.add_space(4.0);
+                ui.separator();
+
                 // ── Recents (계층 2) ──
                 let recents: Vec<RecentItem> = self
                     .recents

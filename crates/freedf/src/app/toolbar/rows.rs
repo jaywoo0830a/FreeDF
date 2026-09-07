@@ -392,7 +392,7 @@ impl FreeDfApp {
                     let selected = self.paper_color == *paper;
                     let (resp, changed) =
                         swatch_with_picker(ui, ("paper_swatch", i), &mut color, selected);
-                    let resp = resp.on_hover_text("Paper color — click to edit (current page)");
+                    let resp = resp.on_hover_text("Paper color — click to apply, double-click to edit (current page)");
                     if resp.clicked() {
                         self.paper_color = *paper;
                         self.apply_paper_to_current_page();
@@ -541,7 +541,7 @@ impl FreeDfApp {
                             let selected = *swatch == self.pen_color;
                             let (resp, changed) =
                                 swatch_with_picker(ui, ("pen_swatch", i), &mut color, selected);
-                            let resp = resp.on_hover_text("Pen color — click to edit");
+                            let resp = resp.on_hover_text("Pen color — click to apply, double-click to edit");
                             if resp.clicked() {
                                 self.pen_color = *swatch;
                                 self.save_default_session();
@@ -592,6 +592,18 @@ impl FreeDfApp {
                         {
                             self.tool_settings_open = true;
                         }
+                        // 커서(펜 닙) 크기 전용 설정 창 트리거.
+                        if icon_button(
+                            ui,
+                            IconButton::new(icons::CURSOR_CLICK, "Cursor Size").hint(
+                                "Open the cursor settings window:\n\
+                                 scale the ballpen/fountain pen nib cursor.",
+                            ),
+                        )
+                        .clicked()
+                        {
+                            self.cursor_settings_open = true;
+                        }
                         if crate::ui::check(
                             ui,
                             &mut self.pressure_enabled,
@@ -628,7 +640,7 @@ impl FreeDfApp {
                             let selected = *swatch == self.fountain_color;
                             let (resp, changed) =
                                 swatch_with_picker(ui, ("fountain_swatch", i), &mut color, selected);
-                            let resp = resp.on_hover_text("Ink color — click to edit");
+                            let resp = resp.on_hover_text("Ink color — click to apply, double-click to edit");
                             if resp.clicked() {
                                 self.fountain_color = *swatch;
                                 self.save_default_session();
@@ -691,7 +703,7 @@ impl FreeDfApp {
                             let selected = *swatch == self.hi_color;
                             let (resp, changed) =
                                 swatch_with_picker(ui, ("hi_swatch", i), &mut color, selected);
-                            let resp = resp.on_hover_text("Highlighter color — click to edit");
+                            let resp = resp.on_hover_text("Highlighter color — click to apply, double-click to edit");
                             if resp.clicked() {
                                 self.hi_color = *swatch;
                                 self.save_default_session();

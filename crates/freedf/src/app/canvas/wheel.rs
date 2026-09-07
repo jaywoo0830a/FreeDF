@@ -9,7 +9,7 @@ use super::*;
 /// 탭이 휠의 어디에 닿았는지.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WheelHit {
-    /// 중앙(현재 색) — 변경 없이 닫기.
+    /// 중앙(도넛 구멍) — 지우개 도구로 전환.
     Center,
     /// 둘레 i번째 색 — 그 색을 적용.
     Swatch(usize),

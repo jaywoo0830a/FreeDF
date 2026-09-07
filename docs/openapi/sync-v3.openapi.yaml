@@ -318,6 +318,27 @@ paths:
         default:
           $ref: '#/components/responses/ServerError'
 
+  /orphan-pdfs:
+    get:
+      tags: [documents]
+      summary: 문서 행이 참조하지 않는 CAS PDF 목록
+      description: |
+        PDF가 먼저 업로드됐지만 아직 문서가 안 만들어졌거나, 문서가
+        삭제되고 CAS 객체만 남은 "고아 PDF"를 조회합니다. 라이브러리에
+        노출해 재등록(POST /v3/documents)할 수 있게 합니다.
+      operationId: listOrphanPdfs
+      responses:
+        '200':
+          description: 고아 PDF 목록 (최신순).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrphanPdf'
+        default:
+          $ref: '#/components/responses/ServerError'
+
   /objects/query:
     post:
       tags: [objects]
@@ -600,6 +621,21 @@ components:
       properties:
         title:
           type: string
+
+    OrphanPdf:
+      type: object
+      description: 문서 행이 참조하지 않는 CAS PDF 객체.
+      required: [digest, size, created_at]
+      properties:
+        digest:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        size:
+          type: integer
+          format: int64
+        created_at:
+          type: integer
+          format: int64
 
     # ── 서버가 계산하는 두 상태 간 diff ──
     Patch:

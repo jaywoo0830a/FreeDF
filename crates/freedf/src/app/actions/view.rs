@@ -3,13 +3,25 @@
 use super::*;
 
 impl FreeDfApp {
+    /// 줌이 바뀐 뒤 **고품질 재렌더를 잠시 미룹니다** (ZOON-OPT.md 연속 줌).
+    /// 연속 줌(버튼 연타/핀치/Ctrl+휠) 동안 매 스텝 재렌더가 쌓여 멈추던
+    /// 것을 막기 위해, 마지막 줌 변경 시각으로부터 정착 데드라인을 잡고
+    /// 그 전까지는 이전 텍스처를 스케일해 표시합니다. 데드라인이 지나면
+    /// `ensure_texture`가 한 번 고품질로 재렌더합니다.
+    pub(crate) fn mark_zoom_dirty(&mut self) {
+        // 120ms 동안 추가 줌이 없으면 재렌더 — 연속 입력 중엔 계속 미룹니다.
+        const ZOOM_SETTLE_MS: u64 = 120;
+        self.zoom_settle_deadline_ms = now_ms().saturating_add(ZOOM_SETTLE_MS);
+        self.zoom_render_pending = true;
+    }
+
     pub(crate) fn zoom_by(&mut self, factor: f32) {
         if self.zoom_lock {
             return;
         }
         let anchor = [self.last_canvas[0] * 0.5, self.last_canvas[1] * 0.5];
         self.view.zoom_at(anchor, factor, MIN_ZOOM, MAX_ZOOM);
-        self.render_dirty = true;
+        self.mark_zoom_dirty();
         self.save_session();
     }
 

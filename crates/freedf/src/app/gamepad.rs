@@ -50,8 +50,8 @@ impl Default for GamepadCfg {
         Self {
             enabled: true,
             speed: 720.0,
-            invert_x: false,
-            invert_y: false,
+            invert_x: true,
+            invert_y: true,
             invert_x_ctrl: false,
             invert_y_ctrl: false,
         }
@@ -268,11 +268,11 @@ impl FreeDfApp {
                 if push > 0.0 {
                     self.zoom_by(ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick — zoom +5%");
+                    gamepad_log_push("LB + stick — zoom +10%");
                 } else {
                     self.zoom_by(1.0 / ZOOM_STEP);
                     self.gamepad_zooms += 1;
-                    gamepad_log_push("LB + stick — zoom -5%");
+                    gamepad_log_push("LB + stick — zoom -10%");
                 }
                 self.gamepad_zoom_last_ms = now;
             }
@@ -398,9 +398,10 @@ impl FreeDfApp {
 
     /// 게임패드 디버그 패널 — 원시 값 + 액션 카운터 + 이벤트 로그.
     pub(crate) fn gamepad_debug_ui(&mut self, ui: &mut egui::Ui) {
+        let mut open = self.gamepad_debug_open;
         egui::Window::new("Gamepad debug")
             .default_width(360.0)
-            .collapsible(false)
+            .open(&mut open)
             .show(ui.ctx(), |ui| {
                 crate::ui::dialog::pad(ui, false, |ui| {
                     match self.gamepad_last {
@@ -475,5 +476,6 @@ impl FreeDfApp {
                     }
                 });
             });
+        self.gamepad_debug_open = open;
     }
 }

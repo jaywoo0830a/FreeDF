@@ -125,6 +125,7 @@ ZIP 압축(deflate)은 저레벨로, 렌더링 코어를 비켜갑니다.
 | GET | `/v3/documents/{id}` | 전체 ZIP 다운로드 (서버 조립) |
 | GET | `/v3/documents/{id}/revision` | 현재 revision |
 | GET | `/v3/documents/{id}/changes?since_revision=` | 변경분 pull (jsonl/zip) |
+| GET | `/v3/orphan-pdfs` | 문서 행이 참조하지 않는 CAS PDF 목록 (재등록용) |
 | POST | `/v3/objects/query` | CAS 보유 probe |
 | PUT | `/v3/objects/{digest}` | CAS 업로드 (멱등, 본문-다이제스트 검증) |
 | GET | `/v3/objects/{digest}` | CAS fetch |
@@ -147,7 +148,8 @@ ZIP 압축(deflate)은 저레벨로, 렌더링 코어를 비켜갑니다.
 스키마가 어긋날 수 없습니다.
 
 - 타입: `Snapshot`/`SnapshotMeta`/`Patch`/`ChangeRecord`/`Digest`/`UploadReceipt`/
-  `DocumentInfo`/`CreateDocument`/`RenameDocument`/`ObjectInfo`/`ApiError`/`RevisionInfo`.
+  `DocumentInfo`/`CreateDocument`/`RenameDocument`/`OrphanPdf`/`ObjectInfo`/
+  `ApiError`/`RevisionInfo`.
 - 클라이언트: `SyncClient` — 서버 통신 전체(문서·스냅샷·객체·변경분).
 - 명세 확장 시 순서: `sync-v3.openapi.yaml` 갱신 → `freedf-sync` 타입 추가 →
   서버/앱이 그 타입 사용. 수제 `json!` 응답은 만들지 않습니다.

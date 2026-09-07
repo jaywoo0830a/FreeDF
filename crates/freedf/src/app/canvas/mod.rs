@@ -301,11 +301,32 @@ impl FreeDfApp {
         // 종이 질감은 페이지 래스터에 **곱셈 합성**되므로, 질감 설정이 바뀌면
         // 재렌더가 필요합니다 (강도는 2% 단위 양자화 — 슬라이더 폭주 방지).
         let tex_key = self.paper_tex_key_for(self.current_page);
-        let needs_render = self.render_dirty
-            || self.texture.is_none()
-            || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) > 0.15
-            || (self.last_render_ppp - ppp).abs() > 0.01
-            || self.last_render_tex_key != tex_key;
+
+        // ── 줌 정착 지연 (ZOON-OPT.md 연속 줌) ──
+        // 줌 중에는 매 스텝 재렌더가 아니라 **이전 텍스처를 스케일해 표시**하고,
+        // 줌이 잠시 멈추면(정착 데드라인 경과) 그때 한 번 고품질로 재렌더합니다.
+        // (줌이 아닌 변경 — 페이지 넘김/용지/질감 — 은 `render_dirty`로 즉시.)
+        let zoom_settled = if self.zoom_render_pending {
+            let now = now_ms();
+            if now >= self.zoom_settle_deadline_ms {
+                self.zoom_render_pending = false;
+                true
+            } else {
+                // 아직 줌 중 — 이번 프레임은 재렌더를 건너뛰고, 정착 시점에 다시
+                // 그리도록 repaint를 요청합니다 (줌 애니메이션의 프레임 간격 확보).
+                ctx.request_repaint();
+                false
+            }
+        } else {
+            true
+        };
+
+        let needs_render = zoom_settled
+            && (self.render_dirty
+                || self.texture.is_none()
+                || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) > 0.15
+                || (self.last_render_ppp - ppp).abs() > 0.01
+                || self.last_render_tex_key != tex_key);
 
         if !needs_render {
             return;

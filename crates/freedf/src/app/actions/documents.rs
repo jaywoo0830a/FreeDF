@@ -120,12 +120,31 @@ impl FreeDfApp {
                     // 정렬 설정으로 재정렬합니다 (줌 유지).
                     self.pending_align = true;
                 } else {
-                    // 새 문서(저장된 세션 없음) — 캐시가 아니라 **기본값** 때문에
-                    // 라이브러리가 열려 보이던 것을 정리: 패널 없이 깨끗한
-                    // 캔버스로 시작합니다.
+                    // 새 문서(저장된 세션 없음) — **이전 문서의 상태가 새 문서로
+                    // 새어들어가지 않도록** 전역 기본 세션(마지막 도구/펜/용지
+                    // 프리퍼런스)을 적용해 깨끗하게 시작합니다. (도구/색/용지 등
+                    // 탭별 상태가 이전 문서 것을 그대로 물려받던 버그 수정.)
+                    let mut has_default = false;
+                    if let Some(v) = self.db.get_app_state("session") {
+                        self.apply_session(
+                            &crate::settings::SessionState::from_json_value(v),
+                            page_count,
+                        );
+                        has_default = true;
+                    }
+                    // 새 문서는 페이지 0부터, 줌/팬은 기본값부터, 그리고
+                    // 캐시가 아니라 **기본값** 때문에 라이브러리가 열려 보이던
+                    // 것을 정리: 패널 없이 깨끗한 캔버스로 시작합니다.
+                    self.current_page = 0;
+                    self.view = ViewTransform::default();
+                    self.page_align = PageAlign::Center;
                     self.show_library = false;
                     self.show_outline = false;
                     self.show_bookmarks = false;
+                    if !has_default {
+                        // 기본 세션조차 없으면(첫 실행) 하이라이터 스냅은 off.
+                        self.text_highlight_snap = false;
+                    }
                 }
                 if is_note {
                     self.logger.log(AppEvent::NoteOpened {
@@ -156,6 +175,48 @@ impl FreeDfApp {
     /// 노트 열기 (라이브러리 패널용 래퍼).
     pub(crate) fn open_note(&mut self, id: u64) {
         self.open_document(id as i64);
+    }
+
+    /// 서버 CAS의 고아 PDF 목록을 백그라운드로 조회합니다.
+    /// (라이브러리 "미등록 PDF" 섹션 — 문서 행이 없는 PDF 객체 노출.)
+    pub(crate) fn refresh_orphan_pdfs(&mut self) {
+        if self.orphan_rx.is_some() {
+            return; // 이미 조회 중.
+        }
+        let cfg = self.media_config.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.orphan_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = crate::sync_client::sync_client(&cfg)
+                .ok_or_else(|| "Media server is not configured.".to_string())
+                .and_then(|c| {
+                    c.list_orphan_pdfs()
+                        .map(OrphanOutcome::Listed)
+                        .map_err(|e| e.to_string())
+                });
+            let _ = tx.send(result);
+        });
+    }
+
+    /// 고아 PDF를 새 문서로 재등록합니다 (CAS 다이제스트 → documents 행 생성).
+    pub(crate) fn register_orphan_pdf(&mut self, digest: freedf_sync::Digest) {
+        if self.orphan_rx.is_some() {
+            return;
+        }
+        let cfg = self.media_config.clone();
+        let title = format!("Imported {}", &digest.as_str()[7..15]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.orphan_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = crate::sync_client::sync_client(&cfg)
+                .ok_or_else(|| "Media server is not configured.".to_string())
+                .and_then(|c| {
+                    c.register_orphan_pdf(&digest, &title)
+                        .map(|cd| OrphanOutcome::Registered(cd.id))
+                        .map_err(|e| e.to_string())
+                });
+            let _ = tx.send(result);
+        });
     }
 
     // ---------- Standalone PDF (Open button) ----------

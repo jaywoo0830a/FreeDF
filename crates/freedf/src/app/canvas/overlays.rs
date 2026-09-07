@@ -131,9 +131,8 @@ impl FreeDfApp {
                         );
                     }
                 }
-                // 중앙 = 도넛 구멍 — 현재 색 디스크 없이 뻥 뚫립니다.
-                // (캔버스 배경색으로 채워 구멍처럼 보이게 하고, 안쪽 링으로
-                // 유리 두께를 표현합니다. 탭하면 그냥 닫힘.)
+                // 중앙 = 도넛 구멍 — **지우개(도구)** 를 선택하는 버튼입니다.
+                // (굿노트처럼 팔레트 링 가운데에서 지우개로 바로 전환.)
                 let hole = Color32::from_rgba_unmultiplied(
                     self.canvas_color[0],
                     self.canvas_color[1],
@@ -146,6 +145,20 @@ impl FreeDfApp {
                     WHEEL_CENTER_R,
                     Stroke::new(1.0, Color32::from_white_alpha(34)),
                 );
+                // 지우개 아이콘 — 아이콘 폰트 글리프를 중앙에 그립니다.
+                const ERASER_ICON: &str = egui_phosphor_icons::icons::ERASER.0;
+                let eraser_on = self.tool == ToolType::Eraser;
+                painter.text(
+                    c,
+                    egui::Align2::CENTER_CENTER,
+                    ERASER_ICON,
+                    egui::FontId::new(18.0, egui::FontFamily::Name("phosphor-regular".into())),
+                    if eraser_on {
+                        crate::theme::nord::semantic::TEXT_STRONG
+                    } else {
+                        crate::theme::nord::semantic::TEXT_PRIMARY
+                    },
+                );
 
                 // 공간을 잡아 이 Area의 **레이어가 휠 영역을 덮게** 합니다 —
                 // 휠 위에서는 캔버스 response.hovered()가 false가 되어
@@ -157,7 +170,13 @@ impl FreeDfApp {
             return;
         };
         match wheel.hit(pos) {
-            WheelHit::Center => self.color_wheel_open = false, // 변경 없이 닫기.
+            // 중앙(도넛 구멍) = 지우개 도구로 전환.
+            WheelHit::Center => {
+                self.tool = ToolType::Eraser;
+                self.save_default_session();
+                self.save_session();
+                self.color_wheel_open = false;
+            }
             WheelHit::Swatch(i) => {
                 if let Some(color) = wheel.ring.get(i).copied() {
                     self.apply_wheel_color(color);
@@ -248,7 +267,7 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_MINUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom out 5% (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom out 10% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(1.0 / ZOOM_STEP);
@@ -263,7 +282,7 @@ impl FreeDfApp {
                                         icons::MAGNIFYING_GLASS_PLUS,
                                     )),
                                 )
-                                .on_hover_text("Zoom in 5% (locked: press the lock or Ctrl+L)")
+                                .on_hover_text("Zoom in 10% (locked: press the lock or Ctrl+L)")
                                 .clicked()
                             {
                                 self.zoom_by(ZOOM_STEP);
@@ -404,7 +423,7 @@ impl FreeDfApp {
                             cur_rgba[3],
                         );
                         let (resp, changed) = swatch_with_picker(ui, "current_color", &mut cur, false);
-                        let resp = resp.on_hover_text("Current pen color — click to edit");
+                        let resp = resp.on_hover_text("Current pen color — click to apply, double-click to edit");
                         if resp.clicked() {
                             self.tool = ToolType::Pen;
                             self.save_session();
@@ -450,7 +469,7 @@ impl FreeDfApp {
                             };
                             let (resp, changed) = swatch_with_picker(ui, ("fav_swatch", i), &mut col, selected);
                             let resp = resp.on_hover_text(
-                                "Set pen color — click to edit (right-click to remove)",
+                                "Set pen color — click to apply, double-click to edit (right-click to remove)",
                             );
                             if resp.clicked() {
                                 if self.tool == ToolType::Fountain {

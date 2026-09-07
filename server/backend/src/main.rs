@@ -136,6 +136,7 @@ async fn main() {
         )
         .route("/v3/documents/:id/revision", get(sync_v3::get_revision))
         .route("/v3/documents/:id/changes", get(sync_v3::get_changes))
+        .route("/v3/orphan-pdfs", get(sync_v3::list_orphan_pdfs))
         .route("/v3/objects/query", post(sync_v3::probe_objects))
         .route(
             "/v3/objects/:digest",
