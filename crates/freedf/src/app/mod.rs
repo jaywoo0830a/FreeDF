@@ -451,6 +451,12 @@ fn pen_double_tapped(ui: &egui::Ui, resp: &egui::Response) -> bool {
 /// 호출부는 클릭 = 적용(프리셋), changed = 편집된 색 저장으로 연결하면 됩니다.
 /// (단일 클릭은 프리셋 적용만, 픽커는 더블클릭·펜 이중 탭에만 표시 — 사용자 요청:
 /// 팬으로 컬러를 두 번 빠르게 터치하면 픽커가 나타남.)
+///
+/// ⚠️ 명시적으로 `Popup::show`를 **매 프레임** 호출해야 팝업의 열림/닫힘 상태가
+/// 관리됩니다. `Popup::menu(&resp)`는 자체적으로 `resp.clicked()` 토글을 넣지만,
+/// 여기서는 (단일 클릭=프리셋 적용을 지키기 위해) `open_memory`로 **이중 탭일
+/// 때만 열도록** 명령합니다. 예전 코드는 double-click 프레임에만 show 해서
+/// 팝업이 실질적으로 열리지 않았습니다.
 fn swatch_with_picker(
     ui: &mut egui::Ui,
     id_salt: impl egui::AsIdSalt,
@@ -459,20 +465,25 @@ fn swatch_with_picker(
 ) -> (egui::Response, bool) {
     let resp = color_circle_swatch(ui, id_salt, *color, selected);
     let mut changed = false;
-    if resp.double_clicked() || pen_double_tapped(ui, &resp) {
-        egui::Popup::menu(&resp)
-            .id(resp.id.with("color_picker_popup"))
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                ui.set_min_width(280.0);
-                ui.spacing_mut().slider_width = 280.0;
-                changed |= egui::color_picker::color_picker_color32(
-                    ui,
-                    color,
-                    egui::color_picker::Alpha::OnlyBlend,
-                );
-            });
-    }
+    // 마우스 더블클릭 또는 펜 이중 탭일 때만 팝업을 엽니다.
+    let open = if resp.double_clicked() || pen_double_tapped(ui, &resp) {
+        Some(egui::SetOpenCommand::Bool(true))
+    } else {
+        None // 열려 있으면 유지, 닫혀 있으면 닫힌 채로.
+    };
+    egui::Popup::menu(&resp)
+        .id(resp.id.with("color_picker_popup"))
+        .open_memory(open)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            ui.set_min_width(280.0);
+            ui.spacing_mut().slider_width = 280.0;
+            changed |= egui::color_picker::color_picker_color32(
+                ui,
+                color,
+                egui::color_picker::Alpha::OnlyBlend,
+            );
+        });
     (resp, changed)
 }
 
