@@ -392,10 +392,65 @@ fn color_circle_swatch(
     ui.interact(rect, ui.id().with(id_salt), egui::Sense::click())
 }
 
-/// 스와치 + **더블클릭** 시 컬러 픽커 팝업 — 색은 데이터: 팝업의 픽커가
-/// `color`를 직접 편집합니다. 반환: `(클릭 응답, 픽커로 바뀌었는지)`.
+/// 펜/터치 이중 탭 판정 상태 — 스와치(id)별 직전 펜 탭.
+#[derive(Clone)]
+struct SwatchTap {
+    /// 직전 펜 탭이 있었던 egui 시각(초). 0이면 이전 탭 없음(아직 첫 탭 전).
+    at: f64,
+    x: f32,
+    y: f32,
+}
+
+/// 펜/터치 이중 탭으로 픽커를 여는 시간 간격(초) — OS 더블클릭 기본치와 동등 수준.
+const PEN_DOUBLE_TAP_SECS: f64 = 0.5;
+
+/// 이번 프레임에 **펜(터치)으로** 이 스와치를 두 번 빠르게 탭했는지 판정.
+/// egui의 `Response::double_clicked()`는 마우스 `PointerButton`에만 동작해서,
+/// Windows Ink 펜이 보내는 `Event::Touch`는 잡지 못합니다. 그래서 `Touch::Start`
+/// 시작점을 직전 탭(같은 스와치, 짧은 시간 안)과 직접 비교해 "이중 탭"을 냅니다.
+/// 마우스는 기존 `double_clicked()` 판정을 그대로 쓰므로 기존 동작은 유지됩니다.
+fn pen_double_tapped(ui: &egui::Ui, resp: &egui::Response) -> bool {
+    let now = ui.ctx().input(|i| i.time); // 초 (egui double-click 임계값과 동일 단위)
+    let rect = resp.rect;
+    let Some(tap) = ui.ctx().input(|i| {
+        i.events.iter().find_map(|e| match e {
+            egui::Event::Touch {
+                phase: egui::TouchPhase::Start,
+                pos,
+                ..
+            } if rect.contains(*pos) => Some(*pos),
+            _ => None,
+        })
+    }) else {
+        return false; // 이번 프레임에 펜 탭이 아니면 해당 없음
+    };
+    ui.ctx().memory_mut(|mem| {
+        let last = mem.data.get_temp_mut_or_insert_with::<SwatchTap>(
+            resp.id.with("pen_swatch_double_tap"),
+            || SwatchTap { at: 0.0, x: 0.0, y: 0.0 },
+        );
+        // 두 탭이 같은 스와치(rect) 안에 있으면서 짧은 시간 안에 떨어졌는지.
+        let within_time = last.at > 0.0 && (now - last.at) < PEN_DOUBLE_TAP_SECS;
+        let dx = last.x - tap.x;
+        let dy = last.y - tap.y;
+        let within_swatch = dx * dx + dy * dy <= rect.width() * rect.width() + rect.height() * rect.height();
+        let is_double = within_time && within_swatch;
+        if is_double {
+            // 더블로 소모 → 다음 탭은 새 시작이라 간주 (3연타 재트리거 방지).
+            *last = SwatchTap { at: 0.0, x: 0.0, y: 0.0 };
+        } else {
+            // 이번 탭을 직전 탭으로 기록.
+            *last = SwatchTap { at: now, x: tap.x, y: tap.y };
+        }
+        is_double
+    })
+}
+
+/// 스와치 + **더블클릭/펜 이중 탭** 시 컬러 픽커 팝업 — 색은 데이터: 팝업의
+/// 픽커가 `color`를 직접 편집합니다. 반환: `(클릭 응답, 픽커로 바뀌었는지)`.
 /// 호출부는 클릭 = 적용(프리셋), changed = 편집된 색 저장으로 연결하면 됩니다.
-/// (단일 클릭은 프리셋 적용만, 픽커는 더블클릭에만 표시 — 사용자 요청.)
+/// (단일 클릭은 프리셋 적용만, 픽커는 더블클릭·펜 이중 탭에만 표시 — 사용자 요청:
+/// 팬으로 컬러를 두 번 빠르게 터치하면 픽커가 나타남.)
 fn swatch_with_picker(
     ui: &mut egui::Ui,
     id_salt: impl egui::AsIdSalt,
@@ -404,7 +459,7 @@ fn swatch_with_picker(
 ) -> (egui::Response, bool) {
     let resp = color_circle_swatch(ui, id_salt, *color, selected);
     let mut changed = false;
-    if resp.double_clicked() {
+    if resp.double_clicked() || pen_double_tapped(ui, &resp) {
         egui::Popup::menu(&resp)
             .id(resp.id.with("color_picker_popup"))
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
