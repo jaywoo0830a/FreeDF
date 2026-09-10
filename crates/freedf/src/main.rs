@@ -9,6 +9,7 @@
 
 mod app;
 mod fonts;
+mod icon;
 mod pdf;
 mod player;
 mod recent;
@@ -24,6 +25,16 @@ mod ui;
 use eframe::egui;
 use freedf_core::logging::Logger;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// 앱 아이콘 — `assets/icon/app_icon.png`(내장)를 디코드해 창/작업표시줄에 씁니다.
+/// PNG 해석에 실패해도 기본 아이콘으로 폴백해 실행에는 지장이 없습니다.
+fn app_icon() -> Arc<egui::IconData> {
+    match eframe::icon_data::from_png_bytes(icon::APP_ICON_PNG) {
+        Ok(ic) => Arc::new(ic),
+        Err(_) => Arc::new(egui::IconData::default()),
+    }
+}
 
 fn main() -> eframe::Result<()> {
     // CLI: `freedf <file.pdf>` — 외부 PDF import 후 열기.
@@ -88,6 +99,7 @@ fn main() -> eframe::Result<()> {
         },
         viewport: egui::ViewportBuilder::default()
             .with_title("FreeDF — Lightweight PDF Viewer & Ink")
+            .with_icon(app_icon())
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([760.0, 520.0]),
         ..Default::default()
