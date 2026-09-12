@@ -1581,13 +1581,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "freedf-hidprobe"
-version = "0.1.0"
-dependencies = [
- "freedf-core",
-]
-
-[[package]]
 name = "freedf-sync"
 version = "0.1.0"
 dependencies = [

@@ -785,6 +785,23 @@ impl StorageBackend for SyncStorage {
 
     // ---------- recents ----------
     fn load_recents(&self) -> Vec<RecentRow> {
+        // 서버가 바뀌거나(마이그레이션) 문서가 삭제된 뒤에도 예전 서버의
+        // recents 캐시가 남아 "Document N not found in the database."를
+        // 유발하지 않도록, 서버가 실제로 가진 문서 목록과 **교차 검증**해
+        // 사라진 doc는 제거하고 캐시(recents.json)에도 반영합니다.
+        // 서버 조회에 실패한 경우(일시 네트워크 장애)에는 기존 캐시를 보존해
+        // 오프라인 상황에서 목록을 잘못 비우지 않습니다.
+        if self.refresh_docs().is_ok() {
+            let mut g = self.inner.lock().unwrap();
+            let before = g.recents.len();
+            // retain 클로저가 g를 또 빌리지 못하도록 서버 doc id 목록을 먼저 캡처.
+            let server_ids: Vec<i64> = g.docs.iter().map(|(id, _)| *id).collect();
+            g.recents.retain(|r| server_ids.iter().any(|id| *id == r.doc_id));
+            if g.recents.len() != before {
+                write_json(&g.dir.join("recents.json"), &g.recents);
+            }
+            return g.recents.clone();
+        }
         self.inner.lock().unwrap().recents.clone()
     }
 
