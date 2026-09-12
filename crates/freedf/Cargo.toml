@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "FreeDF — 초경량 Windows 11 친화적 PDF 뷰어 + 드로잉 패드 (egui 0.36 + pdfium-render 0.9.3)"
 default-run = "freedf"
+build = "build.rs"
 
 [[bin]]
 name = "freedf"
@@ -57,3 +58,10 @@ raw-window-handle = "0.6"
 cpal = "0.15"
 # 인앱 오디오 재생 (rodio — 내부적으로 cpal 사용).
 rodio = "0.18"
+
+# Windows 전용 빌드-시간 리소스 임베드 (.exe 자체 아이콘 — 바탕화면/탐색기/
+# 작업 관리자에서 사용). build.rs → embed-resource 가 win/app.rc 를 컴파일해
+# PE 실행 파일에 Group Icon 리소스로 링크합니다. 런타임 Windows API 불필요.
+# (build.rs 는 #[cfg(windows)] 로 게이트되므로 Linux 빌드에는 영향 없음.)
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"

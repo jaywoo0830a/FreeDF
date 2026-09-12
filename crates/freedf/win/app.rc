@@ -1,0 +1,5 @@
+// FreeDF .exe 아이콘 리소스 (build.rs → embed-resource 가 컴파일).
+// 1 = 앱 아이콘 그룹(GROUP ICON). 바탕화면/탐색기 파일 아이콘과 작업 관리자
+// 프로세스 아이콘은 이 리소스에서 가져옵니다.
+// .ico 경로는 crate 루트(crates/freedf) 기준 상대경로입니다.
+1 ICON "assets/icon/app_icon.ico"

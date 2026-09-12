@@ -13,6 +13,8 @@ Output (written to crates/freedf/assets/icon/):
   * app_icon.png       512 px (embedded at build time via include_bytes!)
   * app_icon_%.png     16/24/32/48/64/128/256 px (PNG sizes)
   * app_icon.ico       multi-size Windows icon
+     (Windows 빌드 시 build.rs → win/app.rc 가 이 .ico 를 .exe 아이콘 리소스로
+      임베드 — 바탕화면/탐색기/작업 관리자 아이콘)
 
 Usage:
     python3 scripts/design_icon.py
