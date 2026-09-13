@@ -27,6 +27,7 @@ pub mod pages;
 pub mod paper;
 pub mod pen;
 pub mod pen_input;
+pub mod pipeline;
 pub mod search;
 pub mod store;
 pub mod text;
