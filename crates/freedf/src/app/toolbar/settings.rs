@@ -1293,12 +1293,10 @@ impl FreeDfApp {
                     // 좌/우 레일을 창 세로 전체로 펼치기 (WCAG: 스크롤 영역이 뷰를 채움).
                     let full_h = ui.max_rect().height();
                     // Left rail: tab list — 안정적인 내비 블록 (선택 시 포커스 요청).
-                    crate::ui::containers::container()
-                        .pad_symmetric(10, 6)
-                        .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                ui.set_width(150.0);
-                                ui.set_height(full_h);
+                    crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(150.0);
+                            ui.set_height(full_h);
                                 egui::ScrollArea::vertical()
                                     .id_salt("settings_tabs")
                                     .show(ui, |ui| {
@@ -1319,12 +1317,10 @@ impl FreeDfApp {
                         });
                     ui.separator();
                     // Right panel: content of the selected tab — 본문 블록.
-                    crate::ui::containers::container()
-                        .pad_symmetric(10, 6)
-                        .show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                ui.set_min_size(egui::vec2(360.0, 380.0));
-                                ui.set_height(full_h);
+                    crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_min_size(egui::vec2(360.0, 380.0));
+                            ui.set_height(full_h);
                                 ui.label(
                                     egui::RichText::new(format!("{} settings", selected.label()))
                                         .strong(),
