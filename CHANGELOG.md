@@ -50,6 +50,12 @@
 - **설정 대화상자 UI 블록화+WCAG(K10)** — 설정 창을 안정적 UI 블록으로 재구성:
   헤더(제목+조작 힌트)·`containers::container`로 좌/우 레일 경계 블록화·선택 라벨
   포커스 요청·탭 툴팁 라벨링. 접근성: 키보드 포커스, 목적 라벨링, 테마 기반 대비.
+- **커넥션 다이얼로그 통일(K11)** — Connect/Reconnect를 3계층
+  `buttons::Button::primary`로, 연결 상태를 `ds::alert`(Success/Danger)로 전환해
+  server_settings와 동일한 블록/스펙 사용.
+- **설정 창 Y축 확장 수정(K12)** — egui `Frame`은 커져야 늘어나지 않는 특성이라,
+  창 콘텐츠 높이(`max_rect().height()`)를 좌/우 레일의 `Ui::set_height`로 명시해
+  컨테이너가 세로 전체를 채우도록 수정(스크롤 영역이 뷰를 채움).
 - **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
   캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
   여백/스타일이 컴포넌트 키트를 통해 일원화됨.

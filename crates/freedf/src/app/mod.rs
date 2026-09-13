@@ -2039,12 +2039,12 @@ impl FreeDfApp {
                             .show(ui);
                     });
                 ui.horizontal(|ui| {
-                    let label = if self.db_connected {
-                        "Reconnect"
-                    } else {
-                        "Connect"
-                    };
-                    if ui.button(label).clicked() {
+                    if crate::ui::buttons::Button::primary(
+                        if self.db_connected { "Reconnect" } else { "Connect" },
+                    )
+                    .show(ui)
+                    .clicked()
+                    {
                         self.try_connect_server(false);
                     }
                     if self.db_connected {
@@ -2054,12 +2054,16 @@ impl FreeDfApp {
                 if self.pending_connect.is_some() {
                     ui.label(egui::RichText::new("Connecting…").weak());
                 } else if let Some((ok, msg)) = &self.connect_status {
-                    let color = if *ok {
-                        ui.visuals().hyperlink_color
-                    } else {
-                        ui.visuals().error_fg_color
-                    };
-                    ui.colored_label(color, msg);
+                    crate::ui::ds::alert(
+                        ui,
+                        if *ok {
+                            crate::ui::ds::Tone::Success
+                        } else {
+                            crate::ui::ds::Tone::Danger
+                        },
+                        if *ok { "Connected" } else { "Connection failed" },
+                        msg.clone(),
+                    );
                 }
                 ui.add_space(8.0);
                 ui.label(
