@@ -214,6 +214,7 @@ impl InkPipeline {
      * @param pressure raw pressure (0..1).
      * @param t        filter timestamp (seconds).
      * @param t_ms     point timestamp (Unix ms).
+     * @param tilt_mag pen tilt magnitude 0..1 (drives italic/tilt width contrast).
      * @return         the first point, filtered and width-locked (render-ready).
      */
     pub fn down(
@@ -225,11 +226,12 @@ impl InkPipeline {
         pressure: f32,
         t: f64,
         t_ms: u64,
+        tilt_mag: f32,
     ) -> StrokePoint {
         self.filter_x = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_y = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_p = Some(OneEuroFilter::from_smoothing(self.smoothing));
-        self.locker = Some(WidthLocker::new(tool, self.max_width_pt, &self.materials, 0.0));
+        self.locker = Some(WidthLocker::new(tool, self.max_width_pt, &self.materials, tilt_mag));
         self.live = Some(LiveStroke::begin(tool, color, self.max_width_pt));
         let tip = self.filter_lock(x, y, pressure, t, t_ms);
         self.live.as_mut().expect("drawing after down").append(tip);
@@ -293,14 +295,28 @@ impl InkPipeline {
         t: f64,
         t_ms: u64,
     ) -> StrokePoint {
-        let sx = self.filter_x.as_mut().map(|f| f.filter(x, t)).unwrap_or(x);
-        let sy = self.filter_y.as_mut().map(|f| f.filter(y, t)).unwrap_or(y);
-        let sp = self
-            .filter_p
-            .as_mut()
-            .map(|f| f.filter(pressure, t))
-            .unwrap_or(pressure)
-            .clamp(0.0, 1.0);
+        // 스무딩 0이면 1€ 필터를 **건너뜁니다** — 앱의 \"스무딩 꺼짐 → raw 좌표\"
+        // 경로와 정확히 일치시켜 행동 변경이 없게 합니다.
+        let use_filter = self.smoothing > 0.001;
+        let sx = if use_filter {
+            self.filter_x.as_mut().map(|f| f.filter(x, t)).unwrap_or(x)
+        } else {
+            x
+        };
+        let sy = if use_filter {
+            self.filter_y.as_mut().map(|f| f.filter(y, t)).unwrap_or(y)
+        } else {
+            y
+        };
+        let sp = if use_filter {
+            self.filter_p
+                .as_mut()
+                .map(|f| f.filter(pressure, t))
+                .unwrap_or(pressure)
+        } else {
+            pressure
+        }
+        .clamp(0.0, 1.0);
         let raw = StrokePoint::with_time(sx, sy, sp, t_ms);
         let (locked_prev, tip) = self
             .locker
@@ -404,7 +420,7 @@ mod tests {
     #[test]
     fn pipeline_down_starts_with_locked_first_point() {
         let mut p = pipeline();
-        let tip = p.down(ToolType::Pen, [10, 20, 30, 255], 100.0, 200.0, 0.7, 0.0, 0);
+        let tip = p.down(ToolType::Pen, [10, 20, 30, 255], 100.0, 200.0, 0.7, 0.0, 0, 0.0);
         assert!(p.is_drawing());
         let l = p.live().expect("live");
         assert_eq!(l.points.len(), 1);
@@ -415,7 +431,7 @@ mod tests {
     #[test]
     fn pipeline_drag_appends_and_locks_widths() {
         let mut p = pipeline();
-        p.down(ToolType::Pen, [0, 0, 0, 255], 10.0, 20.0, 0.5, 0.0, 0);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 10.0, 20.0, 0.5, 0.0, 0, 0.0);
         p.drag(15.0, 22.0, 0.6, 0.016, 10);
         p.drag(20.0, 21.0, 0.7, 0.032, 20);
         let l = p.live().expect("live");
@@ -428,7 +444,7 @@ mod tests {
     #[test]
     fn pipeline_up_preserves_wysiwyg_no_penup_change() {
         let mut p = pipeline();
-        p.down(ToolType::Pen, [0, 0, 0, 255], 10.0, 20.0, 0.5, 0.0, 0);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 10.0, 20.0, 0.5, 0.0, 0, 0.0);
         for i in 1..30 {
             p.drag(
                 10.0 + i as f32 * 3.0,
@@ -452,12 +468,47 @@ mod tests {
     #[test]
     fn pipeline_second_stroke_starts_fresh() {
         let mut p = pipeline();
-        p.down(ToolType::Pen, [0, 0, 0, 255], 0.0, 0.0, 0.5, 0.0, 0);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 0.0, 0.0, 0.5, 0.0, 0, 0.0);
         p.drag(1.0, 0.0, 0.5, 0.016, 10);
         let _ = p.up(1);
         assert!(!p.is_drawing());
-        p.down(ToolType::Pen, [0, 0, 0, 255], 50.0, 50.0, 0.5, 0.0, 0);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 50.0, 50.0, 0.5, 0.0, 0, 0.0);
         let l = p.live().expect("live");
         assert_eq!(l.points.len(), 1, "new stroke does not inherit previous points");
+    }
+
+    /// 계약: `down`에 준 `tilt_mag`가 WidthLocker까지 전달돼 폭에 반영됩니다.
+    /// (BallPenProfile.tilt_k=0.35 → 기울기가 클수록 더 두꺼운 획)
+    #[test]
+    fn pipeline_down_threads_tilt_into_width_locker() {
+        fn locked_width_after(tilt: f32) -> f32 {
+            // smoothing 0 → 필터가 좌표를 왜곡하지 않고 틸트 폭만 비교합니다.
+            let mut p = InkPipeline::new(Materials::default(), 3.0, 0.0);
+            p.down(ToolType::Pen, [0, 0, 0, 255], 0.0, 0.0, 0.5, 0.0, 0, tilt);
+            p.drag(10.0, 0.0, 0.5, 0.016, 16);
+            p.drag(20.0, 0.0, 0.5, 0.032, 32);
+            p.live().expect("live").points[1].width
+        }
+        let w0 = locked_width_after(0.0);
+        let w1 = locked_width_after(1.0);
+        assert!(
+            w1 > w0,
+            "tilt must widen the pen stroke (threaded through the pipeline): \
+             tilt0={w0} vs tilt1={w1}"
+        );
+    }
+
+    /// 계약: `smoothing <= 0.001`이면 1€ 필터를 건너뛰어 **raw 좌표**를 통과시킵니다
+    /// (앱의 \"스무딩 꺼짐 → raw push\" 경로와 행동 일치).
+    #[test]
+    fn pipeline_smoothing_zero_passes_raw_coords() {
+        let mut p = InkPipeline::new(Materials::default(), 3.0, 0.0);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 10.0, 20.0, 0.5, 0.0, 0, 0.0);
+        p.drag(15.0, 22.0, 0.6, 0.016, 16);
+        p.drag(20.0, 21.0, 0.7, 0.032, 32);
+        let pts = &p.live().expect("live").points;
+        assert!((pts[1].x - 15.0).abs() < 1e-4, "raw x passthrough: {}", pts[1].x);
+        assert!((pts[1].y - 22.0).abs() < 1e-4, "raw y passthrough: {}", pts[1].y);
+        assert!((pts[2].x - 20.0).abs() < 1e-4, "raw x passthrough: {}", pts[2].x);
     }
 }

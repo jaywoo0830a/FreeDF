@@ -131,7 +131,7 @@ impl FreeDfApp {
         }
         let dir = std::env::temp_dir().join("freedf-stream");
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("stream-{}-{}.wav", std::process::id(), now_ms()));
+        let path = dir.join(format!("stream-{}-{}.wav", std::process::id(), self.now_ms()));
         let state_path = path.clone();
         let url = item.url.clone();
         let name = item.name.clone();
@@ -279,6 +279,8 @@ impl FreeDfApp {
         self.media_status = Some(format!("Downloading {}…", item.name));
         let url = item.url;
         let name = item.name;
+        // 스레드(백그라운드)로 self가 새어나가지 않도록 시각은 미리 캡처.
+        let now = self.now_ms();
         std::thread::spawn(move || {
             let res = (|| -> Result<MediaOutcome, String> {
                 let bytes = download_bytes(&url)?;
@@ -288,7 +290,7 @@ impl FreeDfApp {
                     .unwrap_or_else(|| "media.bin".into());
                 let dir = std::env::temp_dir().join("freedf-open");
                 std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                let path = dir.join(format!("{}-{safe}", now_ms()));
+                let path = dir.join(format!("{}-{safe}", now));
                 std::fs::write(&path, &bytes)
                     .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
                 open_externally(&path)?;
@@ -359,7 +361,7 @@ impl FreeDfApp {
         };
         let dir = std::env::temp_dir().join("freedf-recordings");
         let _ = std::fs::create_dir_all(&dir);
-        let name = format!("rec-{doc_id}-{}", now_ms());
+        let name = format!("rec-{doc_id}-{}", self.now_ms());
         // 업로드는 정지 시점에 실행되므로 시작 페이지를 여기서 고정합니다.
         self.recording_page = Some(self.current_page as i32);
         match crate::recording::start_recording(&dir, &name) {

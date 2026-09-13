@@ -307,7 +307,7 @@ impl FreeDfApp {
         // 줌이 잠시 멈추면(정착 데드라인 경과) 그때 한 번 고품질로 재렌더합니다.
         // (줌이 아닌 변경 — 페이지 넘김/용지/질감 — 은 `render_dirty`로 즉시.)
         let zoom_settled = if self.zoom_render_pending {
-            let now = now_ms();
+            let now = self.now_ms();
             if now >= self.zoom_settle_deadline_ms {
                 self.zoom_render_pending = false;
                 true
@@ -430,7 +430,7 @@ impl FreeDfApp {
                     st.tilt[0], st.tilt[1], st.pressure, st.contact, st.buttons.button1, st.buttons.button2
                 ));
             }
-            self.last_pen_state_ms = Some(now_ms());
+            self.last_pen_state_ms = Some(self.now_ms());
             // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
             self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
             self.live_pressure = st.pressure;
@@ -461,7 +461,7 @@ impl FreeDfApp {
             &ctx,
             pen_state.as_ref(),
             self.last_pen_state_ms,
-            now_ms(),
+            self.now_ms(),
         );
 
         // ── 스플릿 뷰 포커스 제스처 ──────────────────────────────────────
@@ -470,7 +470,7 @@ impl FreeDfApp {
         // 불편을 없앱니다. (첫 탭 가드는 handle_canvas_input에 있음)
         let pen_alive = self
             .last_pen_state_ms
-            .is_some_and(|t| now_ms().saturating_sub(t) < 1000);
+            .is_some_and(|t| self.now_ms().saturating_sub(t) < 1000);
         let hovered_over_canvas = ctx
             .input(|i| i.pointer.hover_pos())
             .is_some_and(|pos| canvas.contains(pos));
@@ -492,7 +492,7 @@ impl FreeDfApp {
         let focused_now = ctx.input(|i| i.viewport().focused);
         let pressed_now = ctx.input(|i| i.pointer.any_pressed());
         if self.prev_viewport_focused == Some(false) && focused_now != Some(false) && pressed_now {
-            self.focus_grace_until_ms = Some(now_ms().saturating_add(400));
+            self.focus_grace_until_ms = Some(self.now_ms().saturating_add(400));
         }
         self.prev_viewport_focused = focused_now;
         self.handle_canvas_input(&ctx, &response, origin, canvas_size);
@@ -515,7 +515,7 @@ impl FreeDfApp {
                 // 그리고 "펜을 쓰는 중일 때만"(설정)이 켜져 있으면 단순
                 // 마우스/트랙패드 커서는 무시합니다 (판정: input_sources).
                 let pen_ok = !self.edge_autoscroll_pen_only
-                    || self.input_sources.is_pen_in_use(now_ms())
+                    || self.input_sources.is_pen_in_use(self.now_ms())
                     || self.input_sources.pen_undetectable();
                 if response.hovered() && canvas.contains(pos) && pen_ok {
                     let zone = self.edge_zone.clamp(8.0, 300.0);
@@ -534,7 +534,7 @@ impl FreeDfApp {
                     ];
                     // 방향별 반응 지연 — 가장자리에 머문 시간이 delay를 넘어야
                     // 스크롤이 시작됩니다 (delay 0 = 즉시).
-                    let now = now_ms();
+                    let now = self.now_ms();
                     let mut te = [0.0f32; 4];
                     for i in 0..4 {
                         if raw[i] > 0.0 {
@@ -709,7 +709,7 @@ impl FreeDfApp {
         // Search highlights (under ink so annotations stay readable)
         self.paint_search_highlights(&painter, draw_origin);
 
-        let now = now_ms();
+        let now = self.now_ms();
         let rev = self.store.rev();
         let count = self.store.stroke_count_on(self.current_page);
         // 병합 메시는 **정착된 획만** 담고, 스밈(진해짐)이 진행 중인 젊은

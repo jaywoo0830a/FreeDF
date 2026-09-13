@@ -95,7 +95,7 @@ impl FreeDfApp {
                     ui.label(format!(
                         "pen stream: {}",
                         match self.last_pen_state_ms {
-                            Some(t) => format!("수신됨 ({}ms 전)", now_ms().saturating_sub(t)),
+                            Some(t) => format!("수신됨 ({}ms 전)", self.now_ms().saturating_sub(t)),
                             None => "수신 없음 — OTD/장치 확인".to_string(),
                         }
                     ));
@@ -278,7 +278,7 @@ impl FreeDfApp {
             tilt,
         );
         // ── 라이브 진단 (Debug HUD 켜져 있을 때만): 렌더 폭이 평평하면 경고.
-        if pen_trace_on() && n >= 8 && now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
+        if pen_trace_on() && n >= 8 && self.now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
             let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
             for h in &halves_pt {
                 wmn = wmn.min(*h);
@@ -290,7 +290,7 @@ impl FreeDfApp {
                 pmx = pmx.max(p.pressure);
             }
             if wmx - wmn < 0.05 {
-                self.pen_flat_log_ms = now_ms();
+                self.pen_flat_log_ms = self.now_ms();
                 pen_trace(&format!(
                     "LIVE-FLAT: n={n} widths=[{wmn:.3}..{wmx:.3}] pressure=[{pmn:.3}..{pmx:.3}] live_pressure={:?}",
                     self.live_pressure
@@ -299,7 +299,7 @@ impl FreeDfApp {
         }
         // ── 재구성 스로틀: 주사율 프리셋을 따릅니다 (60Hz=16ms, 120=8,
         // 144=7, 240=4) — 그 사이엔 캐시된 메시를 그대로 다시 그립니다.
-        let now = now_ms();
+        let now = self.now_ms();
         let view_key = (
             self.view.zoom,
             self.view.pan_x,
@@ -654,7 +654,7 @@ impl FreeDfApp {
                 let pen_contact = self.input_sources.pen_contact();
                 let hover_age = self
                     .last_pen_state_ms
-                    .map_or(u64::MAX, |t| now_ms().saturating_sub(t));
+                    .map_or(u64::MAX, |t| self.now_ms().saturating_sub(t));
                 let prox = if pen_contact {
                     1.0
                 } else {

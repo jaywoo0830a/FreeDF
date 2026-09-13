@@ -54,24 +54,23 @@ impl LiveStroke {   // A안: 공개 메서드는 핵심 6개만. 나머지는 pu
 
 ```v
 pub struct InkPipeline {
-    ball: BallPenProfile
-    fountain: FountainProfile
+    materials: Materials           // ball/fountain 프로파일을 값으로 보관 (퍼사드)
     max_width_pt: f32
-    smoothing: f32
+    smoothing: f32                 // ≤ 0.001이면 1€ 필터 생략 → raw 좌표 통과
     filter_x / filter_y / filter_p: Option<OneEuroFilter>
-    locker: Option<WidthLocker>
+    locker: Option<WidthLocker>    // tilt_mag는 down()에서 주입
     live: Option<LiveStroke>
 }
 
 impl InkPipeline {
-    pub fn new(ball, fountain, max_width_pt, smoothing) -> Self
+    pub fn new(materials: Materials, max_width_pt, smoothing) -> Self
     pub fn set_smoothing(&mut self, s: f32)
     pub fn smoothing(&self) -> f32
     pub fn is_drawing(&self) -> bool
     pub fn live(&self) -> Option<&LiveStroke>
 
     // 외부로 노출되는 호출은 3개뿐 — 요구된 "호출 시퀀스 압축"
-    pub fn down(&mut self, tool, color, x, y, pressure, t: f64, t_ms: u64) -> StrokePoint
+    pub fn down(&mut self, tool, color, x, y, pressure, t: f64, t_ms: u64, tilt_mag: f32) -> StrokePoint
     pub fn drag(&mut self, x, y, pressure, t: f64, t_ms: u64) -> Option<StrokePoint>
     pub fn up(&mut self, id: u64) -> Option<Stroke>   // 마지막 폭 확정 → freeze → 비활성
 
@@ -81,6 +80,11 @@ impl InkPipeline {
 ```
 
 `drag()` 1회 = `[필터(x/y/p) → WidthLocker.push(이전 점 폭 확정) → LiveStroke.append]`.
+
+- `tilt_mag`(0..1)는 down()에서 WidthLocker로 전달돼 italic/틸트 폭 대비에 반영됩니다
+  (앱의 만년필 틸트 보존 — 테스트 `pipeline_down_threads_tilt_into_width_locker`).
+- `smoothing <= 0.001`이면 필터를 건너뛰어 **raw 좌표**를 그대로 통과시킵니다 —
+  앱의 "스무딩 꺼짐 → raw push" 경로와 행동 일치(테스트 `pipeline_smoothing_zero_passes_raw_coords`).
 
 ### `WritingMaterial` — 필기 재료 추상화 (열린 확장)
 
@@ -144,10 +148,51 @@ impl Materials {
 ## 5. TDD — 테스트 목록 (RED → GREEN)
 
 구현 전 테스트만 작성해 **RED**(`cannot find type InkPipeline/LiveStroke`) 확인 후,
-구현으로 **GREEN**. 최종 `cargo test -p freedf-core` **207개 전부 통과**(0 경고) +
+구현으로 **GREEN**. 최종 `cargo test -p freedf-core` **209개 전부 통과**(0 경고) +
 freedf-canvas 29개. WritingMaterial 확장분(`WritingMaterial` trait + `Materials::for_tool` 퍼사드)도
 같은 방식(TDD — `for_tool_*`, `locker_accepts_any_custom_writing_material`,
 `writing_material_widths_survive_via_factory_box`, `constant_material_widths_are_all_max`)으로 검증.
+피어-입력 tilt/smoothing-raw 계약도 같은 방식으로 추가(`pipeline_down_threads_tilt_into_width_locker`,
+`pipeline_smoothing_zero_passes_raw_coords`).
+
+---
+
+## 6. 앱 배선 + 서비스 조립(AppDeps) — 구현 상태
+
+### 6-1. InkPipeline 앱 배선 (완료)
+
+`FreeDfApp`은 이제 필터·선폭 확정·진행 획을 하나의 `ink: Option<InkPipeline>`으로 조율합니다.
+
+| 항목 | 배선 |
+|---|---|
+| down | `input.rs` — 스트로크 시작 시 `InkPipeline::new(Materials, width, smoothing)` + `down(tool, color, x, y, pressure, t, t_ms, tilt)` |
+| drag | `input.rs` — `pipeline.drag(...)` 1회로 필터→폭 확정→점 추가 위임 |
+| up | `ink.rs::finish_stroke` — `self.ink.take().up(0)`으로 **동결·불변 `Stroke`** 반환 후 커밋 |
+| 점(탭) | `ink.rs::commit_dot` — 동일 파이프라인 down→up 경유 |
+| 렌더 미러 | `active_stroke`는 `pipeline.live().points`와 **동기화**(매 드래그) — 렌더 == 커밋 (WYSIWYG 보존) |
+| 필드 | `width_locker`·`smooth_x/y/p`·`smooth_active` **제거** → `ink` 1개로 통합 |
+
+### 6-2. 서비스 컴포지션 루 — `AppDeps` (완료)
+
+펜 프로파일은 per-session 데이터라 `Materials` 값으로 명시 주입(DI 컨테이너 대상 아님).
+**교차 횡단 서비스**(`Clock`·`Logger`)는 `crates/freedf/src/app/deps.rs`의 `AppDeps`로 묶어
+컴포지션 루(`main.rs`)에서 한 번 조립해 `FreeDfApp::new(deps)`에 **생성자 주입**합니다.
+
+```v
+pub struct AppDeps {
+    pub clock: Box<dyn Clock + Send + Sync>,  // 프로덕션 SystemClock
+    pub logger: Logger,                        // 프로덕션 to_sink / 테스트 disabled
+}
+impl AppDeps {
+    pub fn compose(clock: Box<dyn Clock + Send + Sync>, logger: Logger) -> Self
+}
+```
+
+- `FreeDfApp::now_ms()` = `self.clock.now_ms()` — 앱 전역(캔버스 포함)이 **주입된 시계**로
+  벽시계를 읽습니다(자유 `now_ms()`는 sync_storage 백그라운드 전용으로만 잔존).
+- bake 서비스(`BakeService`)는 이미 **비제네릭(인터페이스 기반)**이며, 세션 설정(메셔)에
+  묶여 있어 deps 대신 `FreeDfApp::new`가 메셔를 만든 뒤 조립합니다.
+- 테스트는 `AppDeps::compose(Box::new(FakeClock), Logger::disabled())`로 갈아 끼웁니다.
 
 | # | 테스트 | 검증 계약 |
 |---|---|---|

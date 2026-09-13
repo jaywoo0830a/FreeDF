@@ -18,7 +18,7 @@ impl FreeDfApp {
                 // 리사이즈되며 화면이 튀는 것을 방지).
                 self.color_wheel_open = !self.color_wheel_open;
                 if self.color_wheel_open {
-                    self.color_wheel_opened_at = now_ms();
+                    self.color_wheel_opened_at = self.now_ms();
                 }
             }
             2 => {
@@ -55,7 +55,7 @@ impl FreeDfApp {
         // 방치 시 자동 닫힘 (누르는 중이면 유지).
         const WHEEL_AUTO_CLOSE_MS: u64 = 4000;
         if self.color_wheel_opened_at != 0
-            && now_ms().saturating_sub(self.color_wheel_opened_at) > WHEEL_AUTO_CLOSE_MS
+            && self.now_ms().saturating_sub(self.color_wheel_opened_at) > WHEEL_AUTO_CLOSE_MS
             && !ctx.input(|i| i.pointer.any_down())
         {
             self.color_wheel_open = false;

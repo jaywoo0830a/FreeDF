@@ -35,7 +35,7 @@ impl FreeDfApp {
             let elapsed = self
                 .recording
                 .as_ref()
-                .map(|r| now_ms().saturating_sub(r.started_ms()) / 1000)
+                .map(|r| self.now_ms().saturating_sub(r.started_ms()) / 1000)
                 .unwrap_or(0);
             if self.recording.is_some() {
                 ui.colored_label(

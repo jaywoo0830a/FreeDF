@@ -11,7 +11,7 @@ impl FreeDfApp {
     pub(crate) fn mark_zoom_dirty(&mut self) {
         // 120ms 동안 추가 줌이 없으면 재렌더 — 연속 입력 중엔 계속 미룹니다.
         const ZOOM_SETTLE_MS: u64 = 120;
-        self.zoom_settle_deadline_ms = now_ms().saturating_add(ZOOM_SETTLE_MS);
+        self.zoom_settle_deadline_ms = self.now_ms().saturating_add(ZOOM_SETTLE_MS);
         self.zoom_render_pending = true;
     }
 

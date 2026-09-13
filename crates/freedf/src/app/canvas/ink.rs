@@ -6,45 +6,57 @@ impl FreeDfApp {
     pub(crate) fn finish_stroke(&mut self) {
         // 스로틀 캐시 무효화 — 완성된 획은 병합 메시(정확 지오메트리)로 넘어갑니다.
         self.active_mesh = None;
-        if let Some(mut active) = self.active_stroke.take() {
-            self.smooth_active = false;
-            if active.points.is_empty() {
+        // 렌더 미러의 잠정 마지막 점들 — 동결이 폭을 바꾸는지 진단합니다.
+        let before_penup: Vec<(f32, f32)> = self
+            .active_stroke
+            .as_ref()
+            .map(|a| {
+                a.points
+                    .iter()
+                    .rev()
+                    .take(4)
+                    .map(|p| (p.pressure, p.width))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // InkPipeline 동결 — 마지막 폭 확정 + 불변 Stroke 반환.
+        let active = match self.ink.take().and_then(|mut p| p.up(0)) {
+            Some(mut f) => {
+                let active = ActiveStroke {
+                    tool: f.tool,
+                    color: f.color,
+                    width: f.width,
+                    points: std::mem::take(&mut f.points),
+                };
+                self.active_stroke = None;
+                if active.points.is_empty() {
+                    return;
+                }
+                active
+            }
+            None => {
+                self.active_stroke = None;
                 return;
             }
-            // ── 펜업 전환 진단: 표시되던 마지막 점들의 (필압, 폭) vs 펜 뗀 뒤.
-            let before_penup: Vec<(f32, f32)> = active
-                .points
-                .iter()
-                .rev()
-                .take(4)
-                .map(|p| (p.pressure, p.width))
-                .collect();
-            // 마지막 점의 폭을 확정합니다 (인과적 — 이후 절대 변하지 않음).
-            if let Some(mut locker) = self.width_locker.take() {
-                if let Some(final_pt) = locker.finish() {
-                    if let Some(last) = active.points.last_mut() {
-                        *last = final_pt;
-                    }
-                }
-            }
-            let after_penup: Vec<(f32, f32)> = active
-                .points
-                .iter()
-                .rev()
-                .take(4)
-                .map(|p| (p.pressure, p.width))
-                .collect();
-            if before_penup != after_penup {
-                pen_trace(&format!(
-                    "PENUP-CHANGED: 표시={before_penup:?} 확정={after_penup:?} live_pressure={:?} ← 펜 떼는 순간 폭 데이터가 바뀜!",
-                    self.live_pressure
-                ));
-            } else {
-                pen_trace(&format!(
-                    "penup tail (pressure,width): {after_penup:?} live_pressure={:?}",
-                    self.live_pressure
-                ));
-            }
+        };
+        let after_penup: Vec<(f32, f32)> = active
+            .points
+            .iter()
+            .rev()
+            .take(4)
+            .map(|p| (p.pressure, p.width))
+            .collect();
+        if before_penup != after_penup {
+            pen_trace(&format!(
+                "PENUP-CHANGED: 표시={before_penup:?} 확정={after_penup:?} live_pressure={:?} ← 펜 떼는 순간 폭 데이터가 바뀜!",
+                self.live_pressure
+            ));
+        } else {
+            pen_trace(&format!(
+                "penup tail (pressure,width): {after_penup:?} live_pressure={:?}",
+                self.live_pressure
+            ));
+        }
             // ── 펜 진단: 획이 끝나면 필압/**렌더 폭** 변화량을 로그로 남깁니다.
             if active.tool != ToolType::Highlighter {
                 let n_pt = active.points.len();
@@ -167,8 +179,7 @@ impl FreeDfApp {
                 });
             }
             // 유휴 자동 저장 타이머 시작 (pen-up 시각 기록).
-            self.last_pen_up_ms = now_ms();
-        }
+            self.last_pen_up_ms = self.now_ms();
     }
 
     /// 스트로크가 닿은 **글자**들을 줄 단위로 묶어 밴드 하이라이트를 만듭니다.
@@ -223,7 +234,7 @@ impl FreeDfApp {
             })
             .unwrap_or(0)
             + 1;
-        let created_ms = now_ms();
+        let created_ms = self.now_ms();
         let mut strokes = Vec::new();
         for (k, r) in rects.iter().enumerate() {
             // 밴드 높이 = 그 줄의 글자 높이(포인트). 필압은 1.0(무시).
@@ -269,22 +280,31 @@ impl FreeDfApp {
 
     pub(crate) fn commit_dot(&mut self, point: [f32; 2], pressure: f32) {
         let (color, width) = self.current_drawing_style();
-        self.width_locker = Some(freedf_core::pen::WidthLocker::new(
-            self.tool,
+        // 단일 점(탭)도 InkPipeline을 거쳐 폭을 잠급니다. 점은 필터 무의미라
+        // 스무딩 0(원점 통과)을 사용하고, t=0 — down 첫 샘플은 항등이라 무관.
+        let tilt = tilt_magnitude(&self.pen_tilt);
+        let t_ms = self.now_ms();
+        let mut pipeline = freedf_core::pipeline::InkPipeline::new(
+            Materials::new(self.pen_profile, self.fountain_profile),
             width,
-            &Materials::new(self.pen_profile, self.fountain_profile),
-            tilt_magnitude(&self.pen_tilt),
-        ));
-        let mut point = StrokePoint::with_time(point[0], point[1], pressure, now_ms());
-        if let Some(locker) = &mut self.width_locker {
-            let (_, tip) = locker.push(point);
-            point = tip;
-        }
+            0.0,
+        );
+        let tip = pipeline.down(
+            self.tool,
+            color,
+            point[0],
+            point[1],
+            pressure,
+            0.0,
+            t_ms,
+            tilt,
+        );
+        self.ink = Some(pipeline);
         self.active_stroke = Some(ActiveStroke {
             tool: self.tool,
             color,
             width,
-            points: vec![point],
+            points: vec![tip],
         });
         self.finish_stroke();
     }

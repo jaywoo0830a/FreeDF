@@ -198,7 +198,7 @@ impl FreeDfApp {
 
         // D-pad = 화살표/PgUp·PgDn 키 — 누르는 순간 주입하고, 누르고 있으면
         // 다른 입력과 같은 100ms 리듬으로 연타(반복). 떼면 release 주입.
-        let now = now_ms();
+        let now = self.now_ms();
         let dpad_keys = [
             (gp.d_up, egui::Key::PageUp, "D-pad up — PageUp"),
             (gp.d_down, egui::Key::PageDown, "D-pad down — PageDown"),

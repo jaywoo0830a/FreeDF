@@ -53,7 +53,7 @@ pub(crate) use freedf_core::paper::{
     PaperStyleSettings, PAPER_COLORS,
 };
 pub(crate) use freedf_core::pen::{
-    BallPenProfile, ColorFamily, FountainProfile, InkSoak, Materials, OneEuroFilter, Palette, WritingMaterial,
+    BallPenProfile, ColorFamily, FountainProfile, InkSoak, Materials, Palette, WritingMaterial,
 };
 pub(crate) use freedf_core::ink::InkGrain;
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
@@ -143,20 +143,13 @@ pub(crate) struct PageAnim {
     vertical: bool,
 }
 
-/// A stroke currently being drawn
+/// A stroke currently being drawn (렌더 미러 — InkPipeline.live()와 동기화).
 #[derive(Clone)]
 pub(crate) struct ActiveStroke {
     tool: ToolType,
     color: [u8; 4],
     width: f32,
     points: Vec<StrokePoint>,
-}
-
-impl ActiveStroke {
-    fn push(&mut self, point: [f32; 2], pressure: f32, t_ms: u64) {
-        self.points
-            .push(StrokePoint::with_time(point[0], point[1], pressure, t_ms));
-    }
 }
 
 fn tool_label(tool: ToolType) -> &'static str {
@@ -961,9 +954,9 @@ pub struct FreeDfApp {
     /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
     /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
     pen_tilt: [f32; 2],
-    /// 진행 중 스트로크의 선폭 확정기 — 점이 입력되는 즉시 폭을 잠급니다
-    /// (펜을 뗀 뒤 폭이 변하지 않음).
-    width_locker: Option<freedf_core::pen::WidthLocker>,
+    /// 진행 중 스트로크를 오케스트라하는 InkPipeline (1€ 필터 + 선폭 확정 + 점 버퍼).
+    /// 터치하지 않으면 None — `down()`으로 시작, `up()`으로 종료·동결.
+    ink: Option<freedf_core::pipeline::InkPipeline>,
     /// evdev 펜 모니터 — egui가 노출하지 않는 **틸트/필압** 자동 공급원
     /// (Linux 전용, 장치가 없으면 None).
     pen_monitor: Option<freedf_core::pen_input::PenMonitor>,
@@ -1142,12 +1135,6 @@ pub struct FreeDfApp {
     active_stroke: Option<ActiveStroke>,
     pan_last: Option<Pos2>,
     middle_pan_last: Option<Pos2>,
-    /// 펜 입력 스무딩 필터 (x/y/필압 채널, 스트로크 시작 시 리셋)
-    smooth_x: OneEuroFilter,
-    smooth_y: OneEuroFilter,
-    smooth_p: OneEuroFilter,
-    /// 현재 스트로크가 스무딩 필터를 사용 중인지
-    smooth_active: bool,
     /// Trackpad/wheel momentum (points/sec) for inertial panning
     scroll_vel: Vec2,
     /// XInput LT 트리거가 깊게 당겨진 상태 (에지 감지용).
@@ -1560,7 +1547,7 @@ impl FreeDfApp {
             left_handed,
             refresh_hz,
             cursor_scale,
-            width_locker: None,
+            ink: None,
             pen_monitor,
             live_pressure: None,
             pen_buttons: Default::default(),
@@ -1639,10 +1626,6 @@ impl FreeDfApp {
             active_stroke: None,
             pan_last: None,
             middle_pan_last: None,
-            smooth_x: OneEuroFilter::from_smoothing(0.4),
-            smooth_y: OneEuroFilter::from_smoothing(0.4),
-            smooth_p: OneEuroFilter::from_smoothing(0.4),
-            smooth_active: false,
             scroll_vel: Vec2::ZERO,
             gamepad_lt_held: false,
             gamepad_undo_last_ms: 0,

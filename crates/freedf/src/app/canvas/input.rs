@@ -234,7 +234,7 @@ impl FreeDfApp {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                             return;
                         }
-                    } else if self.focus_grace_until_ms.is_some_and(|t| now_ms() < t) {
+                    } else if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
                         return;
                     }
                     if let Some(abs) = pointer_abs {
@@ -248,28 +248,44 @@ impl FreeDfApp {
                             && raw[1] <= page_h;
                         let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
                         let (pressure, p_src) = self.pressure_source(ctx);
+                        // 시작/드래그 공용 시각 — `st` 가변 대여 이전에 미리 읽어
+                        // self(clock) 불변 대여와의 대여 충돌을 피합니다.
+                        let drag_t = ctx.input(|i| i.time);
+                        let drag_t_ms = self.now_ms();
                         if self.active_stroke.is_none() {
                             if inside {
-                                // 새 스트로크 시작: 스무딩 필터를 리셋해
-                                // 이전 획과 섞이지 않게 합니다.
-                                let sm = OneEuroFilter::from_smoothing(self.smoothing);
-                                self.smooth_x = sm;
-                                self.smooth_y = sm;
-                                self.smooth_p = sm;
-                                self.smooth_active = true;
+                                // 새 스트로크 시작 — InkPipeline이 1€ 필터 + 선폭
+                                // 확정 + 점 버퍼를 하나로 오케스트라합니다.
                                 let (color, width) = self.current_drawing_style();
-                                // 선폭 확정기 — 점이 들어오는 즉시 폭을 잠급니다.
-                                self.width_locker = Some(freedf_core::pen::WidthLocker::new(
-                                    self.tool,
+                                let smooth = if self.smoothing_enabled
+                                    && self.smoothing > 0.001
+                                {
+                                    self.smoothing
+                                } else {
+                                    0.0
+                                };
+                                let tilt = tilt_magnitude(&self.pen_tilt);
+                                let mut pipeline = freedf_core::pipeline::InkPipeline::new(
+                                    Materials::new(self.pen_profile, self.fountain_profile),
                                     width,
-                                    &Materials::new(self.pen_profile, self.fountain_profile),
-                                    tilt_magnitude(&self.pen_tilt),
-                                ));
+                                    smooth,
+                                );
+                                let tip = pipeline.down(
+                                    self.tool,
+                                    color,
+                                    page[0],
+                                    page[1],
+                                    pressure,
+                                    drag_t,
+                                    drag_t_ms,
+                                    tilt,
+                                );
+                                self.ink = Some(pipeline);
                                 self.active_stroke = Some(ActiveStroke {
                                     tool: self.tool,
                                     color,
                                     width,
-                                    points: Vec::new(),
+                                    points: vec![tip],
                                 });
                                 self.lift_cut_logged = false;
                                 pen_trace(&format!(
@@ -310,43 +326,24 @@ impl FreeDfApp {
                                         );
                                     }
                                 } else {
-                                    // 만년필 모델은 점별 시각으로 속도를 계산합니다.
-                                    let t_ms = now_ms();
-                                    // 1€ 필터(선택적) — OTD 같은 드라이버가 이미
-                                    // 안정화하는 환경에서는 꺼둘 수 있습니다.
-                                    let (x, y, p) = if self.smoothing_enabled
-                                        && self.smoothing > 0.001
-                                        && self.smooth_active
-                                    {
-                                        let t = ctx.input(|i| i.time);
-                                        let sx = self.smooth_x.filter(page[0], t);
-                                        let sy = self.smooth_y.filter(page[1], t);
-                                        let sp = self.smooth_p.filter(pressure, t);
-                                        (sx, sy, sp.clamp(0.0, 1.0))
-                                    } else {
-                                        (page[0], page[1], pressure)
-                                    };
-                                    let raw = StrokePoint::with_time(x, y, p, t_ms);
-                                    if let Some(locker) = &mut self.width_locker {
-                                        // 이전 점의 폭을 확정하고 새 점을 잠급니다 —
-                                        // 미래 점이 이전 폭을 바꾸는 일이 없습니다.
-                                        let (locked_prev, tip) = locker.push(raw);
-                                        if let Some(prev) = locked_prev {
-                                            if let Some(last) = st.points.last_mut() {
-                                                *last = prev;
-                                            }
-                                        }
-                                        st.points.push(tip);
-                                        // 진단: 25점마다 압력/잠금 폭을 남깁니다.
-                                        if st.points.len() % 25 == 0 {
-                                            pen_trace(&format!(
-                                                "pt {}: pressure={p:.3} (src={p_src}) locked_w={:.3}",
-                                                st.points.len(),
-                                                st.points.last().map(|q| q.width).unwrap_or(0.0)
-                                            ));
-                                        }
-                                    } else {
-                                        st.push([x, y], p, t_ms);
+                                    // InkPipeline이 필터 → 폭 확정 → 점 추가까지
+                                    // 한 번에 처리합니다 (마지막 점은 펜업에서 확정).
+                                    if let Some(p) = self.ink.as_mut() {
+                                        p.drag(page[0], page[1], pressure, drag_t, drag_t_ms);
+                                    }
+                                    // 렌더 미러를 파이프라인 라이브 점(중간 확정 포함)과
+                                    // 동기화해 WYSIWYG을 보존합니다 (렌더 == 커밋).
+                                    if let Some(p) = &self.ink {
+                                        st.points =
+                                            p.live().map(|l| l.points.clone()).unwrap_or_default();
+                                    }
+                                    // 진단: 25점마다 압력/잠금 폭을 남깁니다.
+                                    if st.points.len() % 25 == 0 {
+                                        pen_trace(&format!(
+                                            "pt {}: pressure={pressure:.3} (src={p_src}) locked_w={:.3}",
+                                            st.points.len(),
+                                            st.points.last().map(|q| q.width).unwrap_or(0.0)
+                                        ));
                                     }
                                 }
                             }
@@ -367,7 +364,7 @@ impl FreeDfApp {
                         self.wheel_swallow_click = false;
                         return;
                     }
-                    if self.focus_grace_until_ms.is_some_and(|t| now_ms() < t) {
+                    if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
                         return;
                     }
                     if let Some(abs) = pointer_abs {
