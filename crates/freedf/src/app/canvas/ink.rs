@@ -272,8 +272,7 @@ impl FreeDfApp {
         self.width_locker = Some(freedf_core::pen::WidthLocker::new(
             self.tool,
             width,
-            self.pen_profile,
-            self.fountain_profile,
+            &Materials::new(self.pen_profile, self.fountain_profile),
             tilt_magnitude(&self.pen_tilt),
         ));
         let mut point = StrokePoint::with_time(point[0], point[1], pressure, now_ms());

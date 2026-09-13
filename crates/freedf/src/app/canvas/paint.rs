@@ -274,8 +274,7 @@ impl FreeDfApp {
                     width: p.width,
                 })
                 .collect::<Vec<_>>(),
-            &self.pen_profile,
-            &self.fountain_profile,
+            &Materials::new(self.pen_profile, self.fountain_profile),
             tilt,
         );
         // ── 라이브 진단 (Debug HUD 켜져 있을 때만): 렌더 폭이 평평하면 경고.
@@ -478,8 +477,7 @@ impl FreeDfApp {
             ..s
         };
         freedf_canvas::CoreRibbonMesher {
-            ball: self.pen_profile,
-            fountain: self.fountain_profile,
+            materials: Materials::new(self.pen_profile, self.fountain_profile),
             pen_soak: scale_soak(self.pen_soak),
             fountain_soak: scale_soak(self.fountain_soak),
             pen_grain: self.pen_grain,
@@ -544,8 +542,7 @@ impl FreeDfApp {
             cs.tool,
             cs.base_width,
             &cs.points,
-            &mesher.ball,
-            &mesher.fountain,
+            &mesher.materials,
             mesher.tilt_magnitude,
         );
         let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);

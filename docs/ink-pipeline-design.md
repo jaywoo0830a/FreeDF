@@ -31,27 +31,21 @@
 ### `LiveStroke` — 진행 중 획 (append-only + frontier + 증분 bbox)
 
 ```v
-pub struct LiveStroke {
+pub struct LiveStroke {   // 모든 필드는 pub (model::Stroke와 같은 데이터 홀더 스타일)
     tool: ToolType
     color: [u8; 4]
     width: f32
-    points: Vec<StrokePoint>
-    mesh_done: usize   // frontier — 이 인덱스 앞은 확정 구간
-    bbox: Option<[f32; 4]>   // 증분 경계 상자
+    points: Vec<StrokePoint>     // pub — 진행 점
+    mesh_done: usize             // pub — frontier, 이 인덱스 앞은 확정 구간
+    bbox: Option<[f32; 4]>       // pub — 증분 경계 상자
 }
 
-impl LiveStroke {
+impl LiveStroke {   // A안: 공개 메서드는 핵심 6개만. 나머지는 pub 필드 직접 읽기
     pub fn begin(tool, color, width) -> Self
-    pub fn len(&self) -> usize
-    pub fn is_empty(&self) -> bool
-    pub fn last(&self) -> Option<StrokePoint>        // 복사
     pub fn append(&mut self, p) -> usize             // append-only + bbox O(1)
     pub fn fix_last(&mut self, p)                    // frontier 이전은 no-op(불변 보호)
-    pub fn points(&self) -> &[StrokePoint]           // 전체(읽기)
-    pub fn mesh_done(&self) -> usize
     pub fn tail(&self) -> &[StrokePoint]             // frontier 이후 꼬리(증분 메시 입력)
     pub fn mark_meshed(&mut self)                    // frontier = len
-    pub fn bbox(&self) -> Option<[f32; 4]>
     pub fn freeze(&mut self, id, created_ms) -> Stroke  // 불변 커밋본
 }
 ```
@@ -88,6 +82,39 @@ impl InkPipeline {
 
 `drag()` 1회 = `[필터(x/y/p) → WidthLocker.push(이전 점 폭 확정) → LiveStroke.append]`.
 
+### `WritingMaterial` — 필기 재료 추상화 (열린 확장)
+
+`WidthLocker`의 폭 계산은 `LockerProfile` enum 분기가 아니라 **trait** 에 위임합니다.
+새 재료 추가 = struct + `impl WritingMaterial` + `Materials::for_tool` 등록 1줄. locker/pipeline은 무변경(open/closed).
+
+```v
+pub trait WritingMaterial: Send + Sync {
+    fn smoothing_alpha(&self) -> f32   // 인과적 EMA 계수 (0 = 무스무딩, e.g. 하이라이터)
+    fn point_width(&self, max_width_pt, pressure, tilt_mag, speed, dir) -> f32 // 이탤릭+클램프 포함
+    fn widths(&self, max_width_pt, pts, tilt_mag) -> Vec<f32>                  // 배치(굽기 경로)
+}
+
+impl WritingMaterial for BallPenProfile   { /* dir 무시 — 회전 불변 */ }
+impl WritingMaterial for FountainProfile { /* width_at → italic_factor → clamp */ }
+impl WritingMaterial for ConstantMaterial { /* 항상 max_width_pt (하이라이터) */ }
+
+// 단일 분기점(퍼사드) — ball/fountain을 소유하고 ToolType → 재료로 해석
+pub struct Materials { ball: BallPenProfile, fountain: FountainProfile }
+impl Materials {
+    pub fn new(ball, fountain) -> Self
+    pub fn default() -> Self
+    pub fn for_tool(&self, tool: ToolType) -> Option<Box<dyn WritingMaterial>>
+}
+```
+
+- `WidthLocker`는 `profile: Box<dyn WritingMaterial>`을 보유, `lock_width()`는
+  `match` 없이 `profile.point_width(...)` **한 번의 다형 호출**.
+- `WidthLocker::with_material(Box<dyn WritingMaterial>, ...)` — 임의 재료 주입 확장점.
+- `WidthLocker::new(tool, max, &materials, tilt)` — `Materials::for_tool`로 위임.
+- `halves_for_stroke`(freedf-canvas 굽기 경로)도 `&materials`를 받아 `for_tool(...).widths(...)`로
+  Fountain/Highlighter 분기를 제거해 동일한 open/closed 이점을 얻습니다.
+- `InkPipeline`/`CoreRibbonMesher`는 별도 ball/fountain 대신 `materials: Materials`를 보관.
+
 ---
 
 ## 3. 수준별 변경 (기존 대비)
@@ -117,7 +144,10 @@ impl InkPipeline {
 ## 5. TDD — 테스트 목록 (RED → GREEN)
 
 구현 전 테스트만 작성해 **RED**(`cannot find type InkPipeline/LiveStroke`) 확인 후,
-구현으로 **GREEN**. 최종 `cargo test -p freedf-core` 200개 전부 통과.
+구현으로 **GREEN**. 최종 `cargo test -p freedf-core` **207개 전부 통과**(0 경고) +
+freedf-canvas 29개. WritingMaterial 확장분(`WritingMaterial` trait + `Materials::for_tool` 퍼사드)도
+같은 방식(TDD — `for_tool_*`, `locker_accepts_any_custom_writing_material`,
+`writing_material_widths_survive_via_factory_box`, `constant_material_widths_are_all_max`)으로 검증.
 
 | # | 테스트 | 검증 계약 |
 |---|---|---|

@@ -83,24 +83,27 @@ struct Job {
 /// - `poll`은 `try_recv` — 완료된 결과가 없으면 즉시 `None`.
 /// - `busy`는 원자 플래그 — 진행 중 여부를 언제든 읽을 수 있음.
 /// - 블로킹 `recv`는 워커 스레드 내부(`start`)에만 존재.
-pub struct BakeService<W: BakeWorker + 'static> {
+pub struct BakeService {
     job_tx: Option<Sender<Job>>,
     result_rx: Receiver<Result<BakedPage, BakeError>>,
     in_flight: Arc<AtomicBool>,
-    _worker: std::marker::PhantomData<W>,
+    /// 워커를 계속 살려 두는 레퍼런스 (스레드도 자신의 Arc 클론을 가짐).
+    _worker: Arc<Box<dyn BakeWorker + Send + Sync + 'static>>,
 }
 
-impl<W: BakeWorker + 'static> BakeService<W> {
+impl BakeService {
     /// 워커 스레드를 띄우고 서비스를 반환 (블로킹 없음 — 스레드만 생성).
-    pub fn start(worker: W) -> Self {
+    pub fn start(worker: Box<dyn BakeWorker + Send + Sync + 'static>) -> Self {
+        let worker = Arc::new(worker);
         let (job_tx, job_rx) = mpsc::channel::<Job>();
         let (result_tx, result_rx) = mpsc::channel();
         let in_flight = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&in_flight);
+        let worker_ref = Arc::clone(&worker);
         std::thread::spawn(move || {
             // 이 recv는 워커 스레드 안 — UI 스레드가 호출할 수 없습니다.
             while let Ok(job) = job_rx.recv() {
-                let page = worker.bake(job.snapshot, job.params, job.now_ms);
+                let page = worker_ref.bake(job.snapshot, job.params, job.now_ms);
                 flag.store(false, Ordering::Release);
                 if result_tx.send(Ok(page)).is_err() {
                     break; // 소비자 종료.
@@ -112,7 +115,7 @@ impl<W: BakeWorker + 'static> BakeService<W> {
             job_tx: Some(job_tx),
             result_rx,
             in_flight,
-            _worker: std::marker::PhantomData,
+            _worker: worker,
         }
     }
 
@@ -224,7 +227,7 @@ mod tests {
         }
         let gate = Arc::new(AtomicBool::new(false));
         let service =
-            BakeService::start(ManualWorker { gate: Arc::clone(&gate) });
+            BakeService::start(Box::new(ManualWorker { gate: Arc::clone(&gate) }));
 
         let mut store = SceneStore::new();
         store.add(stroke(1));

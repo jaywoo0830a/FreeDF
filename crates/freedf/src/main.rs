@@ -135,7 +135,7 @@ fn main() -> eframe::Result<()> {
                 db,
                 db_connected,
                 connect_error,
-                logger,
+                app::AppDeps::compose(Box::new(freedf_canvas::clock::SystemClock), logger),
                 open_path,
                 open_doc,
             )))

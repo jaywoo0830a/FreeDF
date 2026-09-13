@@ -11,7 +11,7 @@
 
 use freedf_core::ink::{combine_saturation, stroke_ink_lr, InkGrain};
 use freedf_core::model::ToolType;
-use freedf_core::pen::{BallPenProfile, FountainProfile, InkSoak};
+use freedf_core::pen::{InkSoak, Materials};
 
 use crate::ink::Mesh;
 use crate::scene::{Stroke, StrokePoint};
@@ -27,36 +27,27 @@ fn seeded_grain(grain: InkGrain, seed: u64) -> InkGrain {
 /// 도구별 점 단위 절반 두께(pt).
 ///
 /// 입력 시점에 잠금된 폭(`StrokePoint.width`)이 있으면 그대로 쓰고,
-/// 없으면(이전 데이터) 프로파일 배치 계산으로 폴백합니다.
+/// 없으면(이전 데이터) 재료의 배치 계산으로 폴백합니다. 재료는 단일 퍼사드
+/// [`Materials::for_tool`]로 결정하므로 이 함수에는 도구별 분기가 없습니다.
 pub fn halves_for_stroke(
     tool: ToolType,
     base_width: f32,
     points: &[StrokePoint],
-    ball: &BallPenProfile,
-    fountain: &FountainProfile,
+    materials: &Materials,
     tilt_mag: f32,
 ) -> Vec<f32> {
     let n = points.len();
     let locked = !points.is_empty() && points.iter().all(|p| p.width > 0.0);
-    if tool == ToolType::Highlighter {
-        // 마커: 필압/테이퍼 없이 일정한 두께 (잠금 폭도 동일 규칙).
-        let mut halves = Vec::with_capacity(n);
-        if locked {
-            for p in points {
-                halves.push((p.width * 0.5).max(0.5));
-            }
-        } else {
-            halves.resize(n, (base_width * 0.5).max(0.5));
-        }
-        return halves;
-    }
-    let mut halves = Vec::with_capacity(n);
+    // 하이라이터는 더 두꺼운 최소 절반 두께(0.5)를, 그 외 잉크는 얇은 하한(0.05) 사용.
+    let min_half = if tool == ToolType::Highlighter { 0.5 } else { 0.05 };
     if locked {
+        let mut halves = Vec::with_capacity(n);
         for p in points {
-            halves.push((p.width * 0.5).max(0.05));
+            halves.push((p.width * 0.5).max(min_half));
         }
         return halves;
     }
+    let material = materials.for_tool(tool).expect("ink tool has a writing material");
     let core_pts: Vec<freedf_core::model::StrokePoint> = points
         .iter()
         .map(|p| freedf_core::model::StrokePoint {
@@ -67,14 +58,9 @@ pub fn halves_for_stroke(
             width: p.width,
         })
         .collect();
-    if tool == ToolType::Fountain {
-        for w in fountain.widths(base_width, &core_pts, tilt_mag) {
-            halves.push((w * 0.5).max(0.05));
-        }
-    } else {
-        for w in ball.widths(base_width, &core_pts, tilt_mag) {
-            halves.push((w * 0.5).max(0.05));
-        }
+    let mut halves = Vec::with_capacity(n);
+    for w in material.widths(base_width, &core_pts, tilt_mag) {
+        halves.push((w * 0.5).max(min_half));
     }
     halves
 }
@@ -176,8 +162,7 @@ pub fn append_stroke_ribbon(
 /// [`Mesher`] 인터페이스 뒤에 묶습니다.
 #[derive(Debug, Clone, Copy)]
 pub struct CoreRibbonMesher {
-    pub ball: BallPenProfile,
-    pub fountain: FountainProfile,
+    pub materials: Materials,
     pub pen_soak: InkSoak,
     pub fountain_soak: InkSoak,
     pub pen_grain: InkGrain,
@@ -223,8 +208,7 @@ impl CoreRibbonMesher {
             stroke.tool,
             stroke.base_width,
             &stroke.points,
-            &self.ball,
-            &self.fountain,
+            &self.materials,
             self.tilt_magnitude,
         );
         let alphas = alphas_for_stroke(
@@ -268,6 +252,7 @@ mod tests {
     use super::*;
     use crate::geom::PagePoint;
     use crate::scene::{LayerKind, StrokeId};
+    use freedf_core::pen::{BallPenProfile, FountainProfile};
 
     fn point(x: f32, y: f32, pressure: f32, t_ms: u64, width: f32) -> StrokePoint {
         StrokePoint {
@@ -292,8 +277,7 @@ mod tests {
 
     fn mesher() -> CoreRibbonMesher {
         CoreRibbonMesher {
-            ball: BallPenProfile::default(),
-            fountain: FountainProfile::default(),
+            materials: Materials::new(BallPenProfile::default(), FountainProfile::default()),
             pen_soak: InkSoak::ballpoint_default(),
             fountain_soak: InkSoak::fountain_default(),
             pen_grain: InkGrain::default(),
@@ -311,8 +295,7 @@ mod tests {
             ToolType::Pen,
             2.0,
             &pts,
-            &BallPenProfile::default(),
-            &FountainProfile::default(),
+            &Materials::default(),
             0.0,
         );
         assert!(halves.iter().all(|h| (*h - 1.5).abs() < 1e-4), "{halves:?}");

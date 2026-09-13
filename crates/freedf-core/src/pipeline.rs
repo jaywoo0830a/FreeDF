@@ -11,7 +11,7 @@
  */
 
 use crate::model::{Stroke, StrokePoint, ToolType};
-use crate::pen::{BallPenProfile, FountainProfile, OneEuroFilter, WidthLocker};
+use crate::pen::{Materials, OneEuroFilter, WidthLocker};
 
 /**
  * An in-progress stroke: **append-only**, with an incremental bounding box and a
@@ -157,10 +157,8 @@ impl LiveStroke {
  * internally does filter → width-lock (finalize previous point) → append, which
  * **compresses the call sequence**.
  */
-#[derive(Debug)]
 pub struct InkPipeline {
-    ball: BallPenProfile,
-    fountain: FountainProfile,
+    materials: Materials,
     max_width_pt: f32,
     smoothing: f32,
     filter_x: Option<OneEuroFilter>,
@@ -171,15 +169,9 @@ pub struct InkPipeline {
 }
 
 impl InkPipeline {
-    pub fn new(
-        ball: BallPenProfile,
-        fountain: FountainProfile,
-        max_width_pt: f32,
-        smoothing: f32,
-    ) -> Self {
+    pub fn new(materials: Materials, max_width_pt: f32, smoothing: f32) -> Self {
         Self {
-            ball,
-            fountain,
+            materials,
             max_width_pt,
             smoothing,
             filter_x: None,
@@ -237,13 +229,7 @@ impl InkPipeline {
         self.filter_x = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_y = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_p = Some(OneEuroFilter::from_smoothing(self.smoothing));
-        self.locker = Some(WidthLocker::new(
-            tool,
-            self.max_width_pt,
-            self.ball,
-            self.fountain,
-            0.0,
-        ));
+        self.locker = Some(WidthLocker::new(tool, self.max_width_pt, &self.materials, 0.0));
         self.live = Some(LiveStroke::begin(tool, color, self.max_width_pt));
         let tip = self.filter_lock(x, y, pressure, t, t_ms);
         self.live.as_mut().expect("drawing after down").append(tip);
@@ -335,12 +321,7 @@ mod tests {
     use super::*;
 
     fn pipeline() -> InkPipeline {
-        InkPipeline::new(
-            BallPenProfile::default(),
-            FountainProfile::default(),
-            3.0,
-            0.4,
-        )
+        InkPipeline::new(Materials::default(), 3.0, 0.4)
     }
 
     // ---- LiveStroke: append-only + frontier + incremental bbox ----

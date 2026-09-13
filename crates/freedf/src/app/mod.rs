@@ -25,6 +25,8 @@
 //! inherent methods, so call sites keep working exactly as before.
 
 mod actions;
+mod deps;
+pub(crate) use deps::AppDeps;
 pub(crate) mod canvas;
 mod dictionary;
 mod gamepad;
@@ -43,6 +45,7 @@ pub(crate) use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 pub(crate) use freedf_core::history::{Edit, History};
 pub(crate) use freedf_core::logging::{AppEvent, Logger};
 pub(crate) use freedf_core::model::{PageIndex, StrokePoint, ToolType};
+use freedf_canvas::clock::Clock;
 pub(crate) use freedf_core::notes::NotesManager;
 pub(crate) use freedf_core::outline::{flatten, OutlineNode};
 pub(crate) use freedf_core::paper::{
@@ -50,7 +53,7 @@ pub(crate) use freedf_core::paper::{
     PaperStyleSettings, PAPER_COLORS,
 };
 pub(crate) use freedf_core::pen::{
-    BallPenProfile, ColorFamily, FountainProfile, InkSoak, OneEuroFilter, Palette,
+    BallPenProfile, ColorFamily, FountainProfile, InkSoak, Materials, OneEuroFilter, Palette, WritingMaterial,
 };
 pub(crate) use freedf_core::ink::InkGrain;
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
@@ -1017,7 +1020,7 @@ pub struct FreeDfApp {
     /// 순수 규칙은 freedf-canvas `soak::InkSettling` (계약 테스트 포함).
     ink_settling: freedf_canvas::InkSettling,
     /// 전체 재굽기 — freedf-canvas BakeService (백그라운드 스레드, 무블록).
-    ink_baker: freedf_canvas::BakeService<canvas::InkBakeWorker>,
+    ink_baker: freedf_canvas::BakeService,
     /// 워커가 읽는 메셔 설정 스냅샷 (요청 직전에 갱신).
     ink_baker_mesher: std::sync::Arc<std::sync::RwLock<freedf_canvas::CoreRibbonMesher>>,
     /// 진행 중인 전체 굽기 — (페이지, 세대, rev, 획 수, 요청 줌).
@@ -1247,7 +1250,8 @@ pub struct FreeDfApp {
     sel_notes: HashSet<i64>,
     sel_pdfs: HashSet<i64>,
 
-    // ---------- Logging / status ----------
+    // ---------- Services (컴포지션 루 주입) / status ----------
+    clock: Box<dyn Clock + Send + Sync>,
     logger: Logger,
     file_name: String,
     status: Option<String>,
@@ -1347,7 +1351,7 @@ impl FreeDfApp {
         db: std::sync::Arc<dyn StorageBackend>,
         db_connected: bool,
         connect_error: Option<String>,
-        logger: Logger,
+        deps: AppDeps,
         pending_open: Option<PathBuf>,
         pending_doc: Option<i64>,
     ) -> Self {
@@ -1450,8 +1454,7 @@ impl FreeDfApp {
         // 전체 재굽기 워커용 메셔 공유 스냅샷 (설정 변경 시 UI가 갱신).
         let ink_baker_mesher = std::sync::Arc::new(std::sync::RwLock::new(
             freedf_canvas::CoreRibbonMesher {
-                ball: pen_profile,
-                fountain: fountain_profile,
+                materials: Materials::new(pen_profile, fountain_profile),
                 pen_soak,
                 fountain_soak,
                 pen_grain,
@@ -1583,9 +1586,9 @@ impl FreeDfApp {
             ink_egui_mesh: None,
             ink_egui_key: None,
             ink_settling: freedf_canvas::InkSettling::new(),
-            ink_baker: freedf_canvas::BakeService::start(canvas::InkBakeWorker {
+            ink_baker: freedf_canvas::BakeService::start(Box::new(canvas::InkBakeWorker {
                 mesher: ink_baker_mesher.clone(),
-            }),
+            })),
             ink_baker_mesher,
             ink_bake_pending: None,
             store_generation: 0,
@@ -1689,7 +1692,8 @@ impl FreeDfApp {
             library_filter,
             sel_notes: HashSet::new(),
             sel_pdfs: HashSet::new(),
-            logger,
+            clock: deps.clock,
+            logger: deps.logger,
             file_name: String::new(),
             status: None,
             status_since: None,
@@ -2467,11 +2471,16 @@ impl FreeDfApp {
         }
     }
 
+    /// 주입된 Clock으로 현재 시각(epoch ms)을 읽습니다 (벽시계 직접 금지).
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.clock.now_ms()
+    }
+
     /// pen-up 후 일정 시간 무입력이면 백그라운드로 자동 저장합니다.    /// (필기 중 네트워크 0 원칙 유지 — 포인터가 내려간 동안은 절대 플러시 금지)
     fn maybe_auto_flush(&mut self, ctx: &egui::Context) {
         if !auto_flush_due(
             self.last_pen_up_ms,
-            now_ms(),
+            self.now_ms(),
             ctx.input(|i| i.pointer.any_down()),
         ) {
             return;
@@ -2492,10 +2501,10 @@ impl FreeDfApp {
         if !self.db_connected || self.pdf_sync_rx.is_some() {
             return;
         }
-        if now_ms().saturating_sub(self.pdf_sync_last_ms) < PDF_SYNC_INTERVAL_MS {
+        if self.now_ms().saturating_sub(self.pdf_sync_last_ms) < PDF_SYNC_INTERVAL_MS {
             return;
         }
-        self.pdf_sync_last_ms = now_ms();
+        self.pdf_sync_last_ms = self.now_ms();
         let db = self.db.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.pdf_sync_rx = Some(rx);
@@ -3367,7 +3376,7 @@ impl eframe::App for FreeDfApp {
         //    이 창에 포커스 — 0초면 즉시, 그 이상이면 머문 시간 기준.
         //    펜으로 쓰는 중(contact)에는 포커스 이동을 멈추고, 짧은 쿨다운으로
         //    두 창이 포커스를 주고받는 경쟁(제목줄 깜빡임)을 막습니다.
-        let focus_cooled_down = now_ms().saturating_sub(self.last_focus_request_ms)
+        let focus_cooled_down = self.now_ms().saturating_sub(self.last_focus_request_ms)
             >= FOCUS_REQUEST_COOLDOWN_MS;
         if self.window_focus_on_move
             && ctx.input(|i| i.pointer.hover_pos().is_some())
@@ -3375,7 +3384,7 @@ impl eframe::App for FreeDfApp {
             && !self.input_sources.pen_contact()
             && focus_cooled_down
         {
-            let now = now_ms();
+            let now = self.now_ms();
             if self.window_hover_since_ms == 0 {
                 self.window_hover_since_ms = now;
             }
