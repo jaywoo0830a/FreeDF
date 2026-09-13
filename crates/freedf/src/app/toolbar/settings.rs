@@ -1276,8 +1276,8 @@ impl FreeDfApp {
         let mut open = self.settings_open;
         let mut selected = self.settings_tab;
         egui::Window::new("Settings")
-            .default_width(704.0) // = 176 × .25rem
-            .default_height(480.0) // = 120 × .25rem
+            .default_width(crate::ui::scale::rem(44)) // 704px = 44×1rem
+            .default_height(crate::ui::scale::rem(30)) // 480px = 30×1rem
             .resizable(true)
             .open(&mut open)
             .show(ui.ctx(), |ui| {
@@ -1294,7 +1294,7 @@ impl FreeDfApp {
                     // (auto_shrink Y=false). 가로 배치 자식의 세로 채움 hacker을 없앤 재설계.
                     crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(208.0); // = 52 × .25rem
+                            ui.set_width(crate::ui::scale::qrem(52)); // 208px = 52×.25rem
                             egui::ScrollArea::vertical()
                                 .id_salt("settings_tabs")
                                 .auto_shrink([true, false])
@@ -1317,7 +1317,12 @@ impl FreeDfApp {
                     ui.separator();
                     crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
                         ui.vertical(|ui| {
-                            ui.set_min_size(egui::vec2(472.0, 400.0)); // 472 = 118 × .25rem, 400 = 100 × .25rem
+                            ui.set_min_size(
+                                egui::vec2(
+                                    crate::ui::scale::rem(29), // 464px = 29×1rem
+                                    crate::ui::scale::rem(25), // 400px = 25×1rem
+                                ),
+                            );
                             ui.label(
                                 egui::RichText::new(format!("{} settings", selected.label()))
                                     .strong(),

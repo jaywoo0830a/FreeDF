@@ -255,7 +255,8 @@ fn overlay_header(
 ) -> bool {
     let mut close = false;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+        ui.spacing_mut().item_spacing =
+            egui::vec2(crate::ui::scale::qrem(1), 0.0); // 4px
         ui.label(overlay_title(ui, icon, title));
         ui.label(egui::RichText::new(count).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -275,7 +276,7 @@ fn overlay_header(
 /// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
 /// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
 fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
-    let height = 28.0;
+    let height = crate::ui::scale::S_32; // 32px 표준 행 높이 (만 28→토큰)
     let width = ui.available_width();
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
@@ -288,11 +289,11 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, bg);
+    painter.rect_filled(rect, crate::ui::scale::qrem(1), bg); // 반경 4px
     if selected {
         painter.rect_stroke(
             rect,
-            4.0,
+            crate::ui::scale::qrem(1),
             egui::Stroke::new(1.0, visuals.selection.stroke.color),
             egui::StrokeKind::Inside,
         );
@@ -2009,7 +2010,7 @@ impl FreeDfApp {
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .default_width(560.0);
+            .default_width(crate::ui::scale::rem(35)); // 560px = 35×1rem
         if !forced {
             window = window.open(&mut open);
         }
@@ -3012,7 +3013,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(520.0);
+                ui.set_width(crate::ui::scale::rem(33)); // 528px = 33×1rem
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 let total = self.notes.list().len() + self.recents.sorted().len();
@@ -3052,7 +3053,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(460.0);
+                ui.set_width(crate::ui::scale::rem(29)); // 464px = 29×1rem
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 // 개수가 첫 프레임부터 정확하도록 패널 표시 시점에 목차를 로드.
@@ -3095,7 +3096,7 @@ impl FreeDfApp {
                     .inner_margin(egui::Margin::same(8)),
             )
             .show(ctx, |ui| {
-                ui.set_width(420.0);
+                ui.set_width(crate::ui::scale::rem(26)); // 416px = 26×1rem
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                 // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
                 if overlay_header(

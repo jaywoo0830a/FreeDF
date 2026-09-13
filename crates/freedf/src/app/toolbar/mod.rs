@@ -185,10 +185,13 @@ impl FreeDfApp {
         egui::Panel::top("toolbar").show(ui, |ui| {
             // 리본 행을 flex(vstack)+hseparator로 안정화 (외부 프레임 컨테이너 제거).
             crate::ui::layout::vstack(ui, crate::ui::layout::SP_2, |ui| {
-                // Compact spacing + padding; uniform control height for tidy rows
-                ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
-                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-                ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
+                // 버튼/컨트롤/간격은 치수 규약 토큰으로 통일.
+                ui.spacing_mut().button_padding =
+                    egui::vec2(crate::ui::scale::qrem(2), crate::ui::scale::qrem(1)); // 8×4
+                ui.spacing_mut().item_spacing =
+                    egui::vec2(crate::ui::scale::qrem(2), crate::ui::scale::qrem(2)); // 8×8
+                ui.spacing_mut().interact_size =
+                    egui::vec2(0.0, crate::ui::scale::S_32); // 표준 버튼 높이(만 28→32)
 
                 self.row_top(ui);
                 crate::ui::layout::hseparator(ui);

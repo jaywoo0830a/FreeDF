@@ -393,7 +393,7 @@ impl FreeDfApp {
     pub(crate) fn debug_hud_ui(&mut self, ui: &mut egui::Ui) {
         let mut open = self.debug_hud;
         egui::Window::new("Debug HUD")
-            .default_width(400.0)
+            .default_width(crate::ui::scale::rem(25)) // 400px = 25×1rem
             .open(&mut open)
             .show(ui.ctx(), |ui| {
                 crate::ui::dialog::pad(ui, false, |ui| {

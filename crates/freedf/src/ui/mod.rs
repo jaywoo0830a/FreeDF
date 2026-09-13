@@ -24,6 +24,7 @@ pub(crate) mod dialog;
 pub(crate) mod ds;
 pub(crate) mod form;
 pub(crate) mod layout;
+pub(crate) mod scale;
 pub(crate) mod scroll;
 pub(crate) mod toast;
 
