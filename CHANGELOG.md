@@ -42,6 +42,11 @@
 - **툴바 재설계 밀스톤 2(R7)** — `ActionBar`에 `Toggle`(상태 바인딩)·`Select`(라디오)
   지원 추가. Row1 패널 토글(Library/Outline/Bookmarks/Palette)과 More의 정렬 라디오를
   스펙으로 전환 — egui 상태 갱신은 팩토리가, 호출부는 부수효과만.
+- **툴바 재설계 밀스톤 3(R8)** — Row1 Save/Load와 Row2 페이지 그룹(Insert+Delete)을
+  `ActionBar`로 전환, 중복 Delete 제거. Row1 전체가 스펙 기반이 됨.
+- **Row1 스펙 완성 + 검색 단추(K9)** — Hide UI·Window Focus를 액션 바로 통합해 Row1
+  전체를 `ActionBar` 스펙으로 일원화, 중복 원시 `icon_button` 제거. 검색 "Find" 텍스트
+  단추를 3계층 `buttons::Button::primary`로 전환.
 - **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
   캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
   여백/스타일이 컴포넌트 키트를 통해 일원화됨.

@@ -60,7 +60,8 @@ app::toolbar::settings::*      ← 설정 스펙 (grid/card/alert)
 1. ✅ `ui::actionbar::ActionBar` 신설 + Row1의 Undo/Redo/Clear에 적용
 2. ✅ `ActionKind::Toggle`(상태 바인딩)·`Select`(라디오) 추가 →
    패널 토글(Library/Outline/Bookmarks/Palette)·정렬 라디오를 스펙화
-3. `ActionBar`로 Row1 Save/Load·Row2 페이지 그룹 확장 (Further)
+3. ✅ Row1 Save/Load·Row2 페이지 그룹(Insert+Delete)을 `ActionBar`로 전환.
+   Rotate는 메뉴로 단일 홈 유지 — 중복 Delete 제거
 4. 설정 창 `grid`/`card`/`alert`/`tabs` 재구성
 5. 중복 액션 정리(More 오버플로 dedupe) — 종료 조건 확인
 

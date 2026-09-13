@@ -14,34 +14,33 @@ impl FreeDfApp {
                 // Show UI / Hide UI 토글 — 항상 툴바 **가장 왼쪽**에 상주합니다.
                 // 숨기면 캔버스+팔레트만 남고, 복귀는 우상단 플로팅 pill(☰)
                 // 또는 Ctrl+Shift+M.
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::CORNERS_OUT, "Hide UI").hint(
+                let hide_ui = 0;
+                let win_focus = 1;
+                let hit = crate::ui::actionbar::ActionBar::new()
+                    .add(hide_ui, icons::CORNERS_OUT, "Hide UI")
+                    .hint(
                         "Hide toolbars & panels — canvas + palette only.\n\
                          Bring them back with the floating Show UI button (top-right)\n\
                          or Ctrl+Shift+M.",
-                    ),
-                )
-                .clicked()
-                {
+                    )
+                    .add_select(
+                        win_focus,
+                        icons::CROSSHAIR,
+                        "Window Focus",
+                        self.window_focus_on_move,
+                    )
+                    .hint(
+                        "Focus this window when the cursor stays over it for the dwell time.\n\
+                         Click to open its settings (enable + dwell time).\n\
+                         Turn off for windows that should not grab focus in split view.",
+                    )
+                    .show(ui);
+                if hit == Some(hide_ui) {
                     self.manual_minimal = true;
                     self.narrow_chrome_expanded = false;
                     self.show_palette = true;
                     self.save_default_session();
-                }
-                // Window Focus — 단일 라벨 버튼 (상태는 선택 하이라이트).
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::CROSSHAIR, "Window Focus")
-                        .selected(self.window_focus_on_move)
-                        .hint(
-                            "Focus this window when the cursor stays over it for the dwell time.\n\
-                             Click to open its settings (enable + dwell time).\n\
-                             Turn off for windows that should not grab focus in split view.",
-                        ),
-                )
-                .clicked()
-                {
+                } else if hit == Some(win_focus) {
                     self.window_focus_settings_open = true;
                 }
                 crate::ui::layout::vdivider(ui);
@@ -73,22 +72,17 @@ impl FreeDfApp {
                 }
                 crate::ui::layout::vdivider(ui);
 
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::FLOPPY_DISK, "Save Edits")
-                        .hint("Save annotations (Ctrl+S)"),
-                )
-                .clicked()
-                {
+                let save = 0;
+                let load = 1;
+                let hit = crate::ui::actionbar::ActionBar::new()
+                    .add(save, icons::FLOPPY_DISK, "Save Edits")
+                    .hint("Save annotations (Ctrl+S)")
+                    .add(load, icons::FOLDER_SIMPLE, "Load Edits")
+                    .hint("Load annotations")
+                    .show(ui);
+                if hit == Some(save) {
                     self.save_annotations();
-                }
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::FOLDER_SIMPLE, "Load Edits")
-                        .hint("Load annotations"),
-                )
-                .clicked()
-                {
+                } else if hit == Some(load) {
                     self.load_annotations();
                 }
                 crate::ui::layout::vdivider(ui);
@@ -237,14 +231,19 @@ impl FreeDfApp {
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 // 메뉴 대신 **전용 플로팅 창**을 엽니다 — 메뉴 안에서는
                 // 숫자를 타이핑하는 순간 닫히는 문제가 있어 창으로 분리.
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::PLUS_SQUARE, "Insert Page")
-                        .hint("Insert blank pages — opens a small window"),
-                )
-                .clicked()
-                {
+                let insert = 0;
+                let delete = 1;
+                let hit = crate::ui::actionbar::ActionBar::new()
+                    .add(insert, icons::PLUS_SQUARE, "Insert Page")
+                    .hint("Insert blank pages — opens a small window")
+                    .add(delete, icons::TRASH_SIMPLE, "Delete Page")
+                    .enabled(page_count > 1)
+                    .hint("Delete this page")
+                    .show(ui);
+                if hit == Some(insert) {
                     self.insert_page_open = true;
+                } else if hit == Some(delete) {
+                    self.delete_page_action();
                 }
                 ui.menu_button(icon_text(ui, "Rotate Page", icons::REPEAT), |ui| {
                     if crate::ui::buttons::Button::secondary("Rotate current page CW")
@@ -282,16 +281,6 @@ impl FreeDfApp {
                 })
                 .response
                 .on_hover_text("Rotate pages (CW = clockwise)");
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::TRASH_SIMPLE, "Delete Page")
-                        .enabled(page_count > 1)
-                        .hint("Delete this page"),
-                )
-                .clicked()
-                {
-                    self.delete_page_action();
-                }
                 }); // end G1 (Page) group
                 crate::ui::layout::vdivider(ui);
 
@@ -799,7 +788,7 @@ impl FreeDfApp {
                     resp.request_focus();
                     self.focus_search = false;
                 }
-                if ui.button("Find").clicked() || submitted {
+                if crate::ui::buttons::Button::primary("Find").show(ui).clicked() || submitted {
                     self.search_update();
                 }
                 let can = !self.search_matches.is_empty();
