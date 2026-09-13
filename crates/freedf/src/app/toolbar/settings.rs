@@ -1281,33 +1281,57 @@ impl FreeDfApp {
             .resizable(true)
             .open(&mut open)
             .show(ui.ctx(), |ui| {
+                // Dialog header — 명확한 제목 + 조작 힌트 (WCAG 2.4: 목적 라벨링).
+                crate::ui::layout::hstack(ui, crate::ui::layout::SP_2, |ui| {
+                    ui.label(egui::RichText::new("Settings").strong());
+                    ui.label(
+                        egui::RichText::new("Esc 닫기 · Tab/↑↓로 구역 이동").weak().small(),
+                    );
+                });
+                crate::ui::layout::hseparator(ui);
                 ui.horizontal(|ui| {
-                    // Left rail: tab list.
-                    ui.vertical(|ui| {
-                        ui.set_width(140.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("settings_tabs")
-                            .show(ui, |ui| {
-                                for tab in SettingsTab::all() {
-                                    if ui
-                                        .selectable_label(selected == tab, tab.label())
-                                        .clicked()
-                                    {
-                                        selected = tab;
-                                    }
-                                }
+                    // Left rail: tab list — 안정적인 내비 블록 (선택 시 포커스 요청).
+                    crate::ui::containers::container()
+                        .pad_symmetric(10, 6)
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_width(150.0);
+                                egui::ScrollArea::vertical()
+                                    .id_salt("settings_tabs")
+                                    .show(ui, |ui| {
+                                        for tab in SettingsTab::all() {
+                                            let resp = ui
+                                                .selectable_label(selected == tab, tab.label())
+                                                .on_hover_text(format!(
+                                                    "{} — 이 설정 구역으로 전환합니다.",
+                                                    tab.label(),
+                                                ));
+                                            if resp.clicked() {
+                                                selected = tab;
+                                                resp.request_focus();
+                                            }
+                                        }
+                                    });
                             });
-                    });
+                        });
                     ui.separator();
-                    // Right panel: content of the selected tab.
-                    ui.vertical(|ui| {
-                        ui.set_min_size(egui::vec2(360.0, 380.0));
-                        egui::ScrollArea::vertical()
-                            .id_salt("settings_content")
-                            .show(ui, |ui| {
-                                self.show_settings_tab(selected, ui);
+                    // Right panel: content of the selected tab — 본문 블록.
+                    crate::ui::containers::container()
+                        .pad_symmetric(10, 6)
+                        .show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                ui.set_min_size(egui::vec2(360.0, 380.0));
+                                ui.label(
+                                    egui::RichText::new(format!("{} 설정", selected.label()))
+                                        .strong(),
+                                );
+                                egui::ScrollArea::vertical()
+                                    .id_salt("settings_content")
+                                    .show(ui, |ui| {
+                                        self.show_settings_tab(selected, ui);
+                                    });
                             });
-                    });
+                        });
                 });
             });
 

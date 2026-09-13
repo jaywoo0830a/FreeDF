@@ -67,6 +67,7 @@ impl<'a> IconButton<'a> {
         self
     }
 
+    #[allow(dead_code)] // 팔레트 2중 배치용으로 유지.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self

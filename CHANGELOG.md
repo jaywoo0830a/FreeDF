@@ -47,6 +47,9 @@
 - **Row1 스펙 완성 + 검색 단추(K9)** — Hide UI·Window Focus를 액션 바로 통합해 Row1
   전체를 `ActionBar` 스펙으로 일원화, 중복 원시 `icon_button` 제거. 검색 "Find" 텍스트
   단추를 3계층 `buttons::Button::primary`로 전환.
+- **설정 대화상자 UI 블록화+WCAG(K10)** — 설정 창을 안정적 UI 블록으로 재구성:
+  헤더(제목+조작 힌트)·`containers::container`로 좌/우 레일 경계 블록화·선택 라벨
+  포커스 요청·탭 툴팁 라벨링. 접근성: 키보드 포커스, 목적 라벨링, 테마 기반 대비.
 - **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
   캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
   여백/스타일이 컴포넌트 키트를 통해 일원화됨.

@@ -301,16 +301,20 @@ impl FreeDfApp {
                 }
                 // 엣지 자동 스크롤 — 라벨 버튼이 설정 창을 엽니다 (상태는
                 // 선택 하이라이트로 표시).
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::ARROWS_OUT_CARDINAL, "Edge Auto Scroll")
-                        .selected(self.edge_autoscroll)
-                        .hint(
-                            "Edge auto-scroll: the pen (by default) near the canvas edge pans the view.\n\
-                             Ignored over the palette/bottom bar. Click to open its settings.",
-                        ),
-                )
-                .clicked()
+                let edge = 0;
+                if crate::ui::actionbar::ActionBar::new()
+                    .add_select(
+                        edge,
+                        icons::ARROWS_OUT_CARDINAL,
+                        "Edge Auto Scroll",
+                        self.edge_autoscroll,
+                    )
+                    .hint(
+                        "Edge auto-scroll: the pen (by default) near the canvas edge pans the view.\n\
+                         Ignored over the palette/bottom bar. Click to open its settings.",
+                    )
+                    .show(ui)
+                    == Some(edge)
                 {
                     self.edge_scroll_settings_open = true;
                 }
@@ -320,12 +324,12 @@ impl FreeDfApp {
                 // G3: Color wheel group
                 crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 // Color wheel (원형 팔레트 색 지정) — 전용 설정 창.
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::PALETTE, "Color Wheel")
-                        .hint("Color wheel palette colors — click to open settings"),
-                )
-                .clicked()
+                let wheel = 0;
+                if crate::ui::actionbar::ActionBar::new()
+                    .add(wheel, icons::PALETTE, "Color Wheel")
+                    .hint("Color wheel palette colors — click to open settings")
+                    .show(ui)
+                    == Some(wheel)
                 {
                     self.wheel_settings_open = true;
                 }
@@ -397,14 +401,15 @@ impl FreeDfApp {
                 }
                 }); // end paper swatch flex row
                 // 세부 설정 전용 창 트리거 — 크기/간격/줄 색·두께/전체 적용.
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::GEAR, "Paper Settings").hint(
+                let paper = 0;
+                if crate::ui::actionbar::ActionBar::new()
+                    .add(paper, icons::GEAR, "Paper Settings")
+                    .hint(
                         "Open the paper settings window:\n\
                          page size, grid spacing, line color & thickness, apply to all.",
-                    ),
-                )
-                .clicked()
+                    )
+                    .show(ui)
+                    == Some(paper)
                 {
                     self.paper_settings_open = true;
                 }
