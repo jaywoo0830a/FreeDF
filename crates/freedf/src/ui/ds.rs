@@ -88,7 +88,7 @@ pub fn kbd(ui: &mut egui::Ui, text: &str) -> egui::Response {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
         .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(5, 2))
+        .inner_margin(egui::Margin::symmetric(4, 2))
         .show(ui, |ui| ui.label(egui::RichText::new(text).monospace().small().strong()))
         .inner
 }
