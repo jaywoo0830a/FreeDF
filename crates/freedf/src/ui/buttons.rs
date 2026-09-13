@@ -30,11 +30,27 @@ pub enum ButtonSize {
     Large,
 }
 
-/// Returns a text color with sufficient contrast against `bg`.
+/// WCAG 상대 휘도 (0..1). 표준 공식: linearize sRGB 채널 → 0.2126/0.7152/0.0722.
+fn luminance(c: egui::Color32) -> f32 {
+    let [r, g, b, _] = c.to_array();
+    fn lin(x: u8) -> f32 {
+        let s = x as f32 / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powi(2)
+        }
+    }
+    0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+/// WCAG 대비비 (1..21). 흑/백 텍스트 중 더 높은 대비를 확실하게 고릅니다.
 fn on_color(bg: egui::Color32) -> egui::Color32 {
-    let [r, g, b, _] = bg.to_array();
-    let lum = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0;
-    if lum > 0.6 {
+    let bg_l = luminance(bg);
+    // 검정 텍스트 휘도≈0, 흰색 휘도≈1.
+    let c_black = (bg_l + 0.05) / 0.05; // 대비 ≒ ((bg+0.05)/(0+0.05))
+    let c_white = 1.05 / (bg_l + 0.05); // 대비 ≒ ((1+0.05)/(bg+0.05))
+    if c_black >= c_white {
         egui::Color32::BLACK
     } else {
         egui::Color32::WHITE
@@ -120,7 +136,7 @@ impl<'a> Button<'a> {
         if self.danger {
             let f = ui.visuals().error_fg_color.gamma_multiply(0.85);
             fill = Some(f);
-            custom_text = Some(egui::Color32::WHITE);
+            custom_text = Some(on_color(f)); // 채움색에 대해 흑/백 중 최고 대비
         }
 
         let font = egui::FontId::proportional(match self.size {
