@@ -92,6 +92,28 @@ pub fn value_noise(x: f32, y: f32, seed: u64) -> f32 {
     lo + (hi - lo) * sy
 }
 
+/// 두 세로(side) 값에 대해 **x 공통 부분(정수 x셀·`fx`·`sx`)을 1번만** 계산하는 쌍 버전.
+/// 단면(l/r) 밀도는 같은 `u`를 쓰므로 x 응답을 재사용해 산술을 절반으로 줄입니다.
+/// 결과는 `value_noise(x, y0)` / `value_noise(x, y1)`와 **완전히 동일**합니다.
+fn value_noise_pair(x: f32, y0: f32, y1: f32, seed: u64) -> [f32; 2] {
+    let ix = x.floor();
+    let fx = x - ix;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let eval = |y: f32| -> f32 {
+        let iy = y.floor();
+        let fy = y - iy;
+        let sy = fy * fy * (3.0 - 2.0 * fy);
+        let a = hash2(ix as i32, iy as i32, seed);
+        let b = hash2(ix as i32 + 1, iy as i32, seed);
+        let c = hash2(ix as i32, iy as i32 + 1, seed);
+        let d = hash2(ix as i32 + 1, iy as i32 + 1, seed);
+        let lo = a + (b - a) * sx;
+        let hi = c + (d - c) * sx;
+        lo + (hi - lo) * sy
+    };
+    [eval(y0), eval(y1)]
+}
+
 /// 획 공간 잉크 필드 (0..1) — 저주파 흐름 + 고주파 위킹 옥타브 합성.
 /// `u`는 진행 방향(호 길이 비율), `v`는 단면 위치(-1..1).
 pub fn ink_field(u: f32, v: f32, seed: u64) -> f32 {
@@ -104,6 +126,23 @@ pub fn ink_field(u: f32, v: f32, seed: u64) -> f32 {
         seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
     );
     0.72 * flow + 0.28 * wick
+}
+
+/// 단면(왼/오) 전체 잉크 필드 쌍 — `v=-1`(왼)·`v=+1`(오)를 두 옥타브의
+/// x 공통 부분을 공유해 병렬 계산합니다. 결과는 `[ink_field(u,-1), ink_field(u,+1)]`과 동일.
+fn ink_field_pair(u: f32, seed: u64) -> [f32; 2] {
+    let wick_seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let flow = value_noise_pair(u * 3.0, -1.2, 1.2, seed);
+    let wick = value_noise_pair(
+        u * 13.0 + 5.3,
+        -1.0 * 4.0 + 2.9,
+        1.0 * 4.0 + 2.9,
+        wick_seed,
+    );
+    [
+        0.72 * flow[0] + 0.28 * wick[0],
+        0.72 * flow[1] + 0.28 * wick[1],
+    ]
 }
 
 /// 볼펜(일반 펜)의 진행 방향 밀도 형태: 시작 뭉침 + 회복 딥 + 끝 축적,
@@ -161,6 +200,35 @@ impl InkGrain {
         let edge = 1.0 + edge_k * (2.0 * v.abs() - 1.0);
         (shape * edge * (1.0 + noise_amp * noise)).clamp(0.30, 1.60)
     }
+
+    /// 단면(왼/오) 밀도 배율 쌍 — 같은 `u`·속도에서 v만 다르므로 각 옥타브의
+    /// x 공통 부분을 1번만 계산합니다. 결과는 `[density(...-1), density(...+1)]`과
+    /// **완전히 동일**합니다 (`|v|=1`이라 edge 항도 좌우 동일).
+    pub fn density_lr(self, tool: ToolType, u: f32, speed_norm: f32) -> [f32; 2] {
+        let u = u.clamp(0.0, 1.0);
+        let s = speed_norm.clamp(0.0, 1.0);
+        let [nl, nr] = ink_field_pair(u, self.seed);
+        let nl = (nl - 0.5) * 2.0;
+        let nr = (nr - 0.5) * 2.0;
+        let (shape, edge_k, noise_amp) = match tool {
+            ToolType::Fountain => (
+                fountain_shape(u, s, self),
+                0.10,
+                self.flow_amp + self.wick_amp,
+            ),
+            _ => (
+                ballpoint_shape(u, s, self),
+                0.06,
+                (self.flow_amp + self.wick_amp) * 0.85,
+            ),
+        };
+        // |v| = 1 (왼/오 가장자리) → edge 동일.
+        let edge = 1.0 + edge_k;
+        [
+            (shape * edge * (1.0 + noise_amp * nl)).clamp(0.30, 1.60),
+            (shape * edge * (1.0 + noise_amp * nr)).clamp(0.30, 1.60),
+        ]
+    }
 }
 
 /// 스트로크 전체의 점별 잉크 밀도 배율을 계산합니다 (중심선 v=0).
@@ -205,10 +273,7 @@ pub fn stroke_ink_lr(
     let (us, speeds) = stroke_space(points);
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        out.push([
-            grain.density(tool, us[i], -1.0, speeds[i]),
-            grain.density(tool, us[i], 1.0, speeds[i]),
-        ]);
+        out.push(grain.density_lr(tool, us[i], speeds[i]));
     }
     out
 }
@@ -264,6 +329,25 @@ pub fn combine_saturation(sat: f32, density: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn density_lr_matches_two_density_calls() {
+        // 성능 최적화 가드: density_lr(공유 x-파트)의 결과는 density를 좌/우로
+        // 각각 호출한 것과 완전히 동일해야 합니다 (행동 보존).
+        let g_base = InkGrain { seed: 11, ..InkGrain::default() };
+        for &seed in &[11u64, 99, 55555] {
+            let g = InkGrain { seed, ..g_base };
+            for &(u, s) in &[(0.0f32, 0.0f32), (0.12, 0.5), (0.5, 1.0), (1.0, 0.9)] {
+                for tool in [ToolType::Pen, ToolType::Fountain] {
+                    let lr = g.density_lr(tool, u, s);
+                    let l = g.density(tool, u, -1.0, s);
+                    let r = g.density(tool, u, 1.0, s);
+                    assert!((lr[0] - l).abs() < 1e-6, "L mismatch tool={tool:?} u={u} s={s}: {lr:?} vs {l}");
+                    assert!((lr[1] - r).abs() < 1e-6, "R mismatch tool={tool:?} u={u} s={s}: {lr:?} vs {r}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn value_noise_is_deterministic_and_bounded() {

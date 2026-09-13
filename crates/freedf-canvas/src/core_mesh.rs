@@ -142,6 +142,10 @@ pub fn append_stroke_ribbon(
     let ribbon =
         freedf_core::pen::stroke_ribbon_lr(&pts, halves, feather_pt, round_caps, alphas);
     let base = mesh.vertices.len() as u32;
+    // 정확 용량 예약 — 리본 크기가 산출된 뒤 extend realloc을 피합니다.
+    mesh.vertices.reserve(ribbon.verts.len());
+    mesh.colors.reserve(ribbon.verts.len());
+    mesh.indices.reserve(ribbon.tris.len());
     let cf = |v: u8| v as f32 / 255.0;
     for (p, a) in ribbon.verts.iter().zip(&ribbon.alphas) {
         mesh.vertices.push(*p);
@@ -376,5 +380,48 @@ mod tests {
             vec![point(0.0, 0.0, 0.5, 1_000, 2.0), point(10.0, 0.0, 0.5, 1_010, 2.0)],
         );
         assert_eq!(m.mesh(&s, 1_100), m.mesh(&s, 1_100));
+    }
+
+    /// P0 벤치 (기본 실행 제외 — `cargo test -- --ignored --nocapture`).
+    /// live 렌더 재구성의 점당 비용을 측정해 `docs/OPTIMIZATION.md` §4 baseline을
+    /// 실측 갱신하는 데 씁니다. 벤치는 타이밍이라 CI에선 실행하지 않습니다.
+    #[test]
+    #[ignore]
+    fn bench_live_render_cost_per_point() {
+        use std::time::Instant;
+        let m = mesher();
+        for &n in &[1_000usize, 10_000] {
+            let pts: Vec<StrokePoint> = (0..n)
+                .map(|i| {
+                    point(
+                        (i as f32 % 200.0) * 0.5,
+                        (i as f32 / 200.0) * 0.3,
+                        0.4 + 0.5 * ((i as f32 * 0.017).sin()).abs(),
+                        i as u64 * 1000,
+                        2.0, // 잠금 폭 → halves fast path
+                    )
+                })
+                .collect();
+            let s = stroke(ToolType::Pen, pts);
+            // 예열 (할당/캐시 워밍).
+            for _ in 0..3 {
+                let mut me = Mesh::default();
+                m.append_stroke(&mut me, &s, 1_100);
+            }
+            let mut best = f64::MAX;
+            for _ in 0..7 {
+                let mut me = Mesh::default();
+                let t0 = Instant::now();
+                m.append_stroke(&mut me, &s, 1_100);
+                let dt = t0.elapsed().as_secs_f64();
+                best = best.min(dt);
+            }
+            let ns_per_pt = best * 1e9 / n as f64;
+            eprintln!(
+                "[P0-baseline] n={n} append_stroke: {:.0} µs total, {:.2} ns/pt",
+                best * 1e6,
+                ns_per_pt
+            );
+        }
     }
 }

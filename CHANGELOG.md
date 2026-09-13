@@ -46,7 +46,24 @@
 - `docs/ink-pipeline-design.md`: 실제 시그니처(tilt_mag, smoothing-raw), 앱 배선 표,
   `AppDeps` 컴포지션 루 섹션 반영.
 
+### 성능 — OPTIMIZATION.md + P0 계측 (추정 벤치)
+- **`docs/OPTIMIZATION.md` 신설**: live 잉크 렌더의 점당 비용 병목(live 5~7 O(n) 패스 +
+  할당 7+, `value_noise` 점당 ~16 해시)을 정리하고, **증분 tail O(k) + 근사/비트(노이즈 타일·LUT·
+  단일 패스·비트 플래그)** 전략의 **예상 절감 수치**(전체 재구성 −50~65%, 그리기 성장 경로 −90~99%,
+  할당 −80~90%)와 벤치 표를 문서화.
+- **P0 벤치 훅** `#[ignore]` `bench_live_render_cost_per_point` (`freedf-canvas/core_mesh.rs`):
+  `CoreRibbonMesher::append_stroke` 실측 — **n=1k: 560 µs(560 ns/pt), n=10k: 5.93 ms(593 ns/pt)**(debug).
+  OPTIMIZATION.md §4의 baseline을 실측치로 교체. CI에선 실행되지 않음(`ignored`).
+- **동작보존 최적화 구현 (성능 1차)** — 출력·결정성 그대로:
+  - `InkGrain::density_lr` + `value_noise_pair`/`ink_field_pair` (`freedf-core/ink.rs`): 단면(좌/우)
+    밀도가 같은 `u`를 쓰는 점에서 각 옥타브의 **x 공통 부분을 1번만** 계산 (해시 수는 유지).
+    parity 테스트 `density_lr_matches_two_density_calls`로 `density` 2회 호출과 동일함을 고정.
+  - `append_stroke_ribbon` 메시 용량 예약 (`freedf-canvas/core_mesh.rs`): realloc 방지.
+  - 실측: **n=1k 560→548 µs(−2.1%), n=10k 5933→5593 µs(−5.7%)** (debug). OPTIMIZATION.md §4에 실측 갱신.
+  - 큰 폭(50~65%)은 **시각을 바꾸는 근사**(노이즈 타일·LUT·절대 호 길이)로만 가능 → GUI 검증
+    필요로 **미구현 유지**하고 문서에 "P3 근사(추정)"로 구분.
+
 ### 검증
 - `cargo test -p freedf-core`: **209 passed / 0 failed** (단위 198 + 통합 11), 0 경고.
-- `cargo test -p freedf-canvas`: **29 passed / 0 failed**, 0 경고.
+- `cargo test -p freedf-canvas`: **29 passed / 0 failed / 1 ignored** (P0 벤치), 0 경고.
 - 워크스페이스 `cargo build`: **0 에러 / 0 경고**.
