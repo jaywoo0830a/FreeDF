@@ -1285,7 +1285,7 @@ impl FreeDfApp {
                 crate::ui::layout::hstack(ui, crate::ui::layout::SP_2, |ui| {
                     ui.label(egui::RichText::new("Settings").strong());
                     ui.label(
-                        egui::RichText::new("Esc 닫기 · Tab/↑↓로 구역 이동").weak().small(),
+                        egui::RichText::new("Esc to close · Tab / ↑↓ to switch sections").weak().small(),
                     );
                 });
                 crate::ui::layout::hseparator(ui);
@@ -1306,7 +1306,7 @@ impl FreeDfApp {
                                             let resp = ui
                                                 .selectable_label(selected == tab, tab.label())
                                                 .on_hover_text(format!(
-                                                    "{} — 이 설정 구역으로 전환합니다.",
+                                                    "{} — switch to this settings section",
                                                     tab.label(),
                                                 ));
                                             if resp.clicked() {
@@ -1326,7 +1326,7 @@ impl FreeDfApp {
                                 ui.set_min_size(egui::vec2(360.0, 380.0));
                                 ui.set_height(full_h);
                                 ui.label(
-                                    egui::RichText::new(format!("{} 설정", selected.label()))
+                                    egui::RichText::new(format!("{} settings", selected.label()))
                                         .strong(),
                                 );
                                 egui::ScrollArea::vertical()
