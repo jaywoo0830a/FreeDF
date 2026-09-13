@@ -21,6 +21,7 @@ pub(crate) mod buttons;
 pub(crate) mod components;
 pub(crate) mod containers;
 pub(crate) mod dialog;
+pub(crate) mod ds;
 pub(crate) mod form;
 pub(crate) mod layout;
 pub(crate) mod scroll;

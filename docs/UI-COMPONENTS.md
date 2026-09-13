@@ -11,7 +11,8 @@
 | FreeDF | React | Bootstrap | 역할 |
 |--------|-------|-----------|------|
 | `crate::ui::layout` | Layout primitives | `.d-flex`, grid, spacer | 배치(배열) 전용, 상태 무관 |
-| `crate::ui::components` | Atoms | `.badge`/`.form-text` 등 | 표시용 원자 |
+| `crate::ui::components` | Atoms | `.badge`/`.form-text` 등 | 표시용 원자(경량) |
+| `crate::ui::ds` | Design-system elements | `.badge`/`.alert`/`.card`/`<kbd>` | 세마틱 톤 기반 요소 |
 | `crate::ui::form` | Form controls | `.form-*` | 데이터 입력 빌더(props + 결과) |
 | `crate::ui::{icon_button..}` | <Button> | `.btn` | 툴바/버튼 원자 |
 | `app::toolbar::rows::*` | Containers | `<Page>` | 상태를 props에 연결해 조립 |

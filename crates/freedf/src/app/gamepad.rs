@@ -473,8 +473,7 @@ impl FreeDfApp {
         if lines.is_empty() {
             ui.label(egui::RichText::new("(no events)").weak().small());
         } else {
-            egui::ScrollArea::vertical()
-                .id_salt("gamepad_log_scroll")
+            crate::ui::scroll::scroll("gamepad_log")
                 .max_height(240.0)
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
@@ -518,7 +517,16 @@ impl FreeDfApp {
         ui.monospace(format!("build   : {profile}"));
         ui.monospace(format!("renderer: {renderer}"));
         ui.monospace(format!("pid     : {pid} · cpus: {cpus}"));
-        ui.monospace(format!("db      : {db}"));
+        // Connection status as a colored badge (design-system kit).
+        crate::ui::ds::badge(
+            ui,
+            if self.db_connected { "DB connected" } else { "DB offline" },
+            if self.db_connected {
+                crate::ui::ds::Tone::Success
+            } else {
+                crate::ui::ds::Tone::Warning
+            },
+        );
 
         ui.add_space(4.0);
         let block = format!(

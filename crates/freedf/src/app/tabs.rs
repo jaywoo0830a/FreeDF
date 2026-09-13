@@ -426,8 +426,11 @@ impl FreeDfApp {
 
     pub(crate) fn tabs_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("tabs_bar").show(ui, |ui| {
+            // Wrap the tab rail in our primitive container for even padding.
+            crate::ui::containers::container()
+                .pad_symmetric(8, 4)
+                .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-            ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(icon_text(ui, "New Note", icons::PLUS))
@@ -563,6 +566,7 @@ impl FreeDfApp {
                     }
                 }
             });
+                });
         });
     }
 }

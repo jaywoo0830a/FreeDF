@@ -20,6 +20,19 @@
   서버/매크로/게임패드)을 **단일 "Settings" 창(좌측 탭 레일 + 우측 내용)** 으로 통합.
   툴바의 각 `*_open` 요청이 해당 탭으로 라우팅되고 창을 닫으면 해제. `settings.rs`·`mod.rs`.
 - 그 외: 미사용이 된 `fast_ink_noise` App 필드/`form` import 제거, `ui::dialog::dialog` 헬퍼 제거(경고 0 유지).
+- **툴바 전체에 컴포넌트 키트 적용** — Row1~Row3의 모든 그룹 경계를 `layout::group`+`vdivider`,
+  행 조립은 `layout::vstack`+`hseparator`, `toolbar()` 패널은 `containers::container()` 래핑.
+  More 메뉴의 순수 텍스트 버튼을 3계층 `buttons::Button::secondary`로 교체. `rows.rs`/`toolbar/mod.rs`.
+- **툴바 키트 반복 적용(R2)** — Row2를 G1 Page/G2 Canvas/G3 ColorWheel/G4 Paper로 `layout::group`
+  세분화, Rotate 메뉴 4개 버튼을 `buttons::Button::secondary().enabled()`로, Paper 색 스와치 행을
+  `layout::hstack`(flex)로 래핑.
+- **디자인 시스템 키트 `ui::ds` + 자율 적용(R3)** — `Tone`·`badge`·`status_dot`·`alert`·`kbd`·`card`
+  를 `crate::ui::ds`로 신설(재사용, dead_code 유지). 상태바에 연결 배지(online/offline), Debug HUD
+  System에 `badge`(DB), 게임패드 로그에 `scroll` 키트 적용. Row3 펜/하이라이터 스와치를
+  `layout::hstack`(flex)로 래핑. (정리: `ui::components` 확장 블록은 `ui::ds`로 이관.)
+- **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
+  캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
+  여백/스타일이 컴포넌트 키트를 통해 일원화됨.
 - **웹 엘리먼트 라이브러리 확장(R1)** — `ui::components`에 `Tone`(세마틱 색)과 함께
   `badge`/`tag`/`alert`/`status_dot`/`progress`/`spinner`/`kbd`/`code`/`breadcrumb`/
   `divider_label`/`avatar`/`count`/`tabs`/`card` 추가(Bootstrap `.badge/.alert/.progress/…` 매핑).

@@ -183,21 +183,26 @@ const CANVAS_COLOR_PRESETS: [[u8; 4]; 4] = [
 impl FreeDfApp {
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(ui, |ui| {
-            // Compact spacing + padding; uniform control height for tidy rows
-            ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
+            // Wrap the whole ribbon in our primitive container for even padding.
+            crate::ui::containers::container()
+                .pad_symmetric(8, 4)
+                .show(ui, |ui| {
+                    // Compact spacing + padding; uniform control height for tidy rows
+                    ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                    ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
 
-            // Ribbon lines — laid out by the layout kit (`vstack` + `hseparator`).
-            crate::ui::layout::vstack(ui, crate::ui::layout::SP_2, |ui| {
-                self.row_top(ui);
-                crate::ui::layout::hseparator(ui);
-                self.row_pages(ui);
-                crate::ui::layout::hseparator(ui);
-                self.row_tools(ui);
-                crate::ui::layout::hseparator(ui);
-                self.search_row(ui);
-            });
+                    // Ribbon lines — laid out by the layout kit (`vstack` + `hseparator`).
+                    crate::ui::layout::vstack(ui, crate::ui::layout::SP_2, |ui| {
+                        self.row_top(ui);
+                        crate::ui::layout::hseparator(ui);
+                        self.row_pages(ui);
+                        crate::ui::layout::hseparator(ui);
+                        self.row_tools(ui);
+                        crate::ui::layout::hseparator(ui);
+                        self.search_row(ui);
+                    });
+                });
         });
 
         self.settings_windows(ui);

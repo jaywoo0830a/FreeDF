@@ -199,16 +199,25 @@ impl FreeDfApp {
             if ui.checkbox(&mut self.show_media, "Media").changed() {
                 self.media_refresh();
             }
-            if ui.button("Media Server...").clicked() {
+            if crate::ui::buttons::Button::secondary("Media Server...")
+                .show(ui)
+                .clicked()
+            {
                 self.server_msg = None;
                 self.server_settings_open = true;
             }
             ui.separator();
-            if ui.button("Macro...").clicked() {
+            if crate::ui::buttons::Button::secondary("Macro...")
+                .show(ui)
+                .clicked()
+            {
                 self.macro_capture = None;
                 self.macro_settings_open = true;
             }
-            if ui.button("Gamepad...").clicked() {
+            if crate::ui::buttons::Button::secondary("Gamepad...")
+                .show(ui)
+                .clicked()
+            {
                 self.gamepad_settings_open = true;
             }
             ui.separator();
@@ -238,6 +247,8 @@ impl FreeDfApp {
     pub(crate) fn row_pages(&mut self, ui: &mut egui::Ui) {
         toolbar_row(ui, "row2", |ui| {
             ui.horizontal(|ui| {
+                // G1: Page group
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 icon_label(ui, icons::FILES, "Page");
                 let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
                 // 메뉴 대신 **전용 플로팅 창**을 엽니다 — 메뉴 안에서는
@@ -252,29 +263,33 @@ impl FreeDfApp {
                     self.insert_page_open = true;
                 }
                 ui.menu_button(icon_text(ui, "Rotate Page", icons::REPEAT), |ui| {
-                    if ui
-                        .add_enabled(page_count > 0, egui::Button::new("Rotate current page CW"))
+                    if crate::ui::buttons::Button::secondary("Rotate current page CW")
+                        .enabled(page_count > 0)
+                        .show(ui)
                         .clicked()
                     {
                         ui.close();
                         self.rotate_page_action(true);
                     }
-                    if ui
-                        .add_enabled(page_count > 0, egui::Button::new("Rotate current page CCW"))
+                    if crate::ui::buttons::Button::secondary("Rotate current page CCW")
+                        .enabled(page_count > 0)
+                        .show(ui)
                         .clicked()
                     {
                         ui.close();
                         self.rotate_page_action(false);
                     }
-                    if ui
-                        .add_enabled(page_count > 0, egui::Button::new("Rotate all pages CW"))
+                    if crate::ui::buttons::Button::secondary("Rotate all pages CW")
+                        .enabled(page_count > 0)
+                        .show(ui)
                         .clicked()
                     {
                         ui.close();
                         self.rotate_all_pages_action(true);
                     }
-                    if ui
-                        .add_enabled(page_count > 0, egui::Button::new("Rotate all pages CCW"))
+                    if crate::ui::buttons::Button::secondary("Rotate all pages CCW")
+                        .enabled(page_count > 0)
+                        .show(ui)
                         .clicked()
                     {
                         ui.close();
@@ -293,10 +308,11 @@ impl FreeDfApp {
                 {
                     self.delete_page_action();
                 }
-                ui.separator();
+                }); // end G1 (Page) group
+                crate::ui::layout::vdivider(ui);
 
-                // Canvas (페이지 뒤 배경색) — 전용 설정 창.
-                // (Paper 그룹 앞에 배치 — 뒤에 두면 화면 밖으로 잘려 안 보임)
+                // G2: Canvas + Edge scroll group
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 icon_label(ui, icons::IMAGE, "Canvas Color");
                 let canvas_color = Color32::from_rgba_unmultiplied(
                     self.canvas_color[0],
@@ -325,8 +341,11 @@ impl FreeDfApp {
                 {
                     self.edge_scroll_settings_open = true;
                 }
-                ui.separator();
+                }); // end G2 (Canvas) group
+                crate::ui::layout::vdivider(ui);
 
+                // G3: Color wheel group
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 // Color wheel (원형 팔레트 색 지정) — 전용 설정 창.
                 if icon_button(
                     ui,
@@ -337,8 +356,11 @@ impl FreeDfApp {
                 {
                     self.wheel_settings_open = true;
                 }
-                ui.separator();
+                }); // end G3 (Color wheel) group
+                crate::ui::layout::vdivider(ui);
 
+                // G4: Paper group
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 // Paper (grid / ruling / color) — applied to the **current
                 // page**; new pages use these values as their defaults.
                 // "Apply to all" pushes the current values onto every page.
@@ -362,6 +384,8 @@ impl FreeDfApp {
                         "Paper style for the current page.\n\
                          New pages & new notes use it as their default.",
                     );
+                // Paper color swatches as a tightly-packed flex row.
+                crate::ui::layout::hstack(ui, crate::ui::layout::SP_1, |ui| {
                 for (i, paper) in PAPER_COLORS.iter().enumerate() {
                     let mut color =
                         Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
@@ -398,6 +422,7 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
+                }); // end paper swatch flex row
                 // 세부 설정 전용 창 트리거 — 크기/간격/줄 색·두께/전체 적용.
                 if icon_button(
                     ui,
@@ -410,6 +435,7 @@ impl FreeDfApp {
                 {
                     self.paper_settings_open = true;
                 }
+                }); // end G4 (Paper) group
             });
         });
     }
@@ -419,6 +445,7 @@ impl FreeDfApp {
         toolbar_row(ui, "row3", |ui| {
             ui.horizontal(|ui| {
                 // ── 도구 선택기 (드래그 앤 드롭 재정렬) — 특수 로직 유지 ──
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 let mut order = self.tool_order.clone();
                 let mut rects: Vec<egui::Rect> = Vec::with_capacity(order.len());
                 let mut src = self.tool_drag;
@@ -485,8 +512,11 @@ impl FreeDfApp {
                         }
                     }
                 }
-                ui.separator();
+                }); // end G1 (tool picker)
+                crate::ui::layout::vdivider(ui);
 
+                // G2: per-tool settings + refresh
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
                 match self.tool {
                     ToolType::Pen => {
                         egui::ComboBox::from_id_salt("family")
@@ -506,7 +536,8 @@ impl FreeDfApp {
                                 }
                             });
                         let swatches = Palette::swatches(self.color_family);
-                        // Round color swatches forming a neat color bar.
+                        // Round color swatches forming a neat color bar (flex row).
+                        crate::ui::layout::hstack(ui, crate::ui::layout::SP_1, |ui| {
                         for (i, swatch) in swatches.iter().enumerate() {
                             let mut color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
@@ -528,6 +559,7 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
+                        }); // end pen swatch flex row
                         // 계열 스와치 외의 원하는 색을 직접 고릅니다.
                         let mut pen_color = Color32::from_rgba_unmultiplied(
                             self.pen_color[0],
@@ -669,6 +701,8 @@ impl FreeDfApp {
                     ToolType::Highlighter => {
                         // GoodNotes 풍 파스텔 프리셋.
                         let swatches = Palette::highlighter_swatches();
+                        // GoodNotes-palette pastels (flex row).
+                        crate::ui::layout::hstack(ui, crate::ui::layout::SP_1, |ui| {
                         for (i, swatch) in swatches.iter().enumerate() {
                             let mut color = Color32::from_rgba_unmultiplied(
                                 swatch[0],
@@ -690,6 +724,7 @@ impl FreeDfApp {
                                 self.save_session();
                             }
                         }
+                        }); // end highlighter swatch flex row
                         let mut color = Color32::from_rgba_unmultiplied(
                             self.hi_color[0],
                             self.hi_color[1],
@@ -727,7 +762,7 @@ impl FreeDfApp {
                     }
                     ToolType::Pan => {}
                 }
-                ui.separator();
+                crate::ui::layout::vdivider(ui);
                 // 모니터 주사율 프리셋 — 필기 관련 페이싱(진행 획 재구성
                 // 주기·잉크 스밈 그라데이션)을 한 번에 바꿉니다.
                 let mut hz = self.refresh_hz;
@@ -756,6 +791,7 @@ impl FreeDfApp {
                     self.save_default_session();
                     self.save_session();
                 }
+                }); // end G2 (settings) group
             });
         });
     }

@@ -10,8 +10,9 @@
 //! Pair them with the layout kit (`crate::ui::layout`) and the composite
 //! toolbar in `crate::ui::toolbar` to build screens from small pieces.
 //!
-//! NOTE: some atom primitives are not consumed by a pressed feature yet, so we
-//! keep them quiet until the next module is wired onto them (`dead_code`).
+//! NOTE: the richer element set (badges / alerts / cards / …) lives in
+//! `crate::ui::ds`; this module keeps the light atoms. Unused atoms are kept
+//! quiet via `dead_code` until a feature wires them in.
 
 #![allow(dead_code)]
 
@@ -272,3 +273,6 @@ pub fn card<R>(
         .inner
 }
 }
+
+/// probe
+pub fn __probe_ok() {}

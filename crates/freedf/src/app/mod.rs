@@ -2741,11 +2741,25 @@ impl FreeDfApp {
                     return;
                 }
                 egui::Panel::bottom("status").show(ui, |ui| {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(msg));
-                    });
-                    ui.add_space(4.0);
+                    crate::ui::containers::container()
+                        .pad_symmetric(8, 4)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
+                                // Connection health (online / offline).
+                                let tone = if self.db_connected {
+                                    crate::ui::ds::Tone::Success
+                                } else {
+                                    crate::ui::ds::Tone::Warning
+                                };
+                                crate::ui::ds::status_dot(
+                                    ui,
+                                    tone,
+                                    if self.db_connected { "online" } else { "offline" },
+                                );
+                                ui.label(egui::RichText::new(msg));
+                            });
+                        });
                 });
             }
         }
@@ -3436,7 +3450,12 @@ impl eframe::App for FreeDfApp {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            self.canvas(ui);
+            // Wrap the drawing stage in our primitive container (framed page).
+            crate::ui::containers::container()
+                .pad_symmetric(8, 8)
+                .fill(ui.visuals().faint_bg_color)
+                .bordered(ui.visuals().widgets.noninteractive.bg_stroke.color, 1.0)
+                .show(ui, |ui| self.canvas(ui));
         });
 
         // 플로팅 복귀 장치: 크롬이 숨겨진(최소) 모드에서만 표시.
