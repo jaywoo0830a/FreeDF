@@ -7,7 +7,7 @@
 //! 비-Windows 빌드에서는 안전한 no-op입니다.
 //!
 //! 진단 도구: 설정 창([`FreeDfApp::gamepad_settings_ui`])과
-//! 디버그 패널([`FreeDfApp::gamepad_debug_ui`]) — 원시 축/버튼 값과
+//! 통합 Debug HUD 패널([`FreeDfApp::debug_hud_ui`]) — 원시 축/버튼 값과
 //! 이벤트 로그를 보여줍니다.
 
 use std::collections::VecDeque;
@@ -385,101 +385,100 @@ impl FreeDfApp {
             "Invert stick Y with CTRL (LB)",
             "Flip the vertical zoom direction while LB is held.",
         );
-        ui.add_space(8.0);
-        ui.separator();
-        let mut debug = self.gamepad_debug_open;
-        if form::check(
-            ui,
-            &mut debug,
-            "Show debug panel",
-            "Connection status, raw stick/button values and the event log.",
-        )
-        .changed()
-        {
-            self.gamepad_debug_open = debug;
-        }
     }
 
-    /// 게임패드 디버그 패널 — 원시 값 + 액션 카운터 + 이벤트 로그.
-    pub(crate) fn gamepad_debug_ui(&mut self, ui: &mut egui::Ui) {
-        let mut open = self.gamepad_debug_open;
-        egui::Window::new("Gamepad debug")
-            .default_width(360.0)
+    /// 통합 디버그 HUD — **한 개의 창** 안에 펜/캔버스 실시간 값과 게임패드
+    /// 원시 값·액션 카운터·이벤트 로그를 접이식 섹션으로 묶습니다.
+    /// (기존의 캔버스 오버레이 "Debug HUD" + 분리된 "Gamepad debug" 창을 통합.)
+    pub(crate) fn debug_hud_ui(&mut self, ui: &mut egui::Ui) {
+        let mut open = self.debug_hud;
+        egui::Window::new("Debug HUD")
+            .default_width(400.0)
             .open(&mut open)
             .show(ui.ctx(), |ui| {
                 crate::ui::dialog::pad(ui, false, |ui| {
-                    match self.gamepad_last {
-                        Some(g) => {
-                            let green = crate::theme::nord::semantic::COLOR_SUCCESS;
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new("● Connected").color(green));
-                                ui.label(
-                                    egui::RichText::new(format!("speed {} pt/s", self.gamepad_cfg.speed))
-                                        .weak(),
-                                );
-                            });
-                            ui.label(format!(
-                                "Left stick   X={:+.2}   Y={:+.2}",
-                                g.stick.x, g.stick.y
-                            ));
-                            ui.label(format!(
-                                "D-pad   up={} down={} left={} right={}",
-                                if g.d_up { "●" } else { "-" },
-                                if g.d_down { "●" } else { "-" },
-                                if g.d_left { "●" } else { "-" },
-                                if g.d_right { "●" } else { "-" },
-                            ));
-                            ui.label(format!(
-                                "LB(CTRL)={}   LT(Ctrl+Z)={:.2}",
-                                if g.lb { "held" } else { "-" },
-                                g.lt
-                            ));
-                        }
-                        None => {
-                            ui.label(
-                                egui::RichText::new("No gamepad connected")
-                                    .weak(),
-                            );
-                        }
-                    }
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Page flips {} · zooms {} · undos {}",
-                            self.gamepad_flips, self.gamepad_zooms, self.gamepad_undos
-                        ))
-                        .weak(),
-                    );
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.strong("Event log");
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Clear").clicked() {
-                                gamepad_log_clear();
-                            }
-                            if ui.button("Copy").clicked() {
-                                let lines = gamepad_log_snapshot();
-                                ui.ctx()
-                                    .copy_text(lines.join("\n"));
-                            }
-                        });
+                    form::fieldset(ui, "hud_pen", "Pen / Canvas", true, |ui| {
+                        self.debug_pen_section(ui);
                     });
-                    let lines = gamepad_log_snapshot();
-                    if lines.is_empty() {
-                        ui.label(egui::RichText::new("(no events)").weak().small());
-                    } else {
-                        egui::ScrollArea::vertical()
-                            .id_salt("gamepad_log_scroll")
-                            .max_height(240.0)
-                            .stick_to_bottom(true)
-                            .show(ui, |ui| {
-                                for l in &lines {
-                                    ui.label(egui::RichText::new(l).monospace().size(12.0));
-                                }
-                            });
-                    }
+                    form::fieldset(ui, "hud_gamepad", "Gamepad", false, |ui| {
+                        self.gamepad_debug_section(ui);
+                    });
                 });
             });
-        self.gamepad_debug_open = open;
+        self.debug_hud = open;
+    }
+
+    /// 게임패드 디버그 섹션 — 연결 상태 + 원시 축/버튼 + 액션 카운터 + 이벤트 로그.
+    fn gamepad_debug_section(&mut self, ui: &mut egui::Ui) {
+        match self.gamepad_last {
+            Some(g) => {
+                let green = crate::theme::nord::semantic::COLOR_SUCCESS;
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("● Connected").color(green));
+                    ui.label(
+                        egui::RichText::new(format!("speed {} pt/s", self.gamepad_cfg.speed))
+                            .weak(),
+                    );
+                });
+                ui.label(format!(
+                    "Left stick   X={:+.2}   Y={:+.2}",
+                    g.stick.x, g.stick.y
+                ));
+                ui.label(format!(
+                    "D-pad   up={} down={} left={} right={}",
+                    if g.d_up { "●" } else { "-" },
+                    if g.d_down { "●" } else { "-" },
+                    if g.d_left { "●" } else { "-" },
+                    if g.d_right { "●" } else { "-" },
+                ));
+                ui.label(format!(
+                    "LB(CTRL)={}   LT(Ctrl+Z)={:.2}",
+                    if g.lb { "held" } else { "-" },
+                    g.lt
+                ));
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("No gamepad connected")
+                        .weak(),
+                );
+            }
+        }
+        ui.label(
+            egui::RichText::new(format!(
+                "Page flips {} · zooms {} · undos {}",
+                self.gamepad_flips, self.gamepad_zooms, self.gamepad_undos
+            ))
+            .weak(),
+        );
+        ui.add_space(4.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.strong("Event log");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Clear").clicked() {
+                    gamepad_log_clear();
+                }
+                if ui.button("Copy").clicked() {
+                    let lines = gamepad_log_snapshot();
+                    ui.ctx()
+                        .copy_text(lines.join("\n"));
+                }
+            });
+        });
+        let lines = gamepad_log_snapshot();
+        if lines.is_empty() {
+            ui.label(egui::RichText::new("(no events)").weak().small());
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt("gamepad_log_scroll")
+                .max_height(240.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for l in &lines {
+                        ui.label(egui::RichText::new(l).monospace().size(12.0));
+                    }
+                });
+        }
     }
 }

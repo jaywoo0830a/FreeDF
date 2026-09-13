@@ -28,6 +28,14 @@
 - `ink.rs::commit_dot`(탭 점)도 동일 파이프라인 down→up 경유.
 - `ActiveStroke::push` 제거(미사용).
 
+### UI — 통합 디버그 HUD
+- 흩어져 있던 **펜/캔버스 오버레이**와 **분리된 "Gamepad debug" 창**을 **한 개의
+  `Debug HUD` 윈도우**로 통합 (`crates/freedf/src/app/gamepad.rs::debug_hud_ui`).
+  - `Pen / Canvas`(기본 열림) + `Gamepad`(기본 닫힘) 접이식 섹션을
+    `form::fieldset`으로 구성. 토글(이미지 근사 등)은 `form::check` 사용.
+  - 단일 토글 `debug_hud`로 열고 닫으며, 창 ✕로 닫아도 상태가 동기화.
+  - 캔버스 오버레이 `Area`(paint_debug_hud)와 게임패드 전용 창/`gamepad_debug_open`
+    필드 제거, 로그는 전부 영어로 통일 (한국어 "수신됨/없음/off(…)" → 영어).
 ### 서비스 계층 — 인터페이스화 + 컴포지션 루
 - **`BakeService` 비제네릭화** (`freedf-canvas/bake.rs`): `W: BakeWorker` 제네릭 →
   `Arc<Box<dyn BakeWorker + Send + Sync + 'static>>` 보유. `start(Box<dyn BakeWorker>)`로 생성.

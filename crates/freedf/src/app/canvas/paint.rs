@@ -1,14 +1,17 @@
 //! 캔버스 그리기 — 스트로크/용지/병합 잉크 메시/커스텀 커서/디버그 HUD.
 
+use crate::ui::form;
 use super::*;
 
 impl FreeDfApp {
-    /// 실시간 입력 디버그 HUD — 필압/틸트/속도/폭이 실제로 어떻게 들어오는지
+    /// 실시간 입력 디버그 섹션 — 필압/틸트/속도/폭이 실제로 어떻게 들어오는지
     /// 바로 확인할 수 있습니다 (입력 장치가 필압을 보고하지 않으면 pressure가
-    /// 계속 1.0으로 표시됩니다).
-    pub(crate) fn paint_debug_hud(&mut self, ctx: &egui::Context, origin: Pos2) {
-        let pressure = self.sample_pressure(ctx);
-        let (_, p_src) = self.pressure_source(ctx);
+    /// 계속 1.0으로 표시됩니다). 통합 Debug HUD 윈도우의 "Pen / Canvas"
+    /// 접이식 섹션 안에서 렌더됩니다.
+    pub(crate) fn debug_pen_section(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let pressure = self.sample_pressure(&ctx);
+        let (_, p_src) = self.pressure_source(&ctx);
         let (speed, tip_w, pts_n) = match &self.active_stroke {
             Some(st) if st.points.len() >= 2 => {
                 let n = st.points.len();
@@ -57,75 +60,69 @@ impl FreeDfApp {
                 self.pen_profile.tilt_k,
             )
         };
-        let pen_src: &str = if cfg!(target_os = "windows") {
+        let pen_source: &str = if cfg!(target_os = "windows") {
             "OTD"
         } else {
             "evdev"
         };
-        egui::Area::new(egui::Id::new("freedf_debug_hud"))
-            .fixed_pos(origin + egui::vec2(16.0, 16.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(220.0);
-                    ui.strong("Debug HUD");
-                    // 시각 근사 토글 — 켜면 고주파(위킹) 옥타브를 생략해 질감 계산이
-                    // 절반으로 줄어듭니다. 눈으로 정확 2옥타브와 비교해 보세요.
-                    let mut fast = self.fast_ink_noise;
-                    if ui.checkbox(&mut fast, "Fast ink noise (고주파 생략)").changed() {
-                        self.fast_ink_noise = fast;
-                        self.pen_grain.fast_noise = fast;
-                        self.fountain_grain.fast_noise = fast;
-                    }
-                    ui.label(format!(
-                        "device: {device}  (touch events/frame: {touch_events})"
-                    ));
-                    ui.label(format!(
-                        "pressure: {pressure:.3}  (src: {p_src})"
-                    ));
-                    ui.label(format!(
-                        "tilt: [{:+.0}°, {:+.0}°]  (src: {})",
-                        self.pen_tilt[0],
-                        self.pen_tilt[1],
-                        if self.pen_monitor.is_some() {
-                            pen_src
-                        } else {
-                            "없음"
-                        }
-                    ));
-                    ui.label(format!(
-                        "pen buttons: b1={} b2={}",
-                        self.pen_buttons.button1, self.pen_buttons.button2
-                    ));
-                    ui.label(format!("tip speed: {speed:.0} pt/s"));
-                    ui.label(format!("tip width: {tip_w:.2} pt"));
-                    ui.label(format!("active points: {pts_n}"));
-                    ui.label(format!(
-                        "pen stream: {}",
-                        match self.last_pen_state_ms {
-                            Some(t) => format!("수신됨 ({}ms 전)", self.now_ms().saturating_sub(t)),
-                            None => "수신 없음 — OTD/장치 확인".to_string(),
-                        }
-                    ));
-                    if let Some(v) = &self.pen_verdict {
-                        ui.label(format!("verdict: {v}"));
-                    }
-                    let pacing = self.ink_pacing();
-                    ui.label(format!(
-                        "render: ribbon ≈ O(n) · {}Hz preset (re-bake {:.0}ms, soak ×{:.2})",
-                        self.refresh_hz, pacing.active_geom_ms, pacing.soak_scale
-                    ));
-                    ui.label(format!("fps: {fps:.0}"));
-                    ui.separator();
-                    ui.label(format!(
-                        "model: p_k={p_k:.2}  speed_ref/max={s_ref:.0}  tilt_k={t_k:.2}"
-                    ));
-                    ui.label(format!(
-                        "tool: {}",
-                        if is_fountain { "Fountain" } else { "Pen" }
-                    ));
-                });
-            });
+
+        // 시각 근사 토글 — 켜면 고주파(위킹) 옥타브를 생략해 질감 계산이
+        // 절반으로 줄어듭니다. 눈으로 정확 2옥타브와 비교해 보세요.
+        let mut fast = self.fast_ink_noise;
+        if form::check(
+            ui,
+            &mut fast,
+            "Fast ink noise",
+            "Skip the high-frequency (wicking) octave for ~2× faster grain; compare against the full 2-octave look.",
+        )
+        .changed()
+        {
+            self.fast_ink_noise = fast;
+            self.pen_grain.fast_noise = fast;
+            self.fountain_grain.fast_noise = fast;
+        }
+        ui.label(format!(
+            "device: {device}  (touch events/frame: {touch_events})"
+        ));
+        ui.label(format!("pressure: {pressure:.3}  (src: {p_src})"));
+        ui.label(format!(
+            "tilt: [{:+.0}°, {:+.0}°]  (src: {})",
+            self.pen_tilt[0],
+            self.pen_tilt[1],
+            if self.pen_monitor.is_some() {
+                pen_source
+            } else {
+                "none"
+            }
+        ));
+        ui.label(format!(
+            "pen buttons: b1={} b2={}",
+            self.pen_buttons.button1, self.pen_buttons.button2
+        ));
+        ui.label(format!("tip speed: {speed:.0} pt/s"));
+        ui.label(format!("tip width: {tip_w:.2} pt"));
+        ui.label(format!("active points: {pts_n}"));
+        ui.label(format!(
+            "pen stream: {}",
+            match self.last_pen_state_ms {
+                Some(t) => format!("received ({}ms ago)", self.now_ms().saturating_sub(t)),
+                None => "no input — check OTD/device".to_string(),
+            }
+        ));
+        if let Some(v) = &self.pen_verdict {
+            ui.label(format!("verdict: {v}"));
+        }
+        let pacing = self.ink_pacing();
+        ui.label(format!(
+            "render: ribbon ≈ O(n) · {}Hz preset (re-bake {:.0}ms, soak ×{:.2})",
+            self.refresh_hz, pacing.active_geom_ms, pacing.soak_scale
+        ));
+        ui.label(format!("fps: {fps:.0}"));
+        ui.separator();
+        ui.label(format!(
+            "model: p_k={p_k:.2}  speed_ref/max={s_ref:.0}  tilt_k={t_k:.2}"
+        ));
+        ui.label(format!("tool: {}", if is_fountain { "Fountain" } else { "Pen" }));
     }
 
     /// 종이 질감은 이제 **페이지 래스터에 곱셈 합성**됩니다

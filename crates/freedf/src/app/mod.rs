@@ -1152,8 +1152,6 @@ pub struct FreeDfApp {
     gamepad: Option<gilrs::Gilrs>,
     /// 게임패드 설정 창 열림.
     gamepad_settings_open: bool,
-    /// 게임패드 디버그 패널 표시.
-    gamepad_debug_open: bool,
     /// 게임패드 런타임 설정 (설정 창에서 편집).
     gamepad_cfg: gamepad::GamepadCfg,
     /// 디버그 패널용 — 마지막 프레임 원시 상태.
@@ -1637,7 +1635,6 @@ impl FreeDfApp {
             #[cfg(target_os = "windows")]
             gamepad: None,
             gamepad_settings_open: false,
-            gamepad_debug_open: false,
             gamepad_cfg: gamepad::GamepadCfg::default(),
             gamepad_last: None,
             gamepad_dpad_prev: [false; 4],
@@ -3451,8 +3448,8 @@ impl eframe::App for FreeDfApp {
         self.connection_dialog(&ctx);
         self.fallback_dialog(&ctx);
         self.loading_overlay(&ctx);
-        if self.gamepad_debug_open {
-            self.gamepad_debug_ui(ui);
+        if self.debug_hud {
+            self.debug_hud_ui(ui);
         }
 
         // Close confirmation: ask whether to save before quitting.

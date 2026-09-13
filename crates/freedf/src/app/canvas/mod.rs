@@ -245,7 +245,7 @@ impl FreeDfApp {
     /// (압력, 출처) — 진단 로그가 어느 입력이 실제로 쓰였는지 알 수 있게 합니다.
     pub(crate) fn pressure_source(&self, ctx: &egui::Context) -> (f32, &'static str) {
         if !self.pressure_enabled {
-            return (1.0, "off(체크박스)");
+            return (1.0, "off");
         }
         if let Some(p) = self.live_pressure {
             return (p.clamp(0.0, 1.0), "pen-monitor");
@@ -961,10 +961,8 @@ impl FreeDfApp {
             ctx.request_repaint(); // 숨쉬는 애니메이션 유지.
         }
 
-        // Debug HUD — 실시간 입력값 확인용 오버레이.
-        if self.debug_hud {
-            self.paint_debug_hud(&ctx, origin);
-        }
+        // Debug HUD — 실시간 입력값 확인용 오버레이는 이제 통합
+        // Debug HUD 윈도우(`debug_hud_ui`) 안의 "Pen / Canvas" 섹션으로 렌더됩니다.
 
         // Zoom hint
         if self.document.is_some() && self.view.zoom >= 4.0 {
