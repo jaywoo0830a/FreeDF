@@ -193,11 +193,11 @@ impl FreeDfApp {
                 ui.spacing_mut().interact_size =
                     egui::vec2(0.0, crate::ui::scale::S_32); // 표준 버튼 높이(만 28→32)
 
-                self.row_top(ui);
+                self.row_workspace(ui);
                 crate::ui::layout::hseparator(ui);
-                self.row_pages(ui);
+                self.row_page(ui);
                 crate::ui::layout::hseparator(ui);
-                self.row_tools(ui);
+                self.row_ink(ui);
                 crate::ui::layout::hseparator(ui);
                 self.search_row(ui);
             });
@@ -207,7 +207,7 @@ impl FreeDfApp {
     }
 }
 
-mod rows;
+mod ribbon;
 mod settings;
 pub(crate) use settings::SettingsTab;
 pub(crate) mod macros;

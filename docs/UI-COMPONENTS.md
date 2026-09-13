@@ -15,7 +15,7 @@
 | `crate::ui::ds` | Design-system elements | `.badge`/`.alert`/`.card`/`<kbd>` | 세마틱 톤 기반 요소 |
 | `crate::ui::form` | Form controls | `.form-*` | 데이터 입력 빌더(props + 결과) |
 | `crate::ui::{icon_button..}` | <Button> | `.btn` | 툴바/버튼 원자 |
-| `app::toolbar::rows::*` | Containers | `<Page>` | 상태를 props에 연결해 조립 |
+| `app::toolbar::ribbon::*` | Containers | `<Page>` | 상태를 props에 연결해 조립 |
 | `app::FreeDfApp` | Root component | App state | 전역 상태 단일 소스 |
 
 원칙: **상태 접근은 컨테이너(rows/panels)에서만**, 표시는 `crate::ui` 컴포넌트가.
@@ -28,27 +28,40 @@
 ```
 TopBar (Panel::top — app/toolbar/mod.rs::toolbar)
 └─ layout::vstack (행 사이 여백)
-   ├─ layout::toolbar_row "row1"   ── 파일/패널/편집 (toolbar::rows::row_top)
-   │   ├─ group "Window"   Hide UI · Window Focus
+   ├─ layout::toolbar_row "workspace" ── 워크스페이스 (ribbon::row_workspace)
+   │   ├─ Hide UI                          (크롬)
    │   ├─ vdivider
-   │   ├─ group "Panels"   Library · Outline · Bookmarks · Palette  (toolbar_panel_group)
+   │   ├─ group "View"    Library · Outline · Bookmarks · Palette  (toolbar_panel_group)
    │   ├─ vdivider
-   │   ├─ group "Edit"     Undo · Redo · Clear Page
+   │   ├─ group "Edit"    Undo · Redo · Clear Page
    │   ├─ vdivider
-   │   ├─ group "File"     Save Edits · Load Edits
-   │   └─ vdivider + group "More"  (toolbar_overflow_menu)
-   │        └─ menu: Align L/C/R · Dictionary · Media · Media Server ·
-   │                 Macro · Gamepad · Cache · Debug HUD
+   │   ├─ group "File"    Save Edits · Load Edits
+   │   ├─ vdivider
+   │   └─ Settings(⚙ 전역) · More(⋯)        (overflow_menu)
+   │        └─ 주제별 섹션: Page · View · Lookup · Input · Server ·
+   │                       Maintenance · Diagnostics
    ├─ layout::hseparator
-   ├─ layout::toolbar_row "row2"   ── 페이지/캔버스/종이 (row_pages)
+   ├─ layout::toolbar_row "page" ── 페이지/종이/캔버스 (ribbon::row_page)
+   │   ├─ group "Page"    Insert · Delete · Rotate         (page_group)
+   │   ├─ vdivider
+   │   ├─ group "Paper"   Style · Swatches · Custom · ⚙    (paper_group)
+   │   └─ vdivider + group "Canvas"  Swatch · Edge auto scroll (canvas_group)
    ├─ layout::hseparator
-   ├─ layout::toolbar_row "row3"   ── 도구/색/폭 (row_tools)
+   ├─ layout::toolbar_row "ink" ── 도구/잉크 (ribbon::row_ink)
+   │   ├─ group "Tools"         tool picker (drag-reorder) (ink_tool_picker)
+   │   ├─ vdivider
+   │   ├─ group "Tool options"  per-tool color/width/toggles + ⚙ Draw
+   │   │                        (ink_tool_options → ink_pen_options 등)
+   │   └─ vdivider + group "Pacing"  Refresh Hz            (ink_pacing_group)
    ├─ layout::hseparator
-   └─ layout::toolbar_row "search"  (Ctrl+F 시만)
+   └─ layout::toolbar_row "search"  (Ctrl+F 시만, ribbon::search_row)
 ```
 
 **그룹 규칙**: 각 논리 그룹은 `layout::group(gap, …)`으로 묶고, 그룹 사이는
 `layout::vdivider`로 구분. 행 사이는 `layout::hseparator`.
+**단일 홈**: 설정 진입은 Row1의 전역 `Settings` 기어와 Row3의 도구별 `Draw`
+기어 **2곳**. Debug HUD · Dictionary · Window Focus 토글은 `More`에만 존재하며
+설정 창의 중복 입력은 제거됩니다.
 
 ---
 

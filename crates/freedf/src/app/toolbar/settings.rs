@@ -214,18 +214,6 @@ impl FreeDfApp {
                 self.save_default_session();
                 self.save_session();
             }
-            if form::check(
-                ui,
-                &mut self.debug_hud,
-                "Debug HUD",
-                "Live input overlay: pressure, tilt, tip speed, tip width.\n\
-                 Use it to check what your device actually reports.",
-            )
-            .changed()
-            {
-                self.save_default_session();
-                self.save_session();
-            }
         });
     }
 
