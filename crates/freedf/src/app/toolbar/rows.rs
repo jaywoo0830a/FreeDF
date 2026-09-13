@@ -5,7 +5,7 @@
 //! 도구 피커의 드래그 재정렬은 특수 로직이라 원본 egui 코드를 유지합니다.
 
 use super::*;
-use crate::ui::{icon_button, icon_label, icon_select, icon_toggle, IconButton};
+use crate::ui::{icon_button, icon_label, IconButton};
 impl FreeDfApp {
     /// Row 1: 패널 토글, 북마크, 정렬, Undo/Redo/Clear, Save/Load, Hide UI.
     pub(crate) fn row_top(&mut self, ui: &mut egui::Ui) {
@@ -50,33 +50,25 @@ impl FreeDfApp {
                 });
                 crate::ui::layout::vdivider(ui);
 
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::ARROW_COUNTER_CLOCKWISE, "Undo")
-                        .enabled(self.history.can_undo())
-                        .hint("Undo (Ctrl+Z)"),
-                )
-                .clicked()
-                {
+                // "하나의 액션 = 한 곳": Undo/Redo/Clear는 선언형 액션 바의 스펙 한 칸.
+                let undo = 0;
+                let redo = 1;
+                let clear = 2;
+                let hit = crate::ui::actionbar::ActionBar::new()
+                    .add(undo, icons::ARROW_COUNTER_CLOCKWISE, "Undo")
+                    .hint("Undo (Ctrl+Z)")
+                    .enabled(self.history.can_undo())
+                    .add(redo, icons::ARROW_CLOCKWISE, "Redo")
+                    .hint("Redo (Ctrl+Y)")
+                    .enabled(self.history.can_redo())
+                    .add(clear, icons::X_CIRCLE, "Clear Page")
+                    .hint("Clear all ink on this page")
+                    .show(ui);
+                if hit == Some(undo) {
                     self.undo();
-                }
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::ARROW_CLOCKWISE, "Redo")
-                        .enabled(self.history.can_redo())
-                        .hint("Redo (Ctrl+Y)"),
-                )
-                .clicked()
-                {
+                } else if hit == Some(redo) {
                     self.redo();
-                }
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::X_CIRCLE, "Clear Page")
-                        .hint("Clear all ink on this page"),
-                )
-                .clicked()
-                {
+                } else if hit == Some(clear) {
                     self.clear_page();
                 }
                 crate::ui::layout::vdivider(ui);
@@ -112,60 +104,40 @@ impl FreeDfApp {
     /// 세 패널은 상호 배타적(어느 하나 켜면 나머지 자동 해제)이고, Palette는
     /// 독립 토글입니다. (React의 <PanelToggles>에 해당하는 컨테이너 컴포넌트.)
     fn toolbar_panel_group(&mut self, ui: &mut egui::Ui) {
-        if icon_toggle(
-            ui,
-            &mut self.show_library,
-            icons::NOTEBOOK,
-            "Library",
-            "Library (notes, PDFs, recents) — exclusive",
-        )
-        .changed()
-        {
+        let lib = 0;
+        let out = 1;
+        let bm = 2;
+        let pal = 3;
+        // 상태 바인딩 토글 — egui가 값을 직접 갱신하므로 여기선 부수효과만.
+        let hit = crate::ui::actionbar::ActionBar::new()
+            .add_toggle(lib, icons::NOTEBOOK, "Library", &mut self.show_library)
+            .hint("Library (notes, PDFs, recents) — exclusive")
+            .add_toggle(out, icons::LIST_BULLETS, "Outline", &mut self.show_outline)
+            .hint("Outline — exclusive")
+            .add_toggle(bm, icons::BOOKMARKS_SIMPLE, "Bookmarks", &mut self.show_bookmarks)
+            .hint("Bookmarked pages — exclusive")
+            .add_toggle(pal, icons::PALETTE, "Palette", &mut self.show_palette)
+            .hint("Writing-tool color palette (right side of canvas)")
+            .show(ui);
+        if hit == Some(lib) {
             // Library / Outline / Bookmarks는 어디서든 상호 베타적.
             if self.show_library {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Library);
             }
             self.save_session();
-        }
-        if icon_toggle(
-            ui,
-            &mut self.show_outline,
-            icons::LIST_BULLETS,
-            "Outline",
-            "Outline — exclusive",
-        )
-        .changed()
-        {
+        } else if hit == Some(out) {
             if self.show_outline {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Outline);
             }
             self.save_session();
-        }
-        if icon_toggle(
-            ui,
-            &mut self.show_bookmarks,
-            icons::BOOKMARKS_SIMPLE,
-            "Bookmarks",
-            "Bookmarked pages — exclusive",
-        )
-        .changed()
-        {
+        } else if hit == Some(bm) {
             if self.show_bookmarks {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Bookmarks);
             }
-        }
-        if icon_toggle(
-            ui,
-            &mut self.show_palette,
-            icons::PALETTE,
-            "Palette",
-            "Writing-tool color palette (right side of canvas)",
-        )
-        .changed()
-        {
+        } else if hit == Some(pal) {
             self.save_default_session();
         }
     }
@@ -176,17 +148,29 @@ impl FreeDfApp {
         ui.menu_button("More", |ui| {
             ui.set_min_width(300.0);
             // 정렬 — 상단 상주에서 메뉴로 이동 (패널 상태와 무관하게 동작).
-            let aligns = [
-                (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
-                (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
-                (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
-            ];
-            for (a, ic, hint) in aligns {
-                if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
-                    self.page_align = a;
-                    self.realign();
-                    self.save_session();
-                }
+            let left = 0;
+            let center = 1;
+            let right = 2;
+            let hit = crate::ui::actionbar::ActionBar::new()
+                .add_select(left, icons::TEXT_ALIGN_LEFT, "", self.page_align == PageAlign::Left)
+                .hint("Align left")
+                .add_select(center, icons::TEXT_ALIGN_CENTER, "", self.page_align == PageAlign::Center)
+                .hint("Align center")
+                .add_select(right, icons::TEXT_ALIGN_RIGHT, "", self.page_align == PageAlign::Right)
+                .hint("Align right")
+                .show(ui);
+            if hit == Some(left) {
+                self.page_align = PageAlign::Left;
+                self.realign();
+                self.save_session();
+            } else if hit == Some(center) {
+                self.page_align = PageAlign::Center;
+                self.realign();
+                self.save_session();
+            } else if hit == Some(right) {
+                self.page_align = PageAlign::Right;
+                self.realign();
+                self.save_session();
             }
             ui.separator();
             if ui

@@ -36,6 +36,12 @@
 - **서버 설정·연결 다이얼로그 키트화(R5)** — Connect/Reconnect·Save를 `buttons::Button::{primary,
   secondary}`로, 연결 결과를 `ds::alert`(Success/Danger)로 전환. `ds::alert` 메시지도
   `Into<String>`로 유연화.
+- **툴바 재설계 밀스톤 1(R6)** — "하나의 액션 = 한 곳" 원칙 청사진
+  `docs/DESIGN-TOOLBAR.md` 수립. 선언형 액션 바 `ui::actionbar::ActionBar` 신설하고
+  Row1의 Undo/Redo/Clear를 스펙 기반(React식)으로 전환.
+- **툴바 재설계 밀스톤 2(R7)** — `ActionBar`에 `Toggle`(상태 바인딩)·`Select`(라디오)
+  지원 추가. Row1 패널 토글(Library/Outline/Bookmarks/Palette)과 More의 정렬 라디오를
+  스펙으로 전환 — egui 상태 갱신은 팩토리가, 호출부는 부수효과만.
 - **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
   캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
   여백/스타일이 컴포넌트 키트를 통해 일원화됨.
