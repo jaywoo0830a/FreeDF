@@ -353,16 +353,8 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
     resp.clicked()
 }
 
-/// Renders a left-aligned row of controls in the toolbar.
-/// 내용이 창 폭을 넘으면 가로 스크롤로 접근할 수 있게 합니다 (툴바 항목이
-/// 화면 밖으로 잘려 "보이지 않는 버튼"이 생기지 않도록 — 예: Color wheel).
-fn toolbar_row<R>(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::ScrollArea::horizontal()
-        .id_salt(("toolbar_row", salt))
-        .auto_shrink([false, true])
-        .show(ui, |ui| ui.horizontal(|ui| add(ui)).inner)
-        .inner
-}
+/// 레이아웃 키트의 스크롤 툴바 행 — `crate::ui::layout`에서 재사용.
+pub(crate) use crate::ui::toolbar_row;
 
 /// 동그란 색상 스와치를 그립니다. `selected`면 강조 링, 아니면 옅은 테두리.
 /// `id_salt`는 호출 지점마다 고유해야 합니다 (예: 인덱스 포함).
@@ -915,6 +907,10 @@ pub struct FreeDfApp {
     pen_profile: BallPenProfile,
     /// 펜 커서 모양 (펜 도구일 때)
     pen_cursor_style: PenCursorStyle,
+    /// 토스트 알림 큐 (UI 오버레이, 우상단).
+    toasts: crate::ui::toast::ToastQueue,
+    /// 시작 시 환영 토스트를 띄웠는지 (1회만).
+    toast_welcomed: bool,
     /// 도구 선택기 순서 (드래그 앤 드롭 재정렬)
     tool_order: Vec<ToolType>,
     /// 드래그 앤 드롭 상태 (임시)
@@ -1526,6 +1522,8 @@ impl FreeDfApp {
             pressure_enabled,
             pen_profile,
             pen_cursor_style: PenCursorStyle::Round,
+            toasts: crate::ui::toast::ToastQueue::new(),
+            toast_welcomed: false,
             tool_order,
             tool_drag: None,
             tool_drop: None,
@@ -3454,6 +3452,20 @@ impl eframe::App for FreeDfApp {
         if self.debug_hud {
             self.debug_hud_ui(ui);
         }
+
+        // 토스트 알림 (우상단, 시간 경과 시 자동 소멸).
+        if !self.toast_welcomed {
+            self.toast_welcomed = true;
+            let now = ctx.input(|i| i.time) * 1000.0;
+            use crate::ui::toast::ToastKind;
+            self.toasts.push(
+                ToastKind::Info,
+                "FreeDF ready",
+                "Component UI kit (3-tier buttons, layout, toast) is live.",
+                now,
+            );
+        }
+        self.toasts.show(&ctx);
 
         // Close confirmation: ask whether to save before quitting.
         let close_requested = ctx.input(|i| i.viewport().close_requested());

@@ -44,66 +44,11 @@ impl FreeDfApp {
                 {
                     self.window_focus_settings_open = true;
                 }
-                ui.separator();
-                if icon_toggle(
-                    ui,
-                    &mut self.show_library,
-                    icons::NOTEBOOK,
-                    "Library",
-                    "Library (notes, PDFs, recents) — exclusive",
-                )
-                .changed()
-                {
-                    // Library / Outline / Bookmarks는 어디서든 상호 베타적.
-                    if self.show_library {
-                        [self.show_library, self.show_outline, self.show_bookmarks] =
-                            exclusive_panel_on(PanelKind::Library);
-                    }
-                    self.save_session();
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.show_outline,
-                    icons::LIST_BULLETS,
-                    "Outline",
-                    "Outline — exclusive",
-                )
-                .changed()
-                {
-                    if self.show_outline {
-                        [self.show_library, self.show_outline, self.show_bookmarks] =
-                            exclusive_panel_on(PanelKind::Outline);
-                    }
-                    self.save_session();
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.show_bookmarks,
-                    icons::BOOKMARKS_SIMPLE,
-                    "Bookmarks",
-                    "Bookmarked pages — exclusive",
-                )
-                .changed()
-                {
-                    if self.show_bookmarks {
-                        [self.show_library, self.show_outline, self.show_bookmarks] =
-                            exclusive_panel_on(PanelKind::Bookmarks);
-                    }
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.show_palette,
-                    icons::PALETTE,
-                    "Palette",
-                    "Writing-tool color palette (right side of canvas)",
-                )
-                .changed()
-                {
-                    self.save_default_session();
-                }
-                // (자주 안 쓰는 도구/설정 — Dictionary, Macro, Gamepad, Server, 정렬 등 은
-                // 맨 오른쪽 "More" 메뉴로 이동해서 첫 줄 요소 수를 줄였습니다.)
-                ui.separator();
+                crate::ui::layout::vdivider(ui);
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
+                    self.toolbar_panel_group(ui);
+                });
+                crate::ui::layout::vdivider(ui);
 
                 if icon_button(
                     ui,
@@ -134,7 +79,7 @@ impl FreeDfApp {
                 {
                     self.clear_page();
                 }
-                ui.separator();
+                crate::ui::layout::vdivider(ui);
 
                 if icon_button(
                     ui,
@@ -154,69 +99,138 @@ impl FreeDfApp {
                 {
                     self.load_annotations();
                 }
-                ui.separator();
+                crate::ui::layout::vdivider(ui);
 
-                // ── 그룹 3: 오버플로 — 자주 안 쓰는 도구/설정은 메뉴로 모아 첫 줄 정돈 ──
-                ui.menu_button("More", |ui| {
-                    ui.set_min_width(300.0);
-                    // 정렬 — 상단 상주에서 메뉴로 이동 (패널 상태와 무관하게 동작).
-                    let aligns = [
-                        (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
-                        (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
-                        (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
-                    ];
-                    for (a, ic, hint) in aligns {
-                        if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
-                            self.page_align = a;
-                            self.realign();
-                            self.save_session();
-                        }
-                    }
-                    ui.separator();
-                    if ui
-                        .checkbox(&mut self.dictionary.enabled, "Dictionary")
-                        .on_hover_text("Look up a tapped word (needs internet once per word).")
-                        .changed()
-                    {
-                        self.save_default_session();
-                    }
-                    if ui.checkbox(&mut self.show_media, "Media").changed() {
-                        self.media_refresh();
-                    }
-                    if ui.button("Media Server...").clicked() {
-                        self.server_msg = None;
-                        self.server_settings_open = true;
-                    }
-                    ui.separator();
-                    if ui.button("Macro...").clicked() {
-                        self.macro_capture = None;
-                        self.macro_settings_open = true;
-                    }
-                    if ui.button("Gamepad...").clicked() {
-                        self.gamepad_settings_open = true;
-                    }
-                    ui.separator();
-                    ui.menu_button("Cache actions", |ui| {
-                        // 등록된 모든 캐시 순회 — actions/cache.rs의 all_caches()에
-                        // 등록만 하면 여기에 자동으로 나타납니다.
-                        for (i, cache) in all_caches().iter().enumerate() {
-                            if i > 0 { ui.separator(); }
-                            ui.label(egui::RichText::new(cache.label()).strong());
-                            ui.label(egui::RichText::new(cache.description()).weak().small());
-                            if ui
-                                .button(format!("Clear {}", cache.label().to_lowercase()))
-                                .clicked()
-                            {
-                                cache.clear(self);
-                            }
-                        }
-                    });
-                    ui.separator();
-                    ui.checkbox(&mut self.debug_hud, "Debug HUD").on_hover_text(
-                        "Live input overlay & diagnostics (pressure, tilt, speed, system).",
-                    );
+                crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
+                    self.toolbar_overflow_menu(ui);
                 });
             });
+        });
+    }
+
+/// 컴포넌트(그룹 1-패널): Library / Outline / Bookmarks / Palette 토글 묶음.
+    /// 세 패널은 상호 배타적(어느 하나 켜면 나머지 자동 해제)이고, Palette는
+    /// 독립 토글입니다. (React의 <PanelToggles>에 해당하는 컨테이너 컴포넌트.)
+    fn toolbar_panel_group(&mut self, ui: &mut egui::Ui) {
+        if icon_toggle(
+            ui,
+            &mut self.show_library,
+            icons::NOTEBOOK,
+            "Library",
+            "Library (notes, PDFs, recents) — exclusive",
+        )
+        .changed()
+        {
+            // Library / Outline / Bookmarks는 어디서든 상호 베타적.
+            if self.show_library {
+                [self.show_library, self.show_outline, self.show_bookmarks] =
+                    exclusive_panel_on(PanelKind::Library);
+            }
+            self.save_session();
+        }
+        if icon_toggle(
+            ui,
+            &mut self.show_outline,
+            icons::LIST_BULLETS,
+            "Outline",
+            "Outline — exclusive",
+        )
+        .changed()
+        {
+            if self.show_outline {
+                [self.show_library, self.show_outline, self.show_bookmarks] =
+                    exclusive_panel_on(PanelKind::Outline);
+            }
+            self.save_session();
+        }
+        if icon_toggle(
+            ui,
+            &mut self.show_bookmarks,
+            icons::BOOKMARKS_SIMPLE,
+            "Bookmarks",
+            "Bookmarked pages — exclusive",
+        )
+        .changed()
+        {
+            if self.show_bookmarks {
+                [self.show_library, self.show_outline, self.show_bookmarks] =
+                    exclusive_panel_on(PanelKind::Bookmarks);
+            }
+        }
+        if icon_toggle(
+            ui,
+            &mut self.show_palette,
+            icons::PALETTE,
+            "Palette",
+            "Writing-tool color palette (right side of canvas)",
+        )
+        .changed()
+        {
+            self.save_default_session();
+        }
+    }
+
+    /// 컴포넌트(그룹 3): ⋯ 오버플로 메뉴 — 자주 안 쓰는 도구/설정을 한 곳으로.
+    /// (React의 <OverflowMenu>에 해당하는 컨테이너 컴포넌트.)
+    fn toolbar_overflow_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("More", |ui| {
+            ui.set_min_width(300.0);
+            // 정렬 — 상단 상주에서 메뉴로 이동 (패널 상태와 무관하게 동작).
+            let aligns = [
+                (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
+                (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
+                (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
+            ];
+            for (a, ic, hint) in aligns {
+                if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
+                    self.page_align = a;
+                    self.realign();
+                    self.save_session();
+                }
+            }
+            ui.separator();
+            if ui
+                .checkbox(&mut self.dictionary.enabled, "Dictionary")
+                .on_hover_text("Look up a tapped word (needs internet once per word).")
+                .changed()
+            {
+                self.save_default_session();
+            }
+            if ui.checkbox(&mut self.show_media, "Media").changed() {
+                self.media_refresh();
+            }
+            if ui.button("Media Server...").clicked() {
+                self.server_msg = None;
+                self.server_settings_open = true;
+            }
+            ui.separator();
+            if ui.button("Macro...").clicked() {
+                self.macro_capture = None;
+                self.macro_settings_open = true;
+            }
+            if ui.button("Gamepad...").clicked() {
+                self.gamepad_settings_open = true;
+            }
+            ui.separator();
+            ui.menu_button("Cache actions", |ui| {
+                // 등록된 모든 캐시 순회 — actions/cache.rs의 all_caches()에
+                // 등록만 하면 여기에 자동으로 나타납니다.
+                for (i, cache) in all_caches().iter().enumerate() {
+                    if i > 0 { ui.separator(); }
+                    ui.label(egui::RichText::new(cache.label()).strong());
+                    ui.label(egui::RichText::new(cache.description()).weak().small());
+                    if ui
+                        .button(format!("Clear {}", cache.label().to_lowercase()))
+                        .clicked()
+                    {
+                        cache.clear(self);
+                    }
+                }
+            });
+            ui.separator();
+            ui.checkbox(&mut self.debug_hud, "Debug HUD").on_hover_text(
+                "Live input overlay & diagnostics (pressure, tilt, speed, system).",
+            );
         });
     }
 

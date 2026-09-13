@@ -20,6 +20,23 @@
   서버/매크로/게임패드)을 **단일 "Settings" 창(좌측 탭 레일 + 우측 내용)** 으로 통합.
   툴바의 각 `*_open` 요청이 해당 탭으로 라우팅되고 창을 닫으면 해제. `settings.rs`·`mod.rs`.
 - 그 외: 미사용이 된 `fast_ink_noise` App 필드/`form` import 제거, `ui::dialog::dialog` 헬퍼 제거(경고 0 유지).
+- **웹 엘리먼트 라이브러리 확장(R1)** — `ui::components`에 `Tone`(세마틱 색)과 함께
+  `badge`/`tag`/`alert`/`status_dot`/`progress`/`spinner`/`kbd`/`code`/`breadcrumb`/
+  `divider_label`/`avatar`/`count`/`tabs`/`card` 추가(Bootstrap `.badge/.alert/.progress/…` 매핑).
+- **컴포넌트 라이브러리 확장(React·Bootstrap 스타일)** — 3계층 버튼 `ui::buttons`
+  (`Button::{primary,secondary,ghost}`·size/danger/icon·숏컷), 범용 컨테이너 `ui::containers`
+  (margin/padding/fill/border 컨테이너 + grid + flex row/centered), 스크롤바 `ui::scroll`,
+  토스트 `ui::toast`(우상단 스택·자동 소멸·✕; 앱 `toasts` 필드에 배선, 시작 환영 토스트).
+  폼 확장 `textarea`/`segmented`. 문서 `docs/UI-COMPONENTS.md` 갱신.
+- **레이아웃/범용 컴포넌트 키트 신설(React·Bootstrap 스타일)** — `crate::ui::layout`(8px 그리드
+  `SP_*`, `hstack`/`vstack`, `vdivider`/`hseparator`, `toolbar_row`/`group`)과
+  `crate::ui::components`(`pill`/`caption`/`help`/`placeholder`) 추가. `toolbar_row`를 app→ui로 이전해
+  재사용. 툴바 조립부(`toolbar()`·`row_top`)를 이 키트(vstack/hseparator/vdivider/group)로 재구성.
+  설계서 `docs/UI-COMPONENTS.md`(툴바 계층 트리 + 카탈로그 + 작성 가이드).
+- **툴바 Row1 컴포넌트 분해(React 스타일)** — `row_top`을 컨테이너 컴포넌트 합성으로 정리:
+  `toolbar_panel_group`(패널 토글 묶음)과 `toolbar_overflow_menu`(More 메뉴)를 메서드 컴포넌트로
+  추출, 프레젠테이션은 `crate::ui` 컴포넌트(props)가 담당·상태는 컨테이너가 연결하는
+  기존 아키텍처 주석과 일치. `rows.rs`.
 
 ### 필기 파이프라인 리팩터 (InkPipeline / WritingMaterial / Materials)
 - **`LiveStroke` + `InkPipeline` 신설** (`crates/freedf-core/src/pipeline.rs`)

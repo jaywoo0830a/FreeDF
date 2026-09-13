@@ -390,3 +390,29 @@ pub(crate) fn input_group<R>(
     })
     .inner
 }
+
+/// <FormTextarea> — 여러 줄 텍스트 입력, `.changed()`로 판정.
+#[allow(dead_code)] // 예약 — 아직 사용처 없음.
+pub(crate) fn textarea(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    hint: &str,
+    rows: f32,
+) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), rows * 18.0],
+        egui::TextEdit::multiline(value).hint_text(hint),
+    )
+}
+
+/// <Segmented> — Bootstrap btn-group 스타일 라디오 선택 (0..options.len()).
+#[allow(dead_code)] // 예약 — 아직 사용처 없음.
+pub(crate) fn segmented(ui: &mut egui::Ui, selected: &mut usize, options: &[&str]) {
+    ui.horizontal(|ui| {
+        for (i, opt) in options.iter().enumerate() {
+            if ui.selectable_label(*selected == i, *opt).clicked() {
+                *selected = i;
+            }
+        }
+    });
+}

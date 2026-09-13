@@ -187,27 +187,17 @@ impl FreeDfApp {
             ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             ui.spacing_mut().interact_size = egui::vec2(0.0, 28.0);
-            ui.add_space(4.0);
-            self.row_top(ui);
 
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
-
-            self.row_pages(ui);
-
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
-
-            self.row_tools(ui);
-
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
-
-            // Row 4: search (only while Ctrl+F is pressed)
-            self.search_row(ui);
+            // Ribbon lines — laid out by the layout kit (`vstack` + `hseparator`).
+            crate::ui::layout::vstack(ui, crate::ui::layout::SP_2, |ui| {
+                self.row_top(ui);
+                crate::ui::layout::hseparator(ui);
+                self.row_pages(ui);
+                crate::ui::layout::hseparator(ui);
+                self.row_tools(ui);
+                crate::ui::layout::hseparator(ui);
+                self.search_row(ui);
+            });
         });
 
         self.settings_windows(ui);
