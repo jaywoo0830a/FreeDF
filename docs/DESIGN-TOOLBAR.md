@@ -17,33 +17,21 @@
 - 예: 잉크색 토글(상주 + 색상 팔레트), 페이지 삽입(상주 + 우클릭), Undo(상주 + Ctrl+Z).
 - 잦지 않은 액션은 단일 홈 + 필요한 경우 "More" 한 곳에만.
 
-### 1-3. 선언형 조립 (Declarative Composition)
-버튼을 매번 베이프라이트로 쌓지 않습니다. 액션은 스펙으로 선언하고,
-**액션 바 팩토리**(`ui::actionbar`)가 렌더/클릭 판정을 담당합니다.
-
-```ignore
-// 상태(FreeDfApp) ↔ 스펙 연결만 남는다.
-let hit = ActionBar::new()
-    .add(undo, icons::ARROW_COUNTER_CLOCKWISE, "Undo").hint("Undo (Ctrl+Z)")
-    .add(redo, icons::ARROW_CLOCKWISE, "Redo").hint("Redo (Ctrl+Y)")
-    .show(ui);
-```
-
-### 1-4. 원시 프리미티브 계층
-팩토리는 egui 원시(`Button`/`Toggle`/`checkbox`) 또는 `ui::icon_button` 위에만
-얹습니다. 도메인 계층(row 함수)은 팩토리/컴포넌트에만 의존합니다.
+### 1-3. React식 컴포넌트 분리 — 단순 프리미티브 조립
+버튼/토글은 원시 프리미티브(`ui::icon_button`·`icon_toggle`·`icon_select`)를 직접 호출하고,
+**상태 ↔ UI 연결은 그룹별 컴포넌트 함수**(`toolbar_panel_group`, `toolbar_overflow_menu` 등)에
+모읍니다. (추가 추상 계층은 오히려 장황 → 제거. 진짜 추상화가 필요한 곳만 값으로
+핸들러를 받는 작은 헬퍼를 둡니다.)
 
 ## 2. 계층 구조
 
 ```
 egui 원시 (Button/Toggle/ScrollArea/…)
       │
-ui::icon_button · icon_toggle · icon_select · layout::group …
+ui::icon_button · icon_toggle · icon_select · layout::group · 3계층 buttons::Button
       │
-ui::actionbar::ActionBar        ← 선언형 액션 바 (React <ActionBar/>)
-      │
-app::toolbar::rows::row_*      ← 상태(FreeDfApp) ↔ 스펙 연결만
-app::toolbar::settings::*      ← 설정 스펙 (grid/card/alert)
+app::toolbar::rows::row_*      ← 상태(FreeDfApp) ↔ 프리미티브 연결 (그룹 함수)
+app::toolbar::settings::panels ← 설정 스펙 (grid/card/alert, WCAG 대비)
 ```
 
 ## 3. 현재 행 → 목표 그룹

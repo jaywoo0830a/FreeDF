@@ -68,7 +68,7 @@ pub fn toolbar_row<R>(
 ) -> R {
     egui::ScrollArea::horizontal()
         .id_salt(("toolbar_row", salt))
-        .auto_shrink([false, false]) // X: 폭 전체, Y: 고정(선택 시 높이 변동으로 인한 떨림 방지)
+        .auto_shrink([false, true]) // X: 폭 전체, Y: 내용물 높이로 수축(전체 영역 차지 방지)
         .show(ui, |ui| ui.horizontal(|ui| add(ui)).inner)
         .inner
 }
