@@ -30,6 +30,12 @@
   를 `crate::ui::ds`로 신설(재사용, dead_code 유지). 상태바에 연결 배지(online/offline), Debug HUD
   System에 `badge`(DB), 게임패드 로그에 `scroll` 키트 적용. Row3 펜/하이라이터 스와치를
   `layout::hstack`(flex)로 래핑. (정리: `ui::components` 확장 블록은 `ui::ds`로 이관.)
+- **버튼 3계층 확산(R4)** — Debug HUD "Copy diagnostics"·미디어 패널 Upload/Refresh를
+  `buttons::Button::{primary,ghost}`(아이콘 포함)로 전환. `Button::hint`를 `&str`→소유 `String`
+  (`impl Into<String>`)로 유연화해 `format!` 툴팁도 허용.
+- **서버 설정·연결 다이얼로그 키트화(R5)** — Connect/Reconnect·Save를 `buttons::Button::{primary,
+  secondary}`로, 연결 결과를 `ds::alert`(Success/Danger)로 전환. `ds::alert` 메시지도
+  `Into<String>`로 유연화.
 - **앱 레이아웃 프레임을 원시 컨테이너로 감쌈** — 탭바(`tabs_bar`), 툴바, 상태바, 중앙
   캔버스 스테이지를 `containers::container()`(패딩/필/보더) + `layout::vstack`로 래핑.
   여백/스타일이 컴포넌트 키트를 통해 일원화됨.

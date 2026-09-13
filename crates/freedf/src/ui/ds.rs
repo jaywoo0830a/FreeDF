@@ -59,7 +59,14 @@ pub fn status_dot(ui: &mut egui::Ui, tone: Tone, label: &str) {
 }
 
 /// Alert / callout box (<div class="alert alert-*">).
-pub fn alert(ui: &mut egui::Ui, tone: Tone, title: &str, message: &str) {
+pub fn alert(
+    ui: &mut egui::Ui,
+    tone: Tone,
+    title: impl Into<String>,
+    message: impl Into<String>,
+) {
+    let title = title.into();
+    let message = message.into();
     let (fg, fill) = tone.pair(ui);
     egui::Frame::new()
         .fill(fill)

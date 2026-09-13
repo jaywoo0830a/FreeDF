@@ -15,18 +15,18 @@ impl FreeDfApp {
         ui.horizontal(|ui| {
             ui.strong("Media");
             ui.add_space(8.0);
-            if ui
-                .small_button(icon_text(ui, "", icons::ARROWS_CLOCKWISE))
-                .on_hover_text("Refresh list from server")
+            if crate::ui::buttons::Button::ghost("")
+                .icon(icons::ARROWS_CLOCKWISE)
+                .hint("Refresh list from server")
+                .show(ui)
                 .clicked()
             {
                 self.media_refresh();
             }
-            if ui
-                .small_button(icon_text(ui, "Upload", icons::UPLOAD_SIMPLE))
-                .on_hover_text(format!(
-                    "Upload an audio / image / video file to page {page_no}"
-                ))
+            if crate::ui::buttons::Button::primary("Upload")
+                .icon(icons::UPLOAD_SIMPLE)
+                .hint(format!("Upload an audio / image / video file to page {page_no}"))
+                .show(ui)
                 .clicked()
             {
                 self.upload_media_dialog();

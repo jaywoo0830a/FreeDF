@@ -535,7 +535,7 @@ impl FreeDfApp {
              renderer: {renderer}\npid     : {pid}\ncpus    : {cpus}\n\
              db      : {db}"
         );
-        if ui.button("Copy diagnostics").clicked() {
+        if crate::ui::buttons::Button::primary("Copy diagnostics").show(ui).clicked() {
             ui.ctx().copy_text(block);
         }
     }

@@ -1034,13 +1034,20 @@ impl FreeDfApp {
                     .changed();
             });
         ui.horizontal(|ui| {
-            if ui
-                .button(if self.db_connected { "Reconnect" } else { "Connect" })
-                .clicked()
+            if crate::ui::buttons::Button::primary(
+                if self.db_connected { "Reconnect" } else { "Connect" },
+            )
+            .hint("Connect to the sync/media server")
+            .show(ui)
+            .clicked()
             {
                 self.try_connect_server(false);
             }
-            if ui.button("Save").clicked() {
+            if crate::ui::buttons::Button::secondary("Save")
+                .hint("Save server config to disk")
+                .show(ui)
+                .clicked()
+            {
                 let path = MediaServerConfig::config_path();
                 self.server_msg = Some(match self.media_config.save(&path) {
                     Ok(()) => (true, format!("Saved to {}", path.display())),
@@ -1051,12 +1058,16 @@ impl FreeDfApp {
         if self.pending_connect.is_some() {
             ui.label(egui::RichText::new("Connecting…").weak());
         } else if let Some((ok, msg)) = &self.connect_status {
-            let color = if *ok {
-                ui.visuals().hyperlink_color
-            } else {
-                ui.visuals().error_fg_color
-            };
-            ui.colored_label(color, msg);
+            crate::ui::ds::alert(
+                ui,
+                if *ok {
+                    crate::ui::ds::Tone::Success
+                } else {
+                    crate::ui::ds::Tone::Danger
+                },
+                if *ok { "Connected" } else { "Connection failed" },
+                msg.clone(),
+            );
         } else if self.db_connected {
             ui.label(egui::RichText::new("Connected.").weak());
         }

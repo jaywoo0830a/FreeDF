@@ -47,7 +47,7 @@ pub struct Button<'a> {
     size: ButtonSize,
     icon: Option<Icon>,
     label: &'a str,
-    hint: &'a str,
+    hint: String,
     enabled: bool,
     selected: bool,
     danger: bool,
@@ -71,7 +71,7 @@ impl<'a> Button<'a> {
             size: ButtonSize::Medium,
             icon: None,
             label,
-            hint: "",
+            hint: String::new(),
             enabled: true,
             selected: false,
             danger: false,
@@ -87,8 +87,8 @@ impl<'a> Button<'a> {
         self.size = s;
         self
     }
-    pub fn hint(mut self, h: &'a str) -> Self {
-        self.hint = h;
+    pub fn hint(mut self, h: impl Into<String>) -> Self {
+        self.hint = h.into();
         self
     }
     pub fn enabled(mut self, on: bool) -> Self {
