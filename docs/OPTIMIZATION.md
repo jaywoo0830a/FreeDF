@@ -93,4 +93,8 @@ baseline은 이 문서용으로 추가한 `#[ignore]` 벤치 `bench_live_render_
 - **P1** frontier `tail()` 증분 append + `active_stroke` 클론 제거 (가장 큰 프레임 이득).
 - **P2** 절대 호 길이 그레인 — u-정규화 의존 제거 → 알파도 O(k) 증분.
 - **P3** 노이즈 타일·LUT·단일 패스·스크래치·비트 플래그 → 점당 상수 축소.
+  - *(부분 구현)* **`InkGrain.fast_noise`**(기본 false) 토글 — 켜면 고주파 위킹 옥타브를
+    생략해 질감 계산을 절반으로 줄입니다. **Debug HUD 체크박스**로 라이브 비교 가능.
+    결정성 · 범위(0.30..1.60) · no-popping 테스트로 보호. 어떤 게 자연스러운지 눈으로
+    보고 기본값을 정하세요.
 - **P4** 굽기/young overlay 동일화 + (선택) input 1€ 필터 `dt→alpha` 정리.

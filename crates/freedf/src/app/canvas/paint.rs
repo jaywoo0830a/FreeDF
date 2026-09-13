@@ -6,7 +6,7 @@ impl FreeDfApp {
     /// 실시간 입력 디버그 HUD — 필압/틸트/속도/폭이 실제로 어떻게 들어오는지
     /// 바로 확인할 수 있습니다 (입력 장치가 필압을 보고하지 않으면 pressure가
     /// 계속 1.0으로 표시됩니다).
-    pub(crate) fn paint_debug_hud(&self, ctx: &egui::Context, origin: Pos2) {
+    pub(crate) fn paint_debug_hud(&mut self, ctx: &egui::Context, origin: Pos2) {
         let pressure = self.sample_pressure(ctx);
         let (_, p_src) = self.pressure_source(ctx);
         let (speed, tip_w, pts_n) = match &self.active_stroke {
@@ -69,6 +69,14 @@ impl FreeDfApp {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(220.0);
                     ui.strong("Debug HUD");
+                    // 시각 근사 토글 — 켜면 고주파(위킹) 옥타브를 생략해 질감 계산이
+                    // 절반으로 줄어듭니다. 눈으로 정확 2옥타브와 비교해 보세요.
+                    let mut fast = self.fast_ink_noise;
+                    if ui.checkbox(&mut fast, "Fast ink noise (고주파 생략)").changed() {
+                        self.fast_ink_noise = fast;
+                        self.pen_grain.fast_noise = fast;
+                        self.fountain_grain.fast_noise = fast;
+                    }
                     ui.label(format!(
                         "device: {device}  (touch events/frame: {touch_events})"
                     ));

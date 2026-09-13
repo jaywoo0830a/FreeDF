@@ -31,6 +31,9 @@ pub struct InkGrain {
     pub enabled: bool,
     /// 획별 시드 — 스트로크 id(해시)를 넣으면 필적마다 다른 질감.
     pub seed: u64,
+    /// **시각 근사**: 켜면 고주파 위킹 옥타브를 생략해 질감 계산을 절반으로
+    /// 줄입니다 (기본 false — 정확한 2옥타브). GUI에서 결과를 눈으로 비교하는 데 씁니다.
+    pub fast_noise: bool,
     /// 저주파(잉크 흐름 물결) 진폭. 0이면 흐름 변화 없음.
     pub flow_amp: f32,
     /// 고주파(종이 섬유 위킹) 진폭.
@@ -46,6 +49,7 @@ impl Default for InkGrain {
         Self {
             enabled: true,
             seed: 0x5EED_5EED,
+            fast_noise: false,
             // 미묘한 수준을 넘어 눈에 보이는 질감으로 조정 (2026-09):
             // 팬 노이즈 ±~19%, 만년필 ±~31% 밀도 요동.
             flow_amp: 0.18,
@@ -54,6 +58,17 @@ impl Default for InkGrain {
             starvation: 0.42,
         }
     }
+}
+
+/// fast_noise 전용 — 고주파(위킹) 옥타브를 생략한 저비용 필드 (흐름 옥타브만).
+/// 값 노이즈 보간을 유지해 점프(popping)가 없고, 결정적입니다.
+fn ink_field_fast(u: f32, v: f32, seed: u64) -> f32 {
+    value_noise(u * 3.0, v * 1.2, seed)
+}
+
+/// fast_noise 전용 단면(좌/우) 필드 쌍 — x 공통 부분을 공유하고 위킹은 생략.
+fn ink_field_pair_fast(u: f32, seed: u64) -> [f32; 2] {
+    value_noise_pair(u * 3.0, -1.2, 1.2, seed)
 }
 
 /// 속도 정규화 기준 (pt/s) — 만년필 모델의 speed_ref 기본값과 동일.
@@ -179,8 +194,12 @@ impl InkGrain {
         let u = u.clamp(0.0, 1.0);
         let v = v.clamp(-1.0, 1.0);
         let s = speed_norm.clamp(0.0, 1.0);
-        // 잡음: 0 중심 ±1 흔들림 (흐름 + 위킹 옥타브).
-        let noise = (ink_field(u, v, self.seed) - 0.5) * 2.0;
+        // 잡음: 0 중심 ±1 흔들림 (fast_noise면 고주파 위킹 생략).
+        let noise = if self.fast_noise {
+            (ink_field_fast(u, v, self.seed) - 0.5) * 2.0
+        } else {
+            (ink_field(u, v, self.seed) - 0.5) * 2.0
+        };
         // 도구별 형태와 진폭/모서리 강도.
         let (shape, edge_k, noise_amp) = match tool {
             ToolType::Fountain => (
@@ -207,7 +226,11 @@ impl InkGrain {
     pub fn density_lr(self, tool: ToolType, u: f32, speed_norm: f32) -> [f32; 2] {
         let u = u.clamp(0.0, 1.0);
         let s = speed_norm.clamp(0.0, 1.0);
-        let [nl, nr] = ink_field_pair(u, self.seed);
+        let [nl, nr] = if self.fast_noise {
+            ink_field_pair_fast(u, self.seed)
+        } else {
+            ink_field_pair(u, self.seed)
+        };
         let nl = (nl - 0.5) * 2.0;
         let nr = (nr - 0.5) * 2.0;
         let (shape, edge_k, noise_amp) = match tool {
@@ -347,6 +370,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn fast_noise_is_deterministic_bounded_and_non_popping() {
+        let g = InkGrain { fast_noise: true, ..InkGrain::default() };
+        // 결정성 — 같은 (u,v)는 항상 같은 값.
+        for &(u, v) in &[(0.3f32, -1.0), (0.5, 1.0), (0.12, 0.0)] {
+            assert_eq!(
+                g.density(ToolType::Pen, u, v, 0.5),
+                g.density(ToolType::Pen, u, v, 0.5)
+            );
+        }
+        // 밀도 범위 0.30..=1.60 유지.
+        for i in 0..200 {
+            let u = i as f32 / 200.0;
+            for x in g.density_lr(ToolType::Pen, u, 0.5) {
+                assert!((0.30..=1.60).contains(&x), "fast_noise 범위: {x}");
+            }
+        }
+        // no-popping — 인접 u 사이 점프가 유계.
+        let mut prev = g.density(ToolType::Pen, 0.0, -1.0, 0.5);
+        let mut max_jump = 0.0f32;
+        for i in 1..200 {
+            let u = i as f32 / 200.0;
+            let d = g.density(ToolType::Pen, u, -1.0, 0.5);
+            max_jump = max_jump.max((d - prev).abs());
+            prev = d;
+        }
+        assert!(max_jump < 0.5, "fast_noise 점프 과대: {max_jump}");
     }
 
     #[test]

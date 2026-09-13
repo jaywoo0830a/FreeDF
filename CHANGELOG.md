@@ -62,6 +62,11 @@
   - 실측: **n=1k 560→548 µs(−2.1%), n=10k 5933→5593 µs(−5.7%)** (debug). OPTIMIZATION.md §4에 실측 갱신.
   - 큰 폭(50~65%)은 **시각을 바꾸는 근사**(노이즈 타일·LUT·절대 호 길이)로만 가능 → GUI 검증
     필요로 **미구현 유지**하고 문서에 "P3 근사(추정)"로 구분.
+- **시각 근사 캔버스 (P3 부분)**: `InkGrain.fast_noise`(기본 false) — 켜면 **고주파 위킹
+  옥타브를 생략**해 질감 계산이 절반으로 줄어듭니다. `density`/`density_lr` 분기.
+  - **앱 Debug HUD에 체크박스** 추가 (`paint_debug_hud` → `&mut self`, `fast_ink_noise` 필드) —
+    켜는 즉시 펜/만년필 그레인에 전파되어 live·굽기 양쪽에 반영 (view_key에 그레인이 있어 캐시 재구성).
+  - 테스트 `fast_noise_is_deterministic_bounded_and_non_popping`로 결정성·범위·no-popping 보호.
 
 ### 검증
 - `cargo test -p freedf-core`: **209 passed / 0 failed** (단위 198 + 통합 11), 0 경고.
