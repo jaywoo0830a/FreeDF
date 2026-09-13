@@ -1276,8 +1276,8 @@ impl FreeDfApp {
         let mut open = self.settings_open;
         let mut selected = self.settings_tab;
         egui::Window::new("Settings")
-            .default_width(560.0)
-            .default_height(440.0)
+            .default_width(704.0) // = 176 × .25rem
+            .default_height(480.0) // = 120 × .25rem
             .resizable(true)
             .open(&mut open)
             .show(ui.ctx(), |ui| {
@@ -1290,48 +1290,46 @@ impl FreeDfApp {
                 });
                 crate::ui::layout::hseparator(ui);
                 ui.horizontal(|ui| {
-                    // 좌/우 레일을 창 세로 전체로 펼치기 (WCAG: 스크롤 영역이 뷰를 채움).
-                    let full_h = ui.available_height();
-                    // Left rail: tab list — 안정적인 내비 블록 (선택 시 포커스 요청).
+                    // 좌/우 레일: ScrollArea가 창 가용 높이를 채우도록 Y축 수축을 품
+                    // (auto_shrink Y=false). 가로 배치 자식의 세로 채움 hacker을 없앤 재설계.
                     crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(150.0);
-                            ui.set_height(full_h);
-                                egui::ScrollArea::vertical()
-                                    .id_salt("settings_tabs")
-                                    .show(ui, |ui| {
-                                        for tab in SettingsTab::all() {
-                                            let resp = ui
-                                                .selectable_label(selected == tab, tab.label())
-                                                .on_hover_text(format!(
-                                                    "{} — switch to this settings section",
-                                                    tab.label(),
-                                                ));
-                                            if resp.clicked() {
-                                                selected = tab;
-                                                resp.request_focus();
-                                            }
+                            ui.set_width(208.0); // = 52 × .25rem
+                            egui::ScrollArea::vertical()
+                                .id_salt("settings_tabs")
+                                .auto_shrink([true, false])
+                                .show(ui, |ui| {
+                                    for tab in SettingsTab::all() {
+                                        let resp = ui
+                                            .selectable_label(selected == tab, tab.label())
+                                            .on_hover_text(format!(
+                                                "{} — switch to this settings section",
+                                                tab.label(),
+                                            ));
+                                        if resp.clicked() {
+                                            selected = tab;
+                                            resp.request_focus();
                                         }
-                                    });
-                            });
+                                    }
+                                });
                         });
+                    });
                     ui.separator();
-                    // Right panel: content of the selected tab — 본문 블록.
                     crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
                         ui.vertical(|ui| {
-                            ui.set_min_size(egui::vec2(360.0, 380.0));
-                            ui.set_height(full_h);
-                                ui.label(
-                                    egui::RichText::new(format!("{} settings", selected.label()))
-                                        .strong(),
-                                );
-                                egui::ScrollArea::vertical()
-                                    .id_salt("settings_content")
-                                    .show(ui, |ui| {
-                                        self.show_settings_tab(selected, ui);
-                                    });
-                            });
+                            ui.set_min_size(egui::vec2(472.0, 400.0)); // 472 = 118 × .25rem, 400 = 100 × .25rem
+                            ui.label(
+                                egui::RichText::new(format!("{} settings", selected.label()))
+                                    .strong(),
+                            );
+                            egui::ScrollArea::vertical()
+                                .id_salt("settings_content")
+                                .auto_shrink([true, false])
+                                .show(ui, |ui| {
+                                    self.show_settings_tab(selected, ui);
+                                });
                         });
+                    });
                 });
             });
 
