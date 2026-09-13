@@ -101,108 +101,8 @@ impl FreeDfApp {
                 {
                     self.save_default_session();
                 }
-                if icon_toggle(
-                    ui,
-                    &mut self.dictionary.enabled,
-                    icons::BOOK_OPEN_TEXT,
-                    "Dictionary",
-                    "Tap any word on the page to look it up in the dictionary.\n\
-                     Needs internet once per word; results are cached in the database.",
-                )
-                .changed()
-                {
-                    self.save_default_session();
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.server_settings_open,
-                    icons::CLOUD,
-                    "Media Server",
-                    "Media server connection settings — upload & play audio, photos \
-                     and video from your self-hosted VPS.",
-                )
-                .changed()
-                {
-                    self.server_msg = None;
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.show_media,
-                    icons::IMAGES,
-                    "Media",
-                    "Media for this document — upload / play / preview / delete",
-                )
-                .changed()
-                {
-                    // 열릴 때 목록 갱신.
-                    self.media_refresh();
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.macro_settings_open,
-                    icons::KEYBOARD,
-                    "Macro",
-                    "Shortcuts & macros — page/tab keys and Windows virtual \
-                     desktop switching (Ctrl+Win+←/→).",
-                )
-                .changed()
-                {
-                    // 창이 닫히면 캡처도 함께 취소.
-                    self.macro_capture = None;
-                }
-                if icon_toggle(
-                    ui,
-                    &mut self.gamepad_settings_open,
-                    icons::JOYSTICK,
-                    "Gamepad",
-                    "Controller input — L-stick scroll · LB = CTRL · LT = Ctrl+Z ·\n\
-                     D-pad = arrows / PgUp / PgDn. Click to open settings & debug.",
-                )
-                .changed() {}
-                let cache_menu = ui.menu_button(
-                    icon_text(ui, "Cache", icons::HARD_DRIVES),
-                    |ui| {
-                        ui.set_min_width(260.0);
-                        // 등록된 캐시를 전부 순회 — 새 캐시는 actions/cache.rs의
-                        // all_caches()에 등록만 하면 여기에 자동으로 나타납니다.
-                        for (i, cache) in all_caches().iter().enumerate() {
-                            if i > 0 {
-                                ui.separator();
-                            }
-                            ui.label(egui::RichText::new(cache.label()).strong());
-                            ui.label(
-                                egui::RichText::new(cache.description())
-                                    .weak()
-                                    .small(),
-                            );
-                            if ui
-                                .button(format!("Clear {}", cache.label().to_lowercase()))
-                                .clicked()
-                            {
-                                cache.clear(self);
-                            }
-                        }
-                    },
-                );
-                cache_menu
-                    .response
-                    .on_hover_text("Manage app caches — download (disk) / canvas (memory)");
-                ui.separator();
-
-                // 정렬(왼쪽/가운데/오른쪽) — 패널 상태와 무관하게 **항상 표시**
-                // (패널이 펼쳐지면 사라지던 버그 패턴 제거).
-                let aligns = [
-                    (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
-                    (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
-                    (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
-                ];
-                for (a, ic, hint) in aligns {
-                    if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
-                        self.page_align = a;
-                        self.realign();
-                        self.save_session();
-                    }
-                }
+                // (자주 안 쓰는 도구/설정 — Dictionary, Macro, Gamepad, Server, 정렬 등 은
+                // 맨 오른쪽 "More" 메뉴로 이동해서 첫 줄 요소 수를 줄였습니다.)
                 ui.separator();
 
                 if icon_button(
@@ -255,8 +155,67 @@ impl FreeDfApp {
                     self.load_annotations();
                 }
                 ui.separator();
-                ui.toggle_value(&mut self.debug_hud, "Debug HUD")
-                    .on_hover_text("Show live input overlay: pressure, tilt, tip speed/width");
+
+                // ── 그룹 3: 오버플로 — 자주 안 쓰는 도구/설정은 메뉴로 모아 첫 줄 정돈 ──
+                ui.menu_button("More", |ui| {
+                    ui.set_min_width(300.0);
+                    // 정렬 — 상단 상주에서 메뉴로 이동 (패널 상태와 무관하게 동작).
+                    let aligns = [
+                        (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
+                        (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
+                        (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
+                    ];
+                    for (a, ic, hint) in aligns {
+                        if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
+                            self.page_align = a;
+                            self.realign();
+                            self.save_session();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .checkbox(&mut self.dictionary.enabled, "Dictionary")
+                        .on_hover_text("Look up a tapped word (needs internet once per word).")
+                        .changed()
+                    {
+                        self.save_default_session();
+                    }
+                    if ui.checkbox(&mut self.show_media, "Media").changed() {
+                        self.media_refresh();
+                    }
+                    if ui.button("Media Server...").clicked() {
+                        self.server_msg = None;
+                        self.server_settings_open = true;
+                    }
+                    ui.separator();
+                    if ui.button("Macro...").clicked() {
+                        self.macro_capture = None;
+                        self.macro_settings_open = true;
+                    }
+                    if ui.button("Gamepad...").clicked() {
+                        self.gamepad_settings_open = true;
+                    }
+                    ui.separator();
+                    ui.menu_button("Cache actions", |ui| {
+                        // 등록된 모든 캐시 순회 — actions/cache.rs의 all_caches()에
+                        // 등록만 하면 여기에 자동으로 나타납니다.
+                        for (i, cache) in all_caches().iter().enumerate() {
+                            if i > 0 { ui.separator(); }
+                            ui.label(egui::RichText::new(cache.label()).strong());
+                            ui.label(egui::RichText::new(cache.description()).weak().small());
+                            if ui
+                                .button(format!("Clear {}", cache.label().to_lowercase()))
+                                .clicked()
+                            {
+                                cache.clear(self);
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.checkbox(&mut self.debug_hud, "Debug HUD").on_hover_text(
+                        "Live input overlay & diagnostics (pressure, tilt, speed, system).",
+                    );
+                });
             });
         });
     }

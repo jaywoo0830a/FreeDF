@@ -5,6 +5,19 @@
 
 ## [Unreleased] — 2026-09-13
 
+### UI/UX 개편 (툴바 계층 · 그룹핑 · 진단 확충) — `docs/UI-UX-REPORT.md` 반영
+- **기본 한글/UI 폰트를 Asta Sans로 교체** — Google Fonts Asta Sans(위 300–800) Regular를
+  내장해 'Proportional'의 1순위로 등록(Inter·NanumGothic은 폴백 유지). `fonts.rs`.
+- **툴바 Row1 계층화(P0)** — 자주 안 쓰는 도구/설정(Dictionary·Media Server·Media·Macro·
+  Gamepad·Cache·정렬)을 1층에서 제거하고 끝의 **"More" 오버플로 메뉴**로 이동. 첫 줄 요소를
+  약 22 → 16개(그룹: 창/패널 · 명령 · 저장 · More)로 정돈. `rows.rs::row_top`.
+- **Fast ink noise 위치 이동(P1)** — Debug HUD 체크박스 제거, 펜/만년필 설정 창의
+  **"Ink grain" 필드셋**(도구별 질감 옵션)으로 이동. `paint.rs`·`toolbar/mod.rs`.
+- **Debug HUD 확충(P3 부분)** — 디버그 창에 **"System / About"** 접이식 섹션 추가: 소프트웨어
+  버전(`CARGO_PKG_VERSION`)·OS·아키텍처·빌드 프로필·렌더러(glow/wgpu)·PID·CPU·DB 연결 상태 +
+  **"Copy diagnostics"**(클립보드로 1-클릭 진단 복사). `gamepad.rs`.
+- 그 외: 미사용이 된 `fast_ink_noise` App 필드/`form` import 제거(경고 0 유지).
+
 ### 필기 파이프라인 리팩터 (InkPipeline / WritingMaterial / Materials)
 - **`LiveStroke` + `InkPipeline` 신설** (`crates/freedf-core/src/pipeline.rs`)
   - 진행 획을 한 객체로 묶어 호출 시퀀스를 `down()`+`drag()`+`up()`으로 압축.

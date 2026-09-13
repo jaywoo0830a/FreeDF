@@ -905,8 +905,6 @@ pub struct FreeDfApp {
     pressure_enabled: bool,
     /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부.
     debug_hud: bool,
-    /// 시각 근사(고주파 위킹 생략) 질감 토글 — Debug HUD에서 실시간 비교.
-    fast_ink_noise: bool,
     /// 왼손잡이 여부 — 펜 커서 배럴 방향을 왼쪽 반평면으로 제한.
     left_handed: bool,
     /// 모니터 주사율 프리셋 (Hz) — 잉크 페이싱(재구성 주기·스밈 시간) 기준.
@@ -1544,7 +1542,6 @@ impl FreeDfApp {
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
-            fast_ink_noise: true,
             left_handed,
             refresh_hz,
             cursor_scale,

@@ -1,6 +1,5 @@
 //! 캔버스 그리기 — 스트로크/용지/병합 잉크 메시/커스텀 커서/디버그 HUD.
 
-use crate::ui::form;
 use super::*;
 
 impl FreeDfApp {
@@ -66,21 +65,8 @@ impl FreeDfApp {
             "evdev"
         };
 
-        // 시각 근사 토글 — 켜면 고주파(위킹) 옥타브를 생략해 질감 계산이
-        // 절반으로 줄어듭니다. 눈으로 정확 2옥타브와 비교해 보세요.
-        let mut fast = self.fast_ink_noise;
-        if form::check(
-            ui,
-            &mut fast,
-            "Fast ink noise",
-            "Skip the high-frequency (wicking) octave for ~2× faster grain; compare against the full 2-octave look.",
-        )
-        .changed()
-        {
-            self.fast_ink_noise = fast;
-            self.pen_grain.fast_noise = fast;
-            self.fountain_grain.fast_noise = fast;
-        }
+        // 시각 근사(fast_noise) 토글은 이제 **펜/만년필 설정 창의 "Ink grain"**
+        // 필드셋에 있습니다(도구별 잉크 질감 옵션, Debug HUD가 아니어도 접근 가능).
         ui.label(format!(
             "device: {device}  (touch events/frame: {touch_events})"
         ));

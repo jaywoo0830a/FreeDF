@@ -150,6 +150,16 @@ fn ink_grain_controls(ui: &mut egui::Ui, grain: &mut InkGrain) -> bool {
                  Each stroke gets its own texture derived from this seed.",
             )
             .changed();
+        // 시각 근사 — 고주파(위킹) 옥타브를 생략해 질감 계산을 ~2배 빠르게.
+        // 도구별 질감 옵션이므로 펜/만년필 "Ink grain" 설정에서 조정합니다.
+        changed |= check(
+            ui,
+            &mut grain.fast_noise,
+            "Fast ink noise",
+            "Skip the high-frequency (wicking) octave for ~2× faster grain. \
+             Compare against the full 2-octave look and pick what feels natural.",
+        )
+        .changed();
     }
     changed
 }

@@ -403,6 +403,9 @@ impl FreeDfApp {
                     form::fieldset(ui, "hud_gamepad", "Gamepad", false, |ui| {
                         self.gamepad_debug_section(ui);
                     });
+                    form::fieldset(ui, "hud_system", "System / About", false, |ui| {
+                        self.system_debug_section(ui);
+                    });
                 });
             });
         self.debug_hud = open;
@@ -479,6 +482,53 @@ impl FreeDfApp {
                         ui.label(egui::RichText::new(l).monospace().size(12.0));
                     }
                 });
+        }
+    }
+
+    /// 시스템/버전 진단 섹션 — 소프트웨어 버전, OS/아키텍처, 빌드 프로필, PID,
+    /// 논리 CPU 수, 그리고 이슈 리포트에 바로 붙여넣을 수 있는 진단 블록을
+    /// 클립보드로 복사하는 버튼을 제공합니다.
+    fn system_debug_section(&mut self, ui: &mut egui::Ui) {
+        let version = env!("CARGO_PKG_VERSION");
+        let name = env!("CARGO_PKG_NAME");
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let pid = std::process::id();
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0);
+        let db = if self.db_connected { "connected" } else { "offline" };
+        let renderer =
+            if std::env::var("FREEDF_RENDERER").as_deref() == Ok("wgpu") {
+                "wgpu"
+            } else {
+                "glow"
+            };
+
+        ui.label(
+            egui::RichText::new(format!("{name} v{version}"))
+                .strong(),
+        );
+        ui.monospace(format!("OS      : {os} ({arch})"));
+        ui.monospace(format!("build   : {profile}"));
+        ui.monospace(format!("renderer: {renderer}"));
+        ui.monospace(format!("pid     : {pid} · cpus: {cpus}"));
+        ui.monospace(format!("db      : {db}"));
+
+        ui.add_space(4.0);
+        let block = format!(
+            "== {name} diagnostics ==\nversion : {name} {version}\n\
+             os      : {os} ({arch})\nbuild   : {profile}\n\
+             renderer: {renderer}\npid     : {pid}\ncpus    : {cpus}\n\
+             db      : {db}"
+        );
+        if ui.button("Copy diagnostics").clicked() {
+            ui.ctx().copy_text(block);
         }
     }
 }
