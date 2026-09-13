@@ -81,7 +81,10 @@ pub struct MediaObject {
     pub url: String,
 }
 
-/// 미디어 API 클라이언트 (동기, 4초 타임아웃).
+/// 미디어 API 클라이언트 (동기).
+/// 1Gbps 서버용: 커넥트 타임아웃 5s(빨리 실패) + 요청/전송 예산 60s(대용량
+/// 미디어 ~200MB, upload/list/delete). TCP_NODELAY 로 지연 축소, Agent
+/// keep-alive 풀 재사용.
 #[derive(Clone)]
 pub struct MediaClient {
     base: String,
@@ -95,7 +98,10 @@ impl MediaClient {
             base: config.normalized_base(),
             api_key: config.api_key.clone(),
             agent: ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(4))
+                .timeout(std::time::Duration::from_secs(60))
+                .timeout_connect(std::time::Duration::from_secs(5))
+                .no_delay(true)
+                .user_agent("FreeDF/3.0")
                 .build(),
         }
     }

@@ -2,11 +2,15 @@
 """FreeDF app icon generator (Pillow).
 
 Renders the application logo for FreeDF — "Lightweight PDF Viewer & Ink" —
-as a square tile in the app's **Nord** palette:
+as a modern rounded square tile in the app's **Nord** palette:
 
-  * Dark polar-night gradient rounded tile (#2E3440 -> #434C5E)
-  * A light "document page" with a dog-ear (folded) corner  -> PDF
-  * A frost-blue pen stroke sweeping across the page        -> handwriting / ink
+  * Deep indigo → polar-night radial-gradient tile with a soft top-left glow
+  * A softly shadowed "document page" floating on the tile (folded corner)
+  * An elegant **calligraphic ink stroke** (varying width, fountain-pen tip)
+    sweeping across the page  -> handwriting / ink
+
+Every shape is drawn in a 1.0-unit space at 4x supersampling, then downscaled
+with LANCZOS for crisp anti-aliased edges at every output size.
 
 Output (written to crates/freedf/assets/icon/):
   * app_icon_1024.png  master render
@@ -16,10 +20,10 @@ Output (written to crates/freedf/assets/icon/):
      (Windows 빌드 시 build.rs → win/app.rc 가 이 .ico 를 .exe 아이콘 리소스로
       임베드 — 바탕화면/탐색기/작업 관리자 아이콘)
 
-Usage:
-    python3 scripts/design_icon.py
+Usage (격리된 파이썬 도커 컨테이너에서 실행 권장):
+    bash scripts/generate_icons.sh
+    # 로컬 실행:  python3 -m pip install Pillow && python3 scripts/design_icon.py
 """
-
 import math
 import os
 import sys
@@ -27,18 +31,31 @@ import sys
 from PIL import Image, ImageDraw
 
 # --------------------------------------------------------------------------
-# Nord palette (matches crates/freedf/src/theme/tokens.rs)
+# 펠레트 — 캡슐/토큰과 일치하는 Nord + 잉크(먹) 계열
 # --------------------------------------------------------------------------
 NORD2 = (0x43, 0x4C, 0x5E)  # lighter panel
 NORD0 = (0x2E, 0x34, 0x40)  # darkest background
-NORD6 = (0xEC, 0xEF, 0xF4)  # strong text / snow storm
-NORD8 = (0x88, 0xC0, 0xD0)  # frost-blue accent (link)
+NORD6 = (0xEC, 0xEF, 0xF4)  # snow storm / strong text
+NORD8 = (0x88, 0xC0, 0xD0)  # frost-blue accent
+
+# 잉크 계열 — 흰 페이지 위 대비용 인디고
+INK_DEEP = (0x25, 0x33, 0x4E)   # 스트로크 본체
+INK_MID  = (0x2E, 0x3E, 0x5C)   # 글로우/그라디언트
+INK_HL   = (0x3D, 0x54, 0x7E)   # 하이라이트
+
+PAGE_BG   = (0xF8, 0xFA, 0xFC)  # 페이지 중심 (거의 순백)
+PAGE_EDGE = (0xE6, 0xE9, 0xEF)  # 페이지 경계선
+FOLD      = (0xC9, 0xD0, 0xDD)  # 접힌 모서리 음영
+SHADOW    = (0x10, 0x14, 0x1A)  # 페이지 드롭 섀도우
+
+SUPERSAMPLE = 4  # 안티앨리어싱용 초과샘플 배율
 
 OUT_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "crates", "freedf", "assets", "icon")
 )
 
 
+# ── 색 보조 ───────────────────────────────────────────────────────────────────
 def lerp(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
@@ -46,37 +63,35 @@ def lerp(a, b, t):
 def lerp_alpha(c, alpha):
     return (c[0], c[1], c[2], int(255 * alpha))
 
-# --------------------------------------------------------------------------
-# Geometry helpers (draw in a 1.0 unit square, scaled by S)
-# --------------------------------------------------------------------------
+
+# ── 기하 보조 ─────────────────────────────────────────────────────────────────
 class Bezier:
+    """드 리카스텔죠(de Casteljau) 베지어 곡선."""
     def __init__(self, pts):
         self.pts = [(float(x), float(y)) for x, y in pts]
 
     def point(self, t):
-        p = self.pts
-        n = len(p) - 1
-        # de Casteljau
-        q = list(p)
+        q = list(self.pts)
         while len(q) > 1:
             q = [
-                (q[i][0] * (1 - t) + q[i + 1][0] * t, q[i][1] * (1 - t) + q[i + 1][1] * t)
+                (q[i][0] * (1 - t) + q[i + 1][0] * t,
+                 q[i][1] * (1 - t) + q[i + 1][1] * t)
                 for i in range(len(q) - 1)
             ]
         return q[0]
 
-
-def draw_thick_curve(draw, pts, width, color, steps=64):
-    """Draw a smooth curve as overlapping circles -> round joints + caps."""
-    c = Bezier(pts)
-    for i in range(steps + 1):
-        x, y = c.point(i / steps)
-        r = width / 2.0
-        draw.ellipse((x - r, y - r, x + r, y + r), fill=color)
+    def tangent(self, t):
+        # 유한 차분으로 접선 근사 (변곡점에서도 안정)
+        p0 = self.point(max(0.0, t - 1e-3))
+        p1 = self.point(min(1.0, t + 1e-3))
+        dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+        L = math.hypot(dx, dy) or 1.0
+        return (dx / L, dy / L)
 
 
 def rounded_rect_path(x, y, w, h, r):
-    """Rectangle with all corners rounded; returns polygon points."""
+    """모서리가 둥근 사각형 폴리곤 (왼-위부터 시계방향)."""
+    r = min(r, w / 2.0, h / 2.0)
     pts = []
     for cx, cy, a0, a1 in [
         (x + r, y + r, 180, 270),
@@ -89,49 +104,72 @@ def rounded_rect_path(x, y, w, h, r):
             pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     return pts
 
+def calligraphic_stroke_polygon(bez, w0, w1, n=240):
+    """중심 베지어의 폭이 w0→w1로 가늘어지는 칼리그래피 스트로크 폴리곤.
+
+    곡선 양 측을 노멀 방향으로 w(t)/2 만큼 펼쳐 하나의 폐합 다각형으로 만든다
+    → 뾰족한 펜 팁, 매끄러운 굵기 변화의 붓/펜 선.
+    """
+    left, right = [], []
+    for i in range(n + 1):
+        t = i / n
+        cx, cy = bez.point(t)
+        tx, ty = bez.tangent(t)
+        nx, ny = -ty, tx  # 시계방향 노멀
+        w = w0 + (w1 - w0) * t
+        left.append((cx + nx * w, cy + ny * w))
+        right.append((cx - nx * w, cy - ny * w))
+    return left + list(reversed(right))
 
 
-def render_master(S):
-    """Render the icon at resolution S x S."""
-    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
-    # -- 1. Background: rounded tile with vertical-ish gradient -----------
-    tile_r = 0.20 * S
-    tile_poly = rounded_rect_path(0, 0, S, S, tile_r)
-    tile_mask = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(tile_mask).polygon(tile_poly, fill=255)
-    band = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    bd = ImageDraw.Draw(band)
-    top = lerp(NORD2, NORD0, 0.05)
-    bottom = lerp(NORD0, NORD2, 0.90)
-    for y in range(S):
-        bd.line([(0, y), (S, y)], fill=lerp(top, bottom, y / S))
-    # subtle brightening toward the upper-left
-    overlay = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    ovd = ImageDraw.Draw(overlay)
-    cx, cy = 0.32 * S, 0.30 * S
-    for i in range(40, 0, -12):
-        r = i * S * 1.6
-        ovd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 255, 255, 10))
-    band = Image.alpha_composite(band, overlay)
-    bg = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    bg.paste(band, (0, 0), tile_mask)
-    img = Image.alpha_composite(img, bg)
-
-    # -- 2. Document page (dog-ear, slightly rotated) ----------------------
-    pw, ph = 0.60 * S, 0.68 * S
-    px0, py0 = 0.5 * (S - pw), 0.5 * (S - ph) - 0.02 * S
-    angle = math.radians(-7.0)
+def rotate_pts(pts, cx, cy, angle):
     ca, sa = math.cos(angle), math.sin(angle)
-    cx0, cy0 = S / 2.0, py0 + ph / 2.0
+    out = []
+    for x, y in pts:
+        dx, dy = x - cx, y - cy
+        out.append((cx + dx * ca - dy * sa, cy + dx * sa + dy * ca))
+    return out
 
-    def rot(x, y):
-        dx, dy = x - cx0, y - cy0
-        return (cx0 + dx * ca - dy * sa, cy0 + dx * sa + dy * ca)
 
-    page_r = 0.045 * S
-    page_pts = [
+# ── 렌더 ─────────────────────────────────────────────────────────────────────
+def render_master(S):
+    """해상도 S x S 로 아이콘 렌더. 내부는 SUPERSAMPLE로 그려 LANCZOS 다운샘플."""
+    S_hi = S * SUPERSAMPLE
+    img = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+
+    # -- 1. 배경: 인디고→폴라나잇 방사형 그라디언트 타일 + 서리 글로우 --------
+    bg = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    bgd = ImageDraw.Draw(bg)
+    top = lerp(NORD2, NORD0, 0.10)
+    bot = lerp(NORD0, (0x1C, 0x22, 0x2B), 0.85)
+    for y in range(S_hi):
+        bgd.line([(0, y), (S_hi, y)], fill=lerp(top, bot, y / S_hi))
+    # 상단-왼쪽 서리(글로우) → 깊이감
+    glow = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gcx, gcy = 0.28 * S_hi, 0.28 * S_hi
+    for i in range(90, 0, -6):
+        r = i * S_hi * 0.022
+        a = min(90, 12 + (90 - i) * 0.10)
+        gd.ellipse((gcx - r, gcy - r, gcx + r, gcy + r), fill=lerp_alpha(NORD8, a))
+    bg = Image.alpha_composite(bg, glow)
+    # 라운드 타일 마스킹
+    tile_mask = Image.new("L", (S_hi, S_hi), 0)
+    ImageDraw.Draw(tile_mask).polygon(
+        rounded_rect_path(0, 0, S_hi, S_hi, 0.20 * S_hi), fill=255
+    )
+    tile = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    tile.paste(bg, (0, 0), tile_mask)
+    img = Image.alpha_composite(img, tile)
+
+    # -- 2. 문서 페이지 (부드러운 섀도우, 살짝 회전, 접힌 모서리) --------------
+    pw, ph = 0.585 * S_hi, 0.66 * S_hi
+    px0, py0 = 0.5 * (S_hi - pw), 0.5 * (S_hi - ph) - 0.01 * S_hi
+    angle = math.radians(-6.0)
+    cxc, cyc = S_hi / 2.0, py0 + ph / 2.0
+
+    page_r = 0.028 * S_hi
+    corners = [
         (px0 + page_r, py0),
         (px0 + pw - page_r, py0),
         (px0 + pw, py0 + page_r),
@@ -141,56 +179,96 @@ def render_master(S):
         (px0, py0 + ph - page_r),
         (px0, py0 + page_r),
     ]
-    rotated = [rot(x, y) for x, y in page_pts]
-    # soft drop shadow under the page
-    sp = ImageDraw.Draw(img)
-    for i in range(6, 0, -1):
-        sh = [(x, y + i * 0.006 * S) for x, y in rotated]
-        sp.polygon(sh, fill=(0x1F, 0x24, 0x2E, 26 - i * 2))
+    rot = rotate_pts(corners, cxc, cyc, angle)
 
-    page_layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    pd = ImageDraw.Draw(page_layer)
-    pd.polygon(rotated, fill=NORD6 + (255,))
+    # 드롭 섀도우 — 아래/오른쪽으로 밀린 다층 투명
+    shadow = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    for i in range(7, 0, -1):
+        off = i * 0.007 * S_hi
+        poly = [(x + off * 0.7, y + off) for x, y in rot]
+        sd.polygon(poly, fill=lerp_alpha(SHADOW, 10 + (7 - i) * 2))
+    img = Image.alpha_composite(img, shadow)
 
-    # dog-ear (folded top-right corner) -> shaded triangle over the page
-    shd = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    fold = 0.18 * S
-    ImageDraw.Draw(shd).polygon(
-        [rot(px0 + pw - fold, py0 + fold), rot(px0 + pw - fold * 0.9, py0), rot(px0 + pw, py0 + fold * 0.6)],
-        fill=(0xCF, 0xD5, 0xE0, 255),
+    # 페이지 면
+    page = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(page)
+    pd.polygon(rot, fill=PAGE_BG + (255,))
+    pd.polygon(rot + [rot[0]], outline=PAGE_EDGE + (255,),
+               width=max(1, int(S_hi * 0.0025)))
+
+    # 접힌 모서리(오른쪽 위) — 삼각 음영 + 경계선
+    fold = 0.155 * S_hi
+    fold_tri = rotate_pts(
+        [
+            (px0 + pw - fold, py0 + fold),
+            (px0 + pw - fold * 0.86, py0),
+            (px0 + pw, py0 + fold * 0.55),
+        ],
+        cxc, cyc, angle,
     )
-    page_layer = Image.alpha_composite(page_layer, shd)
-    pd = ImageDraw.Draw(page_layer)
-    pd.polygon(rotated + [rotated[0]], outline=(0xB8, 0xC0, 0xCC, 255), width=max(2, int(S * 0.004)))
-    img = Image.alpha_composite(img, page_layer)
+    fd = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    ImageDraw.Draw(fd).polygon(fold_tri, fill=FOLD + (255,))
+    ImageDraw.Draw(fd).polygon(fold_tri + [fold_tri[0]],
+                               outline=lerp_alpha(FOLD, 180),
+                               width=max(1, int(S_hi * 0.0015)))
+    page = Image.alpha_composite(page, fd)
 
-    # -- 3. Ink stroke (frost blue) sweeping across the page ---------------
-    stroke = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    path = [(0.30, 0.56), (0.42, 0.40), (0.58, 0.30), (0.70, 0.20)]
-    pts = [(x * S, y * S) for x, y in path]
-    width = 0.052 * S
-    glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-    draw_thick_curve(ImageDraw.Draw(glow), pts, width * 2.2, lerp_alpha(NORD8, 90))
-    stroke = Image.alpha_composite(stroke, glow)
-    draw_thick_curve(ImageDraw.Draw(stroke), pts, width, NORD8 + (255,))
-    sx, sy = pts[0]
-    r_tip = width * 0.34
+    # 빛 방향(왼-위) 미세 하이라이트
+    hl_layer = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    ImageDraw.Draw(hl_layer).polygon(
+        rotate_pts(
+            [(px0, py0), (px0 + pw * 0.36, py0), (px0, py0 + ph * 0.36)],
+            cxc, cyc, angle,
+        ),
+        fill=(255, 255, 255, 24),
+    )
+    page = Image.alpha_composite(page, hl_layer)
+    img = Image.alpha_composite(img, page)
+
+    # -- 3. 칼리그래피 잉크 스트로크 (굵기 변화 + 펜 팁, 은은한 글로우) --------
+    stroke = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    path = [(0.265, 0.56), (0.40, 0.40), (0.585, 0.30), (0.745, 0.235)]
+    bez = Bezier([(x * S_hi, y * S_hi) for x, y in path])
+    w0, w1 = 0.030 * S_hi, 0.008 * S_hi  # 시작 굵음 → 끝(펜 팁) 가늘음
+
+    glow_layer = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    ImageDraw.Draw(glow_layer).polygon(
+        calligraphic_stroke_polygon(bez, w0 * 2.4, w1 * 2.4),
+        fill=lerp_alpha(INK_MID, 70),
+    )
+    stroke = Image.alpha_composite(stroke, glow_layer)
+
+    # 본체 (인디고)
+    ImageDraw.Draw(stroke).polygon(
+        calligraphic_stroke_polygon(bez, w0, w1), fill=INK_DEEP + (255,)
+    )
+    # 상단 하이라이트 → 둥근 볼륨감
+    ImageDraw.Draw(stroke).polygon(
+        calligraphic_stroke_polygon(bez, w0 * 0.45, w1 * 0.45),
+        fill=lerp_alpha(INK_HL, 110),
+    )
+    # 시작점 펜 눌림(도트)
+    sx, sy = bez.point(0.0)
+    tip_r = w0 * 0.62
     ImageDraw.Draw(stroke).ellipse(
-        (sx - r_tip, sy - r_tip, sx + r_tip, sy + r_tip), fill=lerp_alpha(NORD8, 235)
+        (sx - tip_r, sy - tip_r, sx + tip_r, sy + tip_r),
+        fill=INK_DEEP + (255,),
     )
     img = Image.alpha_composite(img, stroke)
 
-    # -- 4. Thin frost-blue frame ring inset ------------------------------
-    m = 0.045 * S
-    ImageDraw.Draw(img).rounded_rectangle(
-        (m, m, S - m, S - m),
-        radius=0.16 * S,
-        outline=lerp_alpha(NORD8, 190),
-        width=max(2, int(S * 0.018)),
+    # -- 4. 얇은 서리(프레임) 링 인세트 ----------------------------------------
+    ring = Image.new("RGBA", (S_hi, S_hi), (0, 0, 0, 0))
+    m = 0.045 * S_hi
+    ImageDraw.Draw(ring).rounded_rectangle(
+        (m, m, S_hi - m, S_hi - m),
+        radius=0.16 * S_hi,
+        outline=lerp_alpha(NORD8, 150),
+        width=max(1, int(S_hi * 0.010)),
     )
+    img = Image.alpha_composite(img, ring)
 
-    return img
-
+    return img.resize((S, S), Image.LANCZOS)
 
 
 def main():

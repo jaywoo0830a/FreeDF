@@ -49,7 +49,22 @@ impl SyncClient {
         if base.is_empty() || !(base.starts_with("http://") || base.starts_with("https://")) {
             return Err(SyncError::Transport(format!("invalid base_url: {base_url}")));
         }
-        let agent = AgentBuilder::new().timeout(timeout).build();
+        // 1Gbps 최적화:
+        //  - timeout: 전체 요청/전송 예산 (대용량 스냅샷·미디어 전송 허용).
+        //  - timeout_connect: 핸드셰이크는 짧게 — 죽은 서버는 빨리 실패.
+        //  - no_delay: TCP_NODELAY — 작은 메타데이터/폴링(250ms) 응답의 지연 축소.
+        //  (ureq는 Agent 당 keep-alive 풀을 유지해 반복 호출이 커넥션을 재사용.)
+        let connect: Duration = if timeout < Duration::from_secs(5) {
+            timeout
+        } else {
+            Duration::from_secs(5)
+        };
+        let agent = AgentBuilder::new()
+            .timeout(timeout)
+            .timeout_connect(connect)
+            .no_delay(true)
+            .user_agent("FreeDF-sync/3.0")
+            .build();
         Ok(Self {
             agent,
             base,

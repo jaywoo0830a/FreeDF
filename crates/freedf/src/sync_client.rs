@@ -18,7 +18,8 @@ use crate::server::MediaServerConfig;
 pub(crate) use freedf_sync::SyncClient;
 
 /// UI 버튼 등 사용자 조작 경로의 타임아웃 (백그라운드 작업은 기본 30s 사용).
-const UI_TIMEOUT: Duration = Duration::from_secs(4);
+/// 1Gbps 서버: 서비스 로드/재시도 시 10s 까지, 커넥트는 일반 5s 이내 실패.
+const UI_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 설정이 활성화됐을 때만 프로토콜 클라이언트 생성.
 ///

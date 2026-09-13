@@ -1038,7 +1038,7 @@ impl FreeDfApp {
                     self.media_config.enabled,
                     egui::Button::new(icon_text(ui, "Test connection", icons::PLUG)),
                 )
-                .on_hover_text("GET /health on the server (4s timeout)")
+                .on_hover_text("GET /health on the server (5s connect timeout)")
                 .clicked()
             {
                 let client = MediaClient::new(&self.media_config);

@@ -1,11 +1,13 @@
 # FreeDF 서버 스택 — API 백엔드(미디어 + Sync v3) + nginx
 #
-# 트래픽 흐름: Caddy(80/443, TLS) → nginx(호스트 네트워크, 8081) → backend
+# 트래픽 흐름: Caddy(80/443, HTTP/3) → nginx(호스트 네트워크, 8081) → backend
 # backend 네트워크는 배포 환경에 따라 up.sh가 오버레이를 자동 선택합니다:
 #   - docker-compose.host.yml   — Linux Docker Engine(VPS): 호스트 네트워크,
 #                                 DB(127.0.0.1:5432)·nginx(127.0.0.1:8080) 직통.
 #   - docker-compose.bridge.yml — Docker Desktop: 브리지 + host-gateway.
-# - nginx:   호스트 네트워크 — /v3·/api 프록시 + /media 정적 서빙 (freedf.conf).
+# - nginx:   호스트 네트워크 — /v3·/api 프록시 + /media 정적 서빙 (freedf.conf +
+#            main 튜닝 nginx.conf). 1Gbps 대응(worker_connections 8192, keep-alive
+#            업스트림, sendfile/open_file_cache).
 services:
   backend:
     build:
@@ -22,6 +24,24 @@ services:
       # server/backend/up.sh 가 ../db/.env 기반으로 조립해 넘겨줌
       # (브리지: host.docker.internal / 호스트 네트워크: 127.0.0.1).
       DATABASE_URL: ${CONTAINER_DB_URL:-postgres://freedf:freedf@host.docker.internal:5432/freedf}
+    # 1Gbps — 많은 동시 커넥션/큰 파일 전송을 위해 프로세스 fd 상한 상향.
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+    healthcheck:
+      # /health 는 키 없이 200 — 데몬 상태를 로컬에서 직접 확인.
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    # 로그가 무한정 쌓이지 않도록 순환.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
       - ${MEDIA_DIR:-/srv/freedf-server/media}:/srv/freedf-server/media
 
@@ -31,6 +51,19 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    # 1Gbps — worker_connections·keep-alive·fd 상한 상향 (커널 sysctl 은 호스트 손대지 않음).
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
+      # main 컨텍스트(worker_processes/events/업스트림 keep-alive) 전용 튜닝.
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # 서버 블록(/media·/api·/v3·/health) — conf.d 에서 로드됨.
       - ./nginx/freedf.conf:/etc/nginx/conf.d/default.conf:ro
       - ${MEDIA_DIR:-/srv/freedf-server/media}:/srv/freedf-server/media:ro

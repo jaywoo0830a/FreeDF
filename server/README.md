@@ -72,11 +72,15 @@ cd backend && ./init.sh && ./up.sh && cd ..
 
 ## TLS / 도메인
 
-- TLS는 **Caddy**가 종료: 80/443을 받아 nginx(8081)로 포워딩.
-  예: `freedf.rlawjddn00.online { reverse_proxy localhost:8081 }` (자동 HTTPS)
+- TLS는 **Caddy**(호스트 웹 서버)가 종료: 80/443을 받아 nginx(8081)로 포워딩.
+  설정 예시는 `server/caddy/Caddyfile` 참고 — 자동 HTTPS + **HTTP/3(QUIC)**
+  (Caddy 2.8+, UDP 443 방화벽 열기 필요), HTTP/2·HTTP/1.1 폴백 포함.
+  배포: `sudo cp server/caddy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy`
 - nginx는 8081에서 평문 HTTP (backend 127.0.0.1:8080 프록시 + /media 서빙).
-- 도메인을 바꾸려면 `nginx/freedf.conf`의 `server_name`과
-  `backend/.env`의 `PUBLIC_BASE_URL`을 함께 수정하세요.
+  메인 튜닝은 `server/nginx/nginx.conf`, 서버 블록은 `server/nginx/freedf.conf`
+  (1Gbps 대응: worker_connections 8192, 업스트림 keep-alive, sendfile/open_file_cache).
+- 도메인을 바꾸려면 `nginx/freedf.conf`의 `server_name`, `caddy/Caddyfile`의
+  사이트명, `backend/.env`의 `PUBLIC_BASE_URL`을 함께 수정하세요.
 
 ## FreeDF 클라이언트 연동
 
