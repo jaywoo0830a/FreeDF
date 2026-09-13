@@ -1291,7 +1291,7 @@ impl FreeDfApp {
                 crate::ui::layout::hseparator(ui);
                 ui.horizontal(|ui| {
                     // 좌/우 레일을 창 세로 전체로 펼치기 (WCAG: 스크롤 영역이 뷰를 채움).
-                    let full_h = ui.max_rect().height();
+                    let full_h = ui.available_height();
                     // Left rail: tab list — 안정적인 내비 블록 (선택 시 포커스 요청).
                     crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
                         ui.vertical(|ui| {
