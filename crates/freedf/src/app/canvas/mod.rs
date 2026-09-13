@@ -332,7 +332,7 @@ impl FreeDfApp {
             return;
         }
 
-        match doc.render_page(self.current_page, target_w, 4096.0 * ppp) {
+        match doc.render_page(self.current_page, target_w, crate::pdf::MAX_RENDER_DIM) {
             Ok(mut rendered) => {
                 if let Some((strength, base, surface)) = &tex_key {
                     composite_paper_texture(
@@ -1010,7 +1010,7 @@ impl FreeDfApp {
         let size = doc.page_size_pts(next);
         let ppp = ctx.pixels_per_point();
         let target_w = size[0] * self.view.zoom * ppp;
-        if let Ok(mut rendered) = doc.render_page(next, target_w, 4096.0 * ppp) {
+        if let Ok(mut rendered) = doc.render_page(next, target_w, crate::pdf::MAX_RENDER_DIM) {
             // 현재 페이지 렌더와 동일하게 종이 질감을 곱셈 합성합니다 —
             // 프리페치 텍스처를 그대로 쓰는 전환 경로에서 질감이 빠지지 않게
             // 합니다 (이전에는 다음 페이지에 질감이 없어서 줌 재렌더가 필요했음).

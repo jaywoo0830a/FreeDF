@@ -32,6 +32,15 @@ fn pdfium_names() -> &'static [&'static str] {
     }
 }
 
+/// 페이지 래스터의 **최대 표시 차원 픽셀 상한**.
+///
+/// 줌은 번번이 크게 들어갈 수 있는데, 이 상한을 높게 두면 연속 줌 시 pdfium이
+/// 거대한 비트맵을 할당하고, `render_page`가 `as_rgba_bytes()`/`ColorImage`로
+/// ~3배로 복제해 **메모리 폭주(프리즈→크래시)** 가 납니다. 한 면이 이 값을 넘지
+/// 않는 렌더는 ~4096×4096 RGBA = 약 67MB — 복제분 포함 약 200MB로 안전합니다.
+/// 100%·fit-width·고해상도(4K)는 훨씬 아래 값이라 화질 영향이 없습니다.
+pub(crate) const MAX_RENDER_DIM: f32 = 4096.0;
+
 /// PDFium 라이브러리를 찾을 후보 디렉터리 (실행 파일 폴더, 현재 폴더, 앱 데이터 폴더).
 fn library_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -268,11 +277,11 @@ impl DocumentView {
             .map_err(|e| format!("Could not read page: {e}"))?;
 
         let [w_pts, h_pts] = self.page_size_pts(index);
-        let w = (target_width.round().clamp(1.0, 65_000.0)) as Pixels;
+        let w = (target_width.round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
         // 표시 종횡비(너비/높이)에 맞는 높이를 명시해야 합니다. target_width만
         // 주면 pdfium-render가 어긋난 비트맵을 만들어 회전 페이지가 찌그러집니다.
-        let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, 65_000.0)) as Pixels;
-        let m = (max_dimension.round().clamp(1.0, 65_000.0)) as Pixels;
+        let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
+        let m = (max_dimension.round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
         // ── 회전 렌더링 (중요) ── pdfium은 페이지의 내장 /Rotate를 **렌더 시
         // 자동 적용**합니다 (CPDF_Page::UpdateDimensions가 page_matrix_에 회전을
         // 굽고 GetDisplayMatrix가 항상 곱함). 따라서 config에 rotate 플래그를

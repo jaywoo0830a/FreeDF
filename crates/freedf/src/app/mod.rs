@@ -1546,7 +1546,7 @@ impl FreeDfApp {
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
-            fast_ink_noise: false,
+            fast_ink_noise: true,
             left_handed,
             refresh_hz,
             cursor_scale,

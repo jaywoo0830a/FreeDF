@@ -747,19 +747,19 @@ impl Default for GlobalState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MacroState {
-    /// 페이지 키 활성화 (기본 켜짐 — z / x).
+    /// 페이지 키 활성화 (기본 해제 — z / x).
     pub page_enabled: bool,
     pub page_prev: MacroKey,
     pub page_next: MacroKey,
-    /// 탭 키 활성화 (기본 켜짐 — a / s, 이 창 안에서).
+    /// 탭 키 활성화 (기본 해제 — a / s, 이 창 안에서).
     pub tab_enabled: bool,
     pub tab_prev: MacroKey,
     pub tab_next: MacroKey,
-    /// Windows 가상 데스크탑 전환(Ctrl+Win+←/→) 활성화 (기본 꺼짐 — q / w).
+    /// Windows 가상 데스크탑 전환(Ctrl+Win+←/→) 활성화 (기본 해제 — q / w).
     pub desktop_enabled: bool,
     pub desktop_prev: MacroKey,
     pub desktop_next: MacroKey,
-    /// 데스크탑 키를 **FreeDF 포커스일 때만** 활성화 (기본 켜짐).
+    /// 데스크탑 키를 **FreeDF 포커스일 때만** 활성화 (기본 해제).
     /// 끄면 다른 앱 포커스에서도 동작합니다 (물리 키보드 한정 —
     /// 화상 키보드는 OS 수준 이벤트가 없어 전역 감지 불가).
     pub desktop_focus_only: bool,
@@ -768,16 +768,17 @@ pub struct MacroState {
 impl Default for MacroState {
     fn default() -> Self {
         Self {
-            page_enabled: true,
+            // 모든 매크로는 기본적으로 **해제(비활성)** — 사용자가 창에서 개별 켭니다.
+            page_enabled: false,
             page_prev: MacroKey::Z,
             page_next: MacroKey::X,
-            tab_enabled: true,
+            tab_enabled: false,
             tab_prev: MacroKey::A,
             tab_next: MacroKey::S,
             desktop_enabled: false,
             desktop_prev: MacroKey::Q,
             desktop_next: MacroKey::W,
-            desktop_focus_only: true,
+            desktop_focus_only: false,
         }
     }
 }

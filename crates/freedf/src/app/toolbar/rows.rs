@@ -254,6 +254,9 @@ impl FreeDfApp {
                 {
                     self.load_annotations();
                 }
+                ui.separator();
+                ui.toggle_value(&mut self.debug_hud, "Debug HUD")
+                    .on_hover_text("Show live input overlay: pressure, tilt, tip speed/width");
             });
         });
     }

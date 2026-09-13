@@ -75,6 +75,9 @@ baseline은 이 문서용으로 추가한 `#[ignore]` 벤치 `bench_live_render_
 > GUI 검증이 필요해 **아직 미구현**. 구현 후 동일 벤치로 이 표를 교체합니다.
 > debug 프로파일이라 절대값이 크며, 앱(release)에선 상수배 줄어듭니다.
 
+**fast_noise 기본 ON 후 추가 실측** (P3 위킹 생략이 기본): n=1k **504 µs(−10%)**,
+n=10k **5.13 ms(−13.6%)** (초기 560 µs / 5.93 ms 대비). `InkGrain::default().fast_noise = true`.
+
 ---
 
 ## 5. 안전망 (수치를 믿을 수 있게)

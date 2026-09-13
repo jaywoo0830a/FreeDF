@@ -67,8 +67,26 @@
   - **앱 Debug HUD에 체크박스** 추가 (`paint_debug_hud` → `&mut self`, `fast_ink_noise` 필드) —
     켜는 즉시 펜/만년필 그레인에 전파되어 live·굽기 양쪽에 반영 (view_key에 그레인이 있어 캐시 재구성).
   - 테스트 `fast_noise_is_deterministic_bounded_and_non_popping`로 결정성·범위·no-popping 보호.
+- **fast ink noise 기본 ON** — `InkGrain::default().fast_noise = true` + 앱 `fast_ink_noise` 초기값 true.
+  parity 테스트(`density_lr_matches_two_density_calls`)를 두 모드(정확/fast) 모두 검증하도록 확장.
+  P0 벤치 실측: **n=1k 504 µs(−10%), n=10k 5.13 ms(−13.6%)** (초기 560 µs/5.93 ms 대비). OPTIMIZATION.md §4 갱신.
+- **Debug HUD 접근성**: `row_top`(상단 툴바)에 **"Debug HUD" 토글 버튼** 추가 — 설정 창을
+  열지 않아도 오버레이를 바로 켜고 끌 수 있습니다 (기존 Pen Settings→Input & cursor(접힘) 경로 불필요).
+- **매크로 기본 비활성화**: `MacroState::default()`의 `page_enabled`/`tab_enabled`/`desktop_enabled`/
+  `desktop_focus_only`를 **모두 false**로 — 새 세션에서 매크로가 기본으로 꺼져 있고(UI 섹션 비활성),
+  사용자가 Macro 창에서 개별 활성화합니다.
+
+### 버그 수정
+- **연속 줌 시 프리즈→크래시 (OOM)** — PDF 페이지 래스터의 최대 차원을
+  `MAX_RENDER_DIM = 4096`px으로 제한 (`freedf/src/pdf.rs::MAX_RENDER_DIM`,
+  `render_page`의 너비/높이/최대 차원 클램프 상한을 65,000→4096으로 인하,
+  `ensure_texture`/`prefetch` 호출부 갱신).
+  - 원인: 줌이 커지면 pdfium이 거대한 비트맵(고해상도·고줌에서 수십~수백 MB)을 할당하고,
+    `as_rgba_bytes()`·`ColorImage` 복제로 순간 최대 ~3배 메모리 → 릴리즈에서 메모리 폭주(OOM)
+    → 프리즈 후 크래시. 4096px 상한은 재생산 약 67MB/버퍼(복제 포함 ~200MB)로 안전.
+  - 100%·fit-width·4K 고해상도는 상한 아래라 화질 영향 없음. 극단 줌만 소프트 (GPU 스케일).
 
 ### 검증
-- `cargo test -p freedf-core`: **209 passed / 0 failed** (단위 198 + 통합 11), 0 경고.
+- `cargo test -p freedf-core`: **211 passed / 0 failed** (단위 200 + 통합 11), 0 경고.
 - `cargo test -p freedf-canvas`: **29 passed / 0 failed / 1 ignored** (P0 벤치), 0 경고.
 - 워크스페이스 `cargo build`: **0 에러 / 0 경고**.

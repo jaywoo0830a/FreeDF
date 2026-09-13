@@ -32,7 +32,8 @@ pub struct InkGrain {
     /// 획별 시드 — 스트로크 id(해시)를 넣으면 필적마다 다른 질감.
     pub seed: u64,
     /// **시각 근사**: 켜면 고주파 위킹 옥타브를 생략해 질감 계산을 절반으로
-    /// 줄입니다 (기본 false — 정확한 2옥타브). GUI에서 결과를 눈으로 비교하는 데 씁니다.
+    /// 줄입니다 (**기본 true** — 분석적 2옥타브보다 부드러움). Debug HUD의
+    /// "Fast ink noise" 토글로 정확 2옥타브와 라이브 비교합니다.
     pub fast_noise: bool,
     /// 저주파(잉크 흐름 물결) 진폭. 0이면 흐름 변화 없음.
     pub flow_amp: f32,
@@ -49,7 +50,7 @@ impl Default for InkGrain {
         Self {
             enabled: true,
             seed: 0x5EED_5EED,
-            fast_noise: false,
+            fast_noise: true,
             // 미묘한 수준을 넘어 눈에 보이는 질감으로 조정 (2026-09):
             // 팬 노이즈 ±~19%, 만년필 ±~31% 밀도 요동.
             flow_amp: 0.18,
@@ -356,17 +357,20 @@ mod tests {
     #[test]
     fn density_lr_matches_two_density_calls() {
         // 성능 최적화 가드: density_lr(공유 x-파트)의 결과는 density를 좌/우로
-        // 각각 호출한 것과 완전히 동일해야 합니다 (행동 보존).
+        // 각각 호출한 것과 완전히 동일해야 합니다 (행동 보존). 정확 2옥타브와
+        // fast_noise(고주파 생략) 두 모드 모두 검증합니다.
         let g_base = InkGrain { seed: 11, ..InkGrain::default() };
-        for &seed in &[11u64, 99, 55555] {
-            let g = InkGrain { seed, ..g_base };
-            for &(u, s) in &[(0.0f32, 0.0f32), (0.12, 0.5), (0.5, 1.0), (1.0, 0.9)] {
-                for tool in [ToolType::Pen, ToolType::Fountain] {
-                    let lr = g.density_lr(tool, u, s);
-                    let l = g.density(tool, u, -1.0, s);
-                    let r = g.density(tool, u, 1.0, s);
-                    assert!((lr[0] - l).abs() < 1e-6, "L mismatch tool={tool:?} u={u} s={s}: {lr:?} vs {l}");
-                    assert!((lr[1] - r).abs() < 1e-6, "R mismatch tool={tool:?} u={u} s={s}: {lr:?} vs {r}");
+        for &fast in &[false, true] {
+            for &seed in &[11u64, 99, 55555] {
+                let g = InkGrain { seed, fast_noise: fast, ..g_base };
+                for &(u, s) in &[(0.0f32, 0.0f32), (0.12, 0.5), (0.5, 1.0), (1.0, 0.9)] {
+                    for tool in [ToolType::Pen, ToolType::Fountain] {
+                        let lr = g.density_lr(tool, u, s);
+                        let l = g.density(tool, u, -1.0, s);
+                        let r = g.density(tool, u, 1.0, s);
+                        assert!((lr[0] - l).abs() < 1e-6, "L mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {l}");
+                        assert!((lr[1] - r).abs() < 1e-6, "R mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {r}");
+                    }
                 }
             }
         }
