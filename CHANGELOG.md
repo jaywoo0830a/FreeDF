@@ -16,7 +16,10 @@
 - **Debug HUD 확충(P3 부분)** — 디버그 창에 **"System / About"** 접이식 섹션 추가: 소프트웨어
   버전(`CARGO_PKG_VERSION`)·OS·아키텍처·빌드 프로필·렌더러(glow/wgpu)·PID·CPU·DB 연결 상태 +
   **"Copy diagnostics"**(클립보드로 1-클릭 진단 복사). `gamepad.rs`.
-- 그 외: 미사용이 된 `fast_ink_noise` App 필드/`form` import 제거(경고 0 유지).
+- **설정 다이얼로그 통합(P2)** — 11개 분산 모달(도구/커서/종이/캔버스/휠/페이지/엣지/포커스/
+  서버/매크로/게임패드)을 **단일 "Settings" 창(좌측 탭 레일 + 우측 내용)** 으로 통합.
+  툴바의 각 `*_open` 요청이 해당 탭으로 라우팅되고 창을 닫으면 해제. `settings.rs`·`mod.rs`.
+- 그 외: 미사용이 된 `fast_ink_noise` App 필드/`form` import 제거, `ui::dialog::dialog` 헬퍼 제거(경고 0 유지).
 
 ### 필기 파이프라인 리팩터 (InkPipeline / WritingMaterial / Materials)
 - **`LiveStroke` + `InkPipeline` 신설** (`crates/freedf-core/src/pipeline.rs`)

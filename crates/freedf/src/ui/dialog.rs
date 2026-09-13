@@ -19,26 +19,6 @@ pub(crate) const ITEM_SPACING: (f32, f32) = (8.0, 8.0);
 /// 모든 다이얼로그/모달의 최소 폭 (0.25rem 그리드, 400px).
 pub(crate) const MIN_WIDTH: f32 = 400.0;
 
-/// 부동 설정 창 — 공통 여백 리듬 적용.
-pub(crate) fn dialog(
-    ctx: &egui::Context,
-    open: &mut bool,
-    title: &str,
-    width: f32,
-    resizable: bool,
-    scroll: bool,
-    content: impl FnOnce(&mut egui::Ui),
-) {
-    egui::Window::new(title)
-        .open(open)
-        .resizable(resizable)
-        .default_width(width)
-        .min_width(MIN_WIDTH)
-        .show(ctx, |ui| {
-            pad(ui, scroll, content);
-        });
-}
-
 /// 중앙 고정 모달 — collapsible/resizable 없음, 공통 여백 적용.
 pub(crate) fn modal(
     ctx: &egui::Context,

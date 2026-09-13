@@ -922,6 +922,10 @@ pub struct FreeDfApp {
     tool_drop: Option<usize>,
     /// 도구별 세부 설정 플로팅 창 표시 여부 (툴바 Settings 버튼, 임시)
     tool_settings_open: bool,
+    /// 통합 Settings 창 표시 여부 (P2 — 11개 개별 창 대신 단일 탭 창).
+    settings_open: bool,
+    /// 통합 Settings 창에서 현재 선택된 탭.
+    settings_tab: toolbar::SettingsTab,
     /// Paper 세부 설정 플로팅 창 표시 여부 (임시)
     paper_settings_open: bool,
     /// Canvas(서라운드 배경색) 설정 플로팅 창 표시 여부 (임시)
@@ -1526,6 +1530,8 @@ impl FreeDfApp {
             tool_drag: None,
             tool_drop: None,
             tool_settings_open: false,
+            settings_open: false,
+            settings_tab: toolbar::SettingsTab::Draw,
             paper_settings_open: false,
             canvas_settings_open: false,
             cursor_settings_open: false,

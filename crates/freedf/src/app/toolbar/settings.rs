@@ -7,19 +7,55 @@
 use super::*;
 use crate::ui::form;
 
-/// 플로팅 설정 창 boilerplate 제거 — 열림 상태를 바인딩합니다
-/// (React의 <Modal open={..}>와 같은 역할). 실제 렌더링/여백은
-/// 공용 컴포넌트 `crate::ui::dialog::dialog`가 담당합니다.
-fn settings_window(
-    ctx: &egui::Context,
-    open: &mut bool,
-    title: &str,
-    width: f32,
-    resizable: bool,
-    scroll: bool,
-    content: impl FnOnce(&mut egui::Ui),
-) {
-    crate::ui::dialog::dialog(ctx, open, title, width, resizable, scroll, content);
+// Unified Settings window tabs (P2): fold the scattered floating windows
+// into a single tabbed window.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettingsTab {
+    Draw,
+    Cursor,
+    Paper,
+    Canvas,
+    ColorWheel,
+    Page,
+    EdgeScroll,
+    WindowFocus,
+    Server,
+    Macro,
+    Gamepad,
+}
+
+impl SettingsTab {
+    pub(crate) fn all() -> [SettingsTab; 11] {
+        [
+            SettingsTab::Draw,
+            SettingsTab::Cursor,
+            SettingsTab::Paper,
+            SettingsTab::Canvas,
+            SettingsTab::ColorWheel,
+            SettingsTab::Page,
+            SettingsTab::EdgeScroll,
+            SettingsTab::WindowFocus,
+            SettingsTab::Server,
+            SettingsTab::Macro,
+            SettingsTab::Gamepad,
+        ]
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            SettingsTab::Draw => "Draw",
+            SettingsTab::Cursor => "Cursor",
+            SettingsTab::Paper => "Paper",
+            SettingsTab::Canvas => "Canvas",
+            SettingsTab::ColorWheel => "Color wheel",
+            SettingsTab::Page => "Page",
+            SettingsTab::EdgeScroll => "Edge scroll",
+            SettingsTab::WindowFocus => "Window Focus",
+            SettingsTab::Server => "Server",
+            SettingsTab::Macro => "Macros",
+            SettingsTab::Gamepad => "Gamepad",
+        }
+    }
 }
 
 impl FreeDfApp {
@@ -1214,155 +1250,113 @@ impl FreeDfApp {
         });
     }
 
-    /// 설정 플로팅 창들 렌더 (툴바 뒤에 호출).
+    /// Unified "Settings" window — folds the 11 scattered floating windows
+    /// into one tabbed dialog. Each per-feature `*_open` flag is consumed as a
+    /// "open this tab" request; closing the window clears everything.
     pub(crate) fn settings_windows(&mut self, ui: &mut egui::Ui) {
-        // ── 도구별 세부 설정 플로팅 창 (툴바의 Settings 버튼으로 열림) ──
-        // Photoshop식: 툴바는 색/두께/필수 토글만 남기고, 세부 파라미터는
-        // 이 전용 창에서 지정합니다. 창은 현재 도구(볼펜/만년필)를 따릅니다.
-        if self.tool_settings_open {
-            let (title, is_fountain) = if self.tool == ToolType::Fountain {
-                ("Fountain pen settings", true)
-            } else {
-                ("Ballpen settings", false)
+        if let Some(tab) = self.consume_settings_open_request() {
+            self.settings_open = true;
+            self.settings_tab = tab;
+        }
+        if !self.settings_open {
+            return;
+        }
+
+        let mut open = self.settings_open;
+        let mut selected = self.settings_tab;
+        egui::Window::new("Settings")
+            .default_width(560.0)
+            .default_height(440.0)
+            .resizable(true)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    // Left rail: tab list.
+                    ui.vertical(|ui| {
+                        ui.set_width(140.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("settings_tabs")
+                            .show(ui, |ui| {
+                                for tab in SettingsTab::all() {
+                                    if ui
+                                        .selectable_label(selected == tab, tab.label())
+                                        .clicked()
+                                    {
+                                        selected = tab;
+                                    }
+                                }
+                            });
+                    });
+                    ui.separator();
+                    // Right panel: content of the selected tab.
+                    ui.vertical(|ui| {
+                        ui.set_min_size(egui::vec2(360.0, 380.0));
+                        egui::ScrollArea::vertical()
+                            .id_salt("settings_content")
+                            .show(ui, |ui| {
+                                self.show_settings_tab(selected, ui);
+                            });
+                    });
+                });
+            });
+
+        self.settings_open = open;
+        if self.settings_open {
+            self.settings_tab = selected;
+        }
+    }
+
+    /// Consumes the first pending per-feature open flag (low-frequency tools
+    /// still route through their own toolbar buttons) and returns which tab to
+    /// show in the unified Settings window.
+    fn consume_settings_open_request(&mut self) -> Option<SettingsTab> {
+        let mut tab = None;
+        macro_rules! take {
+            ($flag:ident, $t:expr) => {
+                if self.$flag {
+                    self.$flag = false;
+                    tab = Some($t);
+                }
             };
-            let mut open = self.tool_settings_open;
-            settings_window(ui.ctx(), &mut open, title, 400.0, true, true, |ui| {
-                if is_fountain {
+        }
+        take!(server_settings_open, SettingsTab::Server);
+        take!(gamepad_settings_open, SettingsTab::Gamepad);
+        take!(macro_settings_open, SettingsTab::Macro);
+        take!(window_focus_settings_open, SettingsTab::WindowFocus);
+        take!(edge_scroll_settings_open, SettingsTab::EdgeScroll);
+        take!(wheel_settings_open, SettingsTab::ColorWheel);
+        take!(canvas_settings_open, SettingsTab::Canvas);
+        take!(paper_settings_open, SettingsTab::Paper);
+        take!(cursor_settings_open, SettingsTab::Cursor);
+        take!(insert_page_open, SettingsTab::Page);
+        take!(tool_settings_open, SettingsTab::Draw);
+        tab
+    }
+
+    /// Renders the content of one Settings tab by dispatching to the existing
+    /// per-tool / per-feature settings UI functions.
+    fn show_settings_tab(&mut self, tab: SettingsTab, ui: &mut egui::Ui) {
+        match tab {
+            SettingsTab::Draw => {
+                if self.tool == ToolType::Fountain {
                     self.fountain_settings_ui(ui);
                 } else {
                     self.pen_settings_ui(ui);
                 }
-            });
-            self.tool_settings_open = open;
-        }
-
-        // ── 커서(펜 닙) 설정 플로팅 창 (툴바 Cursor 버튼) ──
-        if self.cursor_settings_open {
-            let mut open = self.cursor_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Cursor settings",
-                320.0,
-                false,
-                false,
-                |ui| self.cursor_settings_ui(ui),
-            );
-            self.cursor_settings_open = open;
-        }
-
-        // ── Paper 세부 설정 플로팅 창 (툴바 Paper 옆 Settings 버튼) ──
-        if self.paper_settings_open {
-            let mut open = self.paper_settings_open;
-            settings_window(ui.ctx(), &mut open, "Paper settings", 400.0, true, true, |ui| {
-                self.paper_settings_ui(ui)
-            });
-            self.paper_settings_open = open;
-        }
-
-        // ── Canvas(배경색) 설정 플로팅 창 ──
-        if self.canvas_settings_open {
-            let mut open = self.canvas_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Canvas settings",
-                400.0,
-                false,
-                false,
-                |ui| self.canvas_settings_ui(ui),
-            );
-            self.canvas_settings_open = open;
-        }
-
-        // ── Color wheel(원형 팔레트 색 지정) 설정 플로팅 창 ──
-        if self.wheel_settings_open {
-            let mut open = self.wheel_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Color wheel settings",
-                400.0,
-                false,
-                false,
-                |ui| self.wheel_settings_ui(ui),
-            );
-            self.wheel_settings_open = open;
-        }
-
-        // ── Edge auto-scroll 설정 플로팅 창 (Row2의 토글/기어) ──
-        if self.edge_scroll_settings_open {
-            let mut open = self.edge_scroll_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Edge auto-scroll",
-                400.0,
-                false,
-                false,
-                |ui| self.edge_scroll_settings_ui(ui),
-            );
-            self.edge_scroll_settings_open = open;
-        }
-
-        // ── Window Focus 설정 플로팅 창 (Row1의 Focus Delay 버튼) ──
-        if self.window_focus_settings_open {
-            let mut open = self.window_focus_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Window Focus",
-                400.0,
-                false,
-                false,
-                |ui| self.window_focus_settings_ui(ui),
-            );
-            self.window_focus_settings_open = open;
-        }
-
-        // ── Insert Page 플로팅 창 (메뉴 대신 — 타이핑이 유지됨) ──
-        if self.insert_page_open {
-            let mut open = self.insert_page_open;
-            settings_window(ui.ctx(), &mut open, "Insert pages", 400.0, false, false, |ui| {
-                self.insert_page_ui(ui)
-            });
-            self.insert_page_open = open;
-        }
-
-        // ── 미디어 서버 연결 설정 창 (툴바 Server 버튼) ──
-        if self.server_settings_open {
-            let mut open = self.server_settings_open;
-            settings_window(ui.ctx(), &mut open, "Media server", 440.0, false, false, |ui| {
-                self.server_settings_ui(ui)
-            });
-            self.server_settings_open = open;
-        }
-
-        // ── Macro 단축키 매핑 창 (Row1의 Macro 버튼) ──
-        if self.macro_settings_open {
-            let mut open = self.macro_settings_open;
-            settings_window(
-                ui.ctx(),
-                &mut open,
-                "Macro settings",
-                480.0,
-                false,
-                false,
-                |ui| {
-                    self.macro_settings_ui(ui);
-                    self.macro_capture_finish(ui.ctx());
-                },
-            );
-            self.macro_settings_open = open;
-        }
-
-        // ── 게임패드 설정 창 (Row1의 Gamepad 버튼) ──
-        if self.gamepad_settings_open {
-            let mut open = self.gamepad_settings_open;
-            settings_window(ui.ctx(), &mut open, "Gamepad settings", 400.0, false, false, |ui| {
-                self.gamepad_settings_ui(ui);
-            });
-            self.gamepad_settings_open = open;
+            }
+            SettingsTab::Cursor => self.cursor_settings_ui(ui),
+            SettingsTab::Paper => self.paper_settings_ui(ui),
+            SettingsTab::Canvas => self.canvas_settings_ui(ui),
+            SettingsTab::ColorWheel => self.wheel_settings_ui(ui),
+            SettingsTab::Page => self.insert_page_ui(ui),
+            SettingsTab::EdgeScroll => self.edge_scroll_settings_ui(ui),
+            SettingsTab::WindowFocus => self.window_focus_settings_ui(ui),
+            SettingsTab::Server => self.server_settings_ui(ui),
+            SettingsTab::Macro => {
+                self.macro_settings_ui(ui);
+                self.macro_capture_finish(ui.ctx());
+            }
+            SettingsTab::Gamepad => self.gamepad_settings_ui(ui),
         }
     }
 }

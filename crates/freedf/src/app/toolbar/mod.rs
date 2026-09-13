@@ -216,4 +216,5 @@ impl FreeDfApp {
 
 mod rows;
 mod settings;
+pub(crate) use settings::SettingsTab;
 pub(crate) mod macros;
