@@ -43,6 +43,30 @@ app::toolbar::settings::panels ← 설정 스펙 (grid/card/alert, WCAG 대비)
 | Row3 | 검색 | 상태유지 |
 | 설정 | 펜/만년필/휠/캔버스/종이/서버 | `grid`/`card`/`alert` 키트 적용, 탭 구성 |
 
+## 3-bis. 구현된 재설계 (ribbon.rs, 2026-09-13)
+
+`app/toolbar/rows.rs`를 `app/toolbar/ribbon.rs`로 대체하고, 행을 **도메인별**로
+재편했습니다 (각 행 = 하나의 주제).
+
+| 행 (id) | 그룹 | 구성 |
+|---------|------|------|
+| Row1 `workspace` | Chrome · View · Edit · File · App | Hide UI ／ Library·Outline·Bookmarks·Palette ／ Undo·Redo·Clear ／ Save·Load ／ **Settings**(전역) · **More** |
+| Row2 `page` | Page · Paper · Canvas | Insert·Delete·Rotate ／ Style·Swatches·Custom·⚙ ／ Swatch·Edge auto-scroll |
+| Row3 `ink` | Tools · Tool options · Pacing | 도구 피커(드래그) ／ 도구별 색·굵기·토글 + ⚙ Draw ／ Refresh Hz |
+
+**중복 제거·단일 홈**
+- `Window Focus`(설정)를 Row1 상주에서 제거 → `More ▸ Input`(토글 + ⚙).
+- 설정 진입을 **2곳**으로 수렴: Row1 전역 `Settings` 기어 + Row3 도구별 `Draw` 기어.
+  (기존 `Pen Settings`·`Fountain Settings`·`Cursor Size` 3중 버튼 제거.)
+- `Debug HUD`는 `More ▸ Diagnostics`에만 존재 — 펜 설정 "Input & cursor"의
+  **잘못 기생하던 중복 체크박스를 삭제**(데이터 속성 불일치 수정).
+- `Color wheel`(잉크 색)을 Row2에서 분리 — 설정 창 `Color wheel` 탭으로 단일화.
+- 아이콘 중복 해소: `Paper`=RULER, `Canvas`=SQUARES_FOUR, `Palette`=PALETTE.
+- `More` 메뉴를 **주제별 섹션**으로 재편: Page · View · Lookup · Input · Server ·
+  Maintenance · Diagnostics.
+- 컴포넌트 라이브러리 정리: `ui::components`에 실수로 중첩돼 있던
+  `ds` 중복 요소(badge/alert/…)를 제거하고 경량 원자(pill/caption/help/placeholder)만 유지.
+
 ## 4. 이행 순서 (세션 계획)
 
 1. ✅ `ui::actionbar::ActionBar` 신설 + Row1의 Undo/Redo/Clear에 적용

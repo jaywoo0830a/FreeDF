@@ -5,6 +5,24 @@
 
 ## [Unreleased] — 2026-09-13
 
+### 툴바 전면 재설계 — "도메인 3행 + 단일 설정 홈" (ribbon.rs)
+- **`app/toolbar/rows.rs` → `app/toolbar/ribbon.rs` 대체** — 툴바를 **도메인별 3행**으로 재편:
+  Row1 `Workspace`(Hide UI ／ Library·Outline·Bookmarks·Palette ／ Undo·Redo·Clear ／
+  Save·Load ／ 전역 `Settings` · `More`), Row2 `Page`(Insert·Delete·Rotate ／ Paper ／ Canvas),
+  Row3 `Ink`(도구 피커 ／ 도구별 옵션 ／ Refresh Hz). 각 행 = 하나의 주제.
+- **중복/단일 홈 정리** — `Window Focus` 상주 제거(`More ▸ Input`로 이동), 설정 진입을
+  전역 `Settings` + 도구별 `Draw` **2곳**으로 수렴(`Pen Settings`·`Fountain Settings`·
+  `Cursor Size` 3중 버튼 제거), `Color wheel`을 Row2에서 분리해 설정 탭으로 단일화.
+- **`More` 메뉴 주제별 섹션화** — Page · View · Lookup · Input · Server · Maintenance ·
+  Diagnostics로 묶어 평면 나열을 제거.
+- **오버레이 입력 불일치 수정** — 펜 설정 "Input & cursor"에 기생하던 `Debug HUD`
+  체크박스 삭제(진단 토글의 단일 홈 = `More`). `Paper`=RULER, `Canvas`=SQUARES_FOUR,
+  `Palette`=PALETTE 로 아이콘 중복을 해소.
+- **`ui::components` 중복 제거** — `placeholder()` 함수 안에 실수로 중첩돼 접근 불가였던
+  `Tone`/`badge`/`alert` 등 `ui::ds` 복제 요소를 삭제하고, 경량 원자(pill/caption/help/
+  placeholder)만 유지. 문서 `docs/UI-COMPONENTS.md`·`docs/DESIGN-TOOLBAR.md` 갱신.
+- 검증: `cargo build`(경고 0) · `cargo test -p freedf-core`/`-p freedf-canvas`/`-p freedf` 전체 통과.
+
 ### UI/UX 개편 (툴바 계층 · 그룹핑 · 진단 확충) — `docs/UI-UX-REPORT.md` 반영
 - **기본 한글/UI 폰트를 Asta Sans로 교체** — Google Fonts Asta Sans(위 300–800) Regular를
   내장해 'Proportional'의 1순위로 등록(Inter·NanumGothic은 폴백 유지). `fonts.rs`.
