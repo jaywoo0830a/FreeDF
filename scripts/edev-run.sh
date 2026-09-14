@@ -36,9 +36,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -z "${DISPLAY:-}" ]]; then
+# Xvfb가 필요한 경우는 **헤드리스 Linux뿐**입니다.
+# macOS는 DISPLAY가 비어 있어도 실제 디스플레이가 있고, Windows도 마찬가지입니다.
+# (Wayland 세션도 WAYLAND_DISPLAY가 있으므로 Xvfb가 필요 없습니다.)
+needs_xvfb() {
+  [[ "$(uname -s)" == "Linux" && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]
+}
+
+if needs_xvfb; then
   if ! command -v Xvfb >/dev/null 2>&1; then
-    echo "오류: DISPLAY가 없고 Xvfb도 설치되어 있지 않습니다." >&2
+    echo "오류: 헤드리스 Linux인데 Xvfb도 설치되어 있지 않습니다." >&2
     echo "      sudo apt-get install -y xvfb" >&2
     exit 1
   fi

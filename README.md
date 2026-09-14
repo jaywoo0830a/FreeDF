@@ -261,6 +261,22 @@ cargo run -p freedf
 cargo build --release -p freedf
 ```
 
+### AI 디자인 개선 워크플로 (에이전트가 화면을 직접 보고 판단)
+
+이 저장소에는 [eguidev](https://github.com/cortesi/eguidev) 인프로세스 자동화가 붙어 있어,
+에이전트가 **렌더된 실제 프레임(이미지) + 위젯 기하/색 대비 측정값**을 근거로 디자인 리뷰를
+할 수 있습니다. 처음 클론했다면 아래 가이드를 그 순서대로 따라가세요.
+
+- **`AI_DESIGN_IMPROVEMENT_GUIDE.md`** — 사전 조건 → 클론/빌드 → 계측 확인 → 캡처 →
+  Cline MCP 연결 → 감사 → 개선 루프 → 커밋 체크리스트
+- `docs/eguidev-automation.md` — 자동화 계약(계측 id, 헬퍼, 트러블슈팅)
+
+```bash
+scripts/edev-run.sh smoke       # 회귀 스모크
+scripts/edev-run.sh dump        # 위젯 트리
+scripts/edev-run.sh eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
+```
+
 ### 데이터베이스 시작 (운영)
 
 ```bash
