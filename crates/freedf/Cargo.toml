@@ -10,6 +10,13 @@ build = "build.rs"
 name = "freedf"
 path = "src/main.rs"
 
+[features]
+# AI/에이전트가 FreeDF GUI를 직접 보고 조작하기 위한 eguidev 인프로세스 계측.
+#   cargo run -p freedf --features dev-automation
+# 실제 자동화 서버는 EDEV 런처가 EGUIDEV_MCP_ADDR을 주입한 실행에서만 켜집니다
+# (그 외에는 완전한 no-op — 일반 실행의 동작/성능에 영향이 없습니다).
+dev-automation = ["dep:eguidev", "dep:eguidev_runtime"]
+
 [dependencies]
 freedf-core = { path = "../freedf-core" }
 # 캔버스(잉크 메시) 파이프라인 — 순수 계산 레이어 (doc/architecture.md).
@@ -29,6 +36,10 @@ egui_phosphor_icons = { version = "0.5", default-features = false }
 hound = "3"
 # 이미지 미리보기 디코딩 (PNG/JPEG/GIF/WebP/BMP — 서버에서 받은 사진 미리보기)
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+
+# eguidev 계측/런타임 — `dev-automation` 기능에서만 링크됩니다 (워크스페이스 핀 고정).
+eguidev = { workspace = true, optional = true }
+eguidev_runtime = { workspace = true, optional = true }
 
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -432,18 +432,20 @@ impl FreeDfApp {
                 .show(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .button(icon_text(ui, "New Note", icons::PLUS))
-                    .on_hover_text("New note (Ctrl+N)")
-                    .clicked()
-                {
+                let new_note =
+                    crate::app::dev::tag_button_with(ui, "tabs.new_note", "New Note", |ui| {
+                        ui.button(icon_text(ui, "New Note", icons::PLUS))
+                            .on_hover_text("New note (Ctrl+N)")
+                    });
+                if new_note.clicked() {
                     self.modal = Some(ModalState::ask_new_note());
                 }
-                if ui
-                    .button(icon_text(ui, "Open PDF", icons::FOLDER_OPEN))
-                    .on_hover_text("Open PDF (Ctrl+O)")
-                    .clicked()
-                {
+                let open_pdf =
+                    crate::app::dev::tag_button_with(ui, "tabs.open_pdf", "Open PDF", |ui| {
+                        ui.button(icon_text(ui, "Open PDF", icons::FOLDER_OPEN))
+                            .on_hover_text("Open PDF (Ctrl+O)")
+                    });
+                if open_pdf.clicked() {
                     self.open_file_dialog();
                 }
                 ui.separator();
@@ -505,11 +507,19 @@ impl FreeDfApp {
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                                            let tr = ui.add_sized(
-                                                egui::vec2(title_w, 24.0),
-                                                egui::Label::new(egui::RichText::new(title))
-                                                    .truncate()
-                                                    .sense(egui::Sense::click()),
+                                            let tr = crate::app::dev::tag(
+                                                ui,
+                                                format!("tabs.tab.{i}"),
+                                                |ui| {
+                                                    ui.add_sized(
+                                                        egui::vec2(title_w, 24.0),
+                                                        egui::Label::new(egui::RichText::new(
+                                                            title,
+                                                        ))
+                                                        .truncate()
+                                                        .sense(egui::Sense::click()),
+                                                    )
+                                                },
                                             );
                                             let tr = tr.on_hover_text(title);
                                             if tr.clicked() {

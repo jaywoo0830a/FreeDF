@@ -21,6 +21,13 @@ egui = "0.36"
 # `FREEDF_RENDERER=wgpu` 환경 변수로 DirectX 12 백엔드를 선택할 수 있습니다.
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wgpu", "accesskit", "links", "x11", "wayland"] }
 pdfium-render = "0.9.3"
+# eguidev — egui 앱용 인프로세스 GUI 자동화/계측 (Playwright의 GUI판).
+# 공식 크레이트는 아직 egui 0.35까지만 발행되어 있어(FreeDF는 egui 0.36),
+# 리비전을 고정한 포크를 씁니다. 포크 브랜치 `freedf`는 저자 로컬 경로 의존성을
+# 공개 리비전으로 바꾸고 비공개 `ruau-script-api` 의존성을 걷어낸 것뿐입니다.
+# `crates/freedf`의 `dev-automation` 기능에서만 실제로 링크됩니다.
+eguidev = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
+eguidev_runtime = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 
 [profile.release]
 opt-level = 2

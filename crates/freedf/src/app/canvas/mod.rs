@@ -371,6 +371,9 @@ impl FreeDfApp {
         let ctx = ui.ctx().clone();
         let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         let canvas = response.rect;
+        // 자동화: 페이지를 그리는 화면 영역을 `canvas.surface`로 공개합니다.
+        // (painter로 직접 그린 영역이라 Response가 없습니다.)
+        crate::app::dev::publish_rect(ui, "canvas.surface", canvas);
         let origin = canvas.min;
         let canvas_size = [canvas.width(), canvas.height()];
         // Preserve the zoom when the canvas resizes (panel toggles / window

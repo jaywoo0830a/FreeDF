@@ -93,6 +93,7 @@ fn main() -> eframe::Result<()> {
         // 기본: OpenGL(glow) — 호환성이 가장 좋습니다 (Windows 크래시 방지).
         // `FREEDF_RENDERER=wgpu`로 실행하면 DirectX 12 백엔드로 GPU 오프로드
         // (페이지 전환/줌/합성이 더 부드러움, 전용 GPU 권장).
+        // eguidev 자동화도 glow를 선호합니다 (wgpu는 특정 조합에서 유휴 프레임이 멈춤).
         renderer: match std::env::var("FREEDF_RENDERER").as_deref() {
             Ok("wgpu") => eframe::Renderer::Wgpu,
             _ => eframe::Renderer::Glow,
@@ -104,6 +105,11 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([760.0, 520.0]),
         ..Default::default()
     };
+
+    // eguidev 자동화 실행에서 앱이 포커스를 빼앗지 않도록 합니다 (macOS 전용, 그 외 no-op).
+    // EDEV가 시작한 실행에서만 적용되므로 일반 `cargo run`에는 영향이 없습니다.
+    #[cfg(feature = "dev-automation")]
+    eguidev_runtime::enable_background_launch_guard();
 
     eframe::run_native(
         "FreeDF",

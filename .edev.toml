@@ -1,0 +1,38 @@
+# EDEV 런처 설정 — egui 앱(FreeDF)용 인프로세스 GUI 자동화.
+#
+#   edev            # 명령 목록
+#   edev fixtures   # 등록된 픽스처(이 앱은 아직 없음) 확인
+#   edev dump       # 현재 위젯 트리 텍스트로 덤프
+#   edev eval SCRIPT.luau
+#   edev smoke      # smoketest/ 디렉터리의 .luau 스위트 실행
+#
+# EDEV는 `EGUIDEV_MCP_ADDR`을 주입해 앱을 띄우고, 앱은 그 주소에서만 자동화
+# 서버를 켭니다(그 외 실행은 완전한 no-op).
+#
+# 사전 준비:
+#   cargo install --git https://github.com/jaywoo0830a/eguidev \
+#                 --rev 84ab2da60b36fa5f4235c0792b78e5535b95700a edev
+#   (Linux 헤드리스라면 Xvfb 필요: scripts/edev-run.sh 참고)
+
+[app]
+# `--locked` 필수: 스모크 실행이 의존성 드리프트로 Cargo.lock을 갱신하지 않게 합니다.
+# `dev-automation` 기능이 계측/런타임을 링크합니다.
+command = [
+  "cargo", "run", "--locked",
+  "-p", "freedf", "--bin", "freedf",
+  "--features", "dev-automation",
+]
+# 자동화 중에는 창을 앞으로 올리지 않습니다(macOS 전용 설정).
+# presentation = "background"
+# 종료 유예 시간(초) — 저장 플러시가 있는 앱이라 기본 30초로 충분합니다.
+# shutdown_grace_secs = 30
+
+# 앱은 PDFium을 지연 로드하므로 자동화에 라이브러리가 없어도 GUI는 뜹니다.
+
+[smoke]
+suite_dir = "smoketest"
+# 실패 지점에서 즉시 중단.
+# fail_fast = false
+# 스크립트 하나의 타임아웃(초) — 첫 프레임 + 서버 연결 대기 여유.
+script_timeout_secs = 120
+# 헤드리스 CI에서는 Xvfb 위에서 실행하세요 (scripts/edev-run.sh).

@@ -14,6 +14,18 @@ use super::*;
 use crate::ui::{icon_button, icon_label, icon_select, icon_toggle, IconButton};
 
 /// 메뉴 안 섹션 제목 — 같은 주제의 항목을 묶는 작은 강조 라벨.
+/// 도구 선택 버튼의 자동화용 안정 id — 표시 라벨(`ToolType::label`)과 분리된 계약입니다.
+/// (라벨을 바꿔도 스크립트가 깨지지 않도록 명시적으로 고정합니다.)
+fn dev_tool_id(tool: ToolType) -> &'static str {
+    match tool {
+        ToolType::Pen => "toolbar.tool.pen",
+        ToolType::Fountain => "toolbar.tool.fountain",
+        ToolType::Highlighter => "toolbar.tool.highlighter",
+        ToolType::Eraser => "toolbar.tool.eraser",
+        ToolType::Pan => "toolbar.tool.pan",
+    }
+}
+
 fn menu_section(ui: &mut egui::Ui, label: &str) {
     ui.add_space(2.0);
     ui.label(egui::RichText::new(label).small().strong());
@@ -27,16 +39,16 @@ impl FreeDfApp {
                 // ── Chrome ──────────────────────────────────────────────
                 // 숨기면 캔버스+팔레트만 남고, 복귀는 우상단 플로팅 pill(☰)
                 // 또는 Ctrl+Shift+M.
-                if icon_button(
+                let hide_ui = icon_button(
                     ui,
                     IconButton::new(icons::CORNERS_OUT, "Hide UI").hint(
                         "Hide toolbars & panels — canvas + palette only.\n\
                          Bring them back with the floating Show UI button (top-right)\n\
                          or Ctrl+Shift+M.",
                     ),
-                )
-                .clicked()
-                {
+                );
+                crate::app::dev::tag_button(ui, "toolbar.hide_ui", "Hide UI", &hide_ui);
+                if hide_ui.clicked() {
                     self.manual_minimal = true;
                     self.narrow_chrome_expanded = false;
                     self.show_palette = true;
@@ -52,33 +64,38 @@ impl FreeDfApp {
 
                 // ── Edit: 실행취소 · 재실행 · 페이지 비우기 ─────────────
                 crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
-                    if icon_button(
+                    let undo = icon_button(
                         ui,
                         IconButton::new(icons::ARROW_COUNTER_CLOCKWISE, "Undo")
                             .enabled(self.history.can_undo())
                             .hint("Undo (Ctrl+Z)"),
-                    )
-                    .clicked()
-                    {
+                    );
+                    crate::app::dev::tag_button(ui, "toolbar.undo", "Undo", &undo);
+                    if undo.clicked() {
                         self.undo();
                     }
-                    if icon_button(
+                    let redo = icon_button(
                         ui,
                         IconButton::new(icons::ARROW_CLOCKWISE, "Redo")
                             .enabled(self.history.can_redo())
                             .hint("Redo (Ctrl+Y)"),
-                    )
-                    .clicked()
-                    {
+                    );
+                    crate::app::dev::tag_button(ui, "toolbar.redo", "Redo", &redo);
+                    if redo.clicked() {
                         self.redo();
                     }
-                    if icon_button(
+                    let clear_page = icon_button(
                         ui,
                         IconButton::new(icons::X_CIRCLE, "Clear Page")
                             .hint("Clear all ink on this page"),
-                    )
-                    .clicked()
-                    {
+                    );
+                    crate::app::dev::tag_button(
+                        ui,
+                        "toolbar.clear_page",
+                        "Clear Page",
+                        &clear_page,
+                    );
+                    if clear_page.clicked() {
                         self.clear_page();
                     }
                 });
@@ -86,38 +103,48 @@ impl FreeDfApp {
 
                 // ── File: 주석 저장 · 불러오기 ─────────────────────────
                 crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
-                    if icon_button(
+                    let save_edits = icon_button(
                         ui,
                         IconButton::new(icons::FLOPPY_DISK, "Save Edits")
                             .hint("Save annotations (Ctrl+S)"),
-                    )
-                    .clicked()
-                    {
+                    );
+                    crate::app::dev::tag_button(
+                        ui,
+                        "toolbar.save_edits",
+                        "Save Edits",
+                        &save_edits,
+                    );
+                    if save_edits.clicked() {
                         self.save_annotations();
                     }
-                    if icon_button(
+                    let load_edits = icon_button(
                         ui,
                         IconButton::new(icons::FOLDER_SIMPLE, "Load Edits")
                             .hint("Load annotations"),
-                    )
-                    .clicked()
-                    {
+                    );
+                    crate::app::dev::tag_button(
+                        ui,
+                        "toolbar.load_edits",
+                        "Load Edits",
+                        &load_edits,
+                    );
+                    if load_edits.clicked() {
                         self.load_annotations();
                     }
                 });
                 crate::ui::layout::vdivider(ui);
 
                 // ── App: 전역 설정(단일 홈) + 오버플로 ─────────────────
-                if icon_button(
+                let settings = icon_button(
                     ui,
                     IconButton::new(icons::GEAR, "Settings").hint(
                         "Open Settings — every preference in one tabbed window\n\
                          (draw, cursor, paper, canvas, color wheel, page,\n\
                          edge scroll, window focus, server, macros, gamepad).",
                     ),
-                )
-                .clicked()
-                {
+                );
+                crate::app::dev::tag_button(ui, "toolbar.settings", "Settings", &settings);
+                if settings.clicked() {
                     self.settings_open = true;
                 }
                 crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
@@ -131,59 +158,83 @@ impl FreeDfApp {
     /// Library·Outline·Bookmarks는 상호 배타적(하나를 켜면 나머지 자동 해제)이고,
     /// Palette는 독립 토글입니다. (React의 <PanelToggles>에 해당.)
     fn toolbar_panel_group(&mut self, ui: &mut egui::Ui) {
-        if icon_toggle(
+        let library_toggle = icon_toggle(
             ui,
             &mut self.show_library,
             icons::NOTEBOOK,
             "Library",
             "Library (notes, PDFs, recents) — exclusive",
-        )
-        .changed()
-        {
+        );
+        crate::app::dev::tag_toggle(
+            ui,
+            "toolbar.panel.library",
+            "Library",
+            &library_toggle,
+            self.show_library,
+        );
+        if library_toggle.changed() {
             if self.show_library {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Library);
             }
             self.save_session();
         }
-        if icon_toggle(
+        let outline_toggle = icon_toggle(
             ui,
             &mut self.show_outline,
             icons::LIST_BULLETS,
             "Outline",
             "Outline — exclusive",
-        )
-        .changed()
-        {
+        );
+        crate::app::dev::tag_toggle(
+            ui,
+            "toolbar.panel.outline",
+            "Outline",
+            &outline_toggle,
+            self.show_outline,
+        );
+        if outline_toggle.changed() {
             if self.show_outline {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Outline);
             }
             self.save_session();
         }
-        if icon_toggle(
+        let bookmarks_toggle = icon_toggle(
             ui,
             &mut self.show_bookmarks,
             icons::BOOKMARKS_SIMPLE,
             "Bookmarks",
             "Bookmarked pages — exclusive",
-        )
-        .changed()
-        {
+        );
+        crate::app::dev::tag_toggle(
+            ui,
+            "toolbar.panel.bookmarks",
+            "Bookmarks",
+            &bookmarks_toggle,
+            self.show_bookmarks,
+        );
+        if bookmarks_toggle.changed() {
             if self.show_bookmarks {
                 [self.show_library, self.show_outline, self.show_bookmarks] =
                     exclusive_panel_on(PanelKind::Bookmarks);
             }
         }
-        if icon_toggle(
+        let palette_toggle = icon_toggle(
             ui,
             &mut self.show_palette,
             icons::PALETTE,
             "Palette",
             "Writing-tool color palette (right side of canvas)",
-        )
-        .changed()
-        {
+        );
+        crate::app::dev::tag_toggle(
+            ui,
+            "toolbar.panel.palette",
+            "Palette",
+            &palette_toggle,
+            self.show_palette,
+        );
+        if palette_toggle.changed() {
             self.save_default_session();
         }
     }
@@ -331,23 +382,23 @@ impl FreeDfApp {
             icon_label(ui, icons::FILES, "Page");
             let page_count = self.document.as_ref().map(|d| d.page_count()).unwrap_or(0);
             // 메뉴 안에서는 숫자 타이핑이 닫히므로 **전용 창**을 엽니다.
-            if icon_button(
+            let insert_page = icon_button(
                 ui,
                 IconButton::new(icons::PLUS_SQUARE, "Insert Page")
                     .hint("Insert blank pages — opens a small window"),
-            )
-            .clicked()
-            {
+            );
+            crate::app::dev::tag_button(ui, "toolbar.insert_page", "Insert Page", &insert_page);
+            if insert_page.clicked() {
                 self.insert_page_open = true;
             }
-            if icon_button(
+            let delete_page = icon_button(
                 ui,
                 IconButton::new(icons::TRASH_SIMPLE, "Delete Page")
                     .enabled(page_count > 1)
                     .hint("Delete this page"),
-            )
-            .clicked()
-            {
+            );
+            crate::app::dev::tag_button(ui, "toolbar.delete_page", "Delete Page", &delete_page);
+            if delete_page.clicked() {
                 self.delete_page_action();
             }
             ui.menu_button(icon_text(ui, "Rotate", icons::REPEAT), |ui| {
@@ -528,6 +579,7 @@ impl FreeDfApp {
                 let resp = ui
                     .add(btn.sense(egui::Sense::click_and_drag()))
                     .on_hover_text(format!("{label}  (drag to reorder)"));
+                crate::app::dev::tag_selected_button(ui, dev_tool_id(tool), label, &resp, selected);
                 rects.push(resp.rect);
                 if resp.clicked() {
                     self.tool = tool;

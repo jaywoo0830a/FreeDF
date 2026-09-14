@@ -28,6 +28,7 @@ mod actions;
 mod deps;
 pub(crate) use deps::AppDeps;
 pub(crate) mod canvas;
+pub(crate) mod dev;
 mod dictionary;
 mod gamepad;
 mod input;
@@ -1329,6 +1330,16 @@ pub struct FreeDfApp {
     // ---------- Close confirmation ----------
     asking_close: bool,
     quitting: bool,
+
+    // ---------- eguidev GUI 자동화 (`dev-automation` 기능에서만 존재) ----------
+    /// 인프로세스 자동화 핸들. 첫 계측 프레임에서 egui 플러그인을 등록해
+    /// 스크립트 입력(클릭/타이핑/스크롤)을 앱의 이벤트 루프에 주입하고,
+    /// 위젯 상태·스크린샷을 스크립트에 노출합니다.
+    ///
+    /// `eguidev_runtime::attach` 전에는 완전히 inert라서, EDEV 없이 실행한
+    /// 프로세스는 자동화 관련 코드 경로를 전혀 타지 않습니다.
+    #[cfg(feature = "dev-automation")]
+    devmcp: eguidev::DevMcp,
 }
 
 impl FreeDfApp {
@@ -1480,6 +1491,11 @@ impl FreeDfApp {
                 })
                 .collect(),
         };
+
+        // eguidev 자동화 런타임을 붙입니다 — EDEV가 `EGUIDEV_MCP_ADDR`을
+        // 주입한 실행에서만 서버가 켜지고, 그 외에는 inert 핸들이 됩니다.
+        #[cfg(feature = "dev-automation")]
+        let devmcp = dev::attach();
 
         let app = Self {
             notes,
@@ -1723,6 +1739,8 @@ impl FreeDfApp {
             macro_capture: None,
             asking_close: false,
             quitting: false,
+            #[cfg(feature = "dev-automation")]
+            devmcp,
         };
         // Macro 매핑 요약을 디버그 로그에 남깁니다 (패널 확인용).
         app.push_macro_config();
@@ -3321,6 +3339,30 @@ impl FreeDfApp {
 
 impl eframe::App for FreeDfApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ── eguidev 자동화 프레임 스코프 ────────────────────────────────
+        // `dev-automation` 빌드에서만 위젯 트리 캡처 · 입력 주입 · 스크린샷이
+        // 켜집니다. EDEV가 시작한 실행이 아니면(`EGUIDEV_MCP_ADDR` 없음)
+        // `frame_scope`는 클로저를 한 번 실행할 뿐이라 비용이 사실상 0이고,
+        // `dev::*` 계측 호출도 전부 no-op입니다.
+        //
+        // 루트 뷰포트는 eguidev에서 **암묵적으로 `root`**라서 `name_viewport`를
+        // 부르지 않습니다 (`root`는 예약어 — 호출하면 계측 결함으로 잡힙니다).
+        #[cfg(feature = "dev-automation")]
+        let devmcp = self.devmcp.clone();
+
+        #[cfg(feature = "dev-automation")]
+        eguidev::frame_scope(&devmcp, ui, "freedf.root", |ui| {
+            self.app_frame(ui);
+        });
+
+        #[cfg(not(feature = "dev-automation"))]
+        self.app_frame(ui);
+    }
+}
+
+impl FreeDfApp {
+    /// 루트 뷰포트 한 프레임을 그립니다 (자동화 계측 스코프 안에서 호출됨).
+    fn app_frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         // 펜 진단 로그는 Debug HUD가 켜져 있을 때만 (평소 I/O 비용 0).
         canvas::set_pen_trace(self.debug_hud);
@@ -3494,11 +3536,18 @@ impl eframe::App for FreeDfApp {
         // Close confirmation: ask whether to save before quitting.
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         if close_requested && !self.quitting {
-            if !self.asking_close {
-                self.asking_close = true;
+            // 자동화 실행(EDEV)에서는 "Save before quitting?" 확인 창을 띄우지
+            // 않습니다 — 그 창은 사람의 입력을 기다리므로 EDEV의 정상 종료가
+            // 유예 시간을 넘겨 강제 종료되고, 스모크 실행이 실패로 기록됩니다.
+            if dev::automation_active() {
+                self.quitting = true;
+            } else {
+                if !self.asking_close {
+                    self.asking_close = true;
+                }
+                // Cancel the native close and show our own confirmation dialog.
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
-            // Cancel the native close and show our own confirmation dialog.
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         if self.asking_close {
             let mut save_and_quit = false;
