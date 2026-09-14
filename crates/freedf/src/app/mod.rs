@@ -899,6 +899,9 @@ pub struct FreeDfApp {
     pressure_enabled: bool,
     /// 디버그 HUD(실시간 입력값 오버레이) 표시 여부.
     debug_hud: bool,
+    /// 컴포넌트 갤러리(`dev-automation` 빌드 전용) — UI 계약을 눈과 스크립트로 검증.
+    #[cfg(feature = "dev-automation")]
+    ui_gallery: crate::ui::gallery::Gallery,
     /// 왼손잡이 여부 — 펜 커서 배럴 방향을 왼쪽 반평면으로 제한.
     left_handed: bool,
     /// 모니터 주사율 프리셋 (Hz) — 잉크 페이싱(재구성 주기·스밈 시간) 기준.
@@ -1563,6 +1566,17 @@ impl FreeDfApp {
             fountain_profile,
             pen_tilt: [0.0, 0.0],
             debug_hud,
+            // 테스트 훅: `FREEDF_UI_GALLERY=1`이면 시작할 때 갤러리를 엽니다.
+            // (egui 팝업 안 항목은 자동화가 클릭할 수 없어서, 메뉴 대신 이 경로로
+            //  컴포넌트 계약 스캔을 돌립니다 — docs/UI-SYSTEM.md 참고.)
+            #[cfg(feature = "dev-automation")]
+            ui_gallery: {
+                let mut g = crate::ui::gallery::Gallery::new();
+                if std::env::var_os("FREEDF_UI_GALLERY").is_some() {
+                    g.open = true;
+                }
+                g
+            },
             left_handed,
             refresh_hz,
             cursor_scale,
@@ -3518,6 +3532,9 @@ impl FreeDfApp {
         if self.debug_hud {
             self.debug_hud_ui(ui);
         }
+        // 컴포넌트 갤러리 (dev-automation 전용) — UI 계약을 눈으로/스크립트로 검증.
+        #[cfg(feature = "dev-automation")]
+        self.ui_gallery.show(&ctx);
 
         // 토스트 알림 (우상단, 시간 경과 시 자동 소멸).
         if !self.toast_welcomed {

@@ -11,7 +11,7 @@
 //!   이 파일(컨테이너)이 담당합니다.
 
 use super::*;
-use crate::ui::menu;
+use crate::ui::{kit, tokens};
 use crate::ui::{icon_button, icon_label, icon_toggle, IconButton};
 
 /// 도구 선택 버튼의 자동화용 안정 id — 표시 라벨(`ToolType::label`)과 분리된 계약입니다.
@@ -243,193 +243,178 @@ impl FreeDfApp {
     /// 하나**이고, 섹션은 구분선으로 나뉘며, 모든 항목에 아이콘과 라벨이
     /// 붙습니다. 상태 연결과 계측 id는 여기(컨테이너)가 담당합니다.
     fn overflow_menu(&mut self, ui: &mut egui::Ui) {
-        // More 버튼 자체도 계측합니다 — 오버레이의 모든 항목이 이 버튼 뒤에
-        // 있으므로, 스크립트가 메뉴를 열 수 있어야 그 내용을 측정/검증할 수 있습니다.
+        // More 버튼 자체도 계측합니다 — 오버레이의 유일한 입구라서,
+        // 스크립트가 메뉴를 열 수 있어야 그 내용을 측정/검증할 수 있습니다.
         let more = ui.menu_button(icon_text(ui, "More", icons::DOTS_THREE), |ui| {
+            // 폭을 **고정**합니다. 팝업은 내용에 맞춰 커지므로, 상한을 주지 않으면
+            // 행(전체 폭)이 팝업을 밀어내 메뉴가 594px까지 넓어집니다(실측).
+            // 고정하면 레이아웃과 자동화 좌표가 안정적입니다.
             ui.set_min_width(crate::ui::scale::rem(19)); // 304px
+            ui.set_max_width(crate::ui::scale::rem(19));
+
+            // 컴포넌트 갤러리 입구 — **dev-automation 빌드에만** 나타납니다.
+            // (UI 계약을 자동 스캔하기 위한 테스트 전용 훅. 메뉴가 창 높이를 넘을 때
+            //  마지막 항목이 클릭 불가가 되므로 **맨 위**에 둡니다.)
+            #[cfg(feature = "dev-automation")]
+            {
+                kit::section_label(ui, "Dev");
+                let gallery = kit::Row::action("menu.diag.ui_gallery", "UI gallery")
+                    .icon(icons::SQUARES_FOUR)
+                    .hint("컴포넌트 계약 갤러리 — 모든 변형/상태 (dev 빌드 전용)")
+                    .show(ui, |_| ())
+                    .0;
+                if gallery.clicked() {
+                    self.ui_gallery.open = true;
+                }
+            }
 
             // ── Page: 페이지 정렬 ───────────────────────────────────
-            // (라벨 없는 아이콘 3개 → "Page align" 행 + 우측 3-세그먼트)
-            menu::menu_section(ui, "Page");
-            let aligns = [
-                (
-                    PageAlign::Right,
-                    icons::TEXT_ALIGN_RIGHT,
-                    "Align right",
-                    "menu.page.align.right",
-                ),
-                (
-                    PageAlign::Center,
-                    icons::TEXT_ALIGN_CENTER,
-                    "Align center",
-                    "menu.page.align.center",
-                ),
-                (
-                    PageAlign::Left,
-                    icons::TEXT_ALIGN_LEFT,
-                    "Align left",
-                    "menu.page.align.left",
-                ),
-            ];
-            menu::menu_label_row(ui, icons::TEXT_ALIGN_LEFT, "Page align", |ui| {
-                // right_to_left 레이아웃이라 **역순**으로 추가해야 화면에는
-                // 왼쪽→오른쪽(Left · Center · Right) 순서로 보입니다.
-                for (a, ic, hint, id) in aligns {
-                    let selected = self.page_align == a;
-                    let resp = menu::menu_icon_select(ui, selected, ic, hint);
-                    crate::app::dev::tag_selected_button(ui, id, hint, &resp, selected);
-                    if resp.clicked() {
-                        self.page_align = a;
-                        self.realign();
-                        self.save_session();
-                    }
-                }
-            });
+            // 라벨 없는 아이콘 3개 → "Page align" 행 + 우측 세그먼트 3개.
+            kit::section_label(ui, "Page");
+            let (_, picked) = kit::Row::label("Page align")
+                .icon(icons::TEXT_ALIGN_LEFT)
+                .trailing_width(kit::segment_group_width(3))
+                .show(ui, |ui| {
+                    kit::Segmented::new(
+                        vec![
+                            kit::Segment::icon_only(
+                                "menu.page.align.left",
+                                "Align left",
+                                icons::TEXT_ALIGN_LEFT,
+                            )
+                            .hint("Align ink to the left edge"),
+                            kit::Segment::icon_only(
+                                "menu.page.align.center",
+                                "Align center",
+                                icons::TEXT_ALIGN_CENTER,
+                            )
+                            .hint("Align ink to the horizontal center"),
+                            kit::Segment::icon_only(
+                                "menu.page.align.right",
+                                "Align right",
+                                icons::TEXT_ALIGN_RIGHT,
+                            )
+                            .hint("Align ink to the right edge"),
+                        ],
+                        match self.page_align {
+                            PageAlign::Left => 0,
+                            PageAlign::Center => 1,
+                            PageAlign::Right => 2,
+                        },
+                    )
+                    .show(ui)
+                });
+            if let Some(i) = picked {
+                self.page_align = [PageAlign::Left, PageAlign::Center, PageAlign::Right][i];
+                self.realign();
+                self.save_session();
+            }
 
             // ── View: 미디어 패널 ───────────────────────────────────
-            menu::menu_section(ui, "View");
-            let (media_row, _) = menu::menu_toggle_row(
-                ui,
-                &mut self.show_media,
-                icons::MICROPHONE,
-                "Media panel",
-                "Show the audio recordings panel.",
-                |_ui| (),
-            );
-            crate::app::dev::tag_toggle(
-                ui,
+            kit::section_label(ui, "View");
+            let (media, _) = kit::Row::toggle(
                 "menu.view.media_panel",
                 "Media panel",
-                &media_row,
-                self.show_media,
-            );
-            if media_row.changed() {
+                &mut self.show_media,
+            )
+            .icon(icons::MICROPHONE)
+            .hint("Show the audio recordings panel.")
+            .show(ui, |_| ());
+            if media.changed() {
                 self.media_refresh();
             }
 
             // ── Lookup: 사전 오버레이 ───────────────────────────────
-            menu::menu_section(ui, "Lookup");
-            let (dict_row, _) = menu::menu_toggle_row(
-                ui,
-                &mut self.dictionary.enabled,
-                icons::BOOK_OPEN,
-                "Dictionary",
-                "Look up a tapped word (needs internet once per word).",
-                |_ui| (),
-            );
-            crate::app::dev::tag_toggle(
-                ui,
+            kit::section_label(ui, "Lookup");
+            let (dict, _) = kit::Row::toggle(
                 "menu.lookup.dictionary",
                 "Dictionary",
-                &dict_row,
-                self.dictionary.enabled,
-            );
-            if dict_row.changed() {
+                &mut self.dictionary.enabled,
+            )
+            .icon(icons::BOOK_OPEN)
+            .hint("Look up a tapped word (needs internet once per word).")
+            .show(ui, |_| ());
+            if dict.changed() {
                 self.save_default_session();
             }
 
             // ── Input: 창 포커스 · 매크로 · 게임패드 ─────────────────
-            menu::menu_section(ui, "Input");
-            // 행 = 토글, 트레일링 ⚙ = **그 행의** 설정입니다 (예전에는 체크박스
-            // 옆에 정체불명의 기어가 붙어 있었습니다).
+            // 행 = 토글, 트레일링 ⚙ = **그 행의** 설정.
+            kit::section_label(ui, "Input");
             let mut open_focus_settings = false;
-            let (focus_row, _) = menu::menu_toggle_row(
-                ui,
-                &mut self.window_focus_on_move,
-                icons::CROSSHAIR,
-                "Focus on cursor dwell",
-                "Focus this window when the cursor stays over it for the dwell time.\n\
-                 Turn off for windows that should not grab focus in split view.",
-                |ui| {
-                    let gear = menu::menu_icon_button(
-                        ui,
-                        icons::GEAR,
-                        "Window Focus settings — enable + dwell time",
-                    );
-                    crate::app::dev::tag_button(
-                        ui,
-                        "menu.input.focus_settings",
-                        "Window Focus settings",
-                        &gear,
-                    );
-                    open_focus_settings = gear.clicked();
-                },
-            );
-            crate::app::dev::tag_toggle(
-                ui,
+            let (focus, _) = kit::Row::toggle(
                 "menu.input.focus_dwell",
                 "Focus on cursor dwell",
-                &focus_row,
-                self.window_focus_on_move,
-            );
-            if focus_row.changed() {
+                &mut self.window_focus_on_move,
+            )
+            .icon(icons::CROSSHAIR)
+            .hint(
+                "Focus this window when the cursor stays over it for the dwell time.\n\
+                 Turn off for windows that should not grab focus in split view.",
+            )
+            .trailing_width(tokens::target::COMFORT)
+            .show(ui, |ui| {
+                open_focus_settings = kit::IconButton::new(icons::GEAR, "Window Focus settings")
+                    .hint("Window Focus settings — enable + dwell time")
+                    .test_id("menu.input.focus_settings")
+                    .show(ui)
+                    .clicked();
+            });
+            if focus.changed() {
                 self.save_default_session();
             }
             if open_focus_settings {
                 self.window_focus_settings_open = true;
             }
 
-            let macros = menu::menu_action_row(
-                ui,
-                icons::KEYBOARD,
-                "Macros…",
-                "Record and replay key sequences",
-            );
-            crate::app::dev::tag_button(ui, "menu.input.macros", "Macros", &macros);
+            let macros = kit::Row::action("menu.input.macros", "Macros…")
+                .icon(icons::KEYBOARD)
+                .hint("Record and replay key sequences")
+                .show(ui, |_| ())
+                .0;
             if macros.clicked() {
                 self.macro_capture = None;
                 self.macro_settings_open = true;
             }
-            // 게임패드 아이콘은 이 아이콘 세트에 없어 슬라이더로 대체합니다.
-            let gamepad = menu::menu_action_row(
-                ui,
-                icons::SLIDERS,
-                "Gamepad…",
-                "Gamepad mapping and dead-zone settings",
-            );
-            crate::app::dev::tag_button(ui, "menu.input.gamepad", "Gamepad", &gamepad);
+            // 이 아이콘 세트에는 게임패드 글리프가 없어 슬라이더로 대체합니다.
+            let gamepad = kit::Row::action("menu.input.gamepad", "Gamepad…")
+                .icon(icons::SLIDERS)
+                .hint("Gamepad mapping and dead-zone settings")
+                .show(ui, |_| ())
+                .0;
             if gamepad.clicked() {
                 self.gamepad_settings_open = true;
             }
 
             // ── Server: 미디어 서버 ─────────────────────────────────
-            menu::menu_section(ui, "Server");
-            let media_server = menu::menu_action_row(
-                ui,
-                icons::HARD_DRIVES,
-                "Media server settings…",
-                "Sync v3 server address + API key (server.json)",
-            );
-            crate::app::dev::tag_button(
-                ui,
-                "menu.server.media",
-                "Media server settings",
-                &media_server,
-            );
+            kit::section_label(ui, "Server");
+            let media_server = kit::Row::action("menu.server.media", "Media server settings…")
+                .icon(icons::HARD_DRIVES)
+                .hint("Sync v3 server address + API key (server.json)")
+                .show(ui, |_| ())
+                .0;
             if media_server.clicked() {
                 self.server_msg = None;
                 self.server_settings_open = true;
             }
 
-            // ── Maintenance: 캐시 정리 ──────────────────────────────
-            // 하위 메뉴 대신 **평탄한 행**으로 바꿉니다: 캐시는 2개뿐인데 한 단계
-            // 더 들어가는 구조는 "부모/자식"처럼 보여 계층을 흐립니다. 설명은
-            // 행 툴팁으로 옮겼습니다.
-            menu::menu_section(ui, "Maintenance");
+            // ── Maintenance: 평탄한 행 ──────────────────────────────
+            // 캐시는 2개뿐이라 하위 메뉴(한 단계 더) 대신 행으로 폅니다.
+            kit::section_label(ui, "Maintenance");
             let mut clear_index: Option<usize> = None;
             for (i, cache) in all_caches().iter().enumerate() {
                 let label = format!("Clear {}", cache.label().to_lowercase());
-                let row = menu::menu_action_row(ui, icons::BROOM, &label, cache.description());
-                crate::app::dev::tag_button(
-                    ui,
-                    format!(
-                        "menu.maintenance.clear.{}",
-                        cache.label().to_lowercase().replace(' ', "_")
-                    ),
-                    label.as_str(),
-                    &row,
+                let id = format!(
+                    "menu.maintenance.clear.{}",
+                    cache.label().to_lowercase().replace(' ', "_")
                 );
-                if row.clicked() {
+                let clicked = kit::Row::action(&id, &label)
+                    .icon(icons::BROOM)
+                    .hint(cache.description())
+                    .show(ui, |_| ())
+                    .0
+                    .clicked();
+                if clicked {
                     clear_index = Some(i);
                 }
             }
@@ -438,17 +423,12 @@ impl FreeDfApp {
             }
 
             // ── Diagnostics: 디버그 HUD (단일 홈) ───────────────────
-            menu::menu_section(ui, "Diagnostics");
-            let (hud_row, _) = menu::menu_toggle_row(
-                ui,
-                &mut self.debug_hud,
-                icons::BUG,
-                "Debug HUD",
-                "Live input overlay & diagnostics (pressure, tilt, speed, system).",
-                |_ui| (),
-            );
-            crate::app::dev::tag_toggle(ui, "menu.diag.debug_hud", "Debug HUD", &hud_row, self.debug_hud);
-            if hud_row.changed() {
+            kit::section_label(ui, "Diagnostics");
+            let (hud, _) = kit::Row::toggle("menu.diag.debug_hud", "Debug HUD", &mut self.debug_hud)
+                .icon(icons::BUG)
+                .hint("Live input overlay & diagnostics (pressure, tilt, speed, system).")
+                .show(ui, |_| ());
+            if hud.changed() {
                 self.save_default_session();
             }
         });

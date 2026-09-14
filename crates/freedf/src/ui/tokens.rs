@@ -1,0 +1,133 @@
+//! 디자인 토큰 — 컴포넌트 시스템의 **단일 진실 원천**.
+//!
+//! 왜 필요한가: 예전에는 컴포넌트마다 여백·반지름·글자 크기·타깃 크기가
+//! 호출부 곳곳에 흩어져 있었습니다(실측: 메뉴 정렬 버튼 20×28, 설정 기어 16×28 —
+//! 최소 타깃 미달). 값이 흩어지면 "다른 화면에서 다르게 보이는" 문제가 생기고
+//! 접근성 하한을 지킬 수 없습니다.
+//!
+//! 규칙:
+//! 1. 컴포넌트는 **여기 있는 값만** 씁니다(매직 넘버 금지).
+//! 2. 인터랙티브 요소는 [`target::MIN`] 이상이어야 합니다 —
+//!    [`crate::ui::a11y`]가 이를 강제하고 위반을 수집합니다.
+//! 3. 여백은 8px 그리드(`space`)를 따릅니다(Bootstrap `$spacer` 리듬과 동일).
+//! 4. 색은 [`crate::theme::nord::semantic`]의 의미 토큰만 씁니다(원시 팔레트 금지).
+
+use eframe::egui;
+
+/// 인터랙티브 타깃(터치/클릭 영역) 하한 — 접근성 계약.
+pub mod target {
+    /// 절대 하한 (pt). 이보다 작은 클릭 영역은 만들지 않습니다.
+    pub const MIN: f32 = 24.0;
+    /// 데스크톱 기본 — 대부분의 아이콘 버튼.
+    pub const COMFORT: f32 = 28.0;
+    /// 태블릿/터치 기본 — 손가락 입력이 주가 되는 컨트롤.
+    pub const TOUCH: f32 = 32.0;
+    /// 목록/메뉴 행 높이 — 행 전체가 타깃일 때.
+    pub const ROW: f32 = 28.0;
+}
+
+/// 여백 — 8px 그리드(`layout::SP_*`와 동일 리듬).
+pub mod space {
+    pub const XS: f32 = 2.0;
+    pub const SM: f32 = 4.0;
+    pub const MD: f32 = 8.0;
+    pub const LG: f32 = 12.0;
+    pub const XL: f32 = 16.0;
+}
+
+/// 모서리 반지름.
+pub mod radius {
+    pub const SM: f32 = 4.0;
+    pub const MD: f32 = 6.0;
+    pub const LG: f32 = 8.0;
+}
+
+/// 글자 크기(pt).
+pub mod font {
+    pub const CAPTION: f32 = 11.0;
+    pub const SMALL: f32 = 12.0;
+    pub const BODY: f32 = 14.0;
+    pub const TITLE: f32 = 16.0;
+}
+
+/// 선 두께.
+pub mod stroke {
+    pub const HAIRLINE: f32 = 1.0;
+    pub const FOCUS: f32 = 2.0;
+}
+
+/// 컴포넌트의 상호작용 상태 — 색을 **상태에서 파생**시켜 모든 컴포넌트가
+/// 같은 규칙으로 보이게 합니다(예전에는 컴포넌트마다 즉석에서 색을 만들었음).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum State {
+    Rest,
+    Hover,
+    Active,
+    Selected,
+    Disabled,
+}
+
+impl State {
+    /// `egui::Response`에서 상태를 한 곳에서 판정합니다.
+    pub fn of(resp: &egui::Response, selected: bool) -> Self {
+        if !resp.enabled() {
+            Self::Disabled
+        } else if resp.is_pointer_button_down_on() {
+            Self::Active
+        } else if resp.hovered() {
+            Self::Hover
+        } else if selected {
+            Self::Selected
+        } else {
+            Self::Rest
+        }
+    }
+
+    /// 이 상태의 배경 채움. `None` = 채우지 않음.
+    pub fn fill(self, ui: &egui::Ui, selected_accent: bool) -> Option<egui::Color32> {
+        use crate::theme::nord::semantic as s;
+        match self {
+            Self::Rest => None,
+            Self::Hover => Some(ui.visuals().widgets.hovered.weak_bg_fill),
+            Self::Active => Some(ui.visuals().widgets.active.weak_bg_fill),
+            Self::Selected => Some(if selected_accent {
+                s::ACCENT_SELECT.gamma_multiply(0.35)
+            } else {
+                ui.visuals().selection.bg_fill
+            }),
+            Self::Disabled => None,
+        }
+    }
+
+    /// 이 상태의 테두리.
+    pub fn stroke(self, _ui: &egui::Ui) -> Option<egui::Stroke> {
+        use crate::theme::nord::semantic as s;
+        match self {
+            Self::Disabled => Some(egui::Stroke::new(stroke::HAIRLINE, s::BORDER_WEAK)),
+            _ => None,
+        }
+    }
+
+    /// 이 상태의 글자색.
+    pub fn text(self, _ui: &egui::Ui) -> egui::Color32 {
+        use crate::theme::nord::semantic as s;
+        match self {
+            Self::Disabled => s::TEXT_FAINT,
+            Self::Rest | Self::Hover | Self::Active => s::TEXT_PRIMARY,
+            Self::Selected => s::TEXT_STRONG,
+        }
+    }
+}
+
+/// 최소 타깃을 만족시키지 못하는 사각형을 **사방으로 확장**합니다.
+/// (시각 크기는 유지하면서 클릭 영역만 넓히는 것이 접근성 표준 방식입니다.)
+pub fn expand_to_target(rect: egui::Rect, min: f32) -> egui::Rect {
+    let dx = ((min - rect.width()) / 2.0).max(0.0);
+    let dy = ((min - rect.height()) / 2.0).max(0.0);
+    rect.expand2(egui::vec2(dx, dy))
+}
+
+/// 공통 수직 여백 — 컴포넌트가 같은 호흡을 갖도록.
+pub fn item_gap() -> egui::Vec2 {
+    egui::vec2(space::MD, space::MD)
+}
