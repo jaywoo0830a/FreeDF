@@ -24,6 +24,7 @@ pub(crate) mod dialog;
 pub(crate) mod ds;
 pub(crate) mod form;
 pub(crate) mod layout;
+pub(crate) mod menu;
 pub(crate) mod scale;
 pub(crate) mod scroll;
 pub(crate) mod toast;
@@ -105,6 +106,10 @@ pub(crate) fn icon_toggle(
 }
 
 /// 선택 하이라이트 아이콘 버튼 (정렬 버튼 등 라디오 그룹용).
+///
+/// 메뉴 안에서는 [`crate::ui::menu::menu_icon_select`]를 쓰세요 — 그쪽은 최소
+/// 터치 타깃(28×28)을 보장합니다. 이 원시 버튼은 콘텐츠 크기에 맞춰집니다.
+#[allow(dead_code)] // 툴바 호출부가 menu_icon_select로 이동해 지금은 예약 상태입니다.
 pub(crate) fn icon_select(
     ui: &mut egui::Ui,
     selected: bool,

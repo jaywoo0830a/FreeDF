@@ -11,9 +11,9 @@
 //!   이 파일(컨테이너)이 담당합니다.
 
 use super::*;
-use crate::ui::{icon_button, icon_label, icon_select, icon_toggle, IconButton};
+use crate::ui::menu;
+use crate::ui::{icon_button, icon_label, icon_toggle, IconButton};
 
-/// 메뉴 안 섹션 제목 — 같은 주제의 항목을 묶는 작은 강조 라벨.
 /// 도구 선택 버튼의 자동화용 안정 id — 표시 라벨(`ToolType::label`)과 분리된 계약입니다.
 /// (라벨을 바꿔도 스크립트가 깨지지 않도록 명시적으로 고정합니다.)
 fn dev_tool_id(tool: ToolType) -> &'static str {
@@ -24,11 +24,6 @@ fn dev_tool_id(tool: ToolType) -> &'static str {
         ToolType::Eraser => "toolbar.tool.eraser",
         ToolType::Pan => "toolbar.tool.pan",
     }
-}
-
-fn menu_section(ui: &mut egui::Ui, label: &str) {
-    ui.add_space(2.0);
-    ui.label(egui::RichText::new(label).small().strong());
 }
 
 impl FreeDfApp {
@@ -241,20 +236,49 @@ impl FreeDfApp {
 
     /// 컴포넌트(그룹 6): More 오버플로 — 자주 안 쓰는 액션을 **주제별 섹션**으로.
     /// (React의 <OverflowMenu>에 해당하는 컨테이너 컴포넌트.)
+    ///
+    /// 모든 행은 `crate::ui::menu` 키트로 그립니다. 예전에는 한 화면에
+    /// 체크박스 · 무테두리 텍스트 버튼 · 서브메뉴 · 라벨 없는 아이콘 선택이
+    /// 섞여 있어 정보 계층이 아니라 나열처럼 보였습니다. 이제 **행 구조가
+    /// 하나**이고, 섹션은 구분선으로 나뉘며, 모든 항목에 아이콘과 라벨이
+    /// 붙습니다. 상태 연결과 계측 id는 여기(컨테이너)가 담당합니다.
     fn overflow_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(icon_text(ui, "More", icons::DOTS_THREE), |ui| {
-            ui.set_min_width(crate::ui::scale::rem(17)); // 272px
+        // More 버튼 자체도 계측합니다 — 오버레이의 모든 항목이 이 버튼 뒤에
+        // 있으므로, 스크립트가 메뉴를 열 수 있어야 그 내용을 측정/검증할 수 있습니다.
+        let more = ui.menu_button(icon_text(ui, "More", icons::DOTS_THREE), |ui| {
+            ui.set_min_width(crate::ui::scale::rem(19)); // 304px
 
             // ── Page: 페이지 정렬 ───────────────────────────────────
-            menu_section(ui, "Page");
+            // (라벨 없는 아이콘 3개 → "Page align" 행 + 우측 3-세그먼트)
+            menu::menu_section(ui, "Page");
             let aligns = [
-                (PageAlign::Left, icons::TEXT_ALIGN_LEFT, "Align left"),
-                (PageAlign::Center, icons::TEXT_ALIGN_CENTER, "Align center"),
-                (PageAlign::Right, icons::TEXT_ALIGN_RIGHT, "Align right"),
+                (
+                    PageAlign::Right,
+                    icons::TEXT_ALIGN_RIGHT,
+                    "Align right",
+                    "menu.page.align.right",
+                ),
+                (
+                    PageAlign::Center,
+                    icons::TEXT_ALIGN_CENTER,
+                    "Align center",
+                    "menu.page.align.center",
+                ),
+                (
+                    PageAlign::Left,
+                    icons::TEXT_ALIGN_LEFT,
+                    "Align left",
+                    "menu.page.align.left",
+                ),
             ];
-            ui.horizontal(|ui| {
-                for (a, ic, hint) in aligns {
-                    if icon_select(ui, self.page_align == a, ic, "", hint).clicked() {
+            menu::menu_label_row(ui, icons::TEXT_ALIGN_LEFT, "Page align", |ui| {
+                // right_to_left 레이아웃이라 **역순**으로 추가해야 화면에는
+                // 왼쪽→오른쪽(Left · Center · Right) 순서로 보입니다.
+                for (a, ic, hint, id) in aligns {
+                    let selected = self.page_align == a;
+                    let resp = menu::menu_icon_select(ui, selected, ic, hint);
+                    crate::app::dev::tag_selected_button(ui, id, hint, &resp, selected);
+                    if resp.clicked() {
                         self.page_align = a;
                         self.realign();
                         self.save_session();
@@ -263,103 +287,173 @@ impl FreeDfApp {
             });
 
             // ── View: 미디어 패널 ───────────────────────────────────
-            menu_section(ui, "View");
-            if ui
-                .checkbox(&mut self.show_media, "Media panel")
-                .on_hover_text("Show the audio recordings panel.")
-                .changed()
-            {
+            menu::menu_section(ui, "View");
+            let (media_row, _) = menu::menu_toggle_row(
+                ui,
+                &mut self.show_media,
+                icons::MICROPHONE,
+                "Media panel",
+                "Show the audio recordings panel.",
+                |_ui| (),
+            );
+            crate::app::dev::tag_toggle(
+                ui,
+                "menu.view.media_panel",
+                "Media panel",
+                &media_row,
+                self.show_media,
+            );
+            if media_row.changed() {
                 self.media_refresh();
             }
 
             // ── Lookup: 사전 오버레이 ───────────────────────────────
-            menu_section(ui, "Lookup");
-            if ui
-                .checkbox(&mut self.dictionary.enabled, "Dictionary")
-                .on_hover_text("Look up a tapped word (needs internet once per word).")
-                .changed()
-            {
+            menu::menu_section(ui, "Lookup");
+            let (dict_row, _) = menu::menu_toggle_row(
+                ui,
+                &mut self.dictionary.enabled,
+                icons::BOOK_OPEN,
+                "Dictionary",
+                "Look up a tapped word (needs internet once per word).",
+                |_ui| (),
+            );
+            crate::app::dev::tag_toggle(
+                ui,
+                "menu.lookup.dictionary",
+                "Dictionary",
+                &dict_row,
+                self.dictionary.enabled,
+            );
+            if dict_row.changed() {
                 self.save_default_session();
             }
 
             // ── Input: 창 포커스 · 매크로 · 게임패드 ─────────────────
-            menu_section(ui, "Input");
-            ui.horizontal(|ui| {
-                if ui
-                    .checkbox(&mut self.window_focus_on_move, "Focus on cursor dwell")
-                    .on_hover_text(
-                        "Focus this window when the cursor stays over it for the dwell time.\n\
-                         Turn off for windows that should not grab focus in split view.",
-                    )
-                    .changed()
-                {
-                    self.save_default_session();
-                }
-                if icon_button(
-                    ui,
-                    IconButton::new(icons::GEAR, "")
-                        .frame(false)
-                        .hint("Window Focus settings — enable + dwell time"),
-                )
-                .clicked()
-                {
-                    self.window_focus_settings_open = true;
-                }
-            });
-            if crate::ui::buttons::Button::secondary("Macros…")
-                .show(ui)
-                .clicked()
-            {
+            menu::menu_section(ui, "Input");
+            // 행 = 토글, 트레일링 ⚙ = **그 행의** 설정입니다 (예전에는 체크박스
+            // 옆에 정체불명의 기어가 붙어 있었습니다).
+            let mut open_focus_settings = false;
+            let (focus_row, _) = menu::menu_toggle_row(
+                ui,
+                &mut self.window_focus_on_move,
+                icons::CROSSHAIR,
+                "Focus on cursor dwell",
+                "Focus this window when the cursor stays over it for the dwell time.\n\
+                 Turn off for windows that should not grab focus in split view.",
+                |ui| {
+                    let gear = menu::menu_icon_button(
+                        ui,
+                        icons::GEAR,
+                        "Window Focus settings — enable + dwell time",
+                    );
+                    crate::app::dev::tag_button(
+                        ui,
+                        "menu.input.focus_settings",
+                        "Window Focus settings",
+                        &gear,
+                    );
+                    open_focus_settings = gear.clicked();
+                },
+            );
+            crate::app::dev::tag_toggle(
+                ui,
+                "menu.input.focus_dwell",
+                "Focus on cursor dwell",
+                &focus_row,
+                self.window_focus_on_move,
+            );
+            if focus_row.changed() {
+                self.save_default_session();
+            }
+            if open_focus_settings {
+                self.window_focus_settings_open = true;
+            }
+
+            let macros = menu::menu_action_row(
+                ui,
+                icons::KEYBOARD,
+                "Macros…",
+                "Record and replay key sequences",
+            );
+            crate::app::dev::tag_button(ui, "menu.input.macros", "Macros", &macros);
+            if macros.clicked() {
                 self.macro_capture = None;
                 self.macro_settings_open = true;
             }
-            if crate::ui::buttons::Button::secondary("Gamepad…")
-                .show(ui)
-                .clicked()
-            {
+            // 게임패드 아이콘은 이 아이콘 세트에 없어 슬라이더로 대체합니다.
+            let gamepad = menu::menu_action_row(
+                ui,
+                icons::SLIDERS,
+                "Gamepad…",
+                "Gamepad mapping and dead-zone settings",
+            );
+            crate::app::dev::tag_button(ui, "menu.input.gamepad", "Gamepad", &gamepad);
+            if gamepad.clicked() {
                 self.gamepad_settings_open = true;
             }
 
             // ── Server: 미디어 서버 ─────────────────────────────────
-            menu_section(ui, "Server");
-            if crate::ui::buttons::Button::secondary("Media server settings…")
-                .show(ui)
-                .clicked()
-            {
+            menu::menu_section(ui, "Server");
+            let media_server = menu::menu_action_row(
+                ui,
+                icons::HARD_DRIVES,
+                "Media server settings…",
+                "Sync v3 server address + API key (server.json)",
+            );
+            crate::app::dev::tag_button(
+                ui,
+                "menu.server.media",
+                "Media server settings",
+                &media_server,
+            );
+            if media_server.clicked() {
                 self.server_msg = None;
                 self.server_settings_open = true;
             }
 
             // ── Maintenance: 캐시 정리 ──────────────────────────────
-            menu_section(ui, "Maintenance");
-            ui.menu_button("Cache…", |ui| {
-                // 등록된 모든 캐시 순회 — actions/cache.rs의 all_caches()에
-                // 등록만 하면 여기에 자동으로 나타납니다.
-                for (i, cache) in all_caches().iter().enumerate() {
-                    if i > 0 {
-                        ui.separator();
-                    }
-                    ui.label(egui::RichText::new(cache.label()).strong());
-                    ui.label(egui::RichText::new(cache.description()).weak().small());
-                    if ui
-                        .button(format!("Clear {}", cache.label().to_lowercase()))
-                        .clicked()
-                    {
-                        cache.clear(self);
-                    }
+            // 하위 메뉴 대신 **평탄한 행**으로 바꿉니다: 캐시는 2개뿐인데 한 단계
+            // 더 들어가는 구조는 "부모/자식"처럼 보여 계층을 흐립니다. 설명은
+            // 행 툴팁으로 옮겼습니다.
+            menu::menu_section(ui, "Maintenance");
+            let mut clear_index: Option<usize> = None;
+            for (i, cache) in all_caches().iter().enumerate() {
+                let label = format!("Clear {}", cache.label().to_lowercase());
+                let row = menu::menu_action_row(ui, icons::BROOM, &label, cache.description());
+                crate::app::dev::tag_button(
+                    ui,
+                    format!(
+                        "menu.maintenance.clear.{}",
+                        cache.label().to_lowercase().replace(' ', "_")
+                    ),
+                    label.as_str(),
+                    &row,
+                );
+                if row.clicked() {
+                    clear_index = Some(i);
                 }
-            });
+            }
+            if let Some(i) = clear_index {
+                all_caches()[i].clear(self);
+            }
 
             // ── Diagnostics: 디버그 HUD (단일 홈) ───────────────────
-            menu_section(ui, "Diagnostics");
-            if ui
-                .checkbox(&mut self.debug_hud, "Debug HUD")
-                .on_hover_text("Live input overlay & diagnostics (pressure, tilt, speed, system).")
-                .changed()
-            {
+            menu::menu_section(ui, "Diagnostics");
+            let (hud_row, _) = menu::menu_toggle_row(
+                ui,
+                &mut self.debug_hud,
+                icons::BUG,
+                "Debug HUD",
+                "Live input overlay & diagnostics (pressure, tilt, speed, system).",
+                |_ui| (),
+            );
+            crate::app::dev::tag_toggle(ui, "menu.diag.debug_hud", "Debug HUD", &hud_row, self.debug_hud);
+            if hud_row.changed() {
                 self.save_default_session();
             }
         });
+        // 메뉴를 그린 **뒤** 등록합니다(중복 id 금지 — 그리기와 등록을 한 번에).
+        crate::app::dev::tag_button(ui, "toolbar.more", "More", &more.response);
     }
 
     /// Row 2 — Page: 페이지 조작 · 종이(스타일/색) · 캔버스(배경/엣지).

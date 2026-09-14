@@ -77,6 +77,7 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔�
 |---|---|
 | `freedf.root` | 루트 뷰포트 프레임 스코프 (뷰포트 이름은 eguidev가 암묵적으로 `root`로 둡니다 — `name_viewport`로 다시 지정하면 예약어라 계측 결함이 됩니다) |
 | `toolbar.hide_ui` / `.settings` | Row 1 워크스페이스 |
+| `toolbar.more` | Row 1 `More` 오버플로 버튼 (오버레이를 여는 유일한 입구) |
 | `toolbar.undo` / `.redo` / `.clear_page` | Row 1 편집 이력 |
 | `toolbar.save_edits` / `.load_edits` | Row 1 파일 |
 | `toolbar.panel.library` / `.outline` / `.bookmarks` / `.palette` | Row 1 패널 토글 |
@@ -85,6 +86,28 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔�
 | `tabs.new_note` / `.open_pdf` | 탭바 버튼 |
 | `tabs.tab.<n>` | 탭 n개 (0-based) |
 | `canvas.surface` | 페이지를 그리는 캔버스 영역 (painter 영역) |
+| `toast.stack` | 토스트 스택 사각형 (우측 하단) — "무엇을 덮고 있는지" 측정용 |
+| `toast.dismiss.<id>` | 토스트 닫기 버튼 (`<id>`는 토스트의 안정 키) |
+
+### `More` 오버레이 메뉴 (`menu.*`)
+
+오버레이 항목은 **메뉴가 열려 있을 때만** 존재합니다(닫혀 있으면 위젯 자체가
+없으므로 `wait`/`expect`가 타임아웃됩니다 — 먼저 `toolbar.more`를 클릭하세요).
+
+| id | 대상 |
+|---|---|
+| `menu.page.align.left` / `.center` / `.right` | 페이지 정렬 3-세그먼트 (선택 상태 있음) |
+| `menu.view.media_panel` | 미디어 패널 토글 |
+| `menu.lookup.dictionary` | 사전 오버레이 토글 |
+| `menu.input.focus_dwell` | 커서 머문 시간에 창 포커스 (토글) |
+| `menu.input.focus_settings` | 그 행의 ⚙ 설정 (트레일링) |
+| `menu.input.macros` / `.gamepad` | 설정 창 열기 |
+| `menu.server.media` | 미디어 서버 설정 창 |
+| `menu.maintenance.clear.<cache>` | 캐시별 정리 (`download_cache`, `canvas_cache` … `all_caches()`에 등록하면 자동 추가) |
+| `menu.diag.debug_hud` | 디버그 HUD 토글 |
+
+메뉴 항목의 **계층 리듬**(모든 행 같은 높이 · 같은 좌측 레일)은
+`smoketest/30_more_menu.luau`가 회귀 검증합니다.
 
 계측은 `crates/freedf/src/app/dev.rs`의 얇은 헬퍼로만 합니다. 헬퍼마다
 **기능이 꺼졌을 때의 no-op 분기**를 함께 제공하므로 호출부에 `#[cfg]`가 필요
@@ -162,6 +185,19 @@ args = ["mcp"]
   옆에 `libpdfium.so` / `pdfium.dll`이 필요합니다.
 - **렌더러**: glow를 쓰세요. wgpu 백엔드는 특정 조합에서 자동화 중 유휴 프레임이
   멈춥니다.
+- **앱 세션당 첫 클릭은 창 활성화에 소비됩니다**: 앱을 띄운 뒤 곧바로
+  `widget:click()`을 하면 그 클릭이 사라집니다(실측: 1번째 클릭 무시, 2번째부터
+  정상 — 그래서 `10_launch`는 클릭이 없고, `20_ink_tool_picker`는 첫 클릭 결과를
+  단언하지 않습니다). 시나리오 시작 시 **"열릴 때까지 재시도"**하거나 워밍업
+  클릭을 한 번 넣으세요. `smoketest/30_more_menu.luau`가 재시도 패턴을 씁니다.
+- **팝업은 다음 프레임에 그려집니다**: 메뉴 항목(`menu.*`)은 `toolbar.more`를
+  클릭한 **다음** 프레임부터 존재합니다. 클릭 직후 바로 `expect`하지 말고
+  `widget(id):wait({ present = true })`로 기다리세요. 전역 `eguidev.wait(function() … end)`는
+  이 앱에서 조기 종료(관측 1프레임)하므로 위젯 수준 대기가 안전합니다.
+- **오버레이는 입력을 통과해야 합니다**: 화면 위에 뜨는 `egui::Area`는 기본이
+  `interactable: true`라서 **아래 위젯의 클릭을 삼킵니다**. 토스트가 우측 상단에
+  있던 시절에는 `More`/`Settings`가 눌리지 않았습니다 — 오버레이는 포인터가
+  자기 위에 있을 때만 인터랙티브하게 두세요(`ui/toast.rs` 참고).
 
 ## 화면 캡처와 디자인 리뷰 (에이전트가 "직접 보게" 하기)
 
