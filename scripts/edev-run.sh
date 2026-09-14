@@ -14,7 +14,8 @@
 # 사전 준비:
 #   sudo apt-get install -y xvfb libxcb1 libxkbcommon-x11-0 libxcursor1 \
 #                           libxrandr2 libxi6 libgl1-mesa-dri
-#   cargo install --git https://github.com/jaywoo0830a/eguidev --branch freedf edev
+#   cargo install --git https://github.com/jaywoo0830a/eguidev \
+#                 --rev 84ab2da60b36fa5f4235c0792b78e5535b95700a edev
 
 set -euo pipefail
 
@@ -50,7 +51,8 @@ if [[ -z "${DISPLAY:-}" ]]; then
     if xdpyinfo -display "$XVFB_DISPLAY" >/dev/null 2>&1; then break; fi
     sleep 0.1
   done
-  echo "Xvfb: $XVFB_DISPLAY (pid $XVFB_PID)"
+  # stdout은 `edev eval`의 JSON 출력이 지나가는 통로이므로 진단은 stderr로 보냅니다.
+  echo "Xvfb: $XVFB_DISPLAY (pid $XVFB_PID)" >&2
 fi
 
 if ! command -v edev >/dev/null 2>&1; then

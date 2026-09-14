@@ -1,0 +1,27 @@
+{
+  // Luau 스크립트(smoketest/, scripts/*.luau)를 Luau LSP로 인식시킵니다.
+  "files.associations": {
+    "*.luau": "luau"
+  },
+  "[luau]": {
+    "editor.defaultFormatter": "JohnnyMorganz.stylua"
+  },
+  // target/과 EDEV가 만드는 실행 중 인스턴스 상태는 검색/탐색에서 뺍니다.
+  "files.exclude": {
+    "**/target": true,
+    ".edev-instances": true,
+    "tmp/eguidev-screenshots": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "tmp": true,
+    ".edev-instances": true
+  },
+  // rust-analyzer가 clippy로 검사하게 해 편집 중에 린트를 바로 봅니다.
+  "rust-analyzer.check.command": "clippy",
+  // 통합 터미널에서 `edev`/`cargo run`을 직접 칠 때도 소프트웨어 GL을 씁니다.
+  "terminal.integrated.env.linux": {
+    "LIBGL_ALWAYS_SOFTWARE": "1",
+    "FREEDF_RENDERER": "glow"
+  }
+}

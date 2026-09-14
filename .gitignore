@@ -10,5 +10,7 @@ libpdfium.dylib
 
 # EDEV 런처가 만드는 실행 중 인스턴스 상태 — 커밋/편집/삭제 금지.
 .edev-instances/
-# EDEV 스모크 실패 번들 / eval 산출물.
+# EDEV 스모크 실패 번들 / eval 산출물 / 캡처 스크린샷.
 /tmp/edev-bundles/
+/tmp/eguidev-screenshots/
+

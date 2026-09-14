@@ -1,0 +1,82 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // 디자인 리뷰의 기본 루프: 캡처 → tmp/eguidev-screenshots/*.jpg 를 열어보기.
+      // 같은 스크립트가 MCP에서는 이미지 블록으로 그대로 전달됩니다.
+      "label": "edev: 화면 캡처 (스크린샷 파일)",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": [
+        "eval",
+        "scripts/design-shot.luau",
+        "--out-dir",
+        "tmp/eguidev-screenshots"
+      ],
+      "options": {
+        "env": { "LIBGL_ALWAYS_SOFTWARE": "1" }
+      },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      // 이미지 + 측정값(위젯 기하/레이아웃 문제/팔레트/WCAG 대비)을 한 번에.
+      "label": "edev: 디자인 감사 (이미지 + 측정값)",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": [
+        "eval",
+        "scripts/design-audit.luau",
+        "--out-dir",
+        "tmp/eguidev-screenshots"
+      ],
+      "options": {
+        "env": { "LIBGL_ALWAYS_SOFTWARE": "1" }
+      },
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "edev: 위젯 트리 덤프",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": ["dump"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "edev: 픽스처 목록",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": ["fixtures"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "edev: Luau API 정의 출력",
+      "type": "shell",
+      "command": "edev",
+      "args": ["docs"],
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "edev: 스모크 스위트",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": ["smoke"],
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "edev: 스모크 + 실패 번들",
+      "type": "shell",
+      "command": "scripts/edev-run.sh",
+      "args": ["smoke", "--bundle"],
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    }
+  ]
+}

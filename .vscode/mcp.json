@@ -1,0 +1,22 @@
+{
+  // VS Code 네이티브 MCP 설정 (Copilot Chat agent mode 등) + Cline 등 다른
+  // MCP 클라이언트 참고용. Cline은 자체 전역 설정을 씁니다:
+  //   <globalStorage>/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
+  //
+  // command가 `scripts/edev-mcp.sh`인 이유:
+  //   - VS Code Server(SSH)에는 DISPLAY가 없어서 Xvfb를 대신 띄워야 합니다.
+  //   - MCP 클라이언트의 cwd가 무엇이든 `.edev.toml`을 찾도록 `--cwd`를 고정합니다.
+  //   - stdout은 JSON-RPC 전용이므로 진단 메시지는 모두 stderr로 보냅니다.
+  "servers": {
+    "eguidev-freedf": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/scripts/edev-mcp.sh",
+      "args": ["mcp"],
+      // GPU 없는 환경에서도 eframe/glow가 뜨도록 소프트웨어 GL을 강제합니다.
+      "env": {
+        "LIBGL_ALWAYS_SOFTWARE": "1",
+        "FREEDF_RENDERER": "glow"
+      }
+    }
+  }
+}
