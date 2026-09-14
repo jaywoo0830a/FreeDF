@@ -111,9 +111,10 @@ pub(crate) fn icon_toggle(
 
 /// 선택 하이라이트 아이콘 버튼 (정렬 버튼 등 라디오 그룹용).
 ///
-/// 메뉴 안에서는 [`crate::ui::menu::menu_icon_select`]를 쓰세요 — 그쪽은 최소
-/// 터치 타깃(28×28)을 보장합니다. 이 원시 버튼은 콘텐츠 크기에 맞춰집니다.
-#[allow(dead_code)] // 툴바 호출부가 menu_icon_select로 이동해 지금은 예약 상태입니다.
+/// 새 코드는 [`crate::ui::kit::Segmented`](`Segment::icon_only`)나
+/// [`crate::ui::kit::Button`]을 쓰세요 — 그쪽은 최소 터치 타깃·접근성 이름·계측을
+/// 계약으로 보장합니다. 이 원시 버튼은 콘텐츠 크기에 맞춰집니다.
+#[allow(dead_code)] // 툴바 호출부가 ui::kit으로 이동해 지금은 예약 상태입니다.
 pub(crate) fn icon_select(
     ui: &mut egui::Ui,
     selected: bool,

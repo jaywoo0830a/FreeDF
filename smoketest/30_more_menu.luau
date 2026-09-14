@@ -14,7 +14,7 @@ eguidev.root:wait({ frame_at_least = 1 })
 local more = eguidev.widget("toolbar.more")
 local first_item = eguidev.widget("menu.page.align.left")
 
--- 메뉴 열기. **앱 세션당 첫 클릭은 창 활성화에 소비**되므로 열릴 때까지 클릭합니다
+-- 메뉴 열기. **앱 세션 첫 클릭은 창 활성화에 소비**되므로 열릴 때까지 클릭합니다
 -- (이미 열려 있으면 즉시 true — 불필요한 클릭 없음).
 local function open_menu(): boolean
     for _ = 1, 3 do
@@ -80,7 +80,35 @@ for _ in pairs(left_rail) do
 end
 assert(rail_count == 1, "메뉴 항목의 좌측 정렬이 " .. tostring(rail_count) .. "가지입니다")
 
--- 4) 다시 눌러 닫히는지 (팝업 토글). 앱 상태를 바꾸지 않는 유일한 닫기 방법입니다.
+-- 4) 행끼리 **부분적으로 겹치면 안 됩니다**. 겹치면 아래 행이 위 행의 하단 클릭
+--    영역을 훔칩니다(실측 결함: Row가 트레일링 자식 ui 때문에 커서를 되돌려
+--    stride 17 < 높이 28). 완전 포함(트레일링 ⚙가 행 안에 있는 것)은 정상이라
+--    "부분 겹침"만 결함으로 봅니다.
+local function contains(outer: any, inner: any): boolean
+    return outer.min.x <= inner.min.x
+        and outer.min.y <= inner.min.y
+        and outer.max.x >= inner.max.x
+        and outer.max.y >= inner.max.y
+end
+
+local partial: { string } = {}
+for _, issue in ipairs(eguidev.root:layout_issues()) do
+    if issue.kind == "overlap" and #issue.widgets == 2 then
+        local a_id, b_id = issue.widgets[1], issue.widgets[2]
+        local both_menu = string.find(a_id, "menu.", 1, true) == 1
+            and string.find(b_id, "menu.", 1, true) == 1
+        if both_menu then
+            local a = eguidev.widget(a_id):state()
+            local b = eguidev.widget(b_id):state()
+            if a ~= nil and b ~= nil and not (contains(a.rect, b.rect) or contains(b.rect, a.rect)) then
+                table.insert(partial, a_id .. " ↔ " .. b_id)
+            end
+        end
+    end
+end
+assert(#partial == 0, "메뉴 행이 부분적으로 겹칩니다: " .. table.concat(partial, ", "))
+
+-- 5) 다시 눌러 닫히는지 (팝업 토글). 앱 상태를 바꾸지 않는 유일한 닫기 방법입니다.
 local closed = false
 for _ = 1, 3 do
     more:click()
@@ -95,5 +123,6 @@ assert(closed, "More 메뉴가 닫히지 않았습니다")
 return {
     ok = true,
     rows = rows,
+    partial_overlaps = partial,
     screenshot = eguidev.root:screenshot(),
 }

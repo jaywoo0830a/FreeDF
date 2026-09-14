@@ -203,6 +203,35 @@ fn base_meta(ui: &egui::Ui, response: &egui::Response) -> eguidev::WidgetMeta {
     }
 }
 
+/// 읽기 전용 텍스트(섹션 제목 등)를 id·라벨과 함께 등록합니다.
+///
+/// 역할이 `label`로 기록되므로 스크립트가 `state().label`로 **그 화면에 어떤
+/// 섹션이 있는지** 읽을 수 있습니다(설정 탭 계약 검증에 사용).
+#[cfg(feature = "dev-automation")]
+pub(crate) fn tag_text(
+    ui: &egui::Ui,
+    id: impl Into<String>,
+    label: impl Into<String>,
+    response: &egui::Response,
+) {
+    let meta = eguidev::WidgetMeta {
+        role: eguidev::WidgetRoleMeta::Plain(eguidev::WidgetRole::Label),
+        label: Some(label.into()),
+        ..base_meta(ui, response)
+    };
+    eguidev::track_response(id, response, meta);
+}
+
+/// 텍스트 등록 — 기능이 꺼져 있으면 no-op.
+#[cfg(not(feature = "dev-automation"))]
+pub(crate) fn tag_text(
+    _ui: &egui::Ui,
+    _id: impl Into<String>,
+    _label: impl Into<String>,
+    _response: &egui::Response,
+) {
+}
+
 /// [`egui::Response`]가 없는 painter 영역(예: 페이지 캔버스)을 문자열 id로 공개합니다.
 #[cfg(feature = "dev-automation")]
 pub(crate) fn publish_rect(ui: &mut egui::Ui, id: impl Into<String>, rect: egui::Rect) {

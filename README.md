@@ -269,13 +269,20 @@ cargo build --release -p freedf
 
 - **`AI_DESIGN_IMPROVEMENT_GUIDE.md`** — 사전 조건 → 클론/빌드 → 계측 확인 → 캡처 →
   Cline MCP 연결 → 감사 → 개선 루프 → 커밋 체크리스트
+- `docs/UI-SYSTEM.md` — 컴포넌트 시스템 (토큰 · `ui::kit` · 접근성 계약 · 갤러리)
 - `docs/eguidev-automation.md` — 자동화 계약(계측 id, 헬퍼, 트러블슈팅)
 
 ```bash
-scripts/edev-run.sh smoke       # 회귀 스모크
-scripts/edev-run.sh dump        # 위젯 트리
+./scripts/test-all.sh            # 전체 검증 (헤드리스 계약 → 스모크 → 갤러리 → 기본 프로필)
+scripts/edev-run.sh smoke        # 회귀 스모크
+scripts/edev-run.sh dump         # 위젯 트리
 scripts/edev-run.sh eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
 ```
+
+> 검증은 **한 번에 하나씩(순차)** 돌립니다. `edev`는 실제 창/디스플레이를 쓰므로
+> 동시 실행이 서로의 프레임을 깨뜨립니다 — `scripts/edev-run.sh`가 `flock`으로
+> 직렬화하므로, 그냥 `./scripts/test-all.sh` 하나만 실행하면 됩니다.
+
 
 ### 데이터베이스 시작 (운영)
 

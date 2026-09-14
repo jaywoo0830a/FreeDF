@@ -203,7 +203,9 @@ impl FreeDfApp {
             });
         });
 
-        self.settings_windows(ui);
+        // 설정 창은 여기서 그리지 않습니다 — 프레임 **끝**에서 그려야 앱 패널
+        // (Library/Notes/PDFs) 위에 옵니다. 실측: 여기서 그리면 패널이 설정 창을
+        // 덮어 레일 아래쪽 탭이 보이지 않습니다(z-order 결함).
     }
 }
 

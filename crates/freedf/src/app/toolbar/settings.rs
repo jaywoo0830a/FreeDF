@@ -1,11 +1,20 @@
 //! 설정 UI — 펜/만년필/휠/캔버스/종이/서버 설정 창 내용 + 창 렌더.
 //!
-//! 모든 데이터 입력은 Bootstrap 5 스타일 **폼 컴포넌트**(`crate::ui::form`)를
-//! 사용합니다 — 슬라이더/체크박스/숫자/텍스트/콤보는 `form::range`, `form::check`,
-//! `form::number`, `form::text`, `form::select`의 단일 경로로 들어갑니다.
+//! ## 구조 (재설계)
+//! - **창 크롬**(제목·탭 레일·콘텐츠 패널·닫기)은 [`crate::ui::kit::TabbedWindow`]가
+//!   담당합니다. 그래서 메뉴/갤러리와 **같은 행 컴포넌트·같은 높이·같은 아이콘
+//!   레일**을 쓰고, 헤드리스에서 계약을 검증할 수 있습니다.
+//! - **탭별 내용**은 여기의 함수들(`pen_settings_ui` 등)이 그립니다. 모든 입력은
+//!   Bootstrap 5 스타일 폼 컴포넌트(`crate::ui::form`)를 통과합니다.
+//! - **계약 id**: `settings.window` · `settings.close` · `settings.title` ·
+//!   `settings.tab.<slug>` · `settings.content.<slug>` · `settings.section.<id>`.
+//! - **테스트 훅**: `FREEDF_SETTINGS=1`(시작 시 열기), `FREEDF_SETTINGS_TAB=<slug>`
+//!   (특정 탭 선택) — `dev-automation` 빌드 전용. 팝업/창을 클릭하지 않고도
+//!   자동화가 결정적으로 설정 화면에 도달하게 합니다.
 
 use super::*;
 use crate::ui::form;
+use crate::ui::kit::{TabItem, TabbedWindow};
 
 // Unified Settings window tabs (P2): fold the scattered floating windows
 // into a single tabbed window.
@@ -55,6 +64,75 @@ impl SettingsTab {
             SettingsTab::Macro => "Macros",
             SettingsTab::Gamepad => "Gamepad",
         }
+    }
+
+    /// 계측 id 슬러그 (`settings.tab.<slug>`) — **공개 계약**입니다.
+    /// 라벨을 바꿔도 이 값은 유지하세요(스크립트가 이 id로 탭을 순회합니다).
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            SettingsTab::Draw => "draw",
+            SettingsTab::Cursor => "cursor",
+            SettingsTab::Paper => "paper",
+            SettingsTab::Canvas => "canvas",
+            SettingsTab::ColorWheel => "color_wheel",
+            SettingsTab::Page => "page",
+            SettingsTab::EdgeScroll => "edge_scroll",
+            SettingsTab::WindowFocus => "window_focus",
+            SettingsTab::Server => "server",
+            SettingsTab::Macro => "macro",
+            SettingsTab::Gamepad => "gamepad",
+        }
+    }
+
+    /// 입력에서 받은 슬러그 파싱 (테스트 훅 `FREEDF_SETTINGS_TAB=<slug>`).
+    pub(crate) fn from_slug(slug: &str) -> Option<Self> {
+        let slug = slug.trim().to_ascii_lowercase();
+        Self::all()
+            .into_iter()
+            .find(|t| t.slug() == slug || t.label().eq_ignore_ascii_case(&slug))
+    }
+
+    /// 레일 아이콘 — 메뉴/갤러리와 같은 아이콘 레일에 정렬됩니다.
+    pub(crate) fn icon(self) -> egui_phosphor_icons::Icon {
+        use egui_phosphor_icons::icons as i;
+        match self {
+            SettingsTab::Draw => i::PENCIL,
+            SettingsTab::Cursor => i::CURSOR,
+            SettingsTab::Paper => i::FILE_TEXT,
+            SettingsTab::Canvas => i::SQUARES_FOUR,
+            SettingsTab::ColorWheel => i::PALETTE,
+            SettingsTab::Page => i::BOOK_OPEN,
+            SettingsTab::EdgeScroll => i::ARROWS_OUT_CARDINAL,
+            SettingsTab::WindowFocus => i::CROSSHAIR,
+            SettingsTab::Server => i::HARD_DRIVES,
+            SettingsTab::Macro => i::KEYBOARD,
+            SettingsTab::Gamepad => i::GAME_CONTROLLER,
+        }
+    }
+
+    /// 레일 툴팁 힌트.
+    pub(crate) fn hint(self) -> &'static str {
+        match self {
+            SettingsTab::Draw => "Pen / fountain physics, ink soak and grain for the current tool",
+            SettingsTab::Cursor => "Cursor shape and stabilization while drawing",
+            SettingsTab::Paper => "Paper look, texture, page size and margins",
+            SettingsTab::Canvas => "Canvas background, grid and ink rendering",
+            SettingsTab::ColorWheel => "Color wheel layout and shortcuts",
+            SettingsTab::Page => "Insert page options (size, position, count)",
+            SettingsTab::EdgeScroll => "Edge auto-scroll speed and activation zone",
+            SettingsTab::WindowFocus => "Focus this window on cursor dwell, plus dwell timing",
+            SettingsTab::Server => "Sync v3 server address, API key and media settings",
+            SettingsTab::Macro => "Keyboard/mouse macro bindings",
+            SettingsTab::Gamepad => "Gamepad mapping, dead zone and HUD",
+        }
+    }
+
+    /// `TabbedWindow`에 넘길 레일 항목 목록을 만듭니다.
+    pub(crate) fn tab_items() -> Vec<TabItem<'static>> {
+        Self::all()
+            .into_iter()
+            .map(|t| TabItem::new(t.slug(), t.label()).icon(t.icon()).hint(t.hint()))
+            .collect()
     }
 }
 
@@ -1261,74 +1339,39 @@ impl FreeDfApp {
             return;
         }
 
-        let mut open = self.settings_open;
-        let mut selected = self.settings_tab;
-        egui::Window::new("Settings")
-            .default_width(crate::ui::scale::rem(44)) // 704px = 44×1rem
-            .default_height(crate::ui::scale::rem(30)) // 480px = 30×1rem
-            .resizable(true)
-            .open(&mut open)
-            .show(ui.ctx(), |ui| {
-                // Dialog header — 명확한 제목 + 조작 힌트 (WCAG 2.4: 목적 라벨링).
-                crate::ui::layout::hstack(ui, crate::ui::layout::SP_2, |ui| {
-                    ui.label(egui::RichText::new("Settings").strong());
-                    ui.label(
-                        egui::RichText::new("Esc to close · Tab / ↑↓ to switch sections").weak().small(),
-                    );
-                });
-                crate::ui::layout::hseparator(ui);
-                ui.horizontal(|ui| {
-                    // 좌/우 레일: ScrollArea가 창 가용 높이를 채우도록 Y축 수축을 품
-                    // (auto_shrink Y=false). 가로 배치 자식의 세로 채움 hacker을 없앤 재설계.
-                    crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
-                        ui.vertical(|ui| {
-                            ui.set_width(crate::ui::scale::qrem(52)); // 208px = 52×.25rem
-                            egui::ScrollArea::vertical()
-                                .id_salt("settings_tabs")
-                                .auto_shrink([true, false])
-                                .show(ui, |ui| {
-                                    for tab in SettingsTab::all() {
-                                        let resp = ui
-                                            .selectable_label(selected == tab, tab.label())
-                                            .on_hover_text(format!(
-                                                "{} — switch to this settings section",
-                                                tab.label(),
-                                            ));
-                                        if resp.clicked() {
-                                            selected = tab;
-                                            resp.request_focus();
-                                        }
-                                    }
-                                });
-                        });
-                    });
-                    ui.separator();
-                    crate::ui::layout::vstack(ui, crate::ui::layout::SP_4, |ui| {
-                        ui.vertical(|ui| {
-                            ui.set_min_size(
-                                egui::vec2(
-                                    crate::ui::scale::rem(29), // 464px = 29×1rem
-                                    crate::ui::scale::rem(25), // 400px = 25×1rem
-                                ),
-                            );
-                            ui.label(
-                                egui::RichText::new(format!("{} settings", selected.label()))
-                                    .strong(),
-                            );
-                            egui::ScrollArea::vertical()
-                                .id_salt("settings_content")
-                                .auto_shrink([true, false])
-                                .show(ui, |ui| {
-                                    self.show_settings_tab(selected, ui);
-                                });
-                        });
-                    });
-                });
-            });
+        // 탭 레일 항목 — 키트가 그립니다(아이콘 레일 · 28pt 행 · 선택 상태 · 계측).
+        let items = SettingsTab::tab_items();
+        let selected = SettingsTab::all()
+            .iter()
+            .position(|t| *t == self.settings_tab)
+            .unwrap_or(0);
 
-        self.settings_open = open;
-        if self.settings_open {
-            self.settings_tab = selected;
+        let outcome = TabbedWindow::new(
+            "settings",
+            "Settings",
+            &items,
+            selected,
+            self.settings_open,
+        )
+        .subtitle("Esc to close · click a section on the left")
+        .show(ui.ctx(), |ui, item| {
+            // 슬러그 → 탭 역매핑(계약 id가 곧 라우팅 키입니다).
+            if let Some(tab) = SettingsTab::from_slug(item.id) {
+                self.show_settings_tab(tab, ui);
+            }
+        });
+
+        // 창 **프레임** rect — 자동화/디자인 캡처가 이 id로 창 하나만 잘라냅니다.
+        if let Some(frame) = outcome.frame {
+            crate::app::dev::publish_rect(ui, "settings.window", frame);
+        }
+
+        self.settings_open = outcome.open;
+        if outcome.open {
+            self.settings_tab = SettingsTab::all()
+                .get(outcome.selected)
+                .copied()
+                .unwrap_or(self.settings_tab);
         }
     }
 

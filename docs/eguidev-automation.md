@@ -105,13 +105,55 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔�
 | `menu.server.media` | 미디어 서버 설정 창 |
 | `menu.maintenance.clear.<cache>` | 캐시별 정리 (`download_cache`, `canvas_cache` … `all_caches()`에 등록하면 자동 추가) |
 | `menu.diag.debug_hud` | 디버그 HUD 토글 |
+| `menu.diag.ui_gallery` | 컴포넌트 갤러리 열기 (**dev-automation 빌드에만** 존재, 사람용 입구) |
+
+#### 메뉴 기하 계약 (실측 고정)
+
+`smoketest/30_more_menu.luau`가 회귀 검증하는 값입니다.
+
+| 항목 | 값 | 왜 |
+|---|---|---|
+| 팝업 폭 | 304pt (`ui.set_min_width/max_width`) | 팝업은 내용에 맞춰 커지므로 상한이 없으면 행이 팝업을 밀어냄(실측 594pt) |
+| 행 높이 | 28pt (`tokens::target::ROW`) | 한 가지 높이 — 행마다 키가 달라 보이던 문제 방지 |
+| 행 간격 | 8pt (`style.spacing.item_spacing.y`) | 행 rect는 **겹치면 안 됨** |
+| 좌측 레일 | 하나 | 들여쓰기 흔들림 방지 |
+| 토글 상태 | 행 오른쪽 스위치 트랙 | 명령 행과 토글 행이 똑같이 보이던 어포던스 회귀 방지 |
+
+#### `ui::kit` 컴포넌트의 계약 위반도 여기서 잡힙니다
+
+`eguidev.root:layout_issues()`는 두 종류를 구분해 읽어야 합니다.
+
+* **완전 포함**(예: 트레일링 ⚙가 자기 행 안에 있음) = 정상 중첩.
+* **부분 겹침**(예: 행 높이 28pt인데 다음 행이 22pt 뒤에 시작) = **결함**.
+  아래 행이 위 행의 하단 클릭 영역을 훔칩니다. `30_more_menu.luau`가 이 판정을
+  자동화해 두었습니다(실제로 `Row`의 커서 버그를 이 방법으로 찾았습니다).
+
+### 컴포넌트 갤러리 (`gallery.*`)
+
+`dev-automation` 빌드에서 `FREEDF_UI_GALLERY=1`로 시작하면 열립니다(테스트 훅).
+전체 목록은 [`docs/UI-SYSTEM.md`](UI-SYSTEM.md)를 보세요.
+
+| id | 대상 |
+|---|---|
+| `gallery.button.primary` / `.secondary` / `.ghost` / `.danger` | 버튼 변형 |
+| `gallery.button.disabled` / `.selected` / `.icon` | 버튼 상태 |
+| `gallery.button.size.small` / `.medium` / `.touch` | 크기 등급 (계약: ≥24 / ≥28 / ≥32) |
+| `gallery.icon_button.small` / `.medium` / `.touch` / `.disabled` | 아이콘 버튼 |
+| `gallery.toggle.inline` / `gallery.toggle.row` | 토글 (인라인 · 행) |
+| `gallery.segment.left` / `.center` / `.right` | 배타 선택 (선택 상태 노출) |
+| `gallery.row.action` / `.radio` / `.trailing` / `.trailing.button` / `.disabled` | 행 변형 |
 
 메뉴 항목의 **계층 리듬**(모든 행 같은 높이 · 같은 좌측 레일)은
 `smoketest/30_more_menu.luau`가 회귀 검증합니다.
 
-계측은 `crates/freedf/src/app/dev.rs`의 얇은 헬퍼로만 합니다. 헬퍼마다
-**기능이 꺼졌을 때의 no-op 분기**를 함께 제공하므로 호출부에 `#[cfg]`가 필요
-없습니다.
+계측은 두 경로로만 합니다: **`ui::kit` 컴포넌트**(내장 — 호출부는 `test_id`만
+넘김) 또는 `crates/freedf/src/app/dev.rs`의 얇은 헬퍼. 헬퍼마다 기능이 꺼졌을
+때의 no-op 분기를 함께 제공하므로 호출부에 `#[cfg]`가 필요 없습니다.
+
+> `ui::kit`을 쓰는 화면은 **계측을 빠뜨릴 수 없습니다**: `Row`/`Button`/`Toggle` 등이
+> 그려질 때 [`crate::ui::a11y::finish`]가 `dev::tag_*`를 **내장 호출**합니다
+> (예전에 "오버레이 전체가 무계측"이던 사고의 재발 방지). 키트를 직접 쓰지 않는
+> 커스텀 위젯만 아래 헬퍼를 씁니다.
 
 | 헬퍼 | 쓰는 곳 |
 |---|---|
@@ -154,10 +196,24 @@ eguidev.widget("toolbar.tool.eraser"):wait({ selected = true })
 return { screenshot = eguidev.root:screenshot() }   -- 이미지 블록으로 반환
 ```
 
-`edev smoke`는 `smoketest/`의 각 `.luau`를 독립 실행합니다. 현재:
+`edev smoke`는 `smoketest/`의 각 `.luau`를 **순차로** 실행합니다. 현재:
 
 - `10_launch.luau` — 창이 뜨고 탭바·3단 툴바·캔버스가 그려지는지 + 스크린샷
 - `20_ink_tool_picker.luau` — 실제 클릭으로 도구 선택이 바뀌는지
+- `30_more_menu.luau` — `More` 오버레이의 열림/닫힘 · 항목 존재 · 높이/레일 통일 ·
+  **부분 겹침 없음**(`layout_issues`)
+- `40_ui_gallery.luau` — 컴포넌트 갤러리 계약 스캔 (갤러리가 닫혀 있으면 skip →
+  `scripts/ui-gallery-check.sh`가 `FREEDF_UI_GALLERY=1`로 열어서 돌립니다)
+
+전체 검증은 **한 명령**입니다(순차 실행이 `flock`으로 강제됩니다):
+
+```bash
+./scripts/test-all.sh            # 헤드리스 계약 → 스모크 → 갤러리 → 기본 프로필 컴파일
+```
+
+> **동시에 두 개를 돌리지 마세요.** `edev`는 실제 창을 쓰므로 서로의 프레임/스크린샷을
+> 깨뜨립니다(실측: 동시 실행 시 `10_launch` 스크린샷 타임아웃). `scripts/edev-run.sh`가
+> `flock`으로 직렬화하므로 어떤 호출 순서로도 안전합니다.
 
 ## MCP로 에이전트에 연결
 
@@ -185,9 +241,17 @@ args = ["mcp"]
   옆에 `libpdfium.so` / `pdfium.dll`이 필요합니다.
 - **렌더러**: glow를 쓰세요. wgpu 백엔드는 특정 조합에서 자동화 중 유휴 프레임이
   멈춥니다.
+- **팝업 안 항목은 자동화가 클릭할 수 없습니다**: egui 팝업(`menu_button`) 내부
+  위젯은 interaction-ready로 판정되지 않습니다(실측: `wait({actionable=true})`
+  타임아웃, 팝업 밖 위젯은 정상). 그래서
+  * 메뉴 스모크는 **구조 검증**만 합니다(`30_more_menu.luau`).
+  * 팝업 밖에서 열 수 있는 경로는 **환경변수 테스트 훅**을 씁니다
+    (`FREEDF_UI_GALLERY=1` → 갤러리 창 → 계약 스캔).
+  * `Window`의 내장 스크롤은 `scroll_into_view()` 대상이 아닙니다 — 갤러리 스캔은
+    초기 가시 영역의 컴포넌트로 상호작용을 검증합니다.
 - **메뉴 항목을 누르면 메뉴가 닫힙니다**: egui 팝업의 기본 동작이라, 연속으로
   두 항목을 조작하려면 그 사이에 메뉴를 다시 열어야 합니다. 항목의 상태 변화를
-  확인하려면 **다시 열어서** 읽으세요(`smoketest/30_more_menu.luau` 4번 단계).
+  확인하려면 **다시 열어서** 읽으세요(`smoketest/30_more_menu.luau` 5번 단계).
 - **앱 세션당 첫 클릭은 창 활성화에 소비됩니다**: 앱을 띄운 뒤 곧바로
   `widget:click()`을 하면 그 클릭이 사라집니다(실측: 1번째 클릭 무시, 2번째부터
   정상 — 그래서 `10_launch`는 클릭이 없고, `20_ink_tool_picker`는 첫 클릭 결과를
@@ -212,7 +276,7 @@ args = ["mcp"]
 | CLI `edev eval … --out-dir DIR` | `DIR/*.jpg` 파일 + JSON의 `images[].file` | 사람이 파일을 열어보거나, 에이전트가 파일을 직접 읽을 때 |
 | MCP `script_eval` | 응답의 **이미지 콘텐츠 블록** | 에이전트가 도구 결과에서 바로 봄 |
 
-준비된 스크립트 두 개:
+준비된 스크립트:
 
 ```bash
 # 뷰포트 전체(또는 --arg widget=canvas.surface 로 위젯 크롭) 캡처
@@ -220,6 +284,12 @@ scripts/edev-run.sh eval scripts/design-shot.luau --out-dir tmp/eguidev-screensh
 
 # 이미지 + 측정값(위젯 기하 / 레이아웃 문제 / 팔레트 / WCAG 대비) 한 번에
 scripts/edev-run.sh eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
+
+# More 오버레이를 열고 캡처 + 행 기하/레이아웃 문제 (메뉴 리디자인 리뷰용)
+scripts/edev-run.sh eval scripts/menu-shot.luau --out-dir tmp/eguidev-screenshots
+
+# 갤러리 계약 스캔(갤러리를 열어서) — test-all의 3단계
+scripts/ui-gallery-check.sh
 ```
 
 `design-audit.luau`가 돌려주는 것:

@@ -51,6 +51,9 @@ impl Gallery {
         egui::Window::new("UI Gallery — 컴포넌트 계약")
             .open(&mut open)
             .default_width(560.0)
+            // 높이를 명시해 초기 화면에서 컴포넌트 대부분이 보이게 합니다
+            // (자동화가 스크롤 없이 스캔/스크린샷할 수 있어야 함).
+            .default_height(680.0)
             .vscroll(true)
             .show(ctx, |ui| self.contents(ui));
         self.open = open;

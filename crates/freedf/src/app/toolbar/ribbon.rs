@@ -130,15 +130,15 @@ impl FreeDfApp {
                 crate::ui::layout::vdivider(ui);
 
                 // ── App: 전역 설정(단일 홈) + 오버플로 ─────────────────
-                let settings = icon_button(
-                    ui,
-                    IconButton::new(icons::GEAR, "Settings").hint(
+                // 계측은 컴포넌트 내장(`test_id`) — 수동 태그를 쓰지 않습니다.
+                let settings = kit::IconButton::new(icons::GEAR, "Settings")
+                    .hint(
                         "Open Settings — every preference in one tabbed window\n\
                          (draw, cursor, paper, canvas, color wheel, page,\n\
                          edge scroll, window focus, server, macros, gamepad).",
-                    ),
-                );
-                crate::app::dev::tag_button(ui, "toolbar.settings", "Settings", &settings);
+                    )
+                    .test_id("toolbar.settings")
+                    .show(ui);
                 if settings.clicked() {
                     self.settings_open = true;
                 }
@@ -237,7 +237,7 @@ impl FreeDfApp {
     /// 컴포넌트(그룹 6): More 오버플로 — 자주 안 쓰는 액션을 **주제별 섹션**으로.
     /// (React의 <OverflowMenu>에 해당하는 컨테이너 컴포넌트.)
     ///
-    /// 모든 행은 `crate::ui::menu` 키트로 그립니다. 예전에는 한 화면에
+    /// 모든 행은 `crate::ui::kit`으로 그립니다. 예전에는 한 화면에
     /// 체크박스 · 무테두리 텍스트 버튼 · 서브메뉴 · 라벨 없는 아이콘 선택이
     /// 섞여 있어 정보 계층이 아니라 나열처럼 보였습니다. 이제 **행 구조가
     /// 하나**이고, 섹션은 구분선으로 나뉘며, 모든 항목에 아이콘과 라벨이

@@ -75,27 +75,25 @@ assert(small_h >= 24.0, "Small 등급이 24pt 미만: " .. tostring(small_h))
 assert(medium_h >= 28.0, "Medium 등급이 28pt 미만: " .. tostring(medium_h))
 assert(touch_h >= 32.0, "Touch 등급이 32pt 미만: " .. tostring(touch_h))
 
--- 4) 상호작용 — 행 토글이 실제로 값을 뒤집는지 (원복 포함).
---    갤러리 창은 스크롤되므로 화면 밖일 수 있습니다 — 먼저 끌어옵니다.
-local toggle_row = eguidev.widget("gallery.toggle.row")
-toggle_row:scroll_into_view()
-eguidev.wait_frames(2)
+-- 4) 상호작용 — 배타 선택(Segmented)이 **실제로** 상태에 반영되는지 (원복 포함).
+--    갤러리 창은 스크롤되므로 초기 가시 영역에 있는 컴포넌트로 검증합니다.
+--    (Window 내장 스크롤은 자동화의 scroll_into_view 대상이 아닙니다 — 실측.)
+local function selected_of(id: string): boolean?
+    local s = eguidev.widget(id):state()
+    assert(s ~= nil, id .. " 없음")
+    return s.selected
+end
 
-local before = toggle_row:state()
-assert(before ~= nil, "행 토글 상태를 읽지 못했습니다")
-local was_on = before.value == true
-
-toggle_row:click()
+local left = eguidev.widget("gallery.segment.left")
+left:click()
 eguidev.wait_frames(3)
-local after = eguidev.widget("gallery.toggle.row"):state()
-assert(after ~= nil, "클릭 후 행 토글이 사라졌습니다")
-assert((after.value == true) ~= was_on, "행 토글이 값에 반영되지 않았습니다")
+assert(selected_of("gallery.segment.left") == true, "왼쪽 세그먼트 선택이 반영되지 않았습니다")
+assert(selected_of("gallery.segment.center") == false, "배타 선택이 깨졌습니다(중앙이 여전히 선택)")
 
-eguidev.widget("gallery.toggle.row"):click()
+eguidev.widget("gallery.segment.center"):click()
 eguidev.wait_frames(3)
-local restored = eguidev.widget("gallery.toggle.row"):state()
-assert(restored ~= nil, "원복 후 행 토글이 사라졌습니다")
-assert((restored.value == true) == was_on, "행 토글 원복 실패")
+assert(selected_of("gallery.segment.center") == true, "원복 클릭이 반영되지 않았습니다")
+assert(selected_of("gallery.segment.left") == false, "원복 후 배타 선택이 깨졌습니다")
 
 return {
     ok = true,

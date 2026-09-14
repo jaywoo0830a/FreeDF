@@ -1548,7 +1548,20 @@ impl FreeDfApp {
             tool_drag: None,
             tool_drop: None,
             tool_settings_open: false,
+            // 테스트 훅: `FREEDF_SETTINGS=1`이면 시작할 때 설정 창을 열고,
+            // `FREEDF_SETTINGS_TAB=<slug>`로 특정 탭을 고릅니다.
+            // (창/팝업 클릭에 의존하지 않고 자동화가 결정적으로 도달하게 합니다 —
+            //  docs/UI-SYSTEM.md · smoketest/50_settings.luau 참고.)
+            #[cfg(feature = "dev-automation")]
+            settings_open: std::env::var_os("FREEDF_SETTINGS").is_some(),
+            #[cfg(not(feature = "dev-automation"))]
             settings_open: false,
+            #[cfg(feature = "dev-automation")]
+            settings_tab: std::env::var("FREEDF_SETTINGS_TAB")
+                .ok()
+                .and_then(|s| toolbar::SettingsTab::from_slug(&s))
+                .unwrap_or(toolbar::SettingsTab::Draw),
+            #[cfg(not(feature = "dev-automation"))]
             settings_tab: toolbar::SettingsTab::Draw,
             paper_settings_open: false,
             canvas_settings_open: false,
@@ -1716,6 +1729,11 @@ impl FreeDfApp {
             pending_doc,
             modal: None,
             db_connected,
+            // 디자인 리뷰/자동화에서는 첫 실행 창이 화면을 덮어 캡처를 망칩니다
+            // (실측: 설정 창과 정확히 겹쳐 가독성 0). `FREEDF_SETUP=1`로 켭니다.
+            #[cfg(feature = "dev-automation")]
+            setup_open: !db_connected && std::env::var_os("FREEDF_SETUP").is_some(),
+            #[cfg(not(feature = "dev-automation"))]
             setup_open: !db_connected,
             connect_status: connect_error.map(|e| (false, e)),
             pending_connect: None,
@@ -3526,15 +3544,22 @@ impl FreeDfApp {
             self.minimal_chrome_controls(&ctx);
         }
 
-        self.connection_dialog(&ctx);
-        self.fallback_dialog(&ctx);
-        self.loading_overlay(&ctx);
+        // 모달 우선순위(아래→위 z-order):
+        //   앱 패널/캔버스 → 디버그 HUD/갤러리 → **설정 창** → 첫 실행/폴백/로딩 → 토스트.
+        // 설정 창을 여기(프레임 끝)에서 그려야 앱 패널에 가리지 않습니다.
         if self.debug_hud {
             self.debug_hud_ui(ui);
         }
         // 컴포넌트 갤러리 (dev-automation 전용) — UI 계약을 눈으로/스크립트로 검증.
         #[cfg(feature = "dev-automation")]
         self.ui_gallery.show(&ctx);
+
+        self.settings_windows(ui);
+
+        // 강제 모달(연결 강제/폴백/로딩)은 설정 창보다 위에 옵니다.
+        self.connection_dialog(&ctx);
+        self.fallback_dialog(&ctx);
+        self.loading_overlay(&ctx);
 
         // 토스트 알림 (우상단, 시간 경과 시 자동 소멸).
         if !self.toast_welcomed {

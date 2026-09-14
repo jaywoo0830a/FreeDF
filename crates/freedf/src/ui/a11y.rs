@@ -63,7 +63,7 @@ pub struct Spec<'a> {
 }
 
 impl<'a> Spec<'a> {
-    /// 계측 없는 순수 프레젠테이션용.
+    /// 읽기 전용 텍스트 — 계측하지 않음(장식용).
     pub fn text(name: &'a str) -> Self {
         Self {
             id: None,
@@ -111,6 +111,22 @@ impl<'a> Spec<'a> {
             role: Role::Radio,
             min_target: tokens::target::MIN,
             selected,
+            value: None,
+        }
+    }
+
+    /// 계측 id가 있는 읽기 전용 라벨(섹션 제목·화면 제목 등).
+    ///
+    /// 버튼이 아니므로 최소 타깃은 요구하지 않습니다 — 자동화가 "그 화면에 어떤
+    /// 섹션이 있는가"를 읽는 용도입니다.
+    pub fn label(id: &'a str, name: &'a str) -> Self {
+        Self {
+            id: Some(id),
+            name,
+            hint: "",
+            role: Role::Text,
+            min_target: 0.0,
+            selected: false,
             value: None,
         }
     }
@@ -273,6 +289,9 @@ pub fn finish(ui: &mut egui::Ui, spec: Spec<'_>, resp: egui::Response) -> egui::
         }
         (Some(id), Role::Button | Role::MenuItem) => {
             crate::app::dev::tag_button(ui, id, spec.name, &resp);
+        }
+        (Some(id), Role::Text) => {
+            crate::app::dev::tag_text(ui, id, spec.name, &resp);
         }
         _ => {}
     }

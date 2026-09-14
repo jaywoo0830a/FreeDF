@@ -19,6 +19,9 @@
 
 use eframe::egui;
 
+use crate::ui::a11y::{self, Spec};
+use crate::ui::tokens;
+
 /// 툴팁 도움말 내장 — help가 비면 붙이지 않습니다.
 fn tip(resp: egui::Response, help: &str) -> egui::Response {
     if help.is_empty() {
@@ -116,17 +119,30 @@ pub(crate) fn help(ui: &mut egui::Ui, text: impl Into<String>) {
 }
 
 /// <FieldSet> — 접이식 섹션.
+///
+/// `id_salt`는 문자열입니다: egui id로도 쓰고, **자동화 계약 id**
+/// (`settings.section.<id_salt>`)로도 쓰기 때문입니다(스크립트가 "이 탭에 어떤
+/// 섹션이 있는가"를 읽습니다).
 pub(crate) fn fieldset(
     ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    id_salt: &str,
     title: &str,
     default_open: bool,
     children: impl FnOnce(&mut egui::Ui),
 ) -> egui::collapsing_header::CollapsingResponse<()> {
-    egui::CollapsingHeader::new(title)
+    let resp = egui::CollapsingHeader::new(title)
         .id_salt(id_salt)
         .default_open(default_open)
-        .show(ui, children)
+        .show(ui, children);
+    // 섹션 헤더 자체도 타깃입니다(WCAG 2.5.8) — 패널의 interact_size.y가
+    // COMFORT(28)이므로 헤더 높이도 그만큼 확보됩니다.
+    let id = format!("settings.section.{id_salt}");
+    let _ = a11y::finish(
+        ui,
+        Spec::label(&id, title).min_target(tokens::target::ROW),
+        resp.header_response.clone(),
+    );
+    resp
 }
 
 /// <FormControl> 텍스트 입력 빌더.

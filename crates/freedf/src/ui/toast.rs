@@ -142,7 +142,17 @@ impl ToastQueue {
                                         );
                                     }
                                 });
-                                let close = ui.small_button("x").on_hover_text("Dismiss");
+                                // 최소 타깃(24pt) 강제 — `small_button`은 21pt로
+                                // 감사(small_targets)에서 하한 미달이 나왔습니다.
+                                let close = ui
+                                    .add_sized(
+                                        [
+                                            crate::ui::tokens::target::MIN,
+                                            crate::ui::tokens::target::MIN,
+                                        ],
+                                        egui::Button::new("x"),
+                                    )
+                                    .on_hover_text("Dismiss");
                                 crate::app::dev::tag_button(
                                     ui,
                                     format!("toast.dismiss.{}", t.id),
