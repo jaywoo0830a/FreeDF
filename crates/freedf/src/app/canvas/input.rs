@@ -1,6 +1,87 @@
 //! 캔버스 입력 — 팬/줌(5% 스텝)/스크롤/필기 시작/포커스 제스처.
 
 use super::*;
+use freedf_core::input_events::{PointerEvent, PointerPhase, PointerSource};
+
+/// 보류된 Down 에지의 최대 수명 (ms). 이보다 오래 보관한 에지는 승격하지
+/// 않는다 — 이미 끝난 접촉이 later 프레스에 뒤늦게 붙는 것을 막는다.
+pub(crate) const PENDING_DOWN_TTL_MS: u64 = 250;
+
+/// 게이트에 막힌 Down 에지의 보류 상태 (**P1~P3 회귀 수정**).
+///
+/// 계약: **에지는 파괴되지 않는다.** 캔버스 정책 게이트가 거짓인 프레임의
+/// Down은 버리지 않고 여기 보관했다가, 게이트가 참이 되고 그 소스의 접촉
+/// 증거가 남아 있는 프레임에 **원래 접촉점 그대로** 승격한다.
+///
+/// 왜 필요한가: 리팩터 전에는 `primary_down && (down_on || dragged())`를
+/// **매 프레임 폴링**해 게이트가 늦게 참이 되어도 획이 살아났다(늦은 시작).
+/// 커맨드 경로(허브 → 툴 → BeginStroke)로 옮기면서 Down "에지 1회"만
+/// 평가하게 됐고, 그 한 프레임이 게이트에 막혀 소비되면 **프레스 전체가
+/// 무음 유실**됐다 (`tmp/0916debug.log`: Pen Down 7건 중 3건이 프레스 내내
+/// `cmds(b/ext/end)=0/0/0`).
+///
+/// 힐 로직(되돌린 패치)과의 차이: 승격 대상은 **보류된 Down 에지**뿐이다.
+/// "세션 밖 Drag"를 승격하지 않으므로, 펜을 뗀 뒤 같은 프레임에 쏟아지는
+/// 꼬리 hover 이벤트가 새 세션을 열어 점을 연발하지 않는다.
+///
+/// egui에 의존하지 않는 순수 상태기계 — 전이는 [`Self::promote_if`] 하나다.
+#[derive(Debug, Default)]
+pub(crate) struct PendingDown {
+    /// (막힌 Down 에지, 보관 시작 ms).
+    held: Option<(PointerEvent, u64)>,
+}
+
+impl PendingDown {
+    /// 막힌 Down을 보류한다 — 같은 프레스의 더 새로운 에지가 오면 최신이 이긴다.
+    pub(crate) fn retain(&mut self, ev: PointerEvent, now_ms: u64) {
+        self.held = Some((ev, now_ms));
+    }
+
+    /// 보류 폐기 (프레스 종료 Up / 팬이 프레스를 가져감 / 새 프레스 시작 /
+    /// 포커스 유예). 반환: 폐기된 에지 (진단용).
+    pub(crate) fn cancel(&mut self) -> Option<PointerEvent> {
+        self.held.take().map(|(ev, _)| ev)
+    }
+
+    /// 보관 중인 에지 (승격 증거 판정/진단용).
+    pub(crate) fn held(&self) -> Option<&PointerEvent> {
+        self.held.as_ref().map(|(ev, _)| ev)
+    }
+
+    /// 보관 중이면 (에지, 보관 경과 ms).
+    pub(crate) fn held_ms(&self, now_ms: u64) -> Option<(&PointerEvent, u64)> {
+        self.held
+            .as_ref()
+            .map(|(ev, t)| (ev, now_ms.saturating_sub(*t)))
+    }
+
+    /// 승격 판정 — 참이면 보류를 비우고 그 Down을 돌려준다 (호출자가 이번
+    /// 프레임 이벤트 **맨 앞**에 넣어 `begin → extend` 순서를 만든다).
+    ///
+    /// 조건(모두 참):
+    /// ① 팬 프레임이 아님 ② TTL 안 ③ 캔버스 게이트가 *지금* 참
+    /// ④ 그 소스의 접촉 증거가 있음
+    ///
+    /// TTL 만료는 이 프레스의 승격 기회를 영구히 끝낸다 (보류도 비운다).
+    pub(crate) fn promote_if(
+        &mut self,
+        now_ms: u64,
+        panning: bool,
+        gate_now: bool,
+        contact_evidence: bool,
+    ) -> Option<PointerEvent> {
+        let (_, since) = self.held.as_ref()?;
+        let fresh = now_ms.saturating_sub(*since) <= PENDING_DOWN_TTL_MS;
+        if !fresh {
+            self.held = None;
+            return None;
+        }
+        if panning || !gate_now || !contact_evidence {
+            return None;
+        }
+        self.held.take().map(|(ev, _)| ev)
+    }
+}
 
 impl FreeDfApp {
     pub(crate) fn handle_canvas_input(
@@ -205,7 +286,9 @@ impl FreeDfApp {
         // 것만 툴에 준다. 캔버스 밖 누름·포커스 제스처·팬 정책은 앱 경계의 몫 —
         // 워크스페이스와 툴 상태기계는 UI/장치 지식이 없다.
         let mut hub = std::mem::take(&mut self.input_hub);
-        let mut pointer_events: Vec<freedf_core::input_events::PointerEvent> = Vec::new();
+        let mut pointer_events: Vec<PointerEvent> = Vec::new();
+        // 이번 프레임의 시각 — 보류 에지 승격/만료 판정에 쓴다 (대여 충돌 회피).
+        let now_ms = self.now_ms();
         hub.take(|ev| match ev {
             freedf_core::input_events::InputEvent::Control(c) => {
                 // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
@@ -222,20 +305,29 @@ impl FreeDfApp {
             freedf_core::input_events::InputEvent::Action(a) => {
                 self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
             }
-            freedf_core::input_events::InputEvent::Pointer(p) => {
-                // 캔버스 위에서 시작한 누름만 툴 세션을 연다 — 툴바/오버레이 위
-                // 누름은 egui 위젯이 소비. Drag/Up은 항상 통과 (세션 닫기 보장;
-                // 열려 있지 않으면 툴이 무시한다).
-                if p.phase == freedf_core::input_events::PointerPhase::Down
-                    && !(response.is_pointer_button_down_on() || response.dragged())
-                {
-                    return;
-                }
-                // ── 포커스 제스처 (스플릿 뷰) ─────────────────────────────
-                // ① 아직 포커스 없음 → 이 프레스는 잉크 없이 포커스만 요청
-                //    (한 번만). ② 포커스 획득 직후 유예 중인 누름도 삼킵니다.
-                // (기존 input.rs 로직 이동)
-                if p.phase == freedf_core::input_events::PointerPhase::Down {
+            freedf_core::input_events::InputEvent::Pointer(p) => match p.phase {
+                PointerPhase::Down => {
+                    // 캔버스 위에서 시작한 누름만 툴 세션을 연다 — 툴바/오버레이 위
+                    // 누름은 egui 위젯이 소비. Drag/Up은 항상 통과 (세션 닫기
+                    // 보장; 열려 있지 않으면 툴이 무시한다).
+                    //
+                    // ── 에지는 파괴되지 않는다 (P1~P3 회귀 수정) ──────────────
+                    // 게이트가 거짓인 프레임의 Down은 **보류**한다. 리팩터 전에는
+                    // 이 조건을 매 프레임 폴링해 늦은 시작이 복구됐지만, 커맨드
+                    // 경로는 Down 에지 1회만 평가하므로 그 1회가 막히면 프레스
+                    // 전체가 무음 유실됐다 (0916debug.log: 7건 중 3건).
+                    if !(response.is_pointer_button_down_on() || response.dragged()) {
+                        if !panning {
+                            self.pending_down.retain(p, now_ms);
+                        }
+                        return;
+                    }
+                    // 정상 통과한 새 프레스 — 이전 프레스의 보류는 무효다.
+                    self.pending_down.cancel();
+                    // ── 포커스 제스처 (스플릿 뷰) ─────────────────────────────
+                    // ① 아직 포커스 없음 → 이 프레스는 잉크 없이 포커스만 요청
+                    //    (한 번만). ② 포커스 획득 직후 유예 중인 누름도 삼킵니다.
+                    // **의도적 삼킴**이라 보류하지 않는다 (복구하면 제스처가 무력화).
                     let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
                     if unfocused {
                         if !self.focus_grabbed {
@@ -244,14 +336,87 @@ impl FreeDfApp {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                             return;
                         }
-                    } else if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
+                    } else if self.focus_grace_until_ms.is_some_and(|t| now_ms < t) {
                         return;
                     }
+                    pointer_events.push(p);
                 }
-                pointer_events.push(p);
-            }
+                PointerPhase::Up => {
+                    // 프레스 종료 — 보류된 Down은 승격 기회를 잃는다.
+                    // (같은 소스의 Up만: 반대 소스의 Up이 이 프레스를 닫지 못하게.)
+                    if self
+                        .pending_down
+                        .held()
+                        .is_some_and(|d| d.source == p.source)
+                    {
+                        self.pending_down.cancel();
+                    }
+                    pointer_events.push(p);
+                }
+                PointerPhase::Drag => pointer_events.push(p),
+            },
         });
         self.input_hub = hub;
+
+        // ── 보류된 Down 에지 승격 (P1~P3 회귀 수정) ─────────────────────────
+        // 게이트에 막혀 보관된 Down을, 게이트가 *지금* 참이고 그 소스의 접촉
+        // 증거가 남아 있는 프레임에 **원래 접촉점 그대로** 승격한다 — 리팩터 전
+        // 폴링(늦은 시작) 동작의 복원이고, 첫 점이 실제 접촉점이라 더 정확하다.
+        // 세션 밖 Drag는 절대 승격하지 않으므로(보류가 있어야만 승격) 펜을 뗀 뒤
+        // 도착하는 꼬리 hover 이벤트가 점을 만들지 않는다 — 되돌린 힐 로직의
+        // "점 연발" 원인을 구조적으로 제거한다.
+        if panning {
+            if let Some(d) = self.pending_down.cancel() {
+                pen_trace(&format!(
+                    "STROKE-DROP: 팬 프레임이 프레스를 가져감 — 보류 Down 폐기 source={:?}",
+                    d.source
+                ));
+            }
+        } else if self.focus_grace_until_ms.is_some_and(|t| now_ms < t) {
+            // 포커스 유예 중 — 의도적 삼킴이므로 승격하지 않는다.
+            self.pending_down.cancel();
+        } else {
+            let gate_now = response.is_pointer_button_down_on() || response.dragged();
+            let primary_down_now = ctx.input(|i| i.pointer.primary_down());
+            let evidence = self.pending_down.held_ms(now_ms).is_some_and(|(d, _)| {
+                // ① egui가 프레스를 인지(마우스/펜 공통). ② 펜/패드 어댑터는
+                // 접촉 중에만 Drag를 만든다 → 같은 소스의 Drag도 접촉 증명이다
+                // (evdev가 egui보다 빠른 프레임에서 승격이 하루 늦지 않게).
+                primary_down_now
+                    || (matches!(d.source, PointerSource::Pen | PointerSource::Pad)
+                        && pointer_events
+                            .iter()
+                            .any(|p| p.source == d.source && p.phase == PointerPhase::Drag))
+            });
+            let held = self
+                .pending_down
+                .held_ms(now_ms)
+                .map(|(d, age)| (d.source, d.point, age));
+            match self
+                .pending_down
+                .promote_if(now_ms, false, gate_now, evidence)
+            {
+                Some(d) => {
+                    if let Some((_, _, age)) = held {
+                        pen_trace(&format!(
+                            "STROKE-RECOVER: 보류 Down 승격 — source={:?} point={:?} delay={age}ms (게이트 늦은 시작 복구)",
+                            d.source, d.point
+                        ));
+                    }
+                    // 이번 프레임 Drag들보다 **앞**에 놓아 begin → extend 순서를 지킨다.
+                    pointer_events.insert(0, d);
+                }
+                None => {
+                    if let Some((src, _, age)) = held {
+                        if age > PENDING_DOWN_TTL_MS {
+                            pen_trace(&format!(
+                                "STROKE-DROP: 보류 Down 만료 — source={src:?} age={age}ms (이 프레스 유실; gate={gate_now} evidence={evidence})"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
 
         // 활성 툴 동기화 — 워크스페이스가 진실원 (컨트롤 맵 전환·홀드 포함),
         // self.tool은 렌더/저장용 파생 캐시다.

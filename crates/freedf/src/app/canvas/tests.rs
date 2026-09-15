@@ -336,3 +336,100 @@
         let center = ColorWheel::clamp_center(egui::pos2(9999.0, 9999.0), canvas);
         assert_eq!(center, canvas.center());
     }
+
+    // ── 보류 Down 에지 (P1~P3 회귀 수정) ────────────────────────────────
+    // 계약: 캔버스 게이트에 막힌 Down은 **파괴되지 않는다**. 보관됐다가
+    // 게이트가 참이 되는 프레임에 원래 접촉점 그대로 승격된다 — 리팩터 전
+    // 폴링("늦은 시작")의 복구를 에지 경로에 되돌린 것.
+    // 근거: tmp/0916debug.log — Pen Down 7건 중 3건이 프레스 내내
+    // `cmds(b/ext/end)=0/0/0` (에지 1회 소비 후 복구 경로 0).
+
+    use freedf_core::input_events::PointerSource;
+
+    fn pending_event(source: PointerSource, point: [f32; 2]) -> freedf_core::input_events::PointerEvent
+    {
+        freedf_core::input_events::PointerEvent {
+            source,
+            phase: freedf_core::input_events::PointerPhase::Down,
+            point,
+            pressure: 0.4,
+            tilt: 0.0,
+        }
+    }
+
+    #[test]
+    fn deferred_down_promotes_with_original_contact_point() {
+        let mut p = input::PendingDown::default();
+        let d = pending_event(PointerSource::Pen, [12.0, 34.0]);
+        p.retain(d, 1_000);
+
+        // 게이트가 아직 거짓인 프레임 — 승격하지 않고 보관을 유지한다.
+        assert!(p.promote_if(1_010, false, false, true).is_none());
+        assert!(p.held().is_some(), "막힌 에지는 버려지지 않는다");
+
+        // 다음 프레임 게이트가 참 + 접촉 증거 → **원래 접촉점** 그대로 승격.
+        let promoted = p
+            .promote_if(1_010, false, true, true)
+            .expect("늦은 시작 복구 — 획이 살아난다");
+        assert_eq!(promoted, d, "첫 점은 실제 접촉점이어야 한다");
+        assert!(p.held().is_none(), "승격 후 보류는 비워진다 (이중 승격 금지)");
+        assert!(p.promote_if(1_011, false, true, true).is_none());
+    }
+
+    #[test]
+    fn deferred_down_expires_and_is_forgotten() {
+        let mut p = input::PendingDown::default();
+        p.retain(pending_event(PointerSource::Pen, [0.0, 0.0]), 1_000);
+        let stale = 1_000 + input::PENDING_DOWN_TTL_MS + 1;
+        assert!(
+            p.promote_if(stale, false, true, true).is_none(),
+            "TTL 밖의 에지는 승격하지 않는다 (다른 프레스에 붙지 않게)"
+        );
+        assert!(p.held().is_none(), "만료된 보류는 버린다");
+        // 경계값은 살아 있다 — TTL은 포함(inclusive)이다.
+        p.retain(pending_event(PointerSource::Pen, [1.0, 1.0]), 2_000);
+        let edge = 2_000 + input::PENDING_DOWN_TTL_MS;
+        assert!(p.promote_if(edge, false, true, true).is_some());
+    }
+
+    #[test]
+    fn deferred_down_never_promotes_during_panning() {
+        let mut p = input::PendingDown::default();
+        p.retain(pending_event(PointerSource::Pen, [5.0, 5.0]), 100);
+        assert!(
+            p.promote_if(110, true, true, true).is_none(),
+            "팬 프레임이 프레스를 소유한다 — 잉크 금지"
+        );
+        assert!(p.held().is_some(), "팬이 끝나면 승격 기회가 남아 있다");
+        assert!(p.promote_if(120, false, true, true).is_some());
+    }
+
+    #[test]
+    fn deferred_down_requires_contact_evidence() {
+        let mut p = input::PendingDown::default();
+        p.retain(pending_event(PointerSource::Pen, [5.0, 5.0]), 100);
+        // 게이트만 참이고 접촉 증거가 없으면(이미 뗀 뒤일 수 있다) 승격 금지.
+        assert!(p.promote_if(110, false, true, false).is_none());
+        assert!(p.held().is_some());
+    }
+
+    #[test]
+    fn cancel_returns_edge_and_clears_slot() {
+        let mut p = input::PendingDown::default();
+        let d = pending_event(PointerSource::Pad, [7.0, 8.0]);
+        p.retain(d, 500);
+        assert_eq!(p.cancel(), Some(d));
+        assert!(p.held().is_none());
+        assert_eq!(p.cancel(), None, "두 번 폐기해도 무해");
+        assert!(p.held_ms(999).is_none());
+    }
+
+    #[test]
+    fn no_retained_edge_means_no_promotion() {
+        // 힐 로직(되돌린 패치)과의 구조적 차이 — 세션 밖 Drag/꼬리 hover가
+        // 게이트와 증거를 모두 만족해도 **보류된 에지가 없으면** 아무 일도
+        // 일어나지 않는다. 펜을 뗀 프레임의 꼬리 이벤트가 점을 연발하지 않는다.
+        let mut p = input::PendingDown::default();
+        assert!(p.promote_if(1_000, false, true, true).is_none());
+        assert!(p.held().is_none());
+    }
