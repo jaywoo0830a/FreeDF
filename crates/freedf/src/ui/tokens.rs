@@ -47,6 +47,8 @@ pub mod radius {
     pub const SM: f32 = 0.25 * REM;
     pub const MD: f32 = 0.375 * REM;
     pub const LG: f32 = 0.5 * REM;
+    /// 플로팅 오버레이 창 (0.75rem).
+    pub const XL: f32 = 0.75 * REM;
 }
 
 /// 프레임 **내부 마진** 토큰 — 프레임 종류별로 이름을 붙여 한 곳에서 정의합니다.

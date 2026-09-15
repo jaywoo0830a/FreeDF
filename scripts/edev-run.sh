@@ -66,7 +66,7 @@ if needs_xvfb; then
   XVFB_DISPLAY=":99"
   # 락을 잡고도 :99에 서버가 남아 있으면(이전 실행이 비정상 종료) 재사용합니다.
   if ! xdpyinfo -display "$XVFB_DISPLAY" >/dev/null 2>&1; then
-    Xvfb "$XVFB_DISPLAY" -screen 0 1600x1000x24 -nolisten tcp >/tmp/freedf-xvfb.log 2>&1 &
+    Xvfb "$XVFB_DISPLAY" -screen 0 1600x1000x24 -nolisten tcp 9>&- >/tmp/freedf-xvfb.log 2>&1 &
     XVFB_PID=$!
   fi
   export DISPLAY="$XVFB_DISPLAY"

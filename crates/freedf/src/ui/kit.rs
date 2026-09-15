@@ -21,6 +21,8 @@ use eframe::egui;
 use egui_phosphor_icons::Icon;
 
 use crate::ui::a11y::{self, Spec};
+// `target`은 테스트(계약 단언)에서만 직접 참조합니다.
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::ui::tokens::{self, target, radius, space};
 
 /// 시각 변형 — 의미가 다르면 모양도 달라야 합니다.

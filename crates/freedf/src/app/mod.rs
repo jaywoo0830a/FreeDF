@@ -247,23 +247,27 @@ fn overlay_title(ui: &egui::Ui, icon: egui_phosphor_icons::Icon, title: &str) ->
 /// Library/Outline/Bookmarks **공용 오버레이 헤더** — 한 컨테이너 안에
 /// 아이콘+제목(강조)+개수(약하게)를 왼쪽에, 닫기(✕)를 오른쪽 끝에 배치해
 /// 균형 잡힌 한 줄로 만듭니다. 닫기를 누르면 true를 반환합니다.
+/// 닫기 버튼은 `kit::IconButton`(계약 id `close_id`) — 자동화가 결정적으로
+/// 닫을 수 있고, 터치 타깃도 표준 정거장(S_36)을 따릅니다.
 fn overlay_header(
     ui: &mut egui::Ui,
     icon: egui_phosphor_icons::Icon,
     title: &str,
     count: &str,
+    close_id: &str,
     close_hint: &str,
 ) -> bool {
     let mut close = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing =
-            egui::vec2(crate::ui::scale::qrem(1), 0.0); // 4px
+            egui::vec2(crate::ui::tokens::space::SM, 0.0);
         ui.label(overlay_title(ui, icon, title));
         ui.label(egui::RichText::new(count).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(icon_text(ui, "", icons::X))
-                .on_hover_text(close_hint)
+            if crate::ui::kit::IconButton::new(icons::X, close_hint)
+                .hint(close_hint)
+                .test_id(close_id)
+                .show(ui)
                 .clicked()
             {
                 close = true;
@@ -274,9 +278,60 @@ fn overlay_header(
     close
 }
 
+/// 사이드 콘텐츠 오버레이 **공용 컨테이너** — Library/Outline/Bookmarks가
+/// 같은 프레임(반지름 radius::XL · 마진 margin::CONTAINER)·간격·헤더 리듬을
+/// 공유하게 하는 단일 진실 원천. 닫기를 누르면 true를 반환합니다.
+fn side_overlay(
+    ctx: &egui::Context,
+    id_salt: &str,
+    x: f32,
+    top: f32,
+    width_rem: i32,
+    icon: egui_phosphor_icons::Icon,
+    title: &str,
+    count: &str,
+    close_id: &str,
+    close_hint: &str,
+    body: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let fill = crate::theme::nord::semantic::overlay_bg();
+    let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
+    let mut close = false;
+    egui::Window::new(id_salt)
+        .title_bar(false)
+        .movable(true)
+        .resizable(false)
+        .default_pos(egui::pos2(x, top))
+        .frame(
+            egui::Frame::new()
+                .fill(fill)
+                .stroke(egui::Stroke::new(1.0, stroke))
+                .corner_radius(crate::ui::tokens::radius::XL)
+                .inner_margin(crate::ui::tokens::margin::CONTAINER),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(crate::ui::scale::rem(width_rem));
+            ui.spacing_mut().item_spacing =
+                egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
+            if overlay_header(ui, icon, title, count, close_id, close_hint) {
+                close = true;
+            }
+            body(ui);
+        });
+    close
+}
+
 /// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
-/// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
-fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
+/// 왼쪽에 행 종류를 알려주는 `icon`(없으면 제목만), 오른쪽에 약한 회색 `meta`
+/// (예: "3p", "PDF")를 붙입니다. 행의 `Response`를 반환 — 호출부가
+/// `.clicked()`로 판정하고 `.on_hover_text()` 등을 체이닝할 수 있습니다.
+fn library_row(
+    ui: &mut egui::Ui,
+    icon: Option<egui_phosphor_icons::Icon>,
+    selected: bool,
+    title: &str,
+    meta: &str,
+) -> egui::Response {
     let height = crate::ui::scale::S_36; // 36px (2.25rem) 표준 행 높이 — 모듈러 스케일 토큰
     let width = ui.available_width();
     let (rect, resp) =
@@ -290,14 +345,26 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         egui::Color32::TRANSPARENT
     };
     let painter = ui.painter();
-    painter.rect_filled(rect, crate::ui::scale::qrem(1), bg); // 반경 4px
+    painter.rect_filled(rect, crate::ui::tokens::radius::SM, bg);
     if selected {
         painter.rect_stroke(
             rect,
-            crate::ui::scale::qrem(1),
+            crate::ui::tokens::radius::SM,
             egui::Stroke::new(1.0, visuals.selection.stroke.color),
             egui::StrokeKind::Inside,
         );
+    }
+    // 아이콘 레일 — 행 종류를 한눈에(제목 앞, 약한 색).
+    let mut text_x = rect.left() + 12.0;
+    if let Some(ic) = icon {
+        painter.text(
+            egui::pos2(text_x + 8.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            ic.0,
+            egui::FontId::new(15.0, egui::FontFamily::Name("phosphor-regular".into())),
+            visuals.weak_text_color(),
+        );
+        text_x += 22.0;
     }
     // 오른쪽 메타 폭 계산
     let meta_w = if meta.is_empty() {
@@ -313,7 +380,7 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
             .width()
     };
     // 제목: 메타와 겹치지 않게 잘라낸다.
-    let max_title_w = (rect.width() - 20.0 - meta_w - 8.0).max(24.0);
+    let max_title_w = (rect.right() - 12.0 - meta_w - 8.0 - text_x).max(24.0);
     let mut t = title.to_string();
     {
         let font = egui::FontId::proportional(16.0);
@@ -337,7 +404,7 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
         }
     }
     painter.text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::pos2(text_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
         t,
         egui::FontId::proportional(16.0),
@@ -352,7 +419,7 @@ fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bo
             visuals.weak_text_color(),
         );
     }
-    resp.clicked()
+    resp
 }
 
 /// 레이아웃 키트의 스크롤 툴바 행 — `crate::ui::layout`에서 재사용.
@@ -1411,6 +1478,19 @@ impl FreeDfApp {
         let paper_style_settings = s.paper.style_settings;
         let show_library = s.panels.show_notes;
         let show_outline = s.panels.show_outline;
+        // 테스트 훅: `FREEDF_PANEL=<library|outline|bookmarks>` — 시작할 때 해당
+        // 사이드 오버레이를 엽니다 (dev-automation 전용; 설정 창 훅과 동일 패턴).
+        #[cfg(feature = "dev-automation")]
+        let panel_hook = std::env::var("FREEDF_PANEL").unwrap_or_default();
+        #[cfg(feature = "dev-automation")]
+        let show_bookmarks_hook = panel_hook == "bookmarks";
+        #[cfg(feature = "dev-automation")]
+        let (show_library, show_outline) = (
+            show_library || panel_hook == "library",
+            show_outline || panel_hook == "outline",
+        );
+        #[cfg(not(feature = "dev-automation"))]
+        let show_bookmarks_hook = false;
         let show_palette = s.panels.show_palette;
         let favorite_colors = s.panels.favorite_colors;
         let text_highlight_snap = s.panels.text_highlight_snap;
@@ -1713,7 +1793,7 @@ impl FreeDfApp {
             outline_loaded: false,
             show_library,
             show_outline,
-            show_bookmarks: false,
+            show_bookmarks: show_bookmarks_hook,
             show_palette,
             favorite_colors,
             text_highlight_snap,
@@ -2973,7 +3053,7 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(12.0)
+                    .corner_radius(crate::ui::tokens::radius::XL)
                     .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
@@ -3044,153 +3124,125 @@ impl FreeDfApp {
             });
     }
 
-    /// Library 콘텐츠 오버레이 — **절대 폭(520pt)의 독립 플로팅 창**.
+    /// Library 콘텐츠 오버레이 — `side_overlay` 공용 컨테이너 (폭 33rem).
     /// Hide UI / Show UI 공용. `x, top`은 첫 표시 위치이며, 이후에는
     /// 사용자가 드래그한 위치가 기억됩니다.
     fn library_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
-        let fill = crate::theme::nord::semantic::overlay_bg();
-        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Window::new("library_overlay")
-            .title_bar(false)
-            .movable(true)
-            .resizable(false)
-            .default_pos(egui::pos2(x, top))
-            .frame(
-                egui::Frame::new()
-                    .fill(fill)
-                    .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(12.0)
-                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(crate::ui::scale::rem(33)); // 528px = 33×1rem
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
-                let total = self.notes.list().len() + self.recents.sorted().len();
-                if overlay_header(
-                    ui,
-                    icons::NOTEBOOK,
-                    "Library",
-                    &format!("{total} items"),
-                    "Close Library",
-                ) {
-                    self.show_library = false;
-                }
-                // 콘텐츠가 아무리 넓어도 창 폭(520pt)이 늘어나지 않게 상한 고정 —
+        let total = self.notes.list().len() + self.recents.sorted().len();
+        let close = side_overlay(
+            ctx,
+            "library_overlay",
+            x,
+            top,
+            33,
+            icons::NOTEBOOK,
+            "Library",
+            &format!("{total} items"),
+            "library.close",
+            "Close Library",
+            |ui| {
+                // 콘텐츠가 아무리 넓어도 창 폭이 늘어나지 않게 상한 고정 —
                 // 닫기 버튼이 항상 오른쪽 구석에 붙습니다.
                 egui::ScrollArea::vertical()
                     .id_salt("library_overlay_scroll")
                     .max_height(520.0)
-                    .max_width(504.0)
+                    .max_width(crate::ui::scale::rem(31))
                     .show(ui, |ui| self.library_panel(ui));
-            });
+            },
+        );
+        if close {
+            self.show_library = false;
+        }
     }
 
-    /// Outline 콘텐츠 오버레이 — 절대 폭(460pt)의 독립 플로팅 창. Hide UI/Show UI 공용.
+    /// Outline 콘텐츠 오버레이 — `side_overlay` 공용 컨테이너 (폭 29rem).
     fn outline_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
-        let fill = crate::theme::nord::semantic::overlay_bg();
-        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
-        egui::Window::new("outline_overlay")
-            .title_bar(false)
-            .movable(true)
-            .resizable(false)
-            .default_pos(egui::pos2(x, top))
-            .frame(
-                egui::Frame::new()
-                    .fill(fill)
-                    .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(12.0)
-                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(crate::ui::scale::rem(29)); // 464px = 29×1rem
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
-                // 개수가 첫 프레임부터 정확하도록 패널 표시 시점에 목차를 로드.
-                self.load_outline_if_needed();
-                let count = self.outline.len();
-                if overlay_header(
-                    ui,
-                    icons::LIST_BULLETS,
-                    "Outline",
-                    &format!("{count} entries"),
-                    "Close Outline",
-                ) {
-                    self.show_outline = false;
-                }
+        // 개수가 첫 프레임부터 정확하도록 패널 표시 시점에 목차를 로드.
+        self.load_outline_if_needed();
+        let count = self.outline.len();
+        let close = side_overlay(
+            ctx,
+            "outline_overlay",
+            x,
+            top,
+            29,
+            icons::LIST_BULLETS,
+            "Outline",
+            &format!("{count} entries"),
+            "outline.close",
+            "Close Outline",
+            |ui| {
                 // 깊은 계층 때문에 창 폭이 늘어나 닫기 버튼이 밀리는 문제를 막기
-                // 위해 콘텐츠 폭 상한을 창 폭(460pt)으로 고정합니다.
+                // 위해 콘텐츠 폭 상한을 창 폭에 맞춥니다.
                 egui::ScrollArea::vertical()
                     .id_salt("outline_overlay_scroll")
                     .max_height(520.0)
-                    .max_width(444.0)
+                    .max_width(crate::ui::scale::rem(27))
                     .show(ui, |ui| self.outline_panel(ui));
-            });
+            },
+        );
+        if close {
+            self.show_outline = false;
+        }
     }
 
-    /// Bookmarks 콘텐츠 오버레이 — 절대 폭(420pt)의 독립 플로팅 창. Hide UI/Show UI 공용.
+    /// Bookmarks 콘텐츠 오버레이 — `side_overlay` 공용 컨테이너 (폭 26rem).
     fn bookmarks_overlay(&mut self, ctx: &egui::Context, x: f32, top: f32) {
-        let fill = crate::theme::nord::semantic::overlay_bg();
-        let stroke = crate::theme::nord::semantic::OVERLAY_BORDER;
         let pages: Vec<PageIndex> = self.store.bookmarks().to_vec();
-        egui::Window::new("bookmarks_overlay")
-            .title_bar(false)
-            .movable(true)
-            .resizable(false)
-            .default_pos(egui::pos2(x, top))
-            .frame(
-                egui::Frame::new()
-                    .fill(fill)
-                    .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(12.0)
-                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(crate::ui::scale::rem(26)); // 416px = 26×1rem
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                // 헤더: 아이콘+제목+개수+닫기를 한 컨테이너로 (공용 헬퍼).
-                if overlay_header(
-                    ui,
-                    icons::BOOKMARKS_SIMPLE,
-                    "Bookmarks",
-                    &format!("{} bookmarks", pages.len()),
-                    "Close Bookmarks",
-                ) {
-                    self.show_bookmarks = false;
-                }
+        let close = side_overlay(
+            ctx,
+            "bookmarks_overlay",
+            x,
+            top,
+            26,
+            icons::BOOKMARKS_SIMPLE,
+            "Bookmarks",
+            &format!("{} bookmarks", pages.len()),
+            "bookmarks.close",
+            "Close Bookmarks",
+            |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("bookmarks_overlay_scroll")
                     .max_height(420.0)
-                    .max_width(404.0)
+                    .max_width(crate::ui::scale::rem(24))
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                         if pages.is_empty() {
-                            ui.add_space(crate::ui::tokens::space::SM);
-                            ui.horizontal(|ui| {
-                                ui.add_space(crate::ui::tokens::space::MD);
-                                ui.label(
-                                    egui::RichText::new("No bookmarks yet").weak().small(),
-                                );
-                            });
+                            panels::empty_state(
+                                ui,
+                                icons::BOOKMARKS_SIMPLE,
+                                "No bookmarks yet.",
+                            );
                         } else {
                             // 계층 2: 행 — 호버 강조 + 클릭으로 이동.
                             for p in pages {
-                                if library_row(ui, false, &format!("Page {}", p + 1), "") {
+                                if library_row(
+                                    ui,
+                                    Some(icons::BOOKMARKS_SIMPLE),
+                                    false,
+                                    &format!("Page {}", p + 1),
+                                    "",
+                                )
+                                .clicked()
+                                {
                                     self.goto_page(p);
                                 }
                             }
-                            ui.add_space(crate::ui::tokens::space::SM);
-                            ui.separator();
-                            if ui
-                                .button("Clear all bookmarks")
-                                .on_hover_text("Remove every bookmark from this document")
+                            ui.add_space(crate::ui::tokens::space::MD);
+                            if crate::ui::kit::Button::danger("Clear all bookmarks")
+                                .hint("Remove every bookmark from this document")
+                                .test_id("bookmarks.clear")
+                                .show(ui)
                                 .clicked()
                             {
                                 self.clear_bookmarks();
                             }
                         }
                     });
-            });
+            },
+        );
+        if close {
+            self.show_bookmarks = false;
+        }
     }
 
     /// 최소(포커스) 모드의 **우측 컨테이너** — Palette / Show UI.
@@ -3207,7 +3259,7 @@ impl FreeDfApp {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(12.0)
+                    .corner_radius(crate::ui::tokens::radius::XL)
                     .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {

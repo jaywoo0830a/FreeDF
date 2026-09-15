@@ -11,7 +11,11 @@
 --   3) 크기 등급 계약: small ≥24 · medium ≥28 · touch ≥32
 --   4) 상호작용: 갤러리의 행 토글이 실제로 값을 뒤집는다(왕복 후 원복)
 
-eguidev.root:wait({ frame_at_least = 1 })
+-- `wait_capture`는 첫 캡처 가능 프레임까지 블록합니다. `root:wait`/`expect`는
+-- 뷰포트가 살아 있어도 프레임이 없으면 즉시 실패합니다 — `edev eval`이 앱
+-- 첫 프레임보다 먼저 평가될 수 있는 실측 레이스(dump는 내부 재시도가 있어
+-- 몰랐던 문제).
+eguidev.root:wait_capture()
 
 local sentinel = eguidev.widget("gallery.button.primary")
 if sentinel:state() == nil then

@@ -6,7 +6,7 @@ pub(crate) use super::*;
 
 impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
         ui.add_space(crate::ui::tokens::space::SM);
         crate::ui::form::text(&mut self.library_filter)
@@ -29,7 +29,7 @@ impl FreeDfApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
                 // ── Notes (계층 2: 섹션 헤더 + 행) ──
                 let all_notes: Vec<(u64, String, usize)> = self
                     .notes
@@ -46,40 +46,42 @@ impl FreeDfApp {
                 ui.horizontal(|ui| {
                     section_header(ui, icons::NOTE_PENCIL, "Notes", all_notes.len());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                        if ui
-                            .add_enabled(
-                                has_note,
-                                egui::Button::new(icon_text(ui, "", icons::PENCIL_SIMPLE))
-                                    .frame(false)
-                                    .small(),
-                            )
-                            .on_hover_text("Rename current note")
-                            .clicked()
-                        {
-                            rename_note = true;
-                        }
-                        if ui
-                            .add_enabled(
-                                has_note,
-                                egui::Button::new(icon_text(ui, "", icons::TRASH_SIMPLE))
-                                    .frame(false)
-                                    .small(),
-                            )
-                            .on_hover_text("Delete current note")
-                            .clicked()
+                        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
+                        // 섹션 헤더의 액션도 표준 아이콘 버튼(S_36 · 계약 id)으로 —
+                        // 오버레이 헤더의 닫기와 같은 어휘를 공유합니다.
+                        if crate::ui::kit::IconButton::new(
+                            icons::TRASH_SIMPLE,
+                            "Delete current note",
+                        )
+                        .hint("Delete current note")
+                        .test_id("notes.delete")
+                        .enabled(has_note)
+                        .show(ui)
+                        .clicked()
                         {
                             delete_note = true;
+                        }
+                        if crate::ui::kit::IconButton::new(
+                            icons::PENCIL_SIMPLE,
+                            "Rename current note",
+                        )
+                        .hint("Rename current note")
+                        .test_id("notes.rename")
+                        .enabled(has_note)
+                        .show(ui)
+                        .clicked()
+                        {
+                            rename_note = true;
                         }
                     });
                 });
                 if notes.is_empty() {
-                    empty_note(ui, "No notes yet — use ＋ New to create one.");
+                    empty_state(ui, icons::NOTE_PENCIL, "No notes yet — use ＋ New to create one.");
                 } else {
                     for (id, title, page_count) in &notes {
                         let mut sel = self.sel_notes.contains(&(*id as i64));
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
                             if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
@@ -95,7 +97,9 @@ impl FreeDfApp {
                                 String::new()
                             };
                             let selected = self.current_note == Some(*id as i64);
-                            if library_row(ui, selected, title, &meta) {
+                            if library_row(ui, Some(icons::NOTE_PENCIL), selected, title, &meta)
+                                .clicked()
+                            {
                                 self.open_note(*id);
                             }
                         });
@@ -138,12 +142,12 @@ impl FreeDfApp {
                     section_header(ui, icons::FILE_PDF, "PDFs", files.len());
                 });
                 if visible.is_empty() {
-                    empty_note(ui, "No PDFs opened yet.");
+                    empty_state(ui, icons::FILE_PDF, "No PDFs opened yet.");
                 } else {
                     for f in &visible {
                         let mut sel = f.doc_id.is_some_and(|d| self.sel_pdfs.contains(&d));
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                            ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
                             if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
@@ -172,7 +176,9 @@ impl FreeDfApp {
                                     download_pdf = Some((d, f.title.clone()));
                                 }
                             }
-                            if library_row(ui, false, &f.title, "PDF") {
+                            if library_row(ui, Some(icons::FILE_PDF), false, &f.title, "PDF")
+                                .clicked()
+                            {
                                 if let Some(d) = f.doc_id {
                                     self.open_document(d);
                                 }
@@ -228,7 +234,7 @@ impl FreeDfApp {
                     });
                 });
                 if orphans.is_empty() {
-                    empty_note(ui, "No unregistered PDFs on the server.");
+                    empty_state(ui, icons::CLOUD, "No unregistered PDFs on the server.");
                 } else {
                     let mut register: Option<freedf_sync::Digest> = None;
                     for o in &orphans {
@@ -247,7 +253,7 @@ impl FreeDfApp {
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
                                 if ui
                                     .add(egui::Button::new("Register").small())
                                     .on_hover_text("Create a document from this PDF")
@@ -292,14 +298,16 @@ impl FreeDfApp {
                     );
                 });
                 if recents.is_empty() {
-                    empty_note(ui, "No recent files yet.");
+                    empty_state(ui, icons::CLOCK_COUNTER_CLOCKWISE, "No recent files yet.");
                 } else {
                     for item in &recents {
                         let meta = match item.kind {
                             RecentKind::Note => "note".to_string(),
                             RecentKind::File => "pdf".to_string(),
                         };
-                        if library_row(ui, false, &item.title, &meta) {
+                        if library_row(ui, Some(icons::CLOCK_COUNTER_CLOCKWISE), false, &item.title, &meta)
+                                .clicked()
+                            {
                             if let Some(doc_id) = item.doc_id {
                                 self.open_document(doc_id);
                             }
@@ -366,17 +374,36 @@ impl FreeDfApp {
 
 fn section_header(ui: &mut egui::Ui, ic: egui_phosphor_icons::Icon, name: &str, count: usize) {
     // 계층 2: 섹션 제목 — 아이콘 + 이름 + 개수(weak small).
-    ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+    ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
     ui.label(icon_text(ui, name, ic));
     ui.label(egui::RichText::new(count.to_string()).weak().small());
 }
 
-/// 섹션의 빈 상태 — 행과 같은 들여쓰기(체크박스 폭)에 맞춘 약한 안내 문구.
-fn empty_note(ui: &mut egui::Ui, text: &str) {
-    ui.horizontal(|ui| {
-        ui.add_space(crate::ui::scale::hrem(3));
-        ui.label(egui::RichText::new(text).weak().small());
-    });
+/// 섹션의 **빈 상태** — 카드 프레임(margin::CARD · radius::MD) 안에 아이콘과
+/// 약한 안내 문구를 중앙 정렬로 보여줍니다. 한 줄 텍스트가 흩어져 보이던
+/// 예전 빈 상태를 통일된 컴포넌트로 만듭니다.
+pub(crate) fn empty_state(ui: &mut egui::Ui, icon: egui_phosphor_icons::Icon, text: &str) {
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(crate::ui::tokens::radius::MD)
+        .inner_margin(crate::ui::tokens::margin::CARD)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical_centered(|ui| {
+                ui.add_space(crate::ui::tokens::space::XS);
+                ui.label(
+                    egui::RichText::new(icon.0)
+                        .small()
+                        .font(egui::FontId::new(
+                            20.0,
+                            egui::FontFamily::Name("phosphor-regular".into()),
+                        ))
+                        .weak(),
+                );
+                ui.label(egui::RichText::new(text).weak().small());
+                ui.add_space(crate::ui::tokens::space::XS);
+            });
+        });
 }
 
 fn format_bytes(n: i64) -> String {

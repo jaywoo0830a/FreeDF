@@ -11,18 +11,19 @@ const OUTLINE_MAX_CHARS: usize = 56;
 
 impl FreeDfApp {
     pub(crate) fn outline_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.spacing_mut().item_spacing =
+            egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::XS);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 목차 트리부터.
-        ui.add_space(crate::ui::tokens::space::SM);
+        ui.add_space(crate::ui::tokens::space::XS);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }
         if self.outline.is_empty() {
-            ui.add_space(crate::ui::tokens::space::SM);
-            ui.horizontal(|ui| {
-                ui.add_space(crate::ui::tokens::space::MD);
-                ui.label(egui::RichText::new("No outline in this PDF.").weak().small());
-            });
+            panels::empty_state(
+                ui,
+                icons::LIST_BULLETS,
+                "No outline in this PDF.",
+            );
             return;
         }
         let mut jump: Option<(String, usize)> = None;
@@ -30,15 +31,23 @@ impl FreeDfApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 for entry in flatten(&self.outline) {
-                    // 계층 2~N: 깊이 1당 14pt 들여쓰기, 깊이 6에서 상한.
+                    // 계층 2~N: 깊이 1당 16pt 들여쓰기, 깊이 6에서 상한.
                     // 깊은 계층 때문에 창 폭이 늘어나 닫기 버튼이 밀리는
                     // 문제를 막기 위해 제목도 적당한 길이로 자릅니다.
+                    // 행은 Library와 같은 `library_row` 리듬(높이 S_36 · 호버 강조) —
+                    // 세 오버레이가 하나의 행 어휘를 공유합니다. 오른쪽 메타로
+                    // 이동할 페이지를 미리 보여줍니다(있을 때).
                     ui.horizontal(|ui| {
                         let depth = (entry.depth as f32).min(OUTLINE_MAX_DEPTH as f32);
                         ui.add_space(crate::ui::tokens::space::MD + depth * OUTLINE_INDENT);
                         let title = truncate_outline_title(&entry.node.title);
-                        if ui
-                            .selectable_label(false, &title)
+                        let meta = entry
+                            .node
+                            .page_index
+                            .map(|p| format!("p {}", p + 1))
+                            .unwrap_or_default();
+                        // 전체 제목은 툴팁으로 — `library_row`가 Response를 돌려줍니다.
+                        if library_row(ui, Some(icons::LIST_BULLETS), false, &title, &meta)
                             .on_hover_text(&entry.node.title)
                             .clicked()
                         {
