@@ -49,6 +49,7 @@ ideation/
       ├─ contract.test.js       # 계약 객체 표면
       ├─ stroke-boundary.test.js# 획 경계 불변식 + 중첩 hold
       ├─ stroke-edge.test.js    # 획 시작 에지 계약 ("에지는 파괴되지 않는다")
+      ├─ session-router.test.js # 세션 라우터 — 땜질을 구조로 (실패하는 인터페이스 테스트 포함)
       ├─ canvas-interaction.test.js # 캔버스 상호작용 계층 (스텁)
       ├─ substitution.test.js   # 장치×툴 교체 매트릭스
       ├─ capability.test.js     # 가변 컨트롤 (0/2/5 버튼, 익스프레스 키)
