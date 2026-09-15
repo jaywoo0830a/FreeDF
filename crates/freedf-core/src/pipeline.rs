@@ -511,4 +511,35 @@ mod tests {
         assert!((pts[1].y - 22.0).abs() < 1e-4, "raw y passthrough: {}", pts[1].y);
         assert!((pts[2].x - 20.0).abs() < 1e-4, "raw x passthrough: {}", pts[2].x);
     }
+
+    /// 가설 1 검증 계약 (P1~P3 리팩터 회귀): 한 프레임에 도착한 복수 포인터
+    /// 이벤트가 복수의 `drag()`로 이어질 때, 실행기가 **프레임 시각을 재사용**하면
+    /// (canvas/commands.rs가 커맨드마다 `ctx.input(i.time)`을 다시 읽음) 2번째
+    /// 이후 drag의 dt가 0이 되어 1€ 필터가 좌표를 버리고 `prev_x`를 반환한다.
+    /// → 빠른 필기에서 좌표가 프레임 경계에서 스톨해 "필기가 부자연스러워진다".
+    /// 대조적으로 이벤트 시각을 제대로 주면(dt>0) 좌표가 전진한다 — 즉 원인은
+    /// 파이프라인이 아니라 **호출자의 타임스탬프 재사용**임을 변별한다.
+    #[test]
+    fn pipeline_same_frame_time_drag_stalls_coordinates() {
+        let mut p = InkPipeline::new(Materials::default(), 3.0, 0.6);
+        p.down(ToolType::Pen, [0, 0, 0, 255], 0.0, 0.0, 0.5, 0.0, 0, 0.0);
+        // 같은 프레임 시각(t=0.016, t_ms=16)으로 연속 drag — 실제 앱의
+        // "프레임당 복수 ExtendStroke" 경로를 흉내 낸다.
+        let a = p.drag(100.0, 0.0, 0.5, 0.016, 16).expect("drag1");
+        let b = p.drag(200.0, 0.0, 0.5, 0.016, 16).expect("drag2");
+        assert!(
+            (a.x - b.x).abs() < 1e-6,
+            "같은 프레임 시각의 2번째 drag는 좌표가 스톨한다 (가설 1): a.x={} b.x={}",
+            a.x,
+            b.x
+        );
+        // 대조: dt>0인 이벤트 시각이면 좌표가 전진한다.
+        let c = p.drag(300.0, 0.0, 0.5, 0.020, 20).expect("drag3");
+        assert!(
+            c.x > b.x,
+            "dt>0이면 좌표가 전진한다 (원인은 타임스탬프 재사용): b.x={} c.x={}",
+            b.x,
+            c.x
+        );
+    }
 }

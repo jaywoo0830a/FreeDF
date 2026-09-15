@@ -18,13 +18,16 @@ impl FreeDfApp {
     /// ① **문서/세션 실행** — InkPipeline·store·db·history (툴의 의도를 문서에 반영)
     /// ② **렌더 투영** — 같은 커맨드를 CanvasSurface 연산으로 번역 (열린 레지스트리;
     ///    미처리 커맨드는 조용한 데이터 손실 금지 — 진단 로그)
+    ///
+    /// 반환값: 렌더 투영 성공 여부 — `false`면 이번 커맨드의 렌더가 누락됐다
+    /// (가설 3 변별 지표: 프레임당 누적이 FRAME-DIAG의 `proj_err`로 나온다).
     pub(crate) fn execute_command(
         &mut self,
         cmd: Command,
         ctx: &egui::Context,
         origin: Pos2,
         canvas_size: [f32; 2],
-    ) {
+    ) -> bool {
         match &cmd {
             Command::BeginStroke { tool, point, .. } => {
                 self.begin_stroke_cmd(tool, *point, ctx, origin);
@@ -43,10 +46,15 @@ impl FreeDfApp {
 
         // 렌더 투영 — take 중 프로젝션을 밖에 꺼내 소유권 충돌을 피한다.
         let mut projection = std::mem::take(&mut self.projection);
-        if let Err(e) = projection.project(std::slice::from_ref(&cmd), self) {
-            pen_trace(&format!("PROJECTION-ERROR: {e}"));
-        }
+        let ok = match projection.project(std::slice::from_ref(&cmd), self) {
+            Ok(_) => true,
+            Err(e) => {
+                pen_trace(&format!("PROJECTION-ERROR: {e}"));
+                false
+            }
+        };
         self.projection = projection;
+        ok
     }
 
     /// begin-stroke — 새 잉크 세션 시작 (기존 input.rs 스트로크 시작 로직).

@@ -24,6 +24,8 @@ pub struct Hub {
     queue: VecDeque<InputEvent>,
     /// 현재 포인터를 점유 중인 소스 — Down에 진입, Up에 탈출.
     active_source: Option<PointerSource>,
+    /// 충돌 규칙으로 drop된 이벤트 수 (누적) — 진단용 (가설 2 변별 지표).
+    dropped: usize,
 }
 
 impl Hub {
@@ -42,6 +44,7 @@ impl Hub {
                 // (Up도 예외가 아니다 — 엉뚱한 소스의 Up이 점유를 풀지 못하게.)
                 if let Some(active) = self.active_source {
                     if active != p.source {
+                        self.dropped += 1;
                         return false;
                     }
                 }
@@ -66,6 +69,15 @@ impl Hub {
     /// 아직 소비되지 않은 이벤트 수 (진단/테스트용).
     pub fn pending(&self) -> usize {
         self.queue.len()
+    }
+
+    /// 지금까지 충돌 규칙으로 drop된 이벤트 수 (누적) — 진단용.
+    ///
+    /// 앱은 프레임 시작/끝의 차이(델타)로 "이번 프레임에 몇 건이 드롭됐는지"
+    /// 를 알 수 있다. 필기 중 이 수치가 오르면 반대 소스트림(실제 필압/좌표)
+    /// 이 통째로 유실되고 있다는 신호다 (가설 2).
+    pub fn dropped(&self) -> usize {
+        self.dropped
     }
 }
 
@@ -101,6 +113,8 @@ mod tests {
         assert!(hub.emit(pointer(PointerSource::Pen, PointerPhase::Up)));
         hub.take(|_| {});
         assert!(hub.emit(pointer(PointerSource::Mouse, PointerPhase::Down)));
+        // 진단 계약: drop된 이벤트는 누적 카운터로 관찰 가능하다 (가설 2).
+        assert_eq!(hub.dropped(), 3, "드롭된 이벤트 수가 카운터에 누적된다");
     }
 
     #[test]

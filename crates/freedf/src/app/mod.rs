@@ -1049,6 +1049,9 @@ pub struct FreeDfApp {
     /// 통합 입력 허브 — 장치 어댑터가 push하고 프레임마다 소비한다 (input_hub).
     /// 포인터 충돌 규칙(한 번에 한 포인터)을 소유한다.
     input_hub: freedf_core::input_hub::Hub,
+    /// 이번 프레임 허브 충돌 규칙으로 drop된 이벤트 수 (진단용 — FRAME-DIAG가
+    /// 소비 후 0으로 리셋). 필기 중 0이 아니면 반대 소스트림이 유실되는 것 (가설 2).
+    hub_dropped_frame: usize,
     /// OTD/evdev 펜 스트림이 마지막으로 도착한 시각 (ms) — 진단용.
     last_pen_state_ms: Option<u64>,
     /// 마지막 획의 진단 판정 문구 (Debug HUD 표시용).
@@ -1695,6 +1698,7 @@ impl FreeDfApp {
             projection: canvas::Projection::with_core(),
             pen_adapter: Default::default(),
             input_hub: Default::default(),
+            hub_dropped_frame: 0,
             input_sources: input::InputSources::default(),
             last_pen_state_ms: None,
             pen_verdict: None,

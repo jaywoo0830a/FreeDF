@@ -479,6 +479,7 @@ impl FreeDfApp {
         // 장치 어댑터가 통합 어휘로 번역해 허브에 push한다 — push는 이 경계에서만
         // 일어난다. 포인터 충돌 규칙(한 번에 한 포인터)은 허브가 소유한다.
         // ① 펜 스트림(evdev/OTD): 접촉 에지 + 사이드 버튼 에지.
+        let hub_dropped_before = self.input_hub.dropped();
         if let Some(st) = &pen_state {
             let point = ctx.input(|i| i.pointer.hover_pos()).map(|p| [p.x, p.y]);
             for ev in self.pen_adapter.update(st, point) {
@@ -490,6 +491,10 @@ impl FreeDfApp {
         for ev in super::input::egui_adapter::translate(&raw_events) {
             self.input_hub.emit(ev);
         }
+        // 가설 2 변별 — 이번 프레임 충돌 규칙으로 drop된 수. input.rs의
+        // FRAME-DIAG가 읽고 0으로 되돌린다. 필기 중 0이 아니면 펜/마우스/패드
+        // 중 한쪽 스트림(실제 필압·좌표)이 통째로 유실되고 있는 것이다.
+        self.hub_dropped_frame = self.input_hub.dropped() - hub_dropped_before;
         // ③ 소비는 input.rs의 handle_canvas_input에서 — 컨트롤 맵(사용자 매핑) →
         //    워크스페이스(툴 전환·획 경계) → 커맨드 실행기로 이어진다 (PR2).
         // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
