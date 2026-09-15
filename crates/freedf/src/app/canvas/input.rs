@@ -204,17 +204,10 @@ impl FreeDfApp {
         // 컨트롤(펜 버튼)은 팬 중에도 처리하고, 포인터는 캔버스 정책을 통과한
         // 것만 툴에 준다. 캔버스 밖 누름·포커스 제스처·팬 정책은 앱 경계의 몫 —
         // 워크스페이스와 툴 상태기계는 UI/장치 지식이 없다.
-        use freedf_core::input_events::{PointerPhase as Phase, PointerSource as Src};
         let mut hub = std::mem::take(&mut self.input_hub);
         let mut pointer_events: Vec<freedf_core::input_events::PointerEvent> = Vec::new();
-        // H1/H2/H3 변별 집계 — pen_trace(Debug HUD) 켜짐 시 프레임당 1줄 요약.
-        let (mut n_pen_d, mut n_pen_dr, mut n_pen_u) = (0usize, 0usize, 0usize);
-        let (mut n_mouse_d, mut n_mouse_dr, mut n_mouse_u) = (0usize, 0usize, 0usize);
-        let (mut n_pad_d, mut n_pad_dr, mut n_pad_u) = (0usize, 0usize, 0usize);
-        let (mut n_action, mut n_control) = (0usize, 0usize);
         hub.take(|ev| match ev {
             freedf_core::input_events::InputEvent::Control(c) => {
-                n_control += 1;
                 // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
                 // **포커스된 창만** 사이드 버튼에 반응한다 — 배경 창의 휠이
                 // 함께 열리는 버그 방지 (PR1 동작 보존).
@@ -227,22 +220,9 @@ impl FreeDfApp {
                 }
             }
             freedf_core::input_events::InputEvent::Action(a) => {
-                n_action += 1;
                 self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
             }
             freedf_core::input_events::InputEvent::Pointer(p) => {
-                match (p.source, p.phase) {
-                    (Src::Pen, Phase::Down) => n_pen_d += 1,
-                    (Src::Pen, Phase::Drag) => n_pen_dr += 1,
-                    (Src::Pen, Phase::Up) => n_pen_u += 1,
-                    (Src::Mouse, Phase::Down) => n_mouse_d += 1,
-                    (Src::Mouse, Phase::Drag) => n_mouse_dr += 1,
-                    (Src::Mouse, Phase::Up) => n_mouse_u += 1,
-                    (Src::Pad, Phase::Down) => n_pad_d += 1,
-                    (Src::Pad, Phase::Drag) => n_pad_dr += 1,
-                    (Src::Pad, Phase::Up) => n_pad_u += 1,
-                    _ => {}
-                }
                 // 캔버스 위에서 시작한 누름만 툴 세션을 연다 — 툴바/오버레이 위
                 // 누름은 egui 위젯이 소비. Drag/Up은 항상 통과 (세션 닫기 보장;
                 // 열려 있지 않으면 툴이 무시한다).
@@ -283,97 +263,18 @@ impl FreeDfApp {
 
         if !panning {
             // 툴 상태기계에 포인터를 먹인다 — 툴은 문서 커맨드만 생산한다.
-            //
-            // ── Down 에지 자가 치유 (PR1~P3 회귀 수정) ──────────────────────
-            // 리팩터 전에는 `primary_down && (down_on || dragged())`를 **매 프레임
-            // 폴링**해 세션 시작이 늦어져도 획이 살아났다. 커맨드 경로는 Down
-            // "엣지" 1회만 평가하므로, 그 한 프레임이 캔버스 정책(다른 위젯 점유,
-            // no-repaint 간 다운 등)에 삼켜지면 획 전체가 죽는다 (0916debug.log:
-            // 7 Down 중 3개가 b=0 → 사용자 획 유실). 물리적으로는 접촉 중인데
-            // 워크스페이스에 Down 에지가 없는 Drag는 Down으로 승격해 세션을
-            // 연다 — 구 코드의 늦은 시작(late start) 동작을 복원한다.
             for p in &pointer_events {
-                let mut ev = *p;
-                if ev.phase == Phase::Drag
-                    && !self.workspace.pointer_down()
-                    && match ev.source {
-                        // 펜/터치 어댑터는 접촉 중에만 Drag를 만든다 → Drag 자체가
-                        // "물리적으로 내려가 있다"의 증명.
-                        Src::Pen | Src::Pad => true,
-                        // 마우스는 호버 이동도 Drag다 → egui 프라이머리 버튼 확인.
-                        Src::Mouse => ctx.input(|i| i.pointer.primary_down()),
-                        Src::Tablet => false,
-                    }
-                {
-                    ev.phase = Phase::Down;
-                    if pen_trace_on() {
-                        pen_trace(&format!(
-                            "STROKE-HEAL: Down 에지 유실 복원 — source={:?} point={:?} (Drag→Down 승격)",
-                            ev.source, ev.point
-                        ));
-                    }
-                }
                 self.workspace
-                    .handle(&freedf_core::input_events::InputEvent::Pointer(ev));
+                    .handle(&freedf_core::input_events::InputEvent::Pointer(*p));
             }
         } // 팬 프레임의 포인터는 팬 경로가 가져간다 (아래) — 툴 세션이 열려 있지
         //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
 
         // 워크스페이스가 생산한 문서 커맨드를 앱 상태에 적용한다.
         // (take 중 워크스페이스를 밖에 꺼내 소유권 충돌을 피한다.)
-        // 진단(H1/H3)을 위해 커맨드를 모아 두었다가 순서대로 실행한다 —
-        // 기존 콜백 즉시 실행과 동일한 순서/동작이다.
-        use freedf_core::input_commands::Command;
         let mut ws = std::mem::take(&mut self.workspace);
-        let mut cmds: Vec<Command> = Vec::new();
-        ws.take_commands(|cmd| cmds.push(cmd));
+        ws.take_commands(|cmd| self.execute_command(cmd, ctx, origin, canvas_size));
         self.workspace = ws;
-        let (n_begin, n_extend, n_end) = (
-            cmds.iter()
-                .filter(|c| matches!(c, Command::BeginStroke { .. }))
-                .count(),
-            cmds.iter()
-                .filter(|c| matches!(c, Command::ExtendStroke { .. }))
-                .count(),
-            cmds.iter()
-                .filter(|c| matches!(c, Command::EndStroke))
-                .count(),
-        );
-        let (n_erase, n_undo, n_imm) = (
-            cmds.iter()
-                .filter(|c| matches!(c, Command::EraseAt { .. } | Command::EndErase))
-                .count(),
-            cmds.iter().filter(|c| matches!(c, Command::Undo)).count(),
-            cmds.iter()
-                .filter(|c| matches!(c, Command::Immediate { .. }))
-                .count(),
-        );
-        let mut proj_err = 0usize;
-        for cmd in cmds {
-            if !self.execute_command(cmd, ctx, origin, canvas_size) {
-                proj_err += 1;
-            }
-        }
-
-        // ── FRAME-DIAG (가설 1/2/3 변별 — Debug HUD 켜짐 시에만 출력) ─────────
-        // 해석 가이드:
-        //  * H1: `extend>=2`인 프레임이 잦으면 커맨드들이 같은 프레임 시각을
-        //    재사용해 1€ 필터 dt=0 → 좌표 스톨 (pipeline 계약 테스트 참조).
-        //  * H2: `hub_drop>0`이면 점유 소스 외 스트림(실제 필압/좌표)이 유실.
-        //    pen d/dr/u가 0인데 pad/mouse만 흐르면 펜 스트림이 대신 끊긴 것.
-        //  * H3: `proj_err>0`이면 커맨드의 렌더 투영이 누락 (렌더 지연/끊김).
-        if pen_trace_on() {
-            let any_down_up = n_pen_d + n_pen_u + n_mouse_d + n_mouse_u + n_pad_d + n_pad_u > 0;
-            let any_cmd = n_begin + n_extend + n_end + n_erase + n_undo + n_imm > 0;
-            if any_down_up || any_cmd || proj_err > 0 || self.hub_dropped_frame > 0 {
-                let frame_t = ctx.input(|i| i.time);
-                pen_trace(&format!(
-                    "FRAME-DIAG: t={frame_t:.4} pen(d/dr/u)={n_pen_d}/{n_pen_dr}/{n_pen_u} mouse={n_mouse_d}/{n_mouse_dr}/{n_mouse_u} pad={n_pad_d}/{n_pad_dr}/{n_pad_u} act={n_action} ctl={n_control} hub_drop={} cmds(b/ext/end/er/undo/imm)={n_begin}/{n_extend}/{n_end}/{n_erase}/{n_undo}/{n_imm} proj_err={proj_err}",
-                    self.hub_dropped_frame
-                ));
-            }
-            self.hub_dropped_frame = 0;
-        }
 
         if panning {
             if response.dragged() || response.is_pointer_button_down_on() {

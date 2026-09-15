@@ -169,25 +169,4 @@ mod tests {
             ]
         );
     }
-
-    /// 가설 2 검증 계약 (P1~P3 리팩터 회귀): 접촉 Down 에지 순간 위치가 없으면
-    /// (`point == None` — 예: `hover_pos()`가 아직 None) Down 이벤트가 만들어지지
-    /// 않으면서도 `prev_contact`는 갱신돼 **Down 에지가 영구 유실**된다.
-    /// 다음 프레임부터는 Drag만 흐르고 허브/워크스페이스는 Down을 영영 받지
-    /// 못한다 → 획이 아예 시작되지 않거나 첫 점이 늦게 찍힌다.
-    #[test]
-    fn down_edge_is_permanently_lost_when_position_is_missing() {
-        let mut a = PenEventAdapter::default();
-        // Down 순간 위치 없음 — 이벤트는 안 나오지만 에지는 소모된다.
-        let evs = a.update(&st(true, false, false), None);
-        assert!(evs.is_empty(), "위치 없으면 포인터 이벤트 없음: {evs:?}");
-        // 이후 위치가 들어와도 Down은 다시 오지 않는다 — 첫 이벤트가 Drag다.
-        let evs = a.update(&st(true, false, false), Some([2.0, 2.0]));
-        assert_eq!(evs.len(), 1);
-        assert_eq!(
-            pen(&evs[0]).phase,
-            PointerPhase::Drag,
-            "Down 에지가 유실돼 첫 이벤트가 Drag다 (가설 2 메커니즘)"
-        );
-    }
 }
