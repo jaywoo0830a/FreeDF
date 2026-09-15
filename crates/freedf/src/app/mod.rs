@@ -1041,6 +1041,8 @@ pub struct FreeDfApp {
     workspace: freedf_core::input_workspace::Workspace,
     /// 펜 버튼 등 하드웨어 컨트롤의 사용자 매핑 (input_controlmap).
     control_map: freedf_core::input_controlmap::ControlMap,
+    /// 문서 커맨드 → 캔버스 출력 번역 (열린 레지스트리 — surface의 유일한 호출자).
+    projection: canvas::Projection,
     /// 펜 스트림 → 통합 어휘 어댑터 — 접촉/사이드 버튼 에지 감지를 소유한다
     /// (input_devices). 능력 협상(압력/기울기 기본값)도 이 경계에서 끝난다.
     pen_adapter: freedf_core::input_devices::PenEventAdapter,
@@ -1690,6 +1692,7 @@ impl FreeDfApp {
             pen_buttons: Default::default(),
             workspace: freedf_core::input_workspace::Workspace::new(),
             control_map: freedf_core::input_controlmap::ControlMap::with_defaults(),
+            projection: canvas::Projection::with_core(),
             pen_adapter: Default::default(),
             input_hub: Default::default(),
             input_sources: input::InputSources::default(),

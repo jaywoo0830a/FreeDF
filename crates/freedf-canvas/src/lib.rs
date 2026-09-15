@@ -30,6 +30,7 @@ pub mod clock;
 pub mod core_mesh;
 pub mod geom;
 pub mod ink;
+pub mod canvas_port;
 pub mod scene;
 pub mod soak;
 pub mod surface;

@@ -13,6 +13,11 @@ use freedf_core::input_commands::Command;
 
 impl FreeDfApp {
     /// 커맨드 1건 적용. 매 프레임 워크스페이스 큐를 순서대로 흘린다.
+    ///
+    /// 두 소비자로 갈린다:
+    /// ① **문서/세션 실행** — InkPipeline·store·db·history (툴의 의도를 문서에 반영)
+    /// ② **렌더 투영** — 같은 커맨드를 CanvasSurface 연산으로 번역 (열린 레지스트리;
+    ///    미처리 커맨드는 조용한 데이터 손실 금지 — 진단 로그)
     pub(crate) fn execute_command(
         &mut self,
         cmd: Command,
@@ -20,21 +25,28 @@ impl FreeDfApp {
         origin: Pos2,
         canvas_size: [f32; 2],
     ) {
-        match cmd {
+        match &cmd {
             Command::BeginStroke { tool, point, .. } => {
-                self.begin_stroke_cmd(&tool, point, ctx, origin);
+                self.begin_stroke_cmd(tool, *point, ctx, origin);
             }
-            Command::ExtendStroke { point, .. } => self.extend_stroke_cmd(point, ctx, origin),
+            Command::ExtendStroke { point, .. } => self.extend_stroke_cmd(*point, ctx, origin),
             Command::EndStroke => {
                 if self.active_stroke.is_some() {
                     self.finish_stroke();
                 }
             }
-            Command::EraseAt { point } => self.erase_at_cmd(point, origin),
+            Command::EraseAt { point } => self.erase_at_cmd(*point, origin),
             Command::EndErase => {}
             Command::Undo => self.undo(),
-            Command::Immediate { key } => self.immediate_cmd(&key, ctx, origin, canvas_size),
+            Command::Immediate { key } => self.immediate_cmd(key, ctx, origin, canvas_size),
         }
+
+        // 렌더 투영 — take 중 프로젝션을 밖에 꺼내 소유권 충돌을 피한다.
+        let mut projection = std::mem::take(&mut self.projection);
+        if let Err(e) = projection.project(std::slice::from_ref(&cmd), self) {
+            pen_trace(&format!("PROJECTION-ERROR: {e}"));
+        }
+        self.projection = projection;
     }
 
     /// begin-stroke — 새 잉크 세션 시작 (기존 input.rs 스트로크 시작 로직).

@@ -208,6 +208,12 @@ impl FreeDfApp {
         let mut pointer_events: Vec<freedf_core::input_events::PointerEvent> = Vec::new();
         hub.take(|ev| match ev {
             freedf_core::input_events::InputEvent::Control(c) => {
+                // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
+                // **포커스된 창만** 사이드 버튼에 반응한다 — 배경 창의 휠이
+                // 함께 열리는 버그 방지 (PR1 동작 보존).
+                if !wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
+                    return;
+                }
                 // 원시 컨트롤 → 사용자 매핑 → action. 미바인딩은 조용히 무시.
                 if let Some(action) = self.control_map.translate(&c) {
                     self.workspace.handle(&action);
