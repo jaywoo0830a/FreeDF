@@ -12,3 +12,5 @@ libpdfium.dylib
 .edev-instances/
 # EDEV 스모크 실패 번들 / eval 산출물 / 캡처 스크린샷.
 /tmp
+# ideation 테스트 샌드박스 (node_modules 는 Docker named volume 으로 관리)
+ideation/node_modules

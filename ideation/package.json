@@ -1,0 +1,14 @@
+{
+  "name": "freedf-ideation",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node 24.21.0 + Vitest 5.0.0 sandbox for ideation test code (run via test.sh)",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "5.0.0"
+  }
+}
