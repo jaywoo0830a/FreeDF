@@ -44,11 +44,15 @@ ideation/
    ├─ sum.test.js     # 동작 확인용 샘플
    ├─ playground.test.js / idea*.test.js  # 아이디어별 프로토타입
    └─ idea4/          # 아키텍처 설계 테스트
+      ├─ README.md              # 획 시작 에지 계약 — 참고 문서 (2026-09-15 회귀)
       ├─ layering.test.js       # 의존성 규칙 (정적 검사)
       ├─ contract.test.js       # 계약 객체 표면
       ├─ stroke-boundary.test.js# 획 경계 불변식 + 중첩 hold
+      ├─ stroke-edge.test.js    # 획 시작 에지 계약 ("에지는 파괴되지 않는다")
+      ├─ canvas-interaction.test.js # 캔버스 상호작용 계층 (스텁)
       ├─ substitution.test.js   # 장치×툴 교체 매트릭스
       ├─ capability.test.js     # 가변 컨트롤 (0/2/5 버튼, 익스프레스 키)
+      ├─ extensibility.test.js  # 툴 패키지 조립 (capability 요구)
       └─ invariants.js          # 잘-형성 커맨드 스트림 검사기 (공유)
 ```
 
