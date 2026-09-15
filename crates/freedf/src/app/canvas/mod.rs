@@ -437,28 +437,63 @@ impl FreeDfApp {
             // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
             self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
             self.live_pressure = st.pressure;
-            // 사이드 버튼 에지(눌림) 감지 → `on_pen_button` 훅으로 라우팅.
-            let prev = self.pen_buttons;
+            // 사이드 버튼 상태 (Debug HUD 표시용) — 에지 감지는 펜 어댑터가 소유.
             self.pen_buttons = st.buttons;
-            // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
-            // **포커스된 창만** 사이드 버튼에 반응합니다 — 배경 창의 휠이
-            // 함께 열리는 버그를 막습니다 (순수 판정: wheel_toggle_allowed).
-            if wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
-                if st.buttons.button1 && !prev.button1 {
-                    // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
-                    if !self.color_wheel_open {
-                        self.color_wheel_anchor = ctx
-                            .input(|i| i.pointer.hover_pos())
-                            .map(|p| [p.x - origin.x, p.y - origin.y])
-                            .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-                    }
-                    self.on_pen_button(1, true);
-                }
-                if st.buttons.button2 && !prev.button2 {
-                    self.on_pen_button(2, true);
-                }
+        }
+
+        // ── 통합 입력 경계 (허브) ──────────────────────────────────────────
+        // 장치 어댑터가 통합 어휘로 번역해 허브에 push한다 — push는 이 경계에서만
+        // 일어난다. 포인터 충돌 규칙(한 번에 한 포인터)은 허브가 소유한다.
+        // ① 펜 스트림(evdev/OTD): 접촉 에지 + 사이드 버튼 에지.
+        if let Some(st) = &pen_state {
+            let point = ctx
+                .input(|i| i.pointer.hover_pos())
+                .map(|p| [p.x - origin.x, p.y - origin.y]);
+            for ev in self.pen_adapter.update(st, point) {
+                self.input_hub.emit(ev);
             }
         }
+        // ② egui 포인터(마우스/터치): 어댑터 경계에서 통합 어휘로.
+        let raw_events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
+        for ev in super::input::egui_adapter::translate(&raw_events) {
+            self.input_hub.emit(ev);
+        }
+        // ③ 이번 프레임 소비 — PR1에서는 컨트롤(사이드 버튼)만 소비한다. 포인터는
+        //    PR2(툴 상태기계)가 소비할 때까지 무시 — 기존 직접 경로가 그리기를
+        //    계속 담당한다. (take 중 허브를 밖에 꺼내 소유권 충돌을 피한다.)
+        let mut hub = std::mem::take(&mut self.input_hub);
+        hub.take(|ev| {
+            // 포인터/액션 이벤트는 PR2(툴 상태기계·컨트롤 맵)가 소비 — 지금은 컨트롤만.
+            let freedf_core::input_events::InputEvent::Control(c) = ev else {
+                return;
+            };
+            use freedf_core::input_events::{ControlKind, ControlPhase};
+                // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
+                // **포커스된 창만** 사이드 버튼에 반응합니다 — 배경 창의 휠이
+                // 함께 열리는 버그를 막습니다 (순수 판정: wheel_toggle_allowed).
+                if !wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
+                    return;
+                }
+                match (c.control, c.index, c.phase) {
+                    (ControlKind::StylusButton, 1, ControlPhase::Down) => {
+                        // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
+                        if !self.color_wheel_open {
+                            self.color_wheel_anchor = ctx
+                                .input(|i| i.pointer.hover_pos())
+                                .map(|p| [p.x - origin.x, p.y - origin.y])
+                                .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
+                        }
+                        self.on_pen_button(1, true);
+                    }
+                    (ControlKind::StylusButton, 2, ControlPhase::Down) => {
+                        self.on_pen_button(2, true);
+                    }
+                    // 버튼 뗌/익스프레스 키 — 컨트롤 맵 계층(사용자 매핑)에서
+                    // action으로 번역되는 것은 PR2 범위다.
+                    _ => {}
+                }
+        });
+        self.input_hub = hub;
         // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
         self.input_sources.update(
             &ctx,

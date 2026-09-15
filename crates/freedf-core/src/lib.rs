@@ -11,6 +11,9 @@
 //! - [`pages`]: 페이지 삽입/삭제 시 주석 인덱스 정리
 //! - [`outline`]: PDF 아웃라인(북마크) 트리 모델
 //! - [`search`]: 페이지 내 단어 검색 + 하이라이트 사각형
+//! - [`input_events`]: 통합 입력 이벤트 어휘 (장치 축과 툴 축의 유일한 공유물)
+//! - [`input_hub`]: 이벤트 허브 — 포인터 충돌 규칙(한 번에 한 포인터) 소유
+//! - [`input_devices`]: 장치 어댑터 — raw 하드웨어 → 통합 어휘 번역 (펜 스트림)
 //! - [`pen`]: 색상 팔레트(빨강/파랑/검정 계열) + 필압→두께 곡선
 //! - [`ink`]: 잉크 질감(입체적 불균일) 모델 — 결정적 노이즈 + 도구별 잉크 물리
 //! - [`paper`]: 용지 스타일(그리드/줄/점선) + 배경 색
@@ -19,6 +22,9 @@
 pub mod dictionary;
 pub mod history;
 pub mod ink;
+pub mod input_devices;
+pub mod input_events;
+pub mod input_hub;
 pub mod logging;
 pub mod model;
 pub mod notes;

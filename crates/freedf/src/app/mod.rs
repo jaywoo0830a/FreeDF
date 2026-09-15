@@ -1036,6 +1036,12 @@ pub struct FreeDfApp {
     live_pressure: Option<f32>,
     /// 펜 사이드 버튼 현재 상태 (OTD/evdev 스트림) — 팔레트 토글 등에 사용.
     pen_buttons: freedf_core::pen_input::PenButtons,
+    /// 펜 스트림 → 통합 어휘 어댑터 — 접촉/사이드 버튼 에지 감지를 소유한다
+    /// (input_devices). 능력 협상(압력/기울기 기본값)도 이 경계에서 끝난다.
+    pen_adapter: freedf_core::input_devices::PenEventAdapter,
+    /// 통합 입력 허브 — 장치 어댑터가 push하고 프레임마다 소비한다 (input_hub).
+    /// 포인터 충돌 규칙(한 번에 한 포인터)을 소유한다.
+    input_hub: freedf_core::input_hub::Hub,
     /// OTD/evdev 펜 스트림이 마지막으로 도착한 시각 (ms) — 진단용.
     last_pen_state_ms: Option<u64>,
     /// 마지막 획의 진단 판정 문구 (Debug HUD 표시용).
@@ -1677,6 +1683,8 @@ impl FreeDfApp {
             pen_monitor,
             live_pressure: None,
             pen_buttons: Default::default(),
+            pen_adapter: Default::default(),
+            input_hub: Default::default(),
             input_sources: input::InputSources::default(),
             last_pen_state_ms: None,
             pen_verdict: None,
