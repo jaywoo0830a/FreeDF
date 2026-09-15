@@ -15,31 +15,38 @@
 use eframe::egui;
 
 /// 인터랙티브 타깃(터치/클릭 영역) 하한 — 접근성 계약.
+/// 컴포넌트 실제 크기는 [`crate::ui::scale`]의 모듈러 정거장 중 이 하한 이상을 고른다.
 pub mod target {
-    /// 절대 하한 (pt). 이보다 작은 클릭 영역은 만들지 않습니다.
-    pub const MIN: f32 = 24.0;
-    /// 데스크톱 기본 — 대부분의 아이콘 버튼.
-    pub const COMFORT: f32 = 28.0;
-    /// 태블릿/터치 기본 — 손가락 입력이 주가 되는 컨트롤.
-    pub const TOUCH: f32 = 32.0;
-    /// 목록/메뉴 행 높이 — 행 전체가 타깃일 때.
-    pub const ROW: f32 = 28.0;
+    use crate::ui::scale::REM;
+
+    /// 절대 하한 (1.5rem). 이보다 작은 클릭 영역은 만들지 않습니다.
+    pub const MIN: f32 = 1.5 * REM;
+    /// 데스크톱 기본 (1.75rem) — 대부분의 아이콘 버튼.
+    pub const COMFORT: f32 = 1.75 * REM;
+    /// 태블릿/터치 기본 (2rem) — 손가락 입력이 주가 되는 컨트롤.
+    pub const TOUCH: f32 = 2.0 * REM;
+    /// 목록/메뉴 행 높이 (1.75rem) — 행 전체가 타깃일 때.
+    pub const ROW: f32 = 1.75 * REM;
 }
 
-/// 여백 — 8px 그리드(`layout::SP_*`와 동일 리듬).
+/// 여백 — 8px 그리드(`layout::SP_*`와 동일 리듬), rem 기반 표현.
 pub mod space {
-    pub const XS: f32 = 2.0;
-    pub const SM: f32 = 4.0;
-    pub const MD: f32 = 8.0;
-    pub const LG: f32 = 12.0;
-    pub const XL: f32 = 16.0;
+    use crate::ui::scale::REM;
+
+    pub const XS: f32 = 0.125 * REM;
+    pub const SM: f32 = 0.25 * REM;
+    pub const MD: f32 = 0.5 * REM;
+    pub const LG: f32 = 0.75 * REM;
+    pub const XL: f32 = 1.0 * REM;
 }
 
-/// 모서리 반지름.
+/// 모서리 반지름 — rem 기반 표현.
 pub mod radius {
-    pub const SM: f32 = 4.0;
-    pub const MD: f32 = 6.0;
-    pub const LG: f32 = 8.0;
+    use crate::ui::scale::REM;
+
+    pub const SM: f32 = 0.25 * REM;
+    pub const MD: f32 = 0.375 * REM;
+    pub const LG: f32 = 0.5 * REM;
 }
 
 /// 프레임 **내부 마진** 토큰 — 프레임 종류별로 이름을 붙여 한 곳에서 정의합니다.

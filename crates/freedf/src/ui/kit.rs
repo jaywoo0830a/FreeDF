@@ -46,12 +46,14 @@ pub enum Size {
 }
 
 impl Size {
-    /// 이 크기의 **최소 타깃 한 변**(pt).
+    /// 이 크기의 **실제 한 변** — [`crate::ui::scale`] 모듈러 정거장(×1.5) 중
+    /// [`crate::ui::tokens::target`] 접근성 하한을 만족하는 가장 작은 정거장.
     pub fn target(self) -> f32 {
+        use crate::ui::scale::{S_24, S_36, S_52};
         match self {
-            Self::Small => target::MIN,
-            Self::Medium => target::COMFORT,
-            Self::Touch => target::TOUCH,
+            Self::Small => S_24, // 24px (1.5rem) ≥ target::MIN
+            Self::Medium => S_36, // 36px (2.25rem) ≥ target::COMFORT
+            Self::Touch => S_52, // 52px (3.25rem) ≥ target::TOUCH
         }
     }
 
@@ -228,7 +230,9 @@ impl<'a> IconButton<'a> {
             hint: String::new(),
             enabled: true,
             selected: false,
-            size: Size::Small,
+            // 표준 컨트롤 높이(S_36, 2.25rem) — 행/툴바와 같은 모듈러 리듬.
+            // (Small은 미니 아이콘 전용 — 명시적으로 `.size(Size::Small)`로.)
+            size: Size::Medium,
             test_id: None,
             frame: false,
         }
@@ -346,7 +350,7 @@ impl<'a> Row<'a> {
             enabled: true,
             selected: false,
             value: None,
-            height: tokens::target::ROW,
+            height: crate::ui::scale::S_36, // 행 높이 = 모듈러 정거장 (2.25rem; 하한은 target::ROW)
             trailing_width: 0.0,
         }
     }
@@ -428,20 +432,20 @@ impl<'a> Row<'a> {
         // 트레일링 슬롯 — 행 안쪽 오른쪽에 **고정 폭**으로 배치합니다.
         // (왼쪽→오른쪽 레이아웃을 쓰되 사각형 자체를 우측에 두면, 순서가 뒤집히지
         //  않으면서 우측 정렬이 유지됩니다.)
-        // 세로는 **표준 컨트롤(COMFORT)이 들어갈 만큼** 확보합니다. 2pt씩 인셋하면
-        // 28pt 행에서 슬롯이 24pt가 되어 그 안의 28pt 컨트롤이 행 밖으로 4pt
-        // 넘칩니다(실측: `focus_settings` ↔ `focus_dwell` 부분 겹침).
+        // 세로는 **행 높이 전체**를 슬롯으로 확보합니다 — 표준 컨트롤(S_36)이
+        // 행과 같은 높이라 인셋 없이 정확히 안착합니다. (예전에는 COMFORT(28) 기준
+        // 인셋이라 36 행에서 표준 컨트롤이 행 밖으로 4pt 넘쳤습니다.)
         let trailing_reserve = if self.trailing_width > 0.0 {
             self.trailing_width + space::SM
         } else {
             space::SM
         };
-        // 상태 표시자 자리 — 토글/라디오는 오른쪽에 상태가 **보여야** 합니다.
+        // 상태 표시기 자리 — 토글/라디오는 오른쪽에 상태가 **보여야** 합니다.
         // 트레일링 컨트롤이 있으면 그 왼쪽에 나란히 놓습니다(호출부 변경 불필요).
         let indicator = matches!(self.role, a11y::Role::Toggle | a11y::Role::Radio);
         let reserve =
             trailing_reserve + if indicator { tokens::switch::W + space::SM } else { 0.0 };
-        let inset_y = ((height - tokens::target::COMFORT) * 0.5).max(0.0);
+        let inset_y = 0.0;
         let trect = egui::Rect::from_min_max(
             egui::pos2(rect.right() - reserve, rect.top() + inset_y),
             egui::pos2(rect.right() - space::SM, rect.bottom() - inset_y),
@@ -1226,10 +1230,11 @@ mod tests {
             rects = vec![a.rect, b.rect];
         });
         assert_eq!(rects.len(), 2);
+        let expected_h = crate::ui::scale::S_36;
         assert!(
-            (rects[0].height() - tokens::target::ROW).abs() < 0.5,
-            "행 높이가 ROW({})와 다릅니다: {}",
-            tokens::target::ROW,
+            (rects[0].height() - expected_h).abs() < 0.5,
+            "행 높이가 모듈러 정거장 S_36({})와 다릅니다: {}",
+            expected_h,
             rects[0].height()
         );
         assert!(

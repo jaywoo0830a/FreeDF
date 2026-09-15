@@ -277,7 +277,7 @@ fn overlay_header(
 /// 라이브러리 패널의 목록 행. `selected`면 강조 배경 + 테두리, 호버 시 배경.
 /// 오른쪽에 약한 회색 `meta`(예: "3p", "PDF")를 붙입니다. 클릭하면 true.
 fn library_row(ui: &mut egui::Ui, selected: bool, title: &str, meta: &str) -> bool {
-    let height = crate::ui::scale::S_32; // 32px 표준 행 높이 (만 28→토큰)
+    let height = crate::ui::scale::S_36; // 36px (2.25rem) 표준 행 높이 — 모듈러 스케일 토큰
     let width = ui.available_width();
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());

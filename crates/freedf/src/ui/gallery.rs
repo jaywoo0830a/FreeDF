@@ -101,15 +101,15 @@ impl Gallery {
         // ── Button: 크기 ───────────────────────────────────────────
         kit::section_label(ui, "Button — 크기 (size)");
         ui.horizontal(|ui| {
-            Button::secondary("Small ≥24")
+            Button::secondary("Small 24")
                 .size(Size::Small)
                 .test_id("gallery.button.size.small")
                 .show(ui);
-            Button::secondary("Medium ≥28")
+            Button::secondary("Medium 36")
                 .size(Size::Medium)
                 .test_id("gallery.button.size.medium")
                 .show(ui);
-            Button::secondary("Touch ≥32")
+            Button::secondary("Touch 52")
                 .size(Size::Touch)
                 .test_id("gallery.button.size.touch")
                 .show(ui);

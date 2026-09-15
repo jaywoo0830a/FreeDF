@@ -208,7 +208,7 @@ impl FreeDfApp {
                 ui.spacing_mut().item_spacing =
                     egui::vec2(crate::ui::scale::qrem(2), crate::ui::scale::qrem(2)); // 8×8
                 ui.spacing_mut().interact_size =
-                    egui::vec2(0.0, crate::ui::scale::S_32); // 표준 버튼 높이(만 28→32)
+                    egui::vec2(0.0, crate::ui::scale::S_36); // 표준 버튼 높이 (2.25rem)
 
                 self.row_workspace(ui);
                 crate::ui::layout::hseparator(ui);

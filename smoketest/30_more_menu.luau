@@ -68,10 +68,14 @@ end
 
 -- 2) 행 높이가 한 가지여야 합니다 (행마다 키가 달라 보이던 문제의 회귀 방지).
 local height_count = 0
+local height_dump = {}
+for _, r in ipairs(rows) do
+    table.insert(height_dump, r.id .. "=" .. string.format("%.1f", r.h))
+end
 for _ in pairs(heights) do
     height_count += 1
 end
-assert(height_count == 1, "메뉴 행 높이가 " .. tostring(height_count) .. "가지로 갈렸습니다")
+assert(height_count == 1, "메뉴 행 높이가 " .. tostring(height_count) .. "가지로 갈렸습니다: " .. table.concat(height_dump, ", "))
 
 -- 3) 좌측 정렬 레일이 하나여야 합니다 (들여쓰기 흔들림 방지).
 local rail_count = 0

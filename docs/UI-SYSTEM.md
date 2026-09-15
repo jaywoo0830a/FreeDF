@@ -19,15 +19,22 @@ UI 코드에 매직 넘버를 쓰지 않습니다. 값은 토큰에서만 나옵
 
 | 토큰 | 뜻 | 값 |
 |---|---|---|
-| `target::MIN` | 클릭 가능한 최소 타깃 | 24.0 |
-| `target::COMFORT` | 기본(마우스) 타깃 | 28.0 |
-| `target::TOUCH` | 터치/펜 타깃 | 32.0 |
-| `space::*` | 2 · 4 · 6 · 8 · 12 · 16 · 24 간격 램프 | `XS`…`XXL` |
-| `radius::*` | SMALL/BUTTON/PANEL/WINDOW | — |
+| `target::MIN` | 클릭 가능한 최소 타깃 | 1.5rem (24px) |
+| `target::COMFORT` | 기본(마우스) 타깃 하한 | 1.75rem (28px) |
+| `target::TOUCH` | 터치/펜 타깃 하한 | 2rem (32px) |
+| `scale::S_*` | **×1.5 모듈러 정거장** — S_12 → S_16 → S_24 → S_36 → S_52 → S_80 → S_120 → S_180 → S_272 → S_408 | rem 기반 (0.25rem 스냅) |
+| `space::*` | 2 · 4 · 8 · 12 · 16 간격 램프 (rem 표현) | `XS`…`XL` |
+| `margin::*` | 프레임 내부 마진 — BADGE/KBD/CARD/DIALOG/CONTAINER/CHIP/OVERLAY | — |
+| `radius::*` | 0.25/0.375/0.5rem 반지름 | `SM/MD/LG` |
 | `font::*` | SMALL/BODY/TITLE/HEADING 크기 | — |
 | `stroke::*` | HAIRLINE/NORMAL/EMPHASIS | — |
 | `State` | enabled/hovered/active/selected/disabled 판정 헬퍼 | — |
 | `expand_to_target(rect, min)` | 보이는 크기는 그대로, **클릭 영역만** 키움 | — |
+
+**치수 규약**: 컴포넌트 실제 크기는 `scale`의 모듈러 정거장(0.75rem에서 ×1.5,
+0.25rem 스냅) 중 `target` 하한을 만족하는 가장 작은 값. 표준 컨트롤 높이는
+S_36(2.25rem) — 행·툴바·버튼·아이콘 버튼이 모두 같은 리듬을 공유합니다
+(`smoketest/30_more_menu.luau`가 행 높이 균일을 회귀 검증).
 
 `expand_to_target`이 중요합니다: 아이콘이 16px이어도 타깃은 `target::MIN` 이상이
 됩니다(보이는 크기와 누를 수 있는 크기의 분리).
