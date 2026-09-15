@@ -13,14 +13,14 @@ impl FreeDfApp {
     pub(crate) fn outline_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 목차 트리부터.
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         if !self.outline_loaded {
             self.load_outline_if_needed();
         }
         if self.outline.is_empty() {
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::tokens::space::SM);
             ui.horizontal(|ui| {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::tokens::space::MD);
                 ui.label(egui::RichText::new("No outline in this PDF.").weak().small());
             });
             return;
@@ -35,7 +35,7 @@ impl FreeDfApp {
                     // 문제를 막기 위해 제목도 적당한 길이로 자릅니다.
                     ui.horizontal(|ui| {
                         let depth = (entry.depth as f32).min(OUTLINE_MAX_DEPTH as f32);
-                        ui.add_space(6.0 + depth * OUTLINE_INDENT);
+                        ui.add_space(crate::ui::tokens::space::MD + depth * OUTLINE_INDENT);
                         let title = truncate_outline_title(&entry.node.title);
                         if ui
                             .selectable_label(false, &title)

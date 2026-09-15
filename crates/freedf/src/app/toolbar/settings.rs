@@ -480,7 +480,7 @@ impl FreeDfApp {
              Click a color to remove it. Set R/G/B (or use the picker)\n\
              and press Add to add a new color.",
         );
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         let mut remove_idx: Option<usize> = None;
         ui.horizontal_wrapped(|ui| {
             for (i, color) in self.favorite_colors.iter().enumerate() {
@@ -555,7 +555,7 @@ impl FreeDfApp {
             "The area behind the page (page surround).\n\
              Applies immediately and is saved with the session.",
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         form::label(ui, "Presets");
         ui.horizontal_wrapped(|ui| {
             for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
@@ -580,7 +580,7 @@ impl FreeDfApp {
                 }
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         let mut custom = Color32::from_rgba_unmultiplied(
             self.canvas_color[0],
             self.canvas_color[1],
@@ -625,7 +625,7 @@ impl FreeDfApp {
                 self.insert_page_text = self.insert_page_count.to_string();
             }
         });
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         form::label(ui, "Insert blank pages at:");
         let insert = [
             (InsertTarget::FromCurrent, "From current page (copies size & paper)"),
@@ -1140,7 +1140,7 @@ impl FreeDfApp {
         } else if self.db_connected {
             ui.label(egui::RichText::new("Connected.").weak());
         }
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         ui.separator();
         form::check(
             ui,
@@ -1201,12 +1201,12 @@ impl FreeDfApp {
              below) close to the canvas edge pans the view in that direction. \
              It is ignored over the palette, the bottom bar and other floating UI.",
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         if form::check(ui, &mut self.edge_autoscroll, "Enable edge auto-scroll", "").changed() {
             self.save_default_session();
             self.save_session();
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         ui.add_enabled_ui(self.edge_autoscroll, |ui| {
             if form::range(
                 ui,
@@ -1246,7 +1246,7 @@ impl FreeDfApp {
                 self.save_default_session();
                 self.save_session();
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::tokens::space::SM);
             form::help(
                 ui,
                 "Direction tuning — speed (px/s) and reaction delay (s).\n\
@@ -1291,7 +1291,7 @@ impl FreeDfApp {
                 self.save_session();
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         // 문서 바깥 패닝 여유 — 엣지 스크롤과 무관하게 일반 팬 범위에도 적용.
         if form::range(
             ui,
@@ -1315,11 +1315,11 @@ impl FreeDfApp {
             "In split view, focus this window when the cursor stays \
              over it for the dwell time below.",
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         if form::check(ui, &mut self.window_focus_on_move, "Focus on cursor dwell", "").changed() {
             self.save_default_session();
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         ui.add_enabled_ui(self.window_focus_on_move, |ui| {
             if form::range(
                 ui,

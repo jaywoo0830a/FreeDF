@@ -413,7 +413,7 @@ fn swatch_with_picker(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(280.0);
-            ui.spacing_mut().slider_width = 280.0;
+            ui.spacing_mut().slider_width = crate::ui::scale::hrem(35);
             changed |= egui::color_picker::color_picker_color32(
                 ui,
                 color,
@@ -2116,7 +2116,7 @@ impl FreeDfApp {
                         msg.clone(),
                     );
                 }
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::tokens::space::MD);
                 ui.label(
                     egui::RichText::new(
                         "The server hosts Sync v3 (document snapshots) and media \
@@ -2800,7 +2800,7 @@ impl FreeDfApp {
                         .pad_symmetric(8, 4)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
+                                ui.spacing_mut().item_spacing.x = crate::ui::tokens::space::MD;
                                 // Connection health (online / offline).
                                 let tone = if self.db_connected {
                                     crate::ui::ds::Tone::Success
@@ -2974,7 +2974,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(12.0)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
                 if self.minimal_sections_collapsed {
@@ -3060,7 +3060,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(12.0)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
                 ui.set_width(crate::ui::scale::rem(33)); // 528px = 33×1rem
@@ -3100,7 +3100,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(12.0)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
                 ui.set_width(crate::ui::scale::rem(29)); // 464px = 29×1rem
@@ -3143,7 +3143,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(12.0)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
                 ui.set_width(crate::ui::scale::rem(26)); // 416px = 26×1rem
@@ -3165,9 +3165,9 @@ impl FreeDfApp {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
                         if pages.is_empty() {
-                            ui.add_space(4.0);
+                            ui.add_space(crate::ui::tokens::space::SM);
                             ui.horizontal(|ui| {
-                                ui.add_space(8.0);
+                                ui.add_space(crate::ui::tokens::space::MD);
                                 ui.label(
                                     egui::RichText::new("No bookmarks yet").weak().small(),
                                 );
@@ -3179,7 +3179,7 @@ impl FreeDfApp {
                                     self.goto_page(p);
                                 }
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(crate::ui::tokens::space::SM);
                             ui.separator();
                             if ui
                                 .button("Clear all bookmarks")
@@ -3208,7 +3208,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(egui::Stroke::new(1.0, stroke))
                     .corner_radius(12.0)
-                    .inner_margin(egui::Margin::same(8)),
+                    .inner_margin(crate::ui::tokens::margin::CONTAINER),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -3298,7 +3298,7 @@ impl FreeDfApp {
                         .width(360.0)
                         .show(ui);
                     if matches!(action, TextAction::NewNote) {
-                        ui.add_space(8.0);
+                        ui.add_space(crate::ui::tokens::space::MD);
                         ui.horizontal(|ui| {
                             ui.label("Pages:");
                             egui::ComboBox::from_id_salt("note_pages")
@@ -3599,7 +3599,7 @@ impl FreeDfApp {
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(&ctx, |ui| {
                     ui.label("Your work is saved automatically before quitting.");
-                    ui.add_space(8.0);
+                    ui.add_space(crate::ui::tokens::space::MD);
                     ui.horizontal(|ui| {
                         if ui.button("Save & Quit").clicked() {
                             save_and_quit = true;

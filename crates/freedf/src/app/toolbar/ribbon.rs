@@ -1058,8 +1058,8 @@ impl FreeDfApp {
                 }
             });
         });
-        ui.add_space(4.0);
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
+        ui.add_space(crate::ui::tokens::space::SM);
     }
 
 }

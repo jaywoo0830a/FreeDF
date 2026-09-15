@@ -38,7 +38,7 @@ fn label_line(ui: &mut egui::Ui, label: &str, req: Option<bool>) {
     }
     const REM: f32 = 16.0;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = tokens::space::SM;
         if !label.is_empty() {
             ui.label(egui::RichText::new(label).strong().size(REM));
         }
@@ -133,7 +133,7 @@ pub(crate) fn fieldset(
     // 헤더 삼각형-텍스트 간격 — egui 기본 indent(~6)는 "▼Physics model"처럼
     // 아이콘과 글자가 붙습니다(스크린샷 리뷰). indent로 아이콘 칸과 간격을 확보합니다.
     let prev_indent = ui.spacing_mut().indent;
-    ui.spacing_mut().indent = 24.0;
+    ui.spacing_mut().indent = crate::ui::scale::hrem(3);
     let resp = egui::CollapsingHeader::new(title)
         .id_salt(id_salt)
         .default_open(default_open)

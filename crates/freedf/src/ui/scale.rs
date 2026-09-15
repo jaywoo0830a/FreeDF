@@ -28,18 +28,18 @@ pub const QR: f32 = REM / 4.0;
 pub const HALF: f32 = REM / 2.0;
 
 /// 대형 치수 — **1rem(16px) 배수**로 강제. `rem(44)` = 704px.
-pub fn rem(n: i32) -> f32 {
+pub const fn rem(n: i32) -> f32 {
     (n * 16) as f32
 }
 
 /// 소형 치수 — **0.25rem(4px) 배수**로 강제. `qrem(52)` = 208px.
-pub fn qrem(n: i32) -> f32 {
+pub const fn qrem(n: i32) -> f32 {
     (n * 4) as f32
 }
 
 /// 중형 치수 — **0.5rem(8px) 짝수 계단**으로 강제. `hrem(5)` = 40px.
 /// "24·32·40·48…" 짝수 규격(비정형 짝수 금지)의 생성기.
-pub fn hrem(n: i32) -> f32 {
+pub const fn hrem(n: i32) -> f32 {
     (n * 8) as f32
 }
 

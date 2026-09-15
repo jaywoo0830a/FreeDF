@@ -503,7 +503,7 @@ impl FreeDfApp {
                                         Stroke::new(1.0, weak_border)
                                     })
                                     .corner_radius(4)
-                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .inner_margin(crate::ui::tokens::margin::CHIP)
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);

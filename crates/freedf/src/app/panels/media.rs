@@ -10,11 +10,11 @@ fn fmt_secs(d: std::time::Duration) -> String {
 impl FreeDfApp {
     /// 미디어 패널 — 현재 문서의 미디어 업로드/목록/재생/미리보기/삭제.
     pub(crate) fn media_panel(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::tokens::space::MD);
         let page_no = self.current_page + 1;
         ui.horizontal(|ui| {
             ui.strong("Media");
-            ui.add_space(8.0);
+            ui.add_space(crate::ui::tokens::space::MD);
             if crate::ui::buttons::Button::ghost("")
                 .icon(icons::ARROWS_CLOCKWISE)
                 .hint("Refresh list from server")
@@ -31,7 +31,7 @@ impl FreeDfApp {
             {
                 self.upload_media_dialog();
             }
-            ui.add_space(8.0);
+            ui.add_space(crate::ui::tokens::space::MD);
             let elapsed = self
                 .recording
                 .as_ref()
@@ -56,7 +56,7 @@ impl FreeDfApp {
             {
                 self.start_recording_action();
             }
-            ui.add_space(8.0);
+            ui.add_space(crate::ui::tokens::space::MD);
             ui.separator();
             ui.label(egui::RichText::new(format!("Page {page_no}")).weak());
             ui.selectable_value(&mut self.media_all_pages, false, "This page");
@@ -138,7 +138,7 @@ impl FreeDfApp {
         }
         if let Some(status) = &self.media_status {
             ui.colored_label(ui.visuals().text_color(), status);
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::tokens::space::SM);
         }
 
         // ── 인앱 이미지 미리보기 ──
@@ -225,7 +225,7 @@ impl FreeDfApp {
                 for item in items {
                     self.media_row(ui, item);
                 }
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
             }
         });
     }

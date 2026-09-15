@@ -22,7 +22,7 @@ pub struct Container {
 impl Container {
     pub fn new() -> Self {
         Self {
-            inner_margin: egui::Margin::symmetric(8, 8),
+            inner_margin: crate::ui::tokens::margin::CONTAINER,
             outer_margin: egui::Margin::ZERO,
             fill: None,
             stroke: None,

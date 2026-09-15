@@ -12,13 +12,16 @@
 
 use eframe::egui;
 
-/// 8px grid spacers (Bootstrap-style `--bs-gutter` rhythm).
-pub const SP_1: f32 = 4.0; // .25rem  — tight
-pub const SP_2: f32 = 8.0; // .5rem   — default gutter
+use crate::ui::tokens::space;
+
+/// 8px 그리드 스페이서 (Bootstrap-style `--bs-gutter` rhythm).
+/// `ui::tokens::space`의 **별칭**입니다 — 여백 어휘는 tokens 한 곳에서만 정의합니다.
+pub const SP_1: f32 = space::SM; // .25rem  — tight
+pub const SP_2: f32 = space::MD; // .5rem   — default gutter
 #[allow(dead_code)] // reserved spacer in the 8px grid.
-pub const SP_3: f32 = 12.0; // .75rem  — generous
+pub const SP_3: f32 = space::LG; // .75rem  — generous
 #[allow(dead_code)] // reserved spacer in the 8px grid.
-pub const SP_4: f32 = 16.0; // 1rem    — section gap
+pub const SP_4: f32 = space::XL; // 1rem    — section gap
 
 /// Horizontal stack (flex-row) with an explicit gap.
 pub fn hstack<R>(
@@ -49,14 +52,14 @@ pub fn vstack<R>(
 /// Vertical divider — used between groups inside a horizontal toolbar row.
 pub fn vdivider(ui: &mut egui::Ui) {
     ui.separator();
-    ui.add_space(SP_1 / 2.0);
+    ui.add_space(space::XS);
 }
 
 /// Horizontal separator — used between stacked toolbar rows.
 pub fn hseparator(ui: &mut egui::Ui) {
-    ui.add_space(SP_2 / 2.0);
+    ui.add_space(space::SM);
     ui.separator();
-    ui.add_space(SP_2 / 2.0);
+    ui.add_space(space::SM);
 }
 
 /// A scrolling toolbar row (ribbon). Excess items scroll horizontally instead

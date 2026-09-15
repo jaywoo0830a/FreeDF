@@ -10,14 +10,10 @@
 
 use eframe::egui;
 
-/// 콘텐츠 좌우 여백 (px).
-pub(crate) const PAD_X: f32 = 16.0;
-/// 콘텐츠 상하 여백 (px).
-pub(crate) const PAD_Y: f32 = 12.0;
 /// 위젯 간격 — 다이얼로그 안에서 항상 동일.
-pub(crate) const ITEM_SPACING: (f32, f32) = (8.0, 8.0);
-/// 모든 다이얼로그/모달의 최소 폭 (0.25rem 그리드, 400px).
-pub(crate) const MIN_WIDTH: f32 = 400.0;
+pub(crate) const ITEM_SPACING: (f32, f32) = (crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
+/// 모든 다이얼로그/모달의 최소 폭 (0.5rem 그리드, 400px).
+pub(crate) const MIN_WIDTH: f32 = crate::ui::scale::hrem(50);
 
 /// 중앙 고정 모달 — collapsible/resizable 없음, 공통 여백 적용.
 pub(crate) fn modal(
@@ -40,9 +36,9 @@ pub(crate) fn modal(
 /// 오른쪽 정렬 액션 행 — OK/Cancel 등. 주 버튼을 **마지막**에 넘기면
 /// 가장 오른쪽에 놓입니다 (오른쪽 정렬 레이아웃).
 pub(crate) fn actions<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::tokens::space::MD);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
+        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::MD, 0.0);
         add(ui)
     })
     .inner
@@ -57,7 +53,7 @@ pub(crate) fn pad<R>(
 ) -> R {
     ui.spacing_mut().item_spacing = egui::vec2(ITEM_SPACING.0, ITEM_SPACING.1);
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(PAD_X as i8, PAD_Y as i8))
+        .inner_margin(crate::ui::tokens::margin::DIALOG)
         .show(ui, |ui| {
             if scroll {
                 egui::ScrollArea::vertical().show(ui, content).inner

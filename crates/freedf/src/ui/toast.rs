@@ -123,14 +123,14 @@ impl ToastQueue {
             .order(egui::Order::Foreground)
             .interactable(over_card)
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
                 for (i, t) in self.toasts.iter().enumerate() {
                     let (fill, border) = t.visuals(ui);
                     let card = egui::Frame::new()
                         .fill(fill)
                         .stroke(egui::Stroke::new(1.0, border))
                         .corner_radius(6.0)
-                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .inner_margin(crate::ui::tokens::margin::CARD)
                         .show(ui, |ui| {
                             ui.set_width(280.0);
                             ui.horizontal(|ui| {

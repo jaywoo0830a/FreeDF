@@ -41,7 +41,7 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
     egui::Frame::new()
         .fill(fill)
         .corner_radius(8.0)
-        .inner_margin(egui::Margin::symmetric(6, 2))
+        .inner_margin(crate::ui::tokens::margin::BADGE)
         .show(ui, |ui| ui.label(egui::RichText::new(text).color(fg).small()))
         .inner
 }
@@ -72,7 +72,7 @@ pub fn alert(
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, fg.gamma_multiply(0.6)))
         .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(crate::ui::tokens::margin::CARD)
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(title).strong().color(fg));
@@ -88,7 +88,7 @@ pub fn kbd(ui: &mut egui::Ui, text: &str) -> egui::Response {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
         .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(4, 2))
+        .inner_margin(crate::ui::tokens::margin::KBD)
         .show(ui, |ui| ui.label(egui::RichText::new(text).monospace().small().strong()))
         .inner
 }
@@ -105,7 +105,7 @@ pub fn card<R>(
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, fg.gamma_multiply(0.5)))
         .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(crate::ui::tokens::margin::CARD)
         .show(ui, |ui| {
             if let Some(t) = title {
                 ui.label(egui::RichText::new(t).strong().color(fg));

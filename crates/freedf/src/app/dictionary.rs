@@ -204,7 +204,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(Stroke::new(1.0, stroke))
                     .corner_radius(8)
-                    .inner_margin(egui::Margin::same(12))
+                    .inner_margin(egui::Margin::same(crate::ui::tokens::space::LG as i8))
                     .show(ui, |ui| {
                         ui.set_max_width(340.0);
                         ui.horizontal(|ui| {

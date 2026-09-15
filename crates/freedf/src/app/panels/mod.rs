@@ -8,12 +8,12 @@ impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         crate::ui::form::text(&mut self.library_filter)
             .hint("Search notes & files…")
             .width(f32::INFINITY)
             .show(ui);
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         ui.separator();
 
         let filter = self.library_filter.trim().to_lowercase();
@@ -42,7 +42,7 @@ impl FreeDfApp {
                     .filter(|(_, t, _)| matches(t))
                     .cloned()
                     .collect();
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.horizontal(|ui| {
                     section_header(ui, icons::NOTE_PENCIL, "Notes", all_notes.len());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -103,7 +103,7 @@ impl FreeDfApp {
                     let n_sel = self.sel_notes.len();
                     if n_sel > 0 {
                         ui.horizontal(|ui| {
-                            ui.add_space(24.0);
+                            ui.add_space(crate::ui::scale::hrem(3));
                             if ui
                                 .button(format!("Delete selected ({n_sel})"))
                                 .on_hover_text(
@@ -117,7 +117,7 @@ impl FreeDfApp {
                         });
                     }
                 }
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.separator();
 
                 // ── PDFs (계층 2) ──
@@ -133,7 +133,7 @@ impl FreeDfApp {
                     .filter(|f| matches(&f.title))
                     .cloned()
                     .collect();
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.horizontal(|ui| {
                     section_header(ui, icons::FILE_PDF, "PDFs", files.len());
                 });
@@ -185,7 +185,7 @@ impl FreeDfApp {
                     let n_sel = self.sel_pdfs.len();
                     if n_sel > 0 {
                         ui.horizontal(|ui| {
-                            ui.add_space(24.0);
+                            ui.add_space(crate::ui::scale::hrem(3));
                             if ui
                                 .button(format!("Delete selected ({n_sel})"))
                                 .on_hover_text(
@@ -200,11 +200,11 @@ impl FreeDfApp {
                         });
                     }
                 }
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.separator();
 
                 // ── Unregistered PDFs (서버 CAS 고아 PDF — 문서 행 없음) ──
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 let orphans = self.orphan_pdfs.clone();
                 ui.horizontal(|ui| {
                     section_header(
@@ -271,7 +271,7 @@ impl FreeDfApp {
                     }
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.separator();
 
                 // ── Recents (계층 2) ──
@@ -282,7 +282,7 @@ impl FreeDfApp {
                     .filter(|r| matches(&r.title))
                     .cloned()
                     .collect();
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
                 ui.horizontal(|ui| {
                     section_header(
                         ui,
@@ -306,7 +306,7 @@ impl FreeDfApp {
                         }
                     }
                 }
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::tokens::space::SM);
             });
 
         if let Some((nids, ppaths)) = delete_selected {
@@ -374,7 +374,7 @@ fn section_header(ui: &mut egui::Ui, ic: egui_phosphor_icons::Icon, name: &str, 
 /// 섹션의 빈 상태 — 행과 같은 들여쓰기(체크박스 폭)에 맞춘 약한 안내 문구.
 fn empty_note(ui: &mut egui::Ui, text: &str) {
     ui.horizontal(|ui| {
-        ui.add_space(24.0);
+        ui.add_space(crate::ui::scale::hrem(3));
         ui.label(egui::RichText::new(text).weak().small());
     });
 }

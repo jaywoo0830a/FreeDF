@@ -454,7 +454,7 @@ impl FreeDfApp {
             ))
             .weak(),
         );
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         ui.separator();
         ui.horizontal(|ui| {
             ui.strong("Event log");
@@ -528,7 +528,7 @@ impl FreeDfApp {
             },
         );
 
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::tokens::space::SM);
         let block = format!(
             "== {name} diagnostics ==\nversion : {name} {version}\n\
              os      : {os} ({arch})\nbuild   : {profile}\n\

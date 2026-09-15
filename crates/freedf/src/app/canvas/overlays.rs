@@ -221,7 +221,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(Stroke::new(1.0, stroke))
                     .corner_radius(8.0)
-                    .inner_margin(egui::Margin::same(4))
+                    .inner_margin(crate::ui::tokens::margin::OVERLAY)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
@@ -387,7 +387,7 @@ impl FreeDfApp {
                     .fill(fill)
                     .stroke(Stroke::new(1.0, stroke))
                     .corner_radius(8.0)
-                    .inner_margin(egui::Margin::same(4))
+                    .inner_margin(crate::ui::tokens::margin::OVERLAY)
                     .show(ui, |ui| {
                         // 모든 요소(도구/스와치/버튼)를 세로 중앙 정렬합니다.
                         ui.vertical_centered(|ui| {
