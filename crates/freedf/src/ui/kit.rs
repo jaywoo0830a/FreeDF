@@ -595,6 +595,8 @@ pub struct TabbedWindow<'a> {
     selected: usize,
     open: bool,
     size: egui::Vec2,
+    /// 창 자동 크기 상한 (None = 무제한).
+    max_size: Option<egui::Vec2>,
     rail_width: f32,
 }
 
@@ -625,6 +627,10 @@ impl<'a> TabbedWindow<'a> {
             selected,
             open,
             size: egui::vec2(crate::ui::scale::rem(46), crate::ui::scale::rem(33)),
+            // 창 자동 크기 상한 — 콘텐츠(ScrollArea fill)와 창 크기의 피드백 루프가
+            // 있으면 창이 화면 끝까지 자랍니다(실측: edge_scroll 탭, 820px 전체).
+            // 대화상자 상한 960×640 — 그리드 콘텐츠 최소 폭(~865)도 수용합니다.
+            max_size: Some(egui::vec2(crate::ui::scale::rem(60), crate::ui::scale::rem(40))),
             rail_width: crate::ui::scale::rem(13),
         }
     }
@@ -669,6 +675,7 @@ impl<'a> TabbedWindow<'a> {
         let subtitle = self.subtitle;
         let tabs = self.tabs;
         let size = self.size;
+        let max_size = self.max_size;
         let rail_width = self.rail_width;
         let close_id = format!("{prefix}.close");
         let heading_id = format!("{prefix}.title");
@@ -677,6 +684,8 @@ impl<'a> TabbedWindow<'a> {
             .id(egui::Id::new((prefix, "window")))
             .default_size(size)
             .resizable(true)
+            // 창 자동 크기 상한 (피드백 루프 차단 — 실측 주석은 TabbedWindow::new 참조).
+            .max_size(max_size.unwrap_or(egui::vec2(f32::INFINITY, f32::INFINITY)))
             // 실측: 1280px 뷰포트에서 기본 위치로 열면 창이 오른쪽으로 넘쳐
             // 슬라이더 값 박스가 잘렸습니다 — 화면 안으로 클램프합니다.
             .constrain(true)

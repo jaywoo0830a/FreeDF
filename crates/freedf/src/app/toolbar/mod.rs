@@ -14,10 +14,19 @@ fn pen_profile_preview(
     width: f32,
     profile: &BallPenProfile,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(152.0, 36.0), egui::Sense::hover());
+    // 콘텐츠 폭 전체를 채우는 미리보기 카드 — 작은 상자(152×36)가 좌상단에
+    // 붕 떠 있던 이전 배치는 폼 리듬과 어긋났습니다(스크린샷 리뷰에서 발견).
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 48.0), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
-    let n = 48;
+    painter.rect_filled(rect, 6.0, ui.visuals().faint_bg_color);
+    painter.rect_stroke(
+        rect,
+        6.0,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    let n = 64;
     let x0 = rect.left() + 4.0;
     let x1 = rect.right() - 4.0;
     let cy = rect.center().y;
@@ -59,10 +68,18 @@ fn fountain_profile_preview(
     max_width: f32,
     profile: &FountainProfile,
 ) {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(152.0, 36.0), egui::Sense::hover());
+    // 볼펜 미리보기와 같은 카드 규격(전체 폭 × 48) — 탭마다 다른 상자 크기 금지.
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 48.0), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 4.0, ui.visuals().faint_bg_color);
-    let n = 48;
+    painter.rect_filled(rect, 6.0, ui.visuals().faint_bg_color);
+    painter.rect_stroke(
+        rect,
+        6.0,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    let n = 64;
     let x0 = rect.left() + 4.0;
     let x1 = rect.right() - 4.0;
     let cy = rect.center().y;

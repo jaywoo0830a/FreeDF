@@ -130,10 +130,15 @@ pub(crate) fn fieldset(
     default_open: bool,
     children: impl FnOnce(&mut egui::Ui),
 ) -> egui::collapsing_header::CollapsingResponse<()> {
+    // 헤더 삼각형-텍스트 간격 — egui 기본 indent(~6)는 "▼Physics model"처럼
+    // 아이콘과 글자가 붙습니다(스크린샷 리뷰). indent로 아이콘 칸과 간격을 확보합니다.
+    let prev_indent = ui.spacing_mut().indent;
+    ui.spacing_mut().indent = 24.0;
     let resp = egui::CollapsingHeader::new(title)
         .id_salt(id_salt)
         .default_open(default_open)
         .show(ui, children);
+    ui.spacing_mut().indent = prev_indent;
     // 섹션 헤더 자체도 타깃입니다(WCAG 2.5.8) — 패널의 interact_size.y가
     // COMFORT(28)이므로 헤더 높이도 그만큼 확보됩니다.
     let id = format!("settings.section.{id_salt}");
@@ -217,7 +222,21 @@ pub(crate) fn color(
     help: &str,
 ) -> egui::Response {
     label_line(ui, label, None);
-    tip(ui.color_edit_button_srgba(value), help)
+    // 어두운 색이 창 배경에 묻혀 버튼이 안 보이는 실측 회귀(canvas 탭) —
+    // 견본 테두리를 그려 어떤 색이든 항상 보이게 합니다.
+    let size = tokens::target::COMFORT;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    let resp = ui.put(rect, |ui: &mut egui::Ui| ui.color_edit_button_srgba(value));
+    // 견본은 **원형** — 프리셋 견본(원)과 같은 어휘를 유지합니다.
+    ui.painter().circle_stroke(
+        rect.center(),
+        rect.width() * 0.5 - 2.0,
+        egui::Stroke::new(
+            tokens::stroke::HAIRLINE,
+            ui.visuals().widgets.noninteractive.bg_stroke.color,
+        ),
+    );
+    tip(resp, help)
 }
 
 /// <FormSelect> — 콤보박스 (라벨 위 + 입력 아래, 항목은 items 클로저로).
@@ -237,10 +256,20 @@ pub(crate) fn select(
     tip(resp, help)
 }
 
-/// <FormCheck> — 체크박스 (라벨 위 + 입력 아래), `.changed()`로 판정.
+/// <FormCheck> — 체크박스 + 라벨 **한 줄** (Bootstrap form-check), `.changed()`로 판정.
+/// (예전의 "라벨 위 + 체크박스 아래" 배치는 불리언 하나에 두 줄을 써 콘텐츠 리듬이
+/// 흐트러졌습니다 — 스크린샷 리뷰에서 발견. 행 전체가 타깃이므로 접근성도 더 좋습니다.)
 pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool, text: &str, help: &str) -> egui::Response {
-    label_line(ui, text, None);
-    tip(ui.checkbox(on, ""), help)
+    // `add_sized`는 내용을 **중앙** 배치합니다 — 행 전체 폭에서 콤보+라벨이
+    // 가운데 붕 뜨는 실측 회귀가 있어 좌측 정렬 레이아웃으로 감쌉니다.
+    let resp = ui
+        .allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), tokens::target::ROW),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| ui.checkbox(on, text),
+        )
+        .inner;
+    tip(resp, help)
 }
 
 /// <FormSwitch> — 토글 버튼 (라벨 위 + 입력 아래), `.changed()`로 판정.
@@ -251,6 +280,9 @@ pub(crate) fn switch(ui: &mut egui::Ui, on: &mut bool, text: &str, help: &str) -
 }
 
 /// <FormRange> — f32 슬라이더 (라벨 위 + 입력 아래 수직 배치), `.changed()`로 판정.
+///
+/// 값 표시 소수점은 **범위 크기에서 파생**합니다 — 그렇지 않으면 0.3000(4dp)과
+/// 0.350(3dp)이 섞여 값 칩의 폭·리듬이 흐트러졌습니다(스크린샷 리뷰에서 발견).
 pub(crate) fn range(
     ui: &mut egui::Ui,
     value: &mut f32,
@@ -259,7 +291,18 @@ pub(crate) fn range(
     help: &str,
 ) -> egui::Response {
     label_line(ui, label_text, None);
-    tip(ui.add(egui::Slider::new(value, r)), help)
+    let span = r.end() - r.start();
+    let decimals: usize = if span < 2.0 {
+        2
+    } else if span < 10.0 {
+        1
+    } else {
+        0
+    };
+    let slider = egui::Slider::new(value, r).custom_formatter(move |v, _| {
+        format!("{:.*}", decimals, v)
+    });
+    tip(ui.add(slider), help)
 }
 
 /// <FormRange> 정수형 — 커스텀 포매터 지원 (프리셋 라벨 등).

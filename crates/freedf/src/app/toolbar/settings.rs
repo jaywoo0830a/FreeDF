@@ -148,7 +148,6 @@ impl FreeDfApp {
             self.pen_color[3],
         );
         pen_profile_preview(ui, preview_color, self.pen_width, &self.pen_profile);
-        ui.separator();
         form::fieldset(ui, "pen_win_model", "Physics model", true, |ui| {
             let any_changed = form::range(
                 ui,
@@ -333,7 +332,6 @@ impl FreeDfApp {
             self.fountain_width,
             &self.fountain_profile,
         );
-        ui.separator();
         form::fieldset(ui, "fountain_win_model", "Physics model", true, |ui| {
             let any_changed = form::range(
                 ui,
@@ -558,6 +556,7 @@ impl FreeDfApp {
              Applies immediately and is saved with the session.",
         );
         ui.add_space(8.0);
+        form::label(ui, "Presets");
         ui.horizontal_wrapped(|ui| {
             for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
                 let mut color = Color32::from_rgba_unmultiplied(
@@ -685,25 +684,29 @@ impl FreeDfApp {
                     }
                 },
             );
-            for (i, paper) in PAPER_COLORS.iter().enumerate() {
-                let mut color =
-                    Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
-                let selected = self.paper_color == *paper;
-                let (resp, changed) =
-                    swatch_with_picker(ui, ("paper_swatch_win", i), &mut color, selected);
-                let resp = resp.on_hover_text("Paper color — click to apply, double-click to edit (current page)");
-                if resp.clicked() {
-                    self.paper_color = *paper;
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
-                } else if changed {
-                    self.paper_color = color.to_array();
-                    self.apply_paper_to_current_page();
-                    self.save_default_session();
-                    self.save_session();
+            // 견본은 **가로 한 행** — 세로로 쌓이면 폼 리듬이 깨집니다(스크린샷 리뷰).
+            form::label(ui, "Presets");
+            ui.horizontal_wrapped(|ui| {
+                for (i, paper) in PAPER_COLORS.iter().enumerate() {
+                    let mut color =
+                        Color32::from_rgba_unmultiplied(paper[0], paper[1], paper[2], paper[3]);
+                    let selected = self.paper_color == *paper;
+                    let (resp, changed) =
+                        swatch_with_picker(ui, ("paper_swatch_win", i), &mut color, selected);
+                    let resp = resp.on_hover_text("Paper color — click to apply, double-click to edit (current page)");
+                    if resp.clicked() {
+                        self.paper_color = *paper;
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    } else if changed {
+                        self.paper_color = color.to_array();
+                        self.apply_paper_to_current_page();
+                        self.save_default_session();
+                        self.save_session();
+                    }
                 }
-            }
+            });
             // 프리셋 5색 외에 원하는 배경색을 직접 고릅니다.
             let mut paper_color = Color32::from_rgba_unmultiplied(
                 self.paper_color[0],
@@ -1252,6 +1255,11 @@ impl FreeDfApp {
             );
             let labels = ["Left", "Right", "Up", "Down"];
             let mut changed = false;
+            // Grid 칸은 각 셀의 고유 폭으로 자동 확장 — 키트가 설정한 슬라이더 폭
+            // (패널 전체 폭)이 셀마다 적용되면 3열 폭이 ~2060px로 늘어나 창이
+            // 화면을 넘쳤습니다(실측: edge_scroll 탭). 그리드 안은 컴팩트 폭을 씁니다.
+            let prev_slider_w = ui.spacing_mut().slider_width;
+            ui.spacing_mut().slider_width = crate::ui::scale::hrem(24); // 192
             egui::Grid::new("edge_dir_grid")
                 .num_columns(3)
                 .spacing(egui::vec2(8.0, 4.0))
@@ -1277,6 +1285,7 @@ impl FreeDfApp {
                         ui.end_row();
                     }
                 });
+            ui.spacing_mut().slider_width = prev_slider_w;
             if changed {
                 self.save_default_session();
                 self.save_session();
