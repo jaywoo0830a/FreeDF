@@ -283,9 +283,38 @@ impl FreeDfApp {
 
         if !panning {
             // 툴 상태기계에 포인터를 먹인다 — 툴은 문서 커맨드만 생산한다.
+            //
+            // ── Down 에지 자가 치유 (PR1~P3 회귀 수정) ──────────────────────
+            // 리팩터 전에는 `primary_down && (down_on || dragged())`를 **매 프레임
+            // 폴링**해 세션 시작이 늦어져도 획이 살아났다. 커맨드 경로는 Down
+            // "엣지" 1회만 평가하므로, 그 한 프레임이 캔버스 정책(다른 위젯 점유,
+            // no-repaint 간 다운 등)에 삼켜지면 획 전체가 죽는다 (0916debug.log:
+            // 7 Down 중 3개가 b=0 → 사용자 획 유실). 물리적으로는 접촉 중인데
+            // 워크스페이스에 Down 에지가 없는 Drag는 Down으로 승격해 세션을
+            // 연다 — 구 코드의 늦은 시작(late start) 동작을 복원한다.
             for p in &pointer_events {
+                let mut ev = *p;
+                if ev.phase == Phase::Drag
+                    && !self.workspace.pointer_down()
+                    && match ev.source {
+                        // 펜/터치 어댑터는 접촉 중에만 Drag를 만든다 → Drag 자체가
+                        // "물리적으로 내려가 있다"의 증명.
+                        Src::Pen | Src::Pad => true,
+                        // 마우스는 호버 이동도 Drag다 → egui 프라이머리 버튼 확인.
+                        Src::Mouse => ctx.input(|i| i.pointer.primary_down()),
+                        Src::Tablet => false,
+                    }
+                {
+                    ev.phase = Phase::Down;
+                    if pen_trace_on() {
+                        pen_trace(&format!(
+                            "STROKE-HEAL: Down 에지 유실 복원 — source={:?} point={:?} (Drag→Down 승격)",
+                            ev.source, ev.point
+                        ));
+                    }
+                }
                 self.workspace
-                    .handle(&freedf_core::input_events::InputEvent::Pointer(*p));
+                    .handle(&freedf_core::input_events::InputEvent::Pointer(ev));
             }
         } // 팬 프레임의 포인터는 팬 경로가 가져간다 (아래) — 툴 세션이 열려 있지
         //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
