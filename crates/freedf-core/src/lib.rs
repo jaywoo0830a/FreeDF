@@ -22,9 +22,13 @@
 pub mod dictionary;
 pub mod history;
 pub mod ink;
+pub mod input_commands;
+pub mod input_controlmap;
 pub mod input_devices;
 pub mod input_events;
 pub mod input_hub;
+pub mod input_tools;
+pub mod input_workspace;
 pub mod logging;
 pub mod model;
 pub mod notes;

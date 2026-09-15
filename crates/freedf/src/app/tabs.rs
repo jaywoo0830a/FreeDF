@@ -282,7 +282,7 @@ impl FreeDfApp {
             self.show_bookmarks = false;
         }
         self.show_search = show_search;
-        self.tool = tool;
+        self.select_tool_type(tool);
         self.color_family = color_family;
         self.pen_color = pen_color;
         self.pen_width = pen_width;

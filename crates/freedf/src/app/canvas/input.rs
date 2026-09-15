@@ -200,6 +200,76 @@ impl FreeDfApp {
                     ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser
                 ));
 
+        // ── 허브 소비 → 컨트롤 맵/워크스페이스 → 문서 커맨드 ─────────────────
+        // 컨트롤(펜 버튼)은 팬 중에도 처리하고, 포인터는 캔버스 정책을 통과한
+        // 것만 툴에 준다. 캔버스 밖 누름·포커스 제스처·팬 정책은 앱 경계의 몫 —
+        // 워크스페이스와 툴 상태기계는 UI/장치 지식이 없다.
+        let mut hub = std::mem::take(&mut self.input_hub);
+        let mut pointer_events: Vec<freedf_core::input_events::PointerEvent> = Vec::new();
+        hub.take(|ev| match ev {
+            freedf_core::input_events::InputEvent::Control(c) => {
+                // 원시 컨트롤 → 사용자 매핑 → action. 미바인딩은 조용히 무시.
+                if let Some(action) = self.control_map.translate(&c) {
+                    self.workspace.handle(&action);
+                }
+            }
+            freedf_core::input_events::InputEvent::Action(a) => {
+                self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
+            }
+            freedf_core::input_events::InputEvent::Pointer(p) => {
+                // 캔버스 위에서 시작한 누름만 툴 세션을 연다 — 툴바/오버레이 위
+                // 누름은 egui 위젯이 소비. Drag/Up은 항상 통과 (세션 닫기 보장;
+                // 열려 있지 않으면 툴이 무시한다).
+                if p.phase == freedf_core::input_events::PointerPhase::Down
+                    && !(response.is_pointer_button_down_on() || response.dragged())
+                {
+                    return;
+                }
+                // ── 포커스 제스처 (스플릿 뷰) ─────────────────────────────
+                // ① 아직 포커스 없음 → 이 프레스는 잉크 없이 포커스만 요청
+                //    (한 번만). ② 포커스 획득 직후 유예 중인 누름도 삼킵니다.
+                // (기존 input.rs 로직 이동)
+                if p.phase == freedf_core::input_events::PointerPhase::Down {
+                    let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
+                    if unfocused {
+                        if !self.focus_grabbed {
+                            self.focus_grabbed = true;
+                            self.focus_swallow_next_click = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                            return;
+                        }
+                    } else if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
+                        return;
+                    }
+                }
+                pointer_events.push(p);
+            }
+        });
+        self.input_hub = hub;
+
+        // 활성 툴 동기화 — 워크스페이스가 진실원 (컨트롤 맵 전환·홀드 포함),
+        // self.tool은 렌더/저장용 파생 캐시다.
+        if let Some(t) = tool_type_of_name(self.workspace.active_name()) {
+            if self.tool != t {
+                self.tool = t;
+            }
+        }
+
+        if !panning {
+            // 툴 상태기계에 포인터를 먹인다 — 툴은 문서 커맨드만 생산한다.
+            for p in &pointer_events {
+                self.workspace
+                    .handle(&freedf_core::input_events::InputEvent::Pointer(*p));
+            }
+        } // 팬 프레임의 포인터는 팬 경로가 가져간다 (아래) — 툴 세션이 열려 있지
+        //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
+
+        // 워크스페이스가 생산한 문서 커맨드를 앱 상태에 적용한다.
+        // (take 중 워크스페이스를 밖에 꺼내 소유권 충돌을 피한다.)
+        let mut ws = std::mem::take(&mut self.workspace);
+        ws.take_commands(|cmd| self.execute_command(cmd, ctx, origin, canvas_size));
+        self.workspace = ws;
+
         if panning {
             if response.dragged() || response.is_pointer_button_down_on() {
                 if let Some(abs) = pointer_abs {
@@ -216,204 +286,48 @@ impl FreeDfApp {
             return;
         }
 
-        match self.tool {
-            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter => {
-                let page_w = self.page_size_pts[0];
-                let page_h = self.page_size_pts[1];
-                if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
-                    // ── 포커스 제스처 (스플릿 뷰) ─────────────────────────
-                    // ① 아직 포커스 없음 → 이 프레스는 잉크 없이 포커스만
-                    //    요청합니다 (한 번만 — 플랫폼이 무시하면 다음부터
-                    //    그대로 그립니다). ② 이 프레스가 방금 포커스를 만든
-                    //    직후(유예 중)라면 역시 삼킵니다.
-                    let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
-                    if unfocused {
-                        if !self.focus_grabbed {
-                            self.focus_grabbed = true;
-                            self.focus_swallow_next_click = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                            return;
-                        }
-                    } else if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
-                        return;
-                    }
-                    if let Some(abs) = pointer_abs {
-                        let p = abs - origin;
-                        let raw = self.view.view_to_page([p.x, p.y]);
-                        // 페이지(캔버스) 바깥에서는 필기 금지: 페이지 내부에서만
-                        // 스트로크를 시작하고, 벗어나면 점을 추가하지 않습니다.
-                        let inside = raw[0] >= 0.0
-                            && raw[0] <= page_w
-                            && raw[1] >= 0.0
-                            && raw[1] <= page_h;
-                        let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-                        let (pressure, p_src) = self.pressure_source(ctx);
-                        // 시작/드래그 공용 시각 — `st` 가변 대여 이전에 미리 읽어
-                        // self(clock) 불변 대여와의 대여 충돌을 피합니다.
-                        let drag_t = ctx.input(|i| i.time);
-                        let drag_t_ms = self.now_ms();
-                        if self.active_stroke.is_none() {
-                            if inside {
-                                // 새 스트로크 시작 — InkPipeline이 1€ 필터 + 선폭
-                                // 확정 + 점 버퍼를 하나로 오케스트라합니다.
-                                let (color, width) = self.current_drawing_style();
-                                let smooth = if self.smoothing_enabled
-                                    && self.smoothing > 0.001
-                                {
-                                    self.smoothing
-                                } else {
-                                    0.0
-                                };
-                                let tilt = tilt_magnitude(&self.pen_tilt);
-                                let mut pipeline = freedf_core::pipeline::InkPipeline::new(
-                                    Materials::new(self.pen_profile, self.fountain_profile),
-                                    width,
-                                    smooth,
-                                );
-                                let tip = pipeline.down(
-                                    self.tool,
-                                    color,
-                                    page[0],
-                                    page[1],
-                                    pressure,
-                                    drag_t,
-                                    drag_t_ms,
-                                    tilt,
-                                );
-                                self.ink = Some(pipeline);
-                                self.active_stroke = Some(ActiveStroke {
-                                    tool: self.tool,
-                                    color,
-                                    width,
-                                    points: vec![tip],
-                                });
-                                self.lift_cut_logged = false;
-                                pen_trace(&format!(
-                                    "stroke start: tool={:?} base_w={width:.1}pt pressure_enabled={} device={:?} p_k={:.2} s_k={:.2} src={p_src} tilt=[{:+.0},{:+.0}]",
-                                    self.tool,
-                                    self.pressure_enabled,
-                                    self.input_device,
-                                    self.pen_profile.pressure_k,
-                                    self.pen_profile.speed_k,
-                                    self.pen_tilt[0],
-                                    self.pen_tilt[1]
-                                ));
-                            }
-                        }
-                        if let Some(st) = self.active_stroke.as_mut() {
-                            if inside {
-                                // ── 펜 떼기 직전 처리: 접촉이 해제됐거나 필압이
-                                // 사실상 0으로 무너진 꼬리 리포트는 **버립니다** —
-                                // 펜 떼는 순간 끝이 갑자기 가늘어지는 "확 바뀜"의
-                                // 원인이었습니다. (첫 점 4개는 접촉 시작 타이밍
-                                // 차이로 잘릴 수 있으니 점이 쌓인 뒤에만 적용)
-                                let pen_lifted = !self.input_sources.pen_contact();
-                                // 직전에는 힘이 있었는데 지금 1% 미만 → 리프트 꼬리.
-                                let pressure_collapsed = pressure <= 0.01
-                                    && st
-                                        .points
-                                        .last()
-                                        .map_or(false, |q| q.pressure > 0.05);
-                                let contact_lost = st.points.len() >= 4
-                                    && (pen_lifted || pressure_collapsed);
-                                if contact_lost {
-                                    // 표시 중인 진행 획을 즉시 갱신하도록 캐시 무효화.
-                                    self.active_mesh = None;
-                                    if !self.lift_cut_logged {
-                                        self.lift_cut_logged = true;
-                                        pen_trace(
-                                            "LIFT-CUT: 접촉 해제/필압 붕괴 뒤 도착한 꼬리 점 제거 (펜 떼는 순간 가늘어지는 것 방지)",
-                                        );
-                                    }
-                                } else {
-                                    // InkPipeline이 필터 → 폭 확정 → 점 추가까지
-                                    // 한 번에 처리합니다 (마지막 점은 펜업에서 확정).
-                                    if let Some(p) = self.ink.as_mut() {
-                                        p.drag(page[0], page[1], pressure, drag_t, drag_t_ms);
-                                    }
-                                    // 렌더 미러를 파이프라인 라이브 점(중간 확정 포함)과
-                                    // 동기화해 WYSIWYG을 보존합니다 (렌더 == 커밋).
-                                    if let Some(p) = &self.ink {
-                                        st.points =
-                                            p.live().map(|l| l.points.clone()).unwrap_or_default();
-                                    }
-                                    // 진단: 25점마다 압력/잠금 폭을 남깁니다.
-                                    if st.points.len() % 25 == 0 {
-                                        pen_trace(&format!(
-                                            "pt {}: pressure={pressure:.3} (src={p_src}) locked_w={:.3}",
-                                            st.points.len(),
-                                            st.points.last().map(|q| q.width).unwrap_or(0.0)
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if !primary_down && self.active_stroke.is_some() {
-                    self.finish_stroke();
-                }
-                if response.clicked() && self.active_stroke.is_none() {
-                    // 포커스용 탭은 점을 찍지 않습니다 (프레스에서 삼킨 표식
-                    // 또는 포커스 획득 직후 유예).
-                    if self.focus_swallow_next_click {
-                        self.focus_swallow_next_click = false;
-                        return;
-                    }
-                    if self.wheel_swallow_click {
-                        self.wheel_swallow_click = false;
-                        return;
-                    }
-                    if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
-                        return;
-                    }
-                    if let Some(abs) = pointer_abs {
-                        let p = abs - origin;
-                        let raw = self.view.view_to_page([p.x, p.y]);
-                        // 클릭(점)도 페이지 내부일 때만 기록합니다.
-                        if raw[0] >= 0.0
-                            && raw[0] <= page_w
-                            && raw[1] >= 0.0
-                            && raw[1] <= page_h
-                        {
-                            let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-                            let pressure = self.sample_pressure(ctx);
-                            self.commit_dot(page, pressure);
-                        }
-                    }
-                } else if !primary_down {
-                    // 클릭이 완성되지 않았으면 삼킴 표식을 폐기합니다.
+        // 놓친 Up 보험 — 잉크 세션이 열려 있는데 버튼이 올라왔다면 마무리한다.
+        // (EndStroke 커맨드가 이미 처리했을 것이지만 스트림 유실에 대비한다.)
+        if !primary_down && self.active_stroke.is_some() {
+            self.finish_stroke();
+        }
+
+        if matches!(
+            self.tool,
+            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
+        ) {
+            // 탭(점) 커밋 — 드래그 없이 눌렀다 뗀 경우 (기존 로직 이동).
+            if response.clicked() && self.active_stroke.is_none() {
+                // 포커스용 탭은 점을 찍지 않습니다 (프레스에서 삼킨 표식
+                // 또는 포커스 획득 직후 유예).
+                if self.focus_swallow_next_click {
                     self.focus_swallow_next_click = false;
-                    self.wheel_swallow_click = false;
+                    return;
                 }
-            }
-            ToolType::Eraser => {
-                if primary_down && (response.is_pointer_button_down_on() || response.dragged()) {
-                    if let Some(abs) = pointer_abs {
-                        let p = abs - origin;
-                        let page = self.view.view_to_page([p.x, p.y]);
-                        let radius = self.eraser_radius / self.view.zoom;
-                        let removed = self.store.erase_at(self.current_page, page, radius);
-                        if !removed.is_empty() {
-                            // 지워진 행만 DB에서 삭제 (증분).
-                            if let Some(doc_id) = self.doc_id {
-                                let ids: Vec<i64> =
-                                    removed.iter().map(|s| s.id as i64).collect();
-                                self.db.delete_strokes(doc_id, &ids);
-                            }
-                            self.push_history(Edit::RemoveStrokes {
-                                page: self.current_page,
-                                strokes: removed.clone(),
-                            });
-                            self.logger.log(AppEvent::StrokeErased {
-                                page: self.current_page,
-                                strokes: removed.len(),
-                            });
-                        }
+                if self.wheel_swallow_click {
+                    self.wheel_swallow_click = false;
+                    return;
+                }
+                if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
+                    return;
+                }
+                if let Some(abs) = pointer_abs {
+                    let p = abs - origin;
+                    let raw = self.view.view_to_page([p.x, p.y]);
+                    let page_w = self.page_size_pts[0];
+                    let page_h = self.page_size_pts[1];
+                    // 클릭(점)도 페이지 내부일 때만 기록합니다.
+                    if raw[0] >= 0.0 && raw[0] <= page_w && raw[1] >= 0.0 && raw[1] <= page_h {
+                        let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
+                        let pressure = self.sample_pressure(ctx);
+                        self.commit_dot(page, pressure);
                     }
                 }
+            } else if !primary_down {
+                // 클릭이 완성되지 않았으면 삼킴 표식을 폐기합니다.
+                self.focus_swallow_next_click = false;
+                self.wheel_swallow_click = false;
             }
-            ToolType::Pan => {}
         }
     }
 

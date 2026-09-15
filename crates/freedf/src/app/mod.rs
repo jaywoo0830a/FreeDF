@@ -1036,6 +1036,11 @@ pub struct FreeDfApp {
     live_pressure: Option<f32>,
     /// 펜 사이드 버튼 현재 상태 (OTD/evdev 스트림) — 팔레트 토글 등에 사용.
     pen_buttons: freedf_core::pen_input::PenButtons,
+    /// 툴 레지스트리 + 툴 전환/홀드/획 경계 정책의 소유자 (input_workspace).
+    /// 활성 툴의 진실원 — `self.tool`은 이것의 렌더용 파생 캐시다.
+    workspace: freedf_core::input_workspace::Workspace,
+    /// 펜 버튼 등 하드웨어 컨트롤의 사용자 매핑 (input_controlmap).
+    control_map: freedf_core::input_controlmap::ControlMap,
     /// 펜 스트림 → 통합 어휘 어댑터 — 접촉/사이드 버튼 에지 감지를 소유한다
     /// (input_devices). 능력 협상(압력/기울기 기본값)도 이 경계에서 끝난다.
     pen_adapter: freedf_core::input_devices::PenEventAdapter,
@@ -1683,6 +1688,8 @@ impl FreeDfApp {
             pen_monitor,
             live_pressure: None,
             pen_buttons: Default::default(),
+            workspace: freedf_core::input_workspace::Workspace::new(),
+            control_map: freedf_core::input_controlmap::ControlMap::with_defaults(),
             pen_adapter: Default::default(),
             input_hub: Default::default(),
             input_sources: input::InputSources::default(),
@@ -2777,7 +2784,7 @@ impl FreeDfApp {
     fn apply_session(&mut self, s: &crate::settings::SessionState, page_count: usize) {
         let s = s.clone().sanitized();
         self.current_page = s.page.min(page_count.saturating_sub(1));
-        self.tool = s.tool.active;
+        self.select_tool_type(s.tool.active);
         self.color_family = s.tool.color_family;
         self.pen_color = s.pen.ink.color;
         self.pen_width = s.pen.ink.width.get();
@@ -3013,18 +3020,18 @@ impl FreeDfApp {
             if !self.zoom_lock && ctx.input(|i| i.key_pressed(egui::Key::Minus)) {
                 self.zoom_by(1.0 / ZOOM_STEP);
             }
-            // Tool shortcuts
+            // Tool shortcuts — 툴 전환은 워크스페이스 공용 입구로만.
             if ctx.input(|i| i.key_pressed(egui::Key::P)) {
-                self.tool = ToolType::Pen;
+                self.select_tool_type(ToolType::Pen);
             }
             if ctx.input(|i| i.key_pressed(egui::Key::H)) {
-                self.tool = ToolType::Highlighter;
+                self.select_tool_type(ToolType::Highlighter);
             }
             if ctx.input(|i| i.key_pressed(egui::Key::E)) && !ctrl {
-                self.tool = ToolType::Eraser;
+                self.select_tool_type(ToolType::Eraser);
             }
             if ctx.input(|i| i.key_pressed(egui::Key::V)) {
-                self.tool = ToolType::Pan;
+                self.select_tool_type(ToolType::Pan);
             }
             // 탭 전환 (Macro 설정 — 기본 a/s, 텍스트 입력 중엔 비활성).
             if self.macro_cfg.tab_enabled

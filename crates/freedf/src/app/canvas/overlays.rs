@@ -36,7 +36,7 @@ impl FreeDfApp {
             ToolType::Fountain => self.fountain_color = color,
             ToolType::Highlighter => self.hi_color = color,
             _ => {
-                self.tool = ToolType::Pen;
+                self.select_tool_type(ToolType::Pen);
                 self.pen_color = color;
             }
         }
@@ -172,7 +172,7 @@ impl FreeDfApp {
         match wheel.hit(pos) {
             // 중앙(도넛 구멍) = 지우개 도구로 전환.
             WheelHit::Center => {
-                self.tool = ToolType::Eraser;
+                self.select_tool_type(ToolType::Eraser);
                 self.save_default_session();
                 self.save_session();
                 self.color_wheel_open = false;
@@ -404,7 +404,7 @@ impl FreeDfApp {
                                 .on_hover_text(label)
                                 .clicked()
                             {
-                                self.tool = tool;
+                                self.select_tool_type(tool);
                                 self.save_session();
                             }
                         }
@@ -425,7 +425,7 @@ impl FreeDfApp {
                         let (resp, changed) = swatch_with_picker(ui, "current_color", &mut cur, false);
                         let resp = resp.on_hover_text("Current pen color — click to apply, double-click to edit");
                         if resp.clicked() {
-                            self.tool = ToolType::Pen;
+                            self.select_tool_type(ToolType::Pen);
                             self.save_session();
                         } else if changed {
                             if self.tool == ToolType::Fountain {
@@ -476,7 +476,7 @@ impl FreeDfApp {
                                     self.fountain_color = c;
                                 } else {
                                     self.pen_color = c;
-                                    self.tool = ToolType::Pen;
+                                    self.select_tool_type(ToolType::Pen);
                                 }
                                 self.save_default_session();
                                 self.save_session();

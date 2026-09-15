@@ -2,6 +2,7 @@
 //!
 //! 하위 모듈 구성:
 //! - [`input`]: 캔버스 입력(팬/줌/필기 시작) 처리
+//! - [`commands`]: 문서 커맨드 실행기 (툴 상태기계의 출력을 앱 상태에 적용)
 //! - [`ink`]: 획 완료/하이라이트/점 커밋
 //! - [`paint`]: 스트로크/용지/잉크 메시/커서 그리기
 //! - [`overlays`]: 내비/팔레트/원형 색상 휠 오버레이
@@ -31,6 +32,31 @@ fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
 
 /// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
 const DEFAULT_PEN_AZ: f32 = -0.6;
+
+/// 워크스페이스 툴 이름 → 렌더/저장 모델(ToolType) 다리 — 기본 툴만 대응한다.
+/// (레지스트리에 새 툴이 추가되면 여기와 커맨드 실행기가 함께 확장된다 —
+/// 툴 자체는 프레임워크 수정 없이 등록만으로 동작한다.)
+pub(crate) fn tool_type_of_name(name: &str) -> Option<ToolType> {
+    match name {
+        "pen" => Some(ToolType::Pen),
+        "fountain" => Some(ToolType::Fountain),
+        "highlighter" => Some(ToolType::Highlighter),
+        "eraser" => Some(ToolType::Eraser),
+        "pan" => Some(ToolType::Pan),
+        _ => None,
+    }
+}
+
+/// 역방향 다리 — ToolType → 워크스페이스 툴 이름.
+pub(crate) fn tool_type_name(tool: ToolType) -> &'static str {
+    match tool {
+        ToolType::Pen => "pen",
+        ToolType::Fountain => "fountain",
+        ToolType::Highlighter => "highlighter",
+        ToolType::Eraser => "eraser",
+        ToolType::Pan => "pan",
+    }
+}
 
 /// 펜 사이드 버튼으로 여는 굿노트식 **원형 색상 팔레트** 기하 (캔버스 픽셀).
 const WHEEL_RING_R: f32 = 34.0;
@@ -234,6 +260,14 @@ impl FreeDfApp {
             ToolType::Highlighter => (self.hi_color, self.hi_width),
             _ => ([0, 0, 0, 255], 2.0),
         }
+    }
+
+    /// 툴 선택 공용 입구 — 워크스페이스(진실원)와 렌더 상태를 함께 바꾼다.
+    /// 툴바/휠/단축키/세션 복원 모두 이 메서드로만 전환한다 — 홀드·획 경계
+    /// 정책(그리는 중 전환 시 합성 up/down)이 자동으로 적용된다.
+    pub(crate) fn select_tool_type(&mut self, tool: ToolType) {
+        self.workspace.select(&format!("tool:{}", tool_type_name(tool)));
+        self.tool = tool;
     }
 
     /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
@@ -446,9 +480,7 @@ impl FreeDfApp {
         // 일어난다. 포인터 충돌 규칙(한 번에 한 포인터)은 허브가 소유한다.
         // ① 펜 스트림(evdev/OTD): 접촉 에지 + 사이드 버튼 에지.
         if let Some(st) = &pen_state {
-            let point = ctx
-                .input(|i| i.pointer.hover_pos())
-                .map(|p| [p.x - origin.x, p.y - origin.y]);
+            let point = ctx.input(|i| i.pointer.hover_pos()).map(|p| [p.x, p.y]);
             for ev in self.pen_adapter.update(st, point) {
                 self.input_hub.emit(ev);
             }
@@ -458,42 +490,8 @@ impl FreeDfApp {
         for ev in super::input::egui_adapter::translate(&raw_events) {
             self.input_hub.emit(ev);
         }
-        // ③ 이번 프레임 소비 — PR1에서는 컨트롤(사이드 버튼)만 소비한다. 포인터는
-        //    PR2(툴 상태기계)가 소비할 때까지 무시 — 기존 직접 경로가 그리기를
-        //    계속 담당한다. (take 중 허브를 밖에 꺼내 소유권 충돌을 피한다.)
-        let mut hub = std::mem::take(&mut self.input_hub);
-        hub.take(|ev| {
-            // 포인터/액션 이벤트는 PR2(툴 상태기계·컨트롤 맵)가 소비 — 지금은 컨트롤만.
-            let freedf_core::input_events::InputEvent::Control(c) = ev else {
-                return;
-            };
-            use freedf_core::input_events::{ControlKind, ControlPhase};
-                // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
-                // **포커스된 창만** 사이드 버튼에 반응합니다 — 배경 창의 휠이
-                // 함께 열리는 버그를 막습니다 (순수 판정: wheel_toggle_allowed).
-                if !wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
-                    return;
-                }
-                match (c.control, c.index, c.phase) {
-                    (ControlKind::StylusButton, 1, ControlPhase::Down) => {
-                        // 펜 위치(버튼을 누른 순간의 포인터, 없으면 캔버스 중심)에 엽니다.
-                        if !self.color_wheel_open {
-                            self.color_wheel_anchor = ctx
-                                .input(|i| i.pointer.hover_pos())
-                                .map(|p| [p.x - origin.x, p.y - origin.y])
-                                .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-                        }
-                        self.on_pen_button(1, true);
-                    }
-                    (ControlKind::StylusButton, 2, ControlPhase::Down) => {
-                        self.on_pen_button(2, true);
-                    }
-                    // 버튼 뗌/익스프레스 키 — 컨트롤 맵 계층(사용자 매핑)에서
-                    // action으로 번역되는 것은 PR2 범위다.
-                    _ => {}
-                }
-        });
-        self.input_hub = hub;
+        // ③ 소비는 input.rs의 handle_canvas_input에서 — 컨트롤 맵(사용자 매핑) →
+        //    워크스페이스(툴 전환·획 경계) → 커맨드 실행기로 이어진다 (PR2).
         // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
         self.input_sources.update(
             &ctx,
@@ -1077,6 +1075,7 @@ impl FreeDfApp {
     }
 }
 
+mod commands;
 mod ink;
 mod input;
 mod overlays;

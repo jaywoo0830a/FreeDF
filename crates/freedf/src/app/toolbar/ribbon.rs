@@ -656,7 +656,7 @@ impl FreeDfApp {
                 crate::app::dev::tag_selected_button(ui, dev_tool_id(tool), label, &resp, selected);
                 rects.push(resp.rect);
                 if resp.clicked() {
-                    self.tool = tool;
+                    self.select_tool_type(tool);
                     self.save_session();
                 }
                 if resp.drag_started() {
