@@ -30,6 +30,7 @@ exec docker run --rm "${TTY_FLAGS[@]}" \
   --user "$(id -u):$(id -g)" \
   --env HOME=/tmp \
   --volume "$SCRIPT_DIR/tests":/app/tests \
+  --volume "$SCRIPT_DIR/src":/app/src \
   --volume "$SCRIPT_DIR/vitest.config.js":/app/vitest.config.js \
   --workdir /app \
   "$IMAGE_NAME" \

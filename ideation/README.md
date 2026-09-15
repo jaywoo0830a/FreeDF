@@ -31,8 +31,25 @@ ideation/
 ├─ Dockerfile         # node:24.21.0 + vitest@5.0.0
 ├─ package.json       # vitest 5.0.0 고정
 ├─ vitest.config.js   # tests/ 하위 *.test.{js,ts} 수집
-└─ tests/             # 테스트 코드를 여기에 작성
-   └─ sum.test.js
+├─ src/idea4/         # 계약 객체 — 아키텍처의 공개 표면
+│  ├─ events.js       # 통합 이벤트 어휘 (잎 — 의존성 0)
+│  ├─ descriptor.js   # 장치 기술자 (버튼 개수/압력 등 = 데이터)
+│  ├─ control-map.js  # 사용자 매핑 테이블 (tap/hold)
+│  ├─ hub.js          # 이벤트 허브 (충돌 규칙 + 재생 계약)
+│  ├─ devices.js      # 장치 어댑터 (번역 + 능력 협상)
+│  ├─ tools.js        # 툴 상태기계 (참조 구현 3개)
+│  ├─ workspace.js    # 정책의 집 (툴 선택·획 경계·hold 스택)
+│  └─ index.js        # 배럴
+└─ tests/
+   ├─ sum.test.js     # 동작 확인용 샘플
+   ├─ playground.test.js / idea*.test.js  # 아이디어별 프로토타입
+   └─ idea4/          # 아키텍처 설계 테스트
+      ├─ layering.test.js       # 의존성 규칙 (정적 검사)
+      ├─ contract.test.js       # 계약 객체 표면
+      ├─ stroke-boundary.test.js# 획 경계 불변식 + 중첩 hold
+      ├─ substitution.test.js   # 장치×툴 교체 매트릭스
+      ├─ capability.test.js     # 가변 컨트롤 (0/2/5 버튼, 익스프레스 키)
+      └─ invariants.js          # 잘-형성 커맨드 스트림 검사기 (공유)
 ```
 
 ## 동작 방식
