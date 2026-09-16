@@ -26,6 +26,13 @@ use freedf_core::input_events::{PointerEvent, PointerPhase, PointerSource};
 /// 막는다. 땜질 시절의 `PENDING_DOWN_TTL_MS` 값을 이어받는다.
 pub(crate) const SESSION_TTL_MS: u64 = 250;
 
+/// 라이브 세션 워치독 창 (ms). Up 에지가 유실된 세션이 이만큼 **조용하고**
+/// 접촉 증거도 없으면 합성 up 으로 닫는다. 펜을 대고 멈춰 있는 동안은 egui가
+/// 프레스를 인지하고 있으므로(증거 있음) 닫히지 않는다 — 두 조건이 모두
+/// 필요하다: ① 이벤트가 끊겼다 ② 증거가 없다. 한 프레임의 시계 지연(경합)은
+/// 창 안에 묻힌다 — 레벨 상태를 한 프레임 읽는 것과는 질이 다른 안전망이다.
+pub(crate) const SESSION_STALE_MS: u64 = 500;
+
 /// 싱크의 승인 결정 — 즉답한다.
 #[allow(dead_code)] // Hold 는 생산 싱크(기하 즉담)가 쓰지 않는다 — 스펙/안전망 계약
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +51,9 @@ pub(crate) enum Decision {
 pub(crate) struct Ctx {
     /// 이번 프레임의 시각 — 보류 TTL/세션 나이 판정의 유일한 시간 원천.
     pub now_ms: u64,
-    /// 이번 프레임에 접촉 증거가 있었는가 (egui 프레스 인지 또는 같은 소스 Drag).
-    /// "증거 없는 프레임에서는 승격하지 않는다" 정책의 재료 — 꼬리 hover 방지.
+    /// 이번 프레임에 접촉 증거가 있었는가 (egui 프레스 인지 / 펜이 표면에 닿아
+    /// 있음 / 같은 소스 Drag). "증거 없는 프레임에서는 승격하지 않는다" 정책의
+    /// 재료 — 꼬리 hover 방지. 라이브 세션 워치독도 이 값을 요구한다.
     pub evidence: bool,
     /// 이번 프레임이 팬에 의해 소유되는가 — 잉크 금지.
     pub panning: bool,
@@ -97,6 +105,10 @@ pub(crate) enum Outcome {
     Replaced,
     /// 보류 TTL 만료 — 끝난 프레스가 나중 프레스에 붙지 않는다.
     Expired,
+    /// 라이브 세션 워치독 — Up 에지가 유실된 채 기기가 접촉을 보고하지 않는다.
+    /// 합성 up 으로 정상 경로에서 닫는다 (스펙 확장: JS 참조 구현의 frame()은
+    /// 보류 세션만 다뤘다 — 라이브 세션의 Up 유실은 실기에서만 생기는 축).
+    Stale,
     /// 보류가 취소로 정산 (싱크 refuse 전환 / Up 프레임 미승인).
     Cancelled,
     /// 보류가 승격 — 온전한 세션 `[down, …drags(, up)]` 이 한 번에 전달됐다.
@@ -118,6 +130,7 @@ impl Outcome {
             Outcome::Foreign => "foreign",
             Outcome::Replaced => "replaced",
             Outcome::Expired => "expired",
+            Outcome::Stale => "stale",
             Outcome::Cancelled => "cancelled",
             Outcome::Promoted => "promoted",
         }
@@ -162,6 +175,7 @@ impl Resolution {
                 | Outcome::Refused
                 | Outcome::Cancelled
                 | Outcome::Expired
+                | Outcome::Stale
                 | Outcome::Replaced
         )
     }
@@ -204,6 +218,8 @@ struct OpenSession {
     drags: Vec<PointerEvent>,
     sink: &'static str,
     at: u64,
+    /// 이 세션에 마지막으로 이벤트가 온 시각 — 라이브 워치독의 재료.
+    last_event_ms: u64,
     state: SessionState,
     /// 장부 정산이 이미 됐는가 (라이브 세션은 Down 승인 시점에 정산된다).
     resolved: bool,
@@ -224,6 +240,8 @@ pub(crate) struct SessionSnapshot {
 pub(crate) struct SessionRouter<S: Sink> {
     sinks: Vec<S>,
     ttl_ms: u64,
+    /// 라이브 세션 워치독 창 — Up 유실 보험 (#[SESSION_STALE_MS]).
+    stale_ms: u64,
     on_abandon: AbandonPolicy,
     seq: u64,
     open: Option<OpenSession>,
@@ -239,11 +257,19 @@ impl<S: Sink> SessionRouter<S> {
         Self {
             sinks,
             ttl_ms,
+            stale_ms: SESSION_STALE_MS,
             on_abandon,
             seq: 0,
             open: None,
             resolutions: Vec::new(),
         }
+    }
+
+    /// 라이브 세션 워치독 창 바꾸기 — 정책 노브가 필요해지면 여기로.
+    #[allow(dead_code)] // 기본값(SESSION_STALE_MS)을 쓴다 — 테스트/설정 확장점
+    pub fn with_stale_ms(mut self, stale_ms: u64) -> Self {
+        self.stale_ms = stale_ms;
+        self
     }
 
     /// 지금까지의 정산 장부 — 유실은 여기서 관측된다 (계약 ③).
@@ -324,6 +350,7 @@ impl<S: Sink> SessionRouter<S> {
             let (id, name, source, held) = {
                 let open = self.open.as_mut().unwrap();
                 open.drags.push(*ev);
+                open.last_event_ms = now; // 워치독 재료 — 이벤트가 왔으니 살아 있다
                 (open.id, open.sink, open.source, open.state == SessionState::Held)
             };
             if held {
@@ -483,6 +510,7 @@ impl<S: Sink> SessionRouter<S> {
                         drags: Vec::new(),
                         sink: name,
                         at: now,
+                        last_event_ms: now,
                         state: SessionState::Live,
                         resolved: true,
                     });
@@ -514,6 +542,7 @@ impl<S: Sink> SessionRouter<S> {
                         drags: Vec::new(),
                         sink: name,
                         at: now,
+                        last_event_ms: now,
                         state: SessionState::Held,
                         resolved: false,
                     });
@@ -551,13 +580,66 @@ impl<S: Sink> SessionRouter<S> {
 }
 
 impl<S: Sink> SessionRouter<S> {
-    /// 프레임마다 — 보류 세션의 재판정 창구 (라우터의 유일한 시간 진입점).
-    /// 반환: 정산 보고 | None (보류 없음 또는 계속 보류).
+    /// 프레임마다 — 라우터의 **유일한 시간 진입점**.
+    ///
+    /// ① 보류 세션 재판정 (승격/만료/취소).
+    /// ② 라이브 세션 워치독 — Up 에지 유실 보험 (스펙 확장).
+    ///
+    /// 반환: 정산 보고 | None (할 일 없음).
     pub fn frame(&mut self, ctx: &Ctx) -> Option<Report> {
         let open = self.open.as_ref()?;
-        if open.state != SessionState::Held {
+        match open.state {
+            SessionState::Live => self.frame_live(ctx),
+            SessionState::Held => self.frame_held(ctx),
+        }
+    }
+
+    /// 라이브 세션 워치독 — Up 에지가 유실된 채 기기가 접촉을 보고하지 않으면
+    /// (증거 없음 + stale_ms 조용함) **합성 up** 을 싱크에 전달해 정상 경로로
+    /// 닫는다. 툴 세션이 영원히 열려 있는 상태(그 뒤의 모든 Drag 가 옛 획에
+    /// 붙는 상태)를 구조적으로 막는다.
+    ///
+    /// 한 프레임의 시계 지연(0916 경합: egui가 한 프레임 늦게 아는 것)은 창 안에
+    /// 묻힌다 — 레벨 상태를 한 프레임 읽어 획을 자르는 것과는 질이 다르다.
+    fn frame_live(&mut self, ctx: &Ctx) -> Option<Report> {
+        let now = ctx.now_ms;
+        let open = self.open.as_ref()?;
+        if ctx.evidence || now.saturating_sub(open.last_event_ms) <= self.stale_ms {
             return None;
         }
+        let id = open.id;
+        let name = open.sink;
+        let source = open.source;
+        let open = self.open.take().unwrap();
+        let last = open
+            .drags
+            .last()
+            .map(|d| d.point)
+            .unwrap_or(open.down.point);
+        let synth = PointerEvent {
+            source: open.source,
+            phase: PointerPhase::Up,
+            point: last,
+            pressure: open.down.pressure,
+            tilt: open.down.tilt,
+        };
+        self.sink_by_name(name).handle(&[synth]);
+        // 장부에는 **새 행을 쓰지 않는다**: 이 세션의 Down 에지는 승인 시점에
+        // 이미 `delivered` 로 정산됐다 (계약 ③ — Down 에지 하나당 정산 하나).
+        // 워치독은 세션을 닫는 사건이고, 관측 채널은 이 Report(→ 로그)다.
+        Some(Report {
+            edge: PointerPhase::Up,
+            id: Some(id),
+            source: Some(source),
+            outcome: Outcome::Stale,
+            sink: Some(name),
+            now_ms: now,
+        })
+    }
+
+    /// 보류 세션 재판정 (TTL 만료 / 승격 / 취소).
+    fn frame_held(&mut self, ctx: &Ctx) -> Option<Report> {
+        let open = self.open.as_ref()?;
         let id = open.id;
         let source = open.source;
         let name = open.sink;
@@ -1147,6 +1229,91 @@ mod tests {
         let ink = ink.borrow();
         assert_eq!(kinds(&ink.commands), vec!["begin-stroke", "end-stroke"]);
         assert_eq!(point_of(&ink.commands[0]), [10.0, 0.0]);
+    }
+
+    /// 0916-2 실기 회귀(점 부족)의 계약 고정 — **egui가 한 프레임 늦게 아는 것
+    /// (evidence=false)만으로는 라이브 세션이 끝나지 않는다.**
+    ///
+    /// 종전 앱 보험은 egui 레벨(`primary_down`)을 읽어 "버튼이 올라왔다"고
+    /// 판단했고, 게이트가 순수 기하로 바뀐 뒤에는 펜 Down이 egui보다 먼저 온
+    /// 프레임을 가짜 Up 으로 오독해 획을 1점으로 잘랐다 (writing.log).
+    #[test]
+    fn lagging_egui_frame_never_kills_a_live_session() {
+        let ink = Rc::new(RefCell::new(ScriptedSink::new("ink", &[Decision::Now])));
+        let mut router = SessionRouter::new(vec![shared(ink.clone())]);
+
+        // 펜 Down 이 egui보다 먼저 도착한 프레임 — evidence=false.
+        router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, false));
+        assert!(!router.open_session().unwrap().held, "기하 즉답 — 즉시 라이브");
+
+        // egui가 따라잡기 전 프레임들 — 세션은 그대로 살아 있어야 한다.
+        assert!(router.frame(&ctx(1016, false)).is_none());
+        assert!(router.frame(&ctx(1032, false)).is_none());
+        assert!(router.open_session().is_some(), "시계 지연은 종료가 아니다");
+
+        // 이어지는 Drag 는 정상 전달 — 획이 온전히 이어진다.
+        router.dispatch(&pen(PointerPhase::Drag, 12.0), &ctx(1040, false));
+        router.dispatch(&pen(PointerPhase::Up, 14.0), &ctx(1050, false));
+
+        let ink = ink.borrow();
+        assert_eq!(
+            kinds(&ink.commands),
+            vec!["begin-stroke", "extend-stroke", "end-stroke"],
+            "1점 점이 아니라 온전한 획"
+        );
+        assert_eq!(router.ledger().len(), 1, "Down 1건 = 정산 1건");
+    }
+
+    /// Up 에지 유실 보험 — 이벤트가 끊기고 접촉 증거도 없는 세션은 stale 창
+    /// 뒤에 **합성 up** 으로 정상 경로에서 닫힌다 (툴 세션이 영원히 열려
+    /// 있지 않다 = 이후 Drag 가 옛 획에 붙지 않는다).
+    #[test]
+    fn lost_up_edge_is_closed_by_the_live_watchdog() {
+        let ink = Rc::new(RefCell::new(ScriptedSink::new("ink", &[Decision::Now])));
+        let mut router = SessionRouter::new(vec![shared(ink.clone())]);
+
+        router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, true));
+        router.dispatch(&pen(PointerPhase::Drag, 12.0), &ctx(1010, true));
+
+        // 창 경계 안 — 아직 닫지 않는다.
+        assert!(router.frame(&ctx(1010 + SESSION_STALE_MS, false)).is_none());
+        assert!(router.open_session().is_some());
+
+        // 창 밖 + 증거 없음 → 워치독 정산.
+        let rep = router.frame(&ctx(1010 + SESSION_STALE_MS + 1, false)).expect("워치독 정산");
+        assert_eq!(rep.outcome, Outcome::Stale);
+        assert!(router.open_session().is_none());
+
+        // 장부 불변식 — Down 에지 하나당 정산 하나. 워치독은 새 행을 쓰지 않는다
+        // (Down 에지는 승인 시점에 이미 delivered 로 정산됐다).
+        let ledger = router.ledger();
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].outcome, Outcome::Delivered);
+        assert!(ledger[0].is_terminal());
+
+        // 합성 up 이 싱크에 전달됐다 — 툴 세션이 정상 경로로 닫힌다.
+        let ink = ink.borrow();
+        assert_eq!(
+            kinds(&ink.commands),
+            vec!["begin-stroke", "extend-stroke", "end-stroke"]
+        );
+        assert_eq!(ink.received.last().unwrap().phase, PointerPhase::Up);
+    }
+
+    /// 펜을 대고 멈춰 있어도(이벤트 끊김) 접촉 증거가 있는 동안은 닫지 않는다 —
+    /// 워치독은 "조용함"만으로 발동하지 않는다 (두 조건 모두 필요).
+    /// 생산 배선에서 이 증거에는 **하드웨어 접촉**(펜 tip/필압>0, evdev와 같은
+    /// 시계)과 egui의 프레스 인지가 모두 포함된다.
+    #[test]
+    fn quiet_but_evidenced_session_stays_open() {
+        let ink = Rc::new(RefCell::new(ScriptedSink::new("ink", &[Decision::Now])));
+        let mut router = SessionRouter::new(vec![shared(ink.clone())]);
+
+        router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, true));
+        // 이벤트는 끊겼지만 egui가 프레스를 계속 알고 있다.
+        assert!(router.frame(&ctx(5000, true)).is_none());
+        assert!(router.open_session().is_some(), "멈춰 있는 펜은 획의 끝이 아니다");
+        assert_eq!(router.ledger().len(), 1);
     }
 
     /// TTL 을 넘긴 보류는 만료로 정산된다 — 끝난 프레스가 나중 프레스에 붙지 않는다.

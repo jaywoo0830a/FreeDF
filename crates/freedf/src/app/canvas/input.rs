@@ -221,7 +221,11 @@ impl FreeDfApp {
         let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
         let mut router_ctx = Ctx {
             now_ms,
-            evidence: primary_down,
+            // 접촉 증거 — ① egui가 프레스를 안다(마우스/펜 공통) ② **펜이 표면에
+            // 닿아 있다**(하드웨어 사실 — evdev/OTD와 같은 시계라 경합 없음)
+            // ③ 이번 프레임에 같은 스트림의 Drag가 흘렀다(아래에서 켠다).
+            // 워치독(라이브 세션 TTL)과 보류 승격이 이 값을 재료로 쓴다.
+            evidence: primary_down || self.pen_contact,
             panning,
             focus_grace: self.focus_grace_until_ms.is_some_and(|t| now_ms < t),
             focus_grab_pending: unfocused && !self.focus_grabbed,
@@ -316,9 +320,28 @@ impl FreeDfApp {
             return;
         }
 
-        // 놓친 Up 보험 — 잉크 세션이 열려 있는데 버튼이 올라왔다면 마무리한다.
-        // (EndStroke 커맨드가 이미 처리했을 것이지만 스트림 유실에 대비한다.)
-        if !primary_down && self.active_stroke.is_some() {
+        // 놓친 Up 보험 — **에지 스트림 기준**으로 판정한다 (라우터 세션 상태).
+        //
+        // 구 구현은 egui의 레벨(`primary_down`)을 읽어 "버튼이 올라왔다"고
+        // 판단했다. 샘플링 게이트 시절에는 그 등식이 성립했다 — 게이트 자체가
+        // egui의 점유 인정(`is_pointer_button_down_on`)이었으므로, 잉크 세션은
+        // egui가 프레스를 아는 프레임에만 열렸다.
+        //
+        // 게이트가 **순수 기하**로 바뀐 뒤(0916 마이그레이션) 이 등식은 깨진다:
+        // 펜의 Down 에지는 egui보다 먼저 도착할 수 있고(evdev/OTD가 빠른 시계),
+        // 그 프레임의 `primary_down`은 아직 false다. 보험이 그 지연을 "Up 유실"로
+        // 오독해 **획을 시작점에서 잘라 버렸다** — writing.log 실측: 28획 중 14획이
+        // 1점(`점 부족`)으로 종료, 그중 13획은 종료 시점의 live_pressure가 0.07~0.14
+        // (펜이 아직 눌려 있었다) = 가짜 Up. 정상 14획은 모두 live_pressure≈0.0.
+        //
+        // 이제 Up 유실은 라우터가 소유한다: 에지가 끊긴 채 기기 접촉 증거도 없으면
+        // `frame` 의 라이브 워치독이 **합성 up** 을 정상 경로로 흘려보내 닫는다.
+        // 여기는 그 뒤에 남는 마지막 그물 — 라우터 세션이 없는데 앱에 획이 남은
+        // 경우만 마무리한다 (egui/시계를 읽지 않는다).
+        if self.input_router.open_session().is_none() && self.active_stroke.is_some() {
+            // 진단 — 보험이 발동했다면 그 자체가 이상 신호다 (에지 스트림과
+            // 앱 상태가 어긋났다는 뜻). 다음 회귀 분석이 즉시 가능하게 남긴다.
+            pen_trace("STROKE-FINISH: 놓친 Up 보험 발동 — 라우터 세션 없음 + 열린 획");
             self.finish_stroke();
         }
 
@@ -385,6 +408,10 @@ impl FreeDfApp {
             Outcome::Cancelled => {
                 pen_trace("STROKE-DROP: 보류 세션 취소 — 싱크가 프레스를 내려놓았다")
             }
+            Outcome::Stale => pen_trace(&format!(
+                "STROKE-DROP: Up 에지 유실 — 라이브 세션을 합성 up 으로 닫음 source={:?}",
+                rep.source
+            )),
             _ => {}
         }
     }

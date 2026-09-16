@@ -184,7 +184,86 @@ mod tests {
         assert!(sink.drain().is_empty(), "drain 뒤 아웃박스는 비어 있다");
     }
 
-    /// 마이그레이션 완료 형태의 통합 경로 — 어댑터 → 허브 → 라우터 → 싱크.
+    /// 실기 회귀 재현 → 고정: 펜 Down 이 egui보다 먼저 도착한 프레임(증거 없음)
+    /// 에도 획이 잘리지 않는다.
+    ///
+    /// 종전 앱 보험(`!primary_down` → `finish_stroke`)은 그 프레임을 "Up 유실"로
+    /// 오독해 1점 점으로 잘랐다 (writing.log: 28획 중 14획 점 부족, 종료 시
+    /// live_pressure 0.07~0.14 = 펜이 눌린 채). 여기서는 파이프라인 수준에서
+    /// 그 경로가 **구조적으로 불가능**함을 고정한다 — 첫 프레임의 증거가 거짓이어도
+    /// 세션은 라이브로 남고, 뒤따르는 Drag 가 온전히 전달된다.
+    #[test]
+    fn lagging_evidence_frame_keeps_the_stroke_alive() {
+        use freedf_core::input_commands::{check_well_formed, Command};
+        use freedf_core::input_devices::PenEventAdapter;
+        use freedf_core::input_events::InputEvent;
+        use freedf_core::input_hub::Hub;
+        use freedf_core::input_workspace::Workspace;
+        use freedf_core::pen_input::{PenButtons, PenState};
+
+        let pen_state = |contact: bool| PenState {
+            tilt: [0.0, 0.0],
+            pressure: Some(0.4),
+            contact,
+            buttons: PenButtons::default(),
+        };
+        let mut adapter = PenEventAdapter::default();
+        let mut sink = InkSink::new();
+        sink.set_canvas([0.0, 0.0], [1000.0, 1000.0]);
+        let mut router = SessionRouter::new(vec![sink]);
+        let mut ws = Workspace::new();
+
+        let mut pump = |adapter: &mut PenEventAdapter,
+                        router: &mut SessionRouter<InkSink>,
+                        ws: &mut Workspace,
+                        st: &PenState,
+                        point: [f32; 2],
+                        now: u64,
+                        evidence: bool| {
+            // 어댑터 → 허브 → 라우터 → 싱크 → 워크스페이스 (생산 배선과 동일 순서).
+            let mut hub = Hub::new();
+            for ev in adapter.update(st, Some(point)) {
+                hub.emit(ev);
+            }
+            let c = Ctx {
+                now_ms: now,
+                evidence,
+                panning: false,
+                focus_grace: false,
+                focus_grab_pending: false,
+            };
+            hub.take(|ev| {
+                if let InputEvent::Pointer(p) = ev {
+                    router.dispatch(&p, &c);
+                }
+            });
+            router.frame(&c); // 프레임 말미 재판정 (워치독 포함)
+            for p in router.sinks_mut()[0].drain() {
+                ws.handle(&InputEvent::Pointer(p));
+            }
+        };
+
+        // ① Down 이 egui보다 먼저 온 프레임 — 증거는 아직 거짓.
+        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1000, false);
+        // ② egui가 따라잡기 전 프레임 몇 개 (16ms 간격 — stale 창 안).
+        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1016, false);
+        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1032, false);
+        assert!(router.open_session().is_some(), "시계 지연은 획의 끝이 아니다");
+        // ③ 접촉 유지 Drag → ④ 진짜 Up (펜을 뗀다).
+        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [31.0, 41.0], 1040, true);
+        pump(&mut adapter, &mut router, &mut ws, &pen_state(false), [32.0, 42.0], 1050, true);
+
+        let mut cmds = Vec::new();
+        ws.take_commands(|c| cmds.push(c));
+        assert_eq!(
+            cmds.iter().map(|c| c.kind()).collect::<Vec<_>>(),
+            vec!["begin-stroke", "extend-stroke", "extend-stroke", "extend-stroke", "end-stroke"],
+            "1점 점이 아니라 온전한 획 (접촉 유지 프레임마다 extend)"
+        );
+        assert!(matches!(cmds[0], Command::BeginStroke { point: [30.0, 40.0], .. }));
+        assert!(check_well_formed(&cmds).is_ok());
+        assert_eq!(router.ledger().len(), 1, "Down 1건 = 정산 1건 (유실 관측)");
+    }
     /// Down 에지가 **같은 프레임**에 세션이 되고(판정 지연 0), 땜질 없이 유실이 없다.
     #[test]
     fn full_pipeline_zero_latency_stroke() {

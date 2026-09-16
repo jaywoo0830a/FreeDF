@@ -1036,6 +1036,10 @@ pub struct FreeDfApp {
     live_pressure: Option<f32>,
     /// 펜 사이드 버튼 현재 상태 (OTD/evdev 스트림) — 팔레트 토글 등에 사용.
     pen_buttons: freedf_core::pen_input::PenButtons,
+    /// 펜이 **표면에 닿아 있는가** (하드웨어 사실: tip 스위치 또는 필압>0).
+    /// evdev/OTD 스트림과 같은 시계라 **시계 경합이 없다** — 세션 워치독의
+    /// 접촉 증거로 쓴다 (egui의 primary_down 은 한 프레임 늦을 수 있다).
+    pen_contact: bool,
     /// 툴 레지스트리 + 툴 전환/홀드/획 경계 정책의 소유자 (input_workspace).
     /// 활성 툴의 진실원 — `self.tool`은 이것의 렌더용 파생 캐시다.
     workspace: freedf_core::input_workspace::Workspace,
@@ -1695,6 +1699,7 @@ impl FreeDfApp {
             pen_monitor,
             live_pressure: None,
             pen_buttons: Default::default(),
+            pen_contact: false,
             workspace: freedf_core::input_workspace::Workspace::new(),
             control_map: freedf_core::input_controlmap::ControlMap::with_defaults(),
             projection: canvas::Projection::with_core(),

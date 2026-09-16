@@ -473,6 +473,8 @@ impl FreeDfApp {
             self.live_pressure = st.pressure;
             // 사이드 버튼 상태 (Debug HUD 표시용) — 에지 감지는 펜 어댑터가 소유.
             self.pen_buttons = st.buttons;
+            // 접촉 상태 (하드웨어 사실) — 세션 워치독의 접촉 증거 (라우터 문맥).
+            self.pen_contact = st.contact;
         }
 
         // ── 통합 입력 경계 (허브) ──────────────────────────────────────────
