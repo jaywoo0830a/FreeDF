@@ -46,9 +46,17 @@ ideation/
 │  ├─ pen.js          # C2/C3 펜 어댑터 (틸트 벡터·능력 질의)
 │  ├─ verdict.js      # C4 단일 판정 (설정 + 측정 + 라우터 장부)
 │  └─ index.js        # 배럴 (어휘는 idea4 것을 재수출 — 단일 소유자)
+├─ src/ui/            # 함수형 UI 인터페이스 (스텁) — 테스트 가능·모듈화
+│  ├─ node.js         # 트리 어휘 (잎): 순수 데이터 + scope 조립
+│  ├─ tokens.js       # 토큰 데이터 (잎): 타깃 하한·8px 그리드
+│  ├─ a11y.js         # 단일 관문: check(tree) → issues[] (렌더러 없이)
+│  ├─ harness.js      # 헤드리스 런타임: view/update/tap/tick/ledger
+│  ├─ component.js    # 모듈화 단위: defineComponent + mount 조립
+│  └─ index.js        # 배럴
 └─ tests/
    ├─ sum.test.js     # 동작 확인용 샘플
    ├─ playground.test.js / idea*.test.js  # 아이디어별 프로토타입
+   ├─ ui/             # 함수형 UI 실행 스펙 (README.md = 설계 인덱스)
    ├─ idea5/          # C1~C4 실행 스펙 (README.md = 흐름 인덱스)
    └─ idea4/          # 아키텍처 설계 테스트
       ├─ README.md              # 획 시작 에지 계약 — 참고 문서 (2026-09-15 회귀)
