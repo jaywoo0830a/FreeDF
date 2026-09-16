@@ -72,6 +72,15 @@ impl Hub {
         self.queue.len()
     }
 
+    /// 현재 포인터를 점유 중인 소스 (Down에서 진입, Up에서 탈출).
+    ///
+    /// 캔버스 정책(팬/드로우, 커서 미리보기)이 "이 프레스의 소유자는 누구인가"를
+    /// **추정 대신 묻는** 창구다. 점유 규칙의 소유자가 여기(허브)이므로, 소스
+    /// 판정을 egui 이벤트(터치 유무 등)로 다시 추정하는 래치는 땜질이다.
+    pub fn active_source(&self) -> Option<PointerSource> {
+        self.active_source
+    }
+
     /// 충돌 규칙("한 번에 한 포인터")에 의해 drop된 이벤트 누적 (진단 계약 4.3).
     /// 유실이 장치 축에서 일어났는지를 데이터로 관측하는 창구다.
     pub fn dropped(&self) -> usize {

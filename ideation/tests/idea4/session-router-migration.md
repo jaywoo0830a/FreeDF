@@ -195,3 +195,53 @@ if !primary_down && self.active_stroke.is_some() { self.finish_stroke(); }  // �
 보증하던 등식**(여기서는 "세션이 열렸다 ⇒ egui가 프레스를 안다")을 함께 찾아
 없애야 한다. 남은 egui 레벨/리액션 사용처는 팬(UI 소유가 정당)과 탭 점
 커밋(가드 유지)뿐이다.
+
+## 6. 잔여 땜질 청소 (0916-3)
+
+마이그레이션은 **게이트 하나**를 구조로 바꿨을 뿐, 같은 실수의 다른 얼굴들이
+파이프라인에 남아 있었다. 두 관문을 모두 통과한 것만 남기고 나머지는 제거했다:
+
+> 관문 ① **같은 시계인가** — 그 판단이 "다른 시계(egui/시계/모니터)를 다시
+> 읽는가"면 땜질 (이벤트가 안고 온 데이터로 대체 가능한가).
+> 관문 ② **다른 소유자가 있는가** — 그 사실을 이미 아는 객체(허브/어댑터/라우터/
+> 워크스페이스)가 있는가.
+
+### 입력 파이프라인 (제거 완료)
+
+| 제거 | 관문 | 구조적 대체 |
+|---|---|---|
+| 탭 점 커밋 `response.clicked()` + `commit_dot` | ① (egui 리액션) ② (라우터) | 탭 = 온전한 세션 `[down, up]` → 툴이 begin/end → 1점 획 커밋. 중복 점도 사라짐 |
+| `focus_swallow_next_click` · `wheel_swallow_click` | ② | 세션이 없으면 릴리스도 없어 점이 안 남는다. 휠 프레스는 휠 소유 |
+| 휠 열림 중 허브 미소비(적체) | ② | 휠이 열려 있으면 포인터 스트림 **즉시 소비**(폐기) — 적체/유령 점 제거 |
+| 장치 래치(`InputDevice`, `last_touch_time`, `has_touch`) | ① ② | `PointerEvent.source`(어댑터가 부여) + `Hub::active_source()`(점유 소유자). 팬 정책은 `Mouse`만 팬 소유 (Pad/Pen은 그리는 소스 — 종전 동작 보존) |
+| `pressure_source`/`sample_pressure` (모니터 스냅샷 → egui Touch force → 1.0) | ① ② | 커맨드가 나른 `PointerEvent.pressure`(어댑터 능력 협상) + 설정 변환은 `model_pressure()` 한 곳. 펜 압력이 마우스 획에 새던 경로 소멸 |
+| `LIFT-CUT` 꼬리 컷 (접촉 해제/필압 붕괴 추정) | ① | 어댑터 Up 에지 + 라우터 세션 닫기 — 접촉 해제 뒤 Drag 가 존재하지 않으므로 꼬리도 없다. 소스 무관 가드가 마우스 드로잉을 4점에서 끊던 잠복 버그도 소멸 |
+| 판정 "점 부족 / 필압 일정 → OTD 확인" 오진 | ① | `pressure_enabled`(설정)와 탭(1점)을 구분하는 판정 |
+
+### 렌더링 파이프라인 (제거 완료)
+
+| 제거 | 관문 | 구조적 대체 |
+|---|---|---|
+| 캔버스의 `smooth_tilt` (틸트 EMA + 점프 제한) | ① ② | `PenEventAdapter`가 장치 상태로 소유 — `adapter.tilt()`(조건화된 벡터). 이벤트가 나르는 틸트와 렌더가 보는 틸트가 같아졌다. 테스트도 장치 경계로 이동 |
+
+### 남은 땜질 (다음 청소 — README §8.2에 근거)
+
+- **C1 휠 싱크**: 오버레이 탭 판정(`frame_tap_pos`)이 잉크와 다른 시계다 →
+  라우터 싱크로 승격(우선순위 선행, 기하 소유).
+- **C2 틸트 방위각**: 어휘가 틸트 **크기**만 나른다 → `PointerEvent`에 벡터/방위각
+  추가(events.js 스펙 동시 갱신). 그러면 `tilt_azimuth`·`pen_monitor.is_some()` 분기가
+  사라진다.
+- **C3 틸트 능력**: "틸트를 보고하는 장치인가"를 스트림 존재로 근사 →
+  `pen_input`이 능력을 보고.
+- **C4 진단 단일화**: `LIVE-FLAT`/`PENUP-CHANGED`/`pen_verdict`가 라우터 장부와
+  분리 → 장부 기반 단일 판정(로그 형식 유지).
+- **C5 `InputSources` 선제 필드**: 소비자 없는 추적/접근자(`#[allow(dead_code)]`)
+  제거.
+
+### 검증 (이번 청소)
+
+- 제거 확인 grep: `InputDevice|input_device|last_touch_time`,
+  `*_swallow_click`, `commit_dot|sample_pressure|pressure_source`,
+  `LIFT-CUT|lift_cut_logged|pen_lifted|pressure_collapsed` → **0**
+- `cargo test --workspace` 380+ (freedf 105, core 220, canvas 32, sync 13…),
+  `ideation/test.sh` 109 (105 passed + 4 expected fail)

@@ -24,7 +24,6 @@ impl FreeDfApp {
         self.transition_last_page = 0;
         self.status = None;
         self.color_wheel_open = false;
-        self.wheel_swallow_click = false;
     }
 
     /// DB의 문서 id로 문서를 엽니다 (노트/외부 PDF 공통).

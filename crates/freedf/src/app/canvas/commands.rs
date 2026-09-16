@@ -26,10 +26,18 @@ impl FreeDfApp {
         canvas_size: [f32; 2],
     ) {
         match &cmd {
-            Command::BeginStroke { tool, point, .. } => {
-                self.begin_stroke_cmd(tool, *point, ctx, origin);
+            // 압력은 **이벤트가 나른 값**을 그대로 쓴다 (어댑터가 능력 협상으로
+            // 채운 값 — 모니터/egui 를 다시 샘플링하지 않는다).
+            Command::BeginStroke {
+                tool,
+                point,
+                pressure,
+            } => {
+                self.begin_stroke_cmd(tool, *point, *pressure, ctx, origin);
             }
-            Command::ExtendStroke { point, .. } => self.extend_stroke_cmd(*point, ctx, origin),
+            Command::ExtendStroke { point, pressure } => {
+                self.extend_stroke_cmd(*point, *pressure, ctx, origin)
+            }
             Command::EndStroke => {
                 if self.active_stroke.is_some() {
                     self.finish_stroke();
@@ -54,6 +62,7 @@ impl FreeDfApp {
         &mut self,
         tool: &str,
         point: [f32; 2],
+        pressure: f32,
         ctx: &egui::Context,
         origin: Pos2,
     ) {
@@ -71,7 +80,7 @@ impl FreeDfApp {
             return;
         }
         let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-        let (pressure, p_src) = self.pressure_source(ctx);
+        let pressure = self.model_pressure(pressure);
         // 시작/드래그 공용 시각 — clock 불변 대여와의 충돌을 피하려고 미리 읽는다.
         let drag_t = ctx.input(|i| i.time);
         let drag_t_ms = self.now_ms();
@@ -104,12 +113,11 @@ impl FreeDfApp {
             width,
             points: vec![tip],
         });
-        self.lift_cut_logged = false;
         pen_trace(&format!(
-            "stroke start: tool={:?} (pkg:{tool}) base_w={width:.1}pt pressure_enabled={} device={:?} p_k={:.2} s_k={:.2} src={p_src} tilt=[{:+.0},{:+.0}]",
+            "stroke start: tool={:?} (pkg:{tool}) base_w={width:.1}pt pressure_enabled={} src={:?} p={pressure:.3} p_k={:.2} s_k={:.2} tilt=[{:+.0},{:+.0}]",
             self.tool,
             self.pressure_enabled,
-            self.input_device,
+            self.last_pointer_source,
             self.pen_profile.pressure_k,
             self.pen_profile.speed_k,
             self.pen_tilt[0],
@@ -118,10 +126,16 @@ impl FreeDfApp {
     }
 
     /// extend-stroke — 진행 중 획에 점 추가 (기존 input.rs 드래그 로직).
-    fn extend_stroke_cmd(&mut self, point: [f32; 2], ctx: &egui::Context, origin: Pos2) {
-        // 압력/시각은 `st` 가변 대여 이전에 미리 읽는다 (self 전체 불변 대여와의
+    fn extend_stroke_cmd(
+        &mut self,
+        point: [f32; 2],
+        pressure: f32,
+        ctx: &egui::Context,
+        origin: Pos2,
+    ) {
+        // 시각은 `st` 가변 대여 이전에 미리 읽는다 (self 전체 불변 대여와의
         // 대여 충돌 회피 — 기존 코드와 동일한 순서).
-        let (pressure, p_src) = self.pressure_source(ctx);
+        let pressure = self.model_pressure(pressure);
         let drag_t = ctx.input(|i| i.time);
         let drag_t_ms = self.now_ms();
         let Some(st) = self.active_stroke.as_mut() else {
@@ -137,43 +151,30 @@ impl FreeDfApp {
             return;
         }
         let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-        // ── 펜 떼기 직전 처리: 접촉이 해제됐거나 필압이 사실상 0으로 무너진
-        // 꼬리 리포트는 **버립니다** — 펜 떼는 순간 끝이 갑자기 가늘어지는
-        // "확 바뀜"의 원인이었습니다. (첫 점 4개는 접촉 시작 타이밍 차이로
-        // 잘릴 수 있으니 점이 쌓인 뒤에만 적용)
-        let pen_lifted = !self.input_sources.pen_contact();
-        // 직전에는 힘이 있었는데 지금 1% 미만 → 리프트 꼬리.
-        let pressure_collapsed = pressure <= 0.01
-            && st.points.last().is_some_and(|q| q.pressure > 0.05);
-        let contact_lost = st.points.len() >= 4 && (pen_lifted || pressure_collapsed);
-        if contact_lost {
-            // 표시 중인 진행 획을 즉시 갱신하도록 캐시 무효화.
-            self.active_mesh = None;
-            if !self.lift_cut_logged {
-                self.lift_cut_logged = true;
-                pen_trace(
-                    "LIFT-CUT: 접촉 해제/필압 붕괴 뒤 도착한 꼬리 점 제거 (펜 떼는 순간 가늘어지는 것 방지)",
-                );
-            }
-        } else {
-            // InkPipeline이 필터 → 폭 확정 → 점 추가까지 한 번에 처리합니다
-            // (마지막 점은 펜업에서 확정).
-            if let Some(p) = self.ink.as_mut() {
-                p.drag(page[0], page[1], pressure, drag_t, drag_t_ms);
-            }
-            // 렌더 미러를 파이프라인 라이브 점(중간 확정 포함)과 동기화해
-            // WYSIWYG을 보존합니다 (렌더 == 커밋).
-            if let Some(p) = &self.ink {
-                st.points = p.live().map(|l| l.points.clone()).unwrap_or_default();
-            }
-            // 진단: 25점마다 압력/잠금 폭을 남깁니다.
-            if st.points.len() % 25 == 0 {
-                pen_trace(&format!(
-                    "pt {}: pressure={pressure:.3} (src={p_src}) locked_w={:.3}",
-                    st.points.len(),
-                    st.points.last().map(|q| q.width).unwrap_or(0.0)
-                ));
-            }
+        // ── 꼬리 가드(LIFT-CUT) 제거 ────────────────────────────────────────
+        // 종전에는 "접촉 해제" 또는 "필압 붕괴"를 **추정**해 도착한 꼬리 점을
+        // 잘라냈다 (펜을 떼는 순간 끝이 가늘어지는 증상의 봉합). 그 추정은
+        // ① 소스 무관이라 마우스 드로잉을 4점에서 끊을 수 있고(잠복 버그),
+        // ② 다른 시계(모니터 접촉 상태)를 다시 읽는 땜질이었다.
+        // 구조적 대체: 장치 어댑터가 접촉 해제를 **Up 에지**로 보존하고(0916 #4),
+        // 라우터가 그 Up 으로 세션을 닫는다 — 접촉 해제 뒤의 Drag 는 애초에
+        // 존재하지 않으므로 잘라낼 꼬리도 없다. 압력이 0에 가까운 점은 실제
+        // 접촉점이므로 그대로 기록한다 (가벼운 필압의 획이 4점에서 잘리지 않는다).
+        if let Some(p) = self.ink.as_mut() {
+            p.drag(page[0], page[1], pressure, drag_t, drag_t_ms);
+        }
+        // 렌더 미러를 파이프라인 라이브 점(중간 확정 포함)과 동기화해
+        // WYSIWYG을 보존합니다 (렌더 == 커밋).
+        if let Some(p) = &self.ink {
+            st.points = p.live().map(|l| l.points.clone()).unwrap_or_default();
+        }
+        // 진단: 25점마다 압력/잠금 폭을 남깁니다.
+        if st.points.len() % 25 == 0 {
+            pen_trace(&format!(
+                "pt {}: pressure={pressure:.3} locked_w={:.3}",
+                st.points.len(),
+                st.points.last().map(|q| q.width).unwrap_or(0.0)
+            ));
         }
     }
 

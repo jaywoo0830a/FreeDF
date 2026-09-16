@@ -869,14 +869,6 @@ pub(crate) enum PenCursorStyle {
     Round,
 }
 
-/// 현재 입력 장치. egui 0.36은 이벤트에 장치 필드가 없어 `Event::Touch`
-/// (Windows Ink 펜) 유무로 판별합니다 — 펜이면 잉크, 아니면 팬(기본).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InputDevice {
-    Pen,
-    Mouse,
-}
-
 impl PenCursorStyle {
     fn label(self) -> &'static str {
         match self {
@@ -1004,10 +996,10 @@ pub struct FreeDfApp {
     wheel_settings_open: bool,
     /// Insert Page 플로팅 창 표시 여부 (임시 — 메뉴 대신 창이라 타이핑 유지)
     insert_page_open: bool,
-    /// 마지막으로 감지된 입력 장치 (펜/마우스)
-    input_device: InputDevice,
-    /// 마지막 Windows Ink 터치 시각 (초) — 펜→마우스 전환 유예 판정용.
-    last_touch_time: Option<f64>,
+    /// 마지막으로 **라우팅한 포인터 이벤트의 소스** — 장치 판정은 이벤트가
+    /// 스스로 안고 온다 (추정 래치 금지). 팬 정책은 허브 점유 소스를, 표시는
+    /// 이 값을 쓴다.
+    last_pointer_source: Option<freedf_core::input_events::PointerSource>,
     /// 마우스/트랙패드로도 잉크를 그릴지 (기본 off — 펜 전용 필기)
     mouse_draws: bool,
     /// 펜 입력 스무딩(안정화) 사용 여부 (기본 off — OTD 등 드라이버로
@@ -1078,8 +1070,6 @@ pub struct FreeDfApp {
     macro_settings_open: bool,
     /// 키 캡처 중인 매핑 슬롯 (버튼 클릭 → 다음 키 입력).
     macro_capture: Option<toolbar::macros::MacroSlot>,
-    /// LIFT-CUT 로그가 이번 획에서 이미 나왔는지 (스팸 방지).
-    lift_cut_logged: bool,
     /// 페이지의 완성 획 전부를 담은 병합 잉크 메시 (페이지 좌표, 드로우 콜 1개).
     ink_mesh: Option<std::sync::Arc<freedf_canvas::Mesh>>,
     /// 병합 메시가 만들어진 시점의 (페이지, 스토어 세대, 줌, 잉크 설정).
@@ -1175,8 +1165,6 @@ pub struct FreeDfApp {
     color_wheel_opened_at: u64,
     /// 원형 팔레트가 열린 위치 (캔버스 좌표) — 펜 위치, 클램프 후 사용.
     color_wheel_anchor: [f32; 2],
-    /// 원형 팔레트를 닫은 바깥 탭의 릴리스(점)를 한 번만 무시하는 표식.
-    wheel_swallow_click: bool,
     /// 사용자 정의 용지 크기 [가로, 세로] (pt, `PaperSize::Custom`일 때)
     custom_paper_size: [f32; 2],
     /// 펜 입력 스무딩 강도 0..1
@@ -1295,8 +1283,6 @@ pub struct FreeDfApp {
     prev_viewport_focused: Option<bool>,
     /// 포커스가 프레스와 동시에 잡힌 직후의 잉크 유예 만료 시각 (ms).
     focus_grace_until_ms: Option<u64>,
-    /// 포커스 요청으로 삼킨 프레스의 릴리스(점)를 한 번만 무시하는 표식.
-    focus_swallow_next_click: bool,
 
     // ---------- Search ----------
     search_query: String,
@@ -1670,8 +1656,7 @@ impl FreeDfApp {
             cursor_settings_open: false,
             wheel_settings_open: false,
             insert_page_open: false,
-            input_device: InputDevice::Mouse,
-            last_touch_time: None,
+            last_pointer_source: None,
             mouse_draws,
             smoothing_enabled,
             pen_soak,
@@ -1712,7 +1697,6 @@ impl FreeDfApp {
             pen_flat_log_ms: 0,
             last_finished_id: None,
             last_focus_request_ms: 0,
-            lift_cut_logged: false,
             ink_mesh: None,
             ink_key: (
                 0,
@@ -1755,7 +1739,6 @@ impl FreeDfApp {
             color_wheel_open: false,
             color_wheel_opened_at: 0,
             color_wheel_anchor: [0.0, 0.0],
-            wheel_swallow_click: false,
             custom_paper_size,
             smoothing,
             zoom_lock,
@@ -1811,7 +1794,6 @@ impl FreeDfApp {
             focus_grabbed: false,
             prev_viewport_focused: None,
             focus_grace_until_ms: None,
-            focus_swallow_next_click: false,
             search_query: String::new(),
             search_runs: Vec::new(),
             search_matches: Vec::new(),

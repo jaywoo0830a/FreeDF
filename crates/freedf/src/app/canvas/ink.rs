@@ -78,8 +78,14 @@ impl FreeDfApp {
                         unlocked += 1;
                     }
                 }
-                let verdict = if n_pt < 8 {
-                    "점 부족"
+                let verdict = if !self.pressure_enabled {
+                    // 필압 민감도가 꺼진 설정에서는 폭이 필압과 무관한 것이 정상이다
+                    // (writing.log 오진: "필압 일정 → 입력 문제(OTD 확인)").
+                    "필압 꺼짐 (설정) — 폭은 필압과 무관"
+                } else if n_pt == 1 {
+                    "탭 (1점 — 정상)"
+                } else if n_pt < 8 {
+                    "점 부족 — 짧은 획"
                 } else if pmx - pmn < 0.05 {
                     "필압 일정 → 입력 문제 (OTD 연결/필압 소스 확인)"
                 } else if unlocked > 0 {
@@ -276,37 +282,6 @@ impl FreeDfApp {
             width: active.width,
         });
         true
-    }
-
-    pub(crate) fn commit_dot(&mut self, point: [f32; 2], pressure: f32) {
-        let (color, width) = self.current_drawing_style();
-        // 단일 점(탭)도 InkPipeline을 거쳐 폭을 잠급니다. 점은 필터 무의미라
-        // 스무딩 0(원점 통과)을 사용하고, t=0 — down 첫 샘플은 항등이라 무관.
-        let tilt = tilt_magnitude(&self.pen_tilt);
-        let t_ms = self.now_ms();
-        let mut pipeline = freedf_core::pipeline::InkPipeline::new(
-            Materials::new(self.pen_profile, self.fountain_profile),
-            width,
-            0.0,
-        );
-        let tip = pipeline.down(
-            self.tool,
-            color,
-            point[0],
-            point[1],
-            pressure,
-            0.0,
-            t_ms,
-            tilt,
-        );
-        self.ink = Some(pipeline);
-        self.active_stroke = Some(ActiveStroke {
-            tool: self.tool,
-            color,
-            width,
-            points: vec![tip],
-        });
-        self.finish_stroke();
     }
 
     // ---------- Texture rendering ----------

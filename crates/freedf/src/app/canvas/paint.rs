@@ -9,8 +9,20 @@ impl FreeDfApp {
     /// 접이식 섹션 안에서 렌더됩니다.
     pub(crate) fn debug_pen_section(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let pressure = self.sample_pressure(&ctx);
-        let (_, p_src) = self.pressure_source(&ctx);
+        // 압력/출처는 **파이프라인에 실제로 들어간 값**(획의 마지막 점)을 보여준다 —
+        // 이벤트가 나른 압력을 다시 샘플링하지 않는다.
+        let pressure = self
+            .active_stroke
+            .as_ref()
+            .and_then(|st| st.points.last())
+            .map(|q| q.pressure)
+            .or(self.live_pressure)
+            .unwrap_or(1.0);
+        let p_src = if self.pressure_enabled {
+            "event"
+        } else {
+            "off(명목 1.0)"
+        };
         let (speed, tip_w, pts_n) = match &self.active_stroke {
             Some(st) if st.points.len() >= 2 => {
                 let n = st.points.len();
@@ -41,9 +53,12 @@ impl FreeDfApp {
                 .count();
             (fps, touches)
         });
-        let device = match self.input_device {
-            InputDevice::Pen => "Pen",
-            InputDevice::Mouse => "Mouse",
+        let device = match self.last_pointer_source {
+            Some(freedf_core::input_events::PointerSource::Pen) => "Pen",
+            Some(freedf_core::input_events::PointerSource::Mouse) => "Mouse",
+            Some(freedf_core::input_events::PointerSource::Pad) => "Pad",
+            Some(freedf_core::input_events::PointerSource::Tablet) => "Tablet",
+            None => "—",
         };
         let is_fountain = self.tool == ToolType::Fountain;
         let (p_k, s_ref, t_k) = if is_fountain {
@@ -577,8 +592,9 @@ impl FreeDfApp {
     /// 마우스 + 잉크 도구(mouse_draws 꺼짐)면 팬 십자선으로 표시합니다.
     pub(crate) fn paint_custom_cursor(&self, painter: &egui::Painter, pos: Pos2, time: f32) {
         // 실제로 쓰일 도구: 마우스는 기본적으로 팬처럼 동작.
+        // (소스는 이벤트가 안고 온 값 — 허브 점유가 팬 정책을 안다)
         let mouse_panning = !self.mouse_draws
-            && self.input_device == InputDevice::Mouse
+            && self.last_pointer_source == Some(freedf_core::input_events::PointerSource::Mouse)
             && matches!(
                 self.tool,
                 ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser

@@ -19,13 +19,40 @@ use crate::pen_input::PenState;
 /// `pen_input::PenMonitor::poll()`의 스냅샷을 순서대로 먹여 스트로크 위상
 /// (접촉 에지)과 사이드 버튼 에지를 이벤트로 뽑아내는 순수 상태기계다.
 /// 하드웨어가 없어도 테스트할 수 있다.
+///
+/// **장치 상태의 소유자**이기도 하다: 틸트 벡터를 조건화(노이즈 필터)해 보관하고
+/// [`Self::tilt`]로 노출한다 — 렌더/모델은 조건화된 값을 받고, 캔버스가 장치
+/// 노이즈 사정을 알 필요가 없다 (레이어링: 장치 지식은 이 경계에서 끝난다).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PenEventAdapter {
     prev_buttons: crate::pen_input::PenButtons,
     prev_contact: bool,
+    /// 조건화된 틸트 벡터 (도, ±90) — [`smooth_tilt`] 참조.
+    tilt: [f32; 2],
+}
+
+/// 틸트 노이즈 필터 — 패드 진입 시(호버 시작) 격렬하게 떨리는 틸트 리포트를
+/// 무시한다. 리포트당 최대 변화를 제한하고 EMA로 부드럽게 수렴시킨다.
+///
+/// 종전에는 캔버스(앱)가 이 필터를 들고 `pen_tilt`를 직접 갱신했다 — 장치
+/// 노이즈라는 장치 사정이 앱 경계로 새어 나온 땜질이었다. 이제 어댑터가
+/// 소유한다 (어댑터는 위치/압력 기본값 채움(능력 협상)과 같은 자리다).
+pub fn smooth_tilt(prev: [f32; 2], next: [f32; 2]) -> [f32; 2] {
+    const MAX_STEP: f32 = 24.0; // 한 리포트당 최대 변화(도) — 이보다 큰 점프는 잘라냄.
+    const ALPHA: f32 = 0.3; // EMA 계수.
+    let mut out = prev;
+    for i in 0..2 {
+        let step = (next[i] - prev[i]).clamp(-MAX_STEP, MAX_STEP);
+        out[i] = prev[i] + step * ALPHA;
+    }
+    out
 }
 
 impl PenEventAdapter {
+    /// 조건화된 틸트 벡터 (도, ±90) — 렌더/모델의 틸트 원천.
+    pub fn tilt(&self) -> [f32; 2] {
+        self.tilt
+    }
     /// 펜 스트림 스냅샷 1건 → 통합 이벤트들.
     ///
     /// `point`: 이 순간의 커서 위치(경계 좌표). 펜 스트림 자체는 위치가 없고
@@ -35,9 +62,13 @@ impl PenEventAdapter {
     pub fn update(&mut self, st: &PenState, point: Option<[f32; 2]>) -> Vec<InputEvent> {
         let mut out = Vec::new();
 
+        // 틸트 조건화 — 장치 노이즈 필터는 여기(장치 경계)서 끝난다. 이벤트가
+        // 나르는 틸트와 렌더/모델이 보는 틸트가 같은 값이 된다 (조건화된 벡터).
+        self.tilt = smooth_tilt(self.tilt, st.tilt);
+
         // 능력 협상의 끝 — 압력/기울기는 여기서 "항상 존재"하게 된다.
         let pressure = st.pressure.unwrap_or(1.0);
-        let tilt = st.tilt[0].hypot(st.tilt[1]);
+        let tilt = self.tilt[0].hypot(self.tilt[1]);
 
         // ── 에지 보존 (0916 계약 #4) ─────────────────────────────────────
         // 접촉 에지가 감지됐는데 이 패킷에 위치가 없으면, 에지를 **파괴하지
@@ -142,9 +173,12 @@ mod tests {
         let p = pen(&evs[0]);
         assert_eq!(p.phase, PointerPhase::Down);
         assert_eq!(p.source, PointerSource::Pen);
-        // 능력 협상: 압력/기울기가 어댑터에서 채워진다 (기기 값 그대로).
+        // 능력 협상: 압력/기울기가 어댑터에서 채워진다.
         assert_eq!(p.pressure, 0.7);
-        assert_eq!(p.tilt, 5.0); // hypot(3, 4)
+        // 틸트는 **조건화된 벡터**의 크기다 (raw [3,4] → EMA 0.3 → [0.9,1.2]).
+        // 장치 노이즈 필터가 경계 안에 있으므로 첫 리포트는 raw보다 작다.
+        let expect = (0.9f32 * 0.9 + 1.2 * 1.2).sqrt();
+        assert!((p.tilt - expect).abs() < 1e-5, "tilt={} expect={expect}", p.tilt);
         let evs = a.update(&st(false, false, false), Some([1.0, 1.0]));
         assert_eq!(pen(&evs[0]).phase, PointerPhase::Up);
     }
@@ -213,5 +247,45 @@ mod tests {
         // 미뤄진 뒤 접촉이 재개돼도 유령 Down 이 생기지 않는다 (prev_contact 미갱신).
         let evs = a.update(&st(true, false, false), Some([2.0, 2.0]));
         assert_eq!(pen(&evs[0]).phase, PointerPhase::Down);
+    }
+
+    /// 틸트 조건화는 **장치 경계**의 책임 — 캔버스(앱)에서 옮겨온 테스트.
+    #[test]
+    fn smooth_tilt_rejects_violent_jumps() {
+        // 패드 진입 시 ±90° 스파이크가 연달아 와도 한 걸음이 24°×0.3 = 7.2°를
+        // 넘지 않고, 같은 값이 계속되면 서서히 수렴합니다.
+        let mut t = [0.0f32, 0.0];
+        for _ in 0..8 {
+            let prev = t;
+            t = smooth_tilt(t, [90.0, -90.0]);
+            assert!((t[0] - prev[0]).abs() <= 7.2 + 1e-3, "급격 점프 제한");
+            assert!((t[1] - prev[1]).abs() <= 7.2 + 1e-3);
+        }
+        assert!(t[0] > 40.0 && t[1] < -40.0, "결국 목표로 수렴");
+        // 상수 입력에는 정확히 수렴.
+        let mut t2 = [10.0f32, -10.0];
+        for _ in 0..50 {
+            t2 = smooth_tilt(t2, [20.0, 5.0]);
+        }
+        assert!((t2[0] - 20.0).abs() < 0.5 && (t2[1] - 5.0).abs() < 0.5);
+    }
+
+    /// 어댑터가 조건화된 틸트를 보관/노출한다 — 이벤트가 나르는 틸트와
+    /// 렌더가 보는 틸트가 같은 값이 된다 (앱에서 필터를 들고 있을 이유가 없다).
+    #[test]
+    fn adapter_exposes_conditioned_tilt_vector() {
+        let mut a = PenEventAdapter::default();
+        let evs = a.update(&st(true, false, false), Some([1.0, 1.0]));
+        let p = pen(&evs[0]);
+        // 첫 리포트: [3,4] → EMA 0.3 → [0.9, 1.2], 크기 = hypot.
+        let t = a.tilt();
+        assert!((t[0] - 0.9).abs() < 1e-5 && (t[1] - 1.2).abs() < 1e-5);
+        assert!((p.tilt - (t[0] * t[0] + t[1] * t[1]).sqrt()).abs() < 1e-5);
+        // 급격한 점프는 잘린다 (조건화가 어댑터 안에 있다).
+        let mut wild = st(true, false, false);
+        wild.tilt = [90.0, -90.0];
+        a.update(&wild, Some([2.0, 2.0]));
+        let t1 = a.tilt();
+        assert!((t1[0] - t[0]).abs() <= 7.2 + 1e-3 && (t1[1] - t[1]).abs() <= 7.2 + 1e-3);
     }
 }

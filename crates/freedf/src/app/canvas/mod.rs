@@ -64,19 +64,6 @@ const WHEEL_SWATCH_R: f32 = 12.0;
 const WHEEL_CENTER_R: f32 = 15.0;
 const WHEEL_BACK_R: f32 = 56.0;
 
-/// 틸트 노이즈 필터 — 패드 진입 시(호버 시작) 격렬하게 떨리는 틸트 리포트를
-/// 무시합니다. 리포트당 최대 변화를 제한하고 EMA로 부드럽게 수렴시킵니다.
-fn smooth_tilt(prev: [f32; 2], next: [f32; 2]) -> [f32; 2] {
-    const MAX_STEP: f32 = 24.0; // 한 리포트당 최대 변화(도) — 이보다 큰 점프는 잘라냄.
-    const ALPHA: f32 = 0.3; // EMA 계수.
-    let mut out = prev;
-    for i in 0..2 {
-        let d = (next[i] - prev[i]).clamp(-MAX_STEP, MAX_STEP);
-        out[i] = prev[i] + d * ALPHA;
-    }
-    out
-}
-
 /// 손잡이에 따라 방위각을 유효 반평면으로 되돌립니다 — 오른손잡이는 배럴이
 /// 오른쪽(1·4사분면), 왼손잡이는 왼쪽(2·3사분면)에만 머뭅니다. 반대편이면
 /// 세로축 대칭으로 접어서 같은 상하 방향의 반대쪽으로 보냅니다.
@@ -270,37 +257,20 @@ impl FreeDfApp {
         self.tool = tool;
     }
 
-    /// Pen pressure — 우선순위: evdev에서 직접 읽은 필압 → egui Touch force
-    /// → (없으면) 풀 필압.
-    pub(crate) fn sample_pressure(&self, ctx: &egui::Context) -> f32 {
-        self.pressure_source(ctx).0
-    }
-
-    /// (압력, 출처) — 진단 로그가 어느 입력이 실제로 쓰였는지 알 수 있게 합니다.
-    pub(crate) fn pressure_source(&self, ctx: &egui::Context) -> (f32, &'static str) {
-        if !self.pressure_enabled {
-            return (1.0, "off");
-        }
-        if let Some(p) = self.live_pressure {
-            return (p.clamp(0.0, 1.0), "pen-monitor");
-        }
-        if let Some(mon) = &self.pen_monitor {
-            if let Some(p) = mon.snapshot().pressure {
-                return (p.clamp(0.0, 1.0), "pen-monitor(스냅샷)");
-            }
-        }
-        let force: Option<f32> = ctx.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Touch { force, .. } => *force,
-                    _ => None,
-                })
-                .last()
-        });
-        match force {
-            Some(f) => (f.clamp(0.0, 1.0), "egui-touch"),
-            None => (1.0, "없음(1.0 고정)"),
+    /// 사용자 설정 → 모델 입력 변환: 필압 민감도가 꺼져 있으면 모델에는 명목
+    /// 압력(1.0)을 준다 (폭이 필압에 반응하지 않는다).
+    ///
+    /// 종전에는 이 변환이 `pressure_source()` 안에 섞여 있었고, 그 함수가
+    /// ① 이벤트가 나른 압력을 버리고 모니터/egui 를 **다시 샘플링**했으며
+    /// (펜 압력이 마우스 획에 새는 문제 — 표본 시각도 어긋났다),
+    /// ② egui Touch force 폴백까지 손으로 들고 있었다 (능력 협상은 어댑터의
+    /// 몫 — `PointerEvent.pressure` 참조).
+    /// 이제 압력의 출처는 **이벤트 하나**이고, 여기는 설정 한 곳만 반영한다.
+    pub(crate) fn model_pressure(&self, event_pressure: f32) -> f32 {
+        if self.pressure_enabled {
+            event_pressure.clamp(0.0, 1.0)
+        } else {
+            1.0
         }
     }
 
@@ -468,8 +438,9 @@ impl FreeDfApp {
                 ));
             }
             self.last_pen_state_ms = Some(self.now_ms());
-            // 패드 진입 시 격렬한 틸트 노이즈를 필터링 (점프 제한 + EMA).
-            self.pen_tilt = smooth_tilt(self.pen_tilt, st.tilt);
+            // 틸트는 **장치 어댑터가 조건화한 벡터**를 그대로 쓴다 (노이즈
+            // 필터는 장치 경계의 소유 — 캔버스는 장치 사정을 모른다).
+            self.pen_tilt = self.pen_adapter.tilt();
             self.live_pressure = st.pressure;
             // 사이드 버튼 상태 (Debug HUD 표시용) — 에지 감지는 펜 어댑터가 소유.
             self.pen_buttons = st.buttons;
@@ -496,7 +467,6 @@ impl FreeDfApp {
         //    워크스페이스(툴 전환·획 경계) → 커맨드 실행기로 이어진다 (PR2).
         // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
         self.input_sources.update(
-            &ctx,
             pen_state.as_ref(),
             self.last_pen_state_ms,
             self.now_ms(),

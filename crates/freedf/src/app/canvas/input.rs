@@ -20,21 +20,27 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
-        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 탭을 휠이 전담합니다.
+        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 프레스의 소유자는 휠이다.
+        //
+        // 종전에는 여기서 `return` 만 하고 허브를 소비하지 않았다: 포인터 이벤트가
+        // 매 프레임 큐에 **적체**하다가, 휠이 닫히는 순간 묵은 Down/Up 이 한꺼번에
+        // 라우팅되어 페이지에 유령 점이 찍힐 수 있었다 (그 자리를 삼킴 표식
+        // `wheel_swallow_click` 이 손으로 막고 있었다).
+        // 이제는 소유권을 명시한다: 휠이 열려 있는 동안 포인터 스트림은 **즉시
+        // 소비·폐기**된다 (휠의 탭 판정은 오버레이가 담당). 적체도, 유령 점도,
+        // 삼킴 표식도 필요 없다.
         if self.color_wheel_open {
+            self.input_hub.take(|_| {});
             if let Some(abs) = frame_tap_pos(ctx) {
                 let canvas_rect =
                     egui::Rect::from_min_size(origin, egui::vec2(canvas_size[0], canvas_size[1]));
                 let wheel_center = self.color_wheel_center(canvas_rect);
                 if abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0 {
                     // 휠 안 탭 — color_wheel_overlay가 처리, 캔버스 입력은 스킵.
-                    // (릴리스 점도 삼켜 휠 탭이 페이지에 점을 남기지 않게)
-                    self.wheel_swallow_click = true;
                     return;
                 }
-                // 바깥 탭 — 닫고 점 없이 삼킵니다.
+                // 바깥 탭 — 닫고 점 없이 삼킵니다 (프레스는 이미 휠 소유로 소비됐다).
                 self.color_wheel_open = false;
-                self.wheel_swallow_click = true;
                 return;
             }
         }
@@ -160,30 +166,6 @@ impl FreeDfApp {
 
         let primary_down = ctx.input(|i| i.pointer.primary_down());
 
-        // ── 입력 장치 판별 (래치 + 유예 시간) ─────────────────────────────
-        // egui 0.36 이벤트에는 장치 필드가 없어, Windows Ink 펜의 `Event::Touch`
-        // 유무로 펜/마우스를 구분합니다. 펜 입력 중 일부 프레임에는 Touch
-        // 이벤트가 아예 없을 수 있는데, 그때마다 Mouse로 뒤집히면 **필기 중
-        // 팬(페이지 이동)으로 전환되어 페이지가 갑자기 확 이동**합니다
-        // (펜을 떼는 순간 장치 변환이 감지되던 버그의 원인).
-        // → 마지막 터치 후 1초간은 Pen으로 유지하고, 스트로크 진행 중에는
-        //   절대 Mouse로 뒤집지 않습니다.
-        let has_touch = ctx
-            .input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { .. })));
-        let any_pointer = ctx.input(|i| {
-            i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released()
-        });
-        if has_touch {
-            self.input_device = InputDevice::Pen;
-            self.last_touch_time = Some(ctx.input(|i| i.time));
-        } else if any_pointer && self.active_stroke.is_none() {
-            let now = ctx.input(|i| i.time);
-            let stale = self.last_touch_time.map_or(true, |t| now - t > 1.0);
-            if stale {
-                self.input_device = InputDevice::Mouse;
-            }
-        }
-
         // ── 사전 오버레이: 단어 탭 조회 (다른 동작보다 우선) ─────────────
         if response.clicked() && self.dictionary.enabled && self.document.is_some() {
             if let Some(abs) = pointer_abs {
@@ -198,11 +180,19 @@ impl FreeDfApp {
             }
         }
 
-        // 마우스/트랙패드는 (mouse_draws가 꺼져 있으면) 모든 잉크 도구에서
-        // 팬으로 동작 — 팬만 글을 쓰게 하는 범용 관례를 따릅니다.
+        // ── 팬 정책 — 소스는 **이벤트가 안고 있다** (추정 래치 없음) ─────────
+        // 종전에는 egui `Event::Touch`(Windows Ink 펜) 유무로 펜/마우스를 추정하고,
+        // 펜↔마우스가 프레임마다 뒤집히는 것을 1초 래치로 막았다 (땜질: 다른 시계의
+        // 신호로 장치를 재추정). 이제 장치 경계(어댑터)가 소스를 붙여 보내고,
+        // 점유 규칙의 소유자(허브)가 "지금 이 프레스의 주인"을 알고 있다 — 묻는다.
+        //
+        // 마우스/트랙패드는 (mouse_draws가 꺼져 있으면) 잉크 도구에서 팬으로
+        // 동작 — 팬만 글을 쓰게 하는 범용 관례를 따릅니다. `Mouse`만 팬 소유자다:
+        // `Pad`(터치)와 `Pen`은 그리는 소스 (종전 has_touch→Pen 동작과 동일).
+        let press_source = self.input_hub.active_source();
         let panning = self.tool == ToolType::Pan
             || (!self.mouse_draws
-                && self.input_device == InputDevice::Mouse
+                && press_source == Some(freedf_core::input_events::PointerSource::Mouse)
                 && matches!(
                     self.tool,
                     ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser
@@ -249,6 +239,9 @@ impl FreeDfApp {
                 self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
             }
             freedf_core::input_events::InputEvent::Pointer(p) => {
+                // 마지막으로 라우팅한 소스 — 장치 판정은 이벤트가 안고 온다.
+                // (팬 정책은 허브 점유 소스를 쓰고, 표시/로그는 이 값.)
+                self.last_pointer_source = Some(p.source);
                 // ── 세션 라우터 — 프레스의 목적지와 완결을 소유한다 ──────────
                 // 게이트는 더 이상 egui 레벨 샘플링이 아니라 이벤트가 안고 있는
                 // 좌표의 **순수 기하**다 (잉크 싱크) — Down 에지 1회 판정이
@@ -264,9 +257,10 @@ impl FreeDfApp {
         self.input_hub = hub;
 
         // ── 포커스 획득 제스처 — 싱크가 삼킨 프레스의 표식을 소화한다 ─────────
+        // (이 프레스는 잉크 세션을 열지 않았다 — 릴리스도 세션 밖이라 점이 남지
+        //  않는다. 종전의 `focus_swallow_next_click` 삼킴 표식은 불필요해졌다.)
         if self.input_router.sinks_mut()[0].take_focus_request() {
             self.focus_grabbed = true;
-            self.focus_swallow_next_click = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
@@ -345,43 +339,14 @@ impl FreeDfApp {
             self.finish_stroke();
         }
 
-        if matches!(
-            self.tool,
-            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
-        ) {
-            // 탭(점) 커밋 — 드래그 없이 눌렀다 뗀 경우 (기존 로직 이동).
-            if response.clicked() && self.active_stroke.is_none() {
-                // 포커스용 탭은 점을 찍지 않습니다 (프레스에서 삼킨 표식
-                // 또는 포커스 획득 직후 유예).
-                if self.focus_swallow_next_click {
-                    self.focus_swallow_next_click = false;
-                    return;
-                }
-                if self.wheel_swallow_click {
-                    self.wheel_swallow_click = false;
-                    return;
-                }
-                if self.focus_grace_until_ms.is_some_and(|t| self.now_ms() < t) {
-                    return;
-                }
-                if let Some(abs) = pointer_abs {
-                    let p = abs - origin;
-                    let raw = self.view.view_to_page([p.x, p.y]);
-                    let page_w = self.page_size_pts[0];
-                    let page_h = self.page_size_pts[1];
-                    // 클릭(점)도 페이지 내부일 때만 기록합니다.
-                    if raw[0] >= 0.0 && raw[0] <= page_w && raw[1] >= 0.0 && raw[1] <= page_h {
-                        let page = [raw[0].clamp(0.0, page_w), raw[1].clamp(0.0, page_h)];
-                        let pressure = self.sample_pressure(ctx);
-                        self.commit_dot(page, pressure);
-                    }
-                }
-            } else if !primary_down {
-                // 클릭이 완성되지 않았으면 삼킴 표식을 폐기합니다.
-                self.focus_swallow_next_click = false;
-                self.wheel_swallow_click = false;
-            }
-        }
+        // ── 탭(점)은 라우터 세션이 그린다 — 별도 점 커밋 경로 없음 ────────────
+        //
+        // 종전에는 여기서 egui 리액션(`response.clicked()`)으로 탭을 **다시** 판정해
+        // `commit_dot` 을 호출했다 (그 위에 포커스/휠 삼킴 표식 두 개가 얹혀 있었다).
+        // 이제 탭은 프레스-릴리스의 온전한 세션 `[down, up]` 이므로 툴이
+        // begin-stroke → end-stroke 를 내고, 1점 획이 정상 경로로 커밋된다 —
+        // 점이 두 번 찍히지도(획 점 + 커밋 점), 다른 시계를 다시 읽지도 않는다.
+        // 캔버스 밖 누름/포커스 제스처/휠 소유 프레스는 애초에 세션이 없다.
     }
 
     // ---------- Stroke painting ----------
