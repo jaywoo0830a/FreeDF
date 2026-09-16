@@ -25,6 +25,10 @@ import { checkWellFormed, commandTypes } from './invariants.js';
  *  ② 라우터는 시계를 읽지 않는다 — 시간은 인자로만 들어온다 (정적 검사).
  *  ③ 모든 Down 에지는 resolution(장부)으로 정산된다 — 유실은 상태가 아니라
  *     데이터로 관측된다.
+ *  ④ 교차 소스는 이 객체의 계약 밖이다 — "한 번에 한 포인터"는 상류(허브)의
+ *     점유 규칙이 소유하고, 라우터는 그 아래에서 **한 소스의 온전한 스트림**만
+ *     본다. 다른 소스의 이벤트는 세션도 장부도 오염시키지 않고 'foreign' 으로
+ *     드러난다.
  *
  * "실패하는 인터페이스 테스트": 아래 대조군(`it.fails`)은 현재 설계의 축소
  * 모의(샘플링 게이트 + 앱 보류)가 이 계약을 **만족할 수 없음을 증명**하기
@@ -82,9 +86,16 @@ export function createSessionRouter({ sinks, ttlMs = 250, onAbandon = 'drop' } =
      */
     dispatch(ev, { now = 0 } = {}) {
       if (ev.phase === 'down') {
+        // 교차 소스 — 라우터의 계약 밖이다. "한 번에 한 포인터"는 상류(허브)의
+        // 점유 규칙이 소유하고, 실제 배치에서 라우터는 그 아래에 놓인다. 여기서는
+        // 배선 실수를 조용히 흡수하는 대신 드러낸다 — 세션도 장부도 오염하지 않는다.
+        if (open && open.source !== ev.source) {
+          return { edge: 'down', outcome: 'foreign', source: ev.source, now };
+        }
         if (open) {
-          // 업스트림(어댑터) 계약 위반 방어 — 접촉 없는 Down. 열린 세션을
-          // 합성 up 으로 닫고(워크스페이스의 획 경계 합성과 같은 원리) 정산한다.
+          // 같은 소스의 Down — 업스트림(어댑터) 계약 위반이다 (접촉이 아직
+          // 열려 있는데 Down?). 열린 세션을 합성 up 으로 닫고(워크스페이스의
+          // 획 경계 합성과 같은 원리) 정산한다.
           if (!open.resolved) resolve('replaced', { sink: open.sink });
           sinkByName(open.sink).handle([
             Pointer(open.source, 'up', lastPoint(), open.down.pressure),
@@ -112,6 +123,11 @@ export function createSessionRouter({ sinks, ttlMs = 250, onAbandon = 'drop' } =
       }
 
       if (!open) return { edge: ev.phase, outcome: 'unrouted', now }; // 세션 밖 Drag/Up
+      if (open.source !== ev.source) {
+        // 교차 소스 샘플 — 세션을 오염시키지 않는다 (다른 소스의 Drag 가
+        // 잉크 획에 섞이는 것을 구조적으로 차단; 상류 점유 규칙의 몫).
+        return { edge: ev.phase, outcome: 'foreign', source: ev.source, now };
+      }
 
       if (ev.phase === 'drag') {
         open.drags.push(ev);
@@ -229,6 +245,15 @@ const rig = () => {
 
 const toHub = (hub) => (evs) => evs.forEach((e) => hub.emit(e));
 const pen = (phase, x, pressure = 0.3) => Pointer('pen', phase, [x, 0], pressure, 0);
+const pad = (phase, x) => Pointer('pad', phase, [x, 0], 1.0, 0);
+
+const TERMINAL = ['delivered', 'refused', 'cancelled', 'expired', 'replaced'];
+/** 정산 불변식 — 지금까지의 Down 에지가 전부 터미널 결과로 정산됐는가. */
+const expectAllSettled = (router, downs) => {
+  const ledger = router.ledger();
+  expect(ledger).toHaveLength(downs);
+  for (const r of ledger) expect(TERMINAL).toContain(r.outcome);
+};
 
 /** 스크립트된 싱크 — admit 판정을 순서대로 내놓고, 받은 이벤트/판정 인자를 기록한다. */
 const scriptedSink = (name, decisions, hub) => {
@@ -311,11 +336,7 @@ describe('세션 라우터 — 인터페이스 계약 (실패를 표현 불가�
 
     const ledger = router.ledger();
     expect(ledger.map((r) => r.outcome)).toEqual(['delivered', 'refused']); // Down 2건 = 정산 2건
-    expect(
-      ledger.every((r) =>
-        ['delivered', 'refused', 'cancelled', 'expired', 'replaced'].includes(r.outcome),
-      ),
-    ).toBe(true);
+    expectAllSettled(router, 2);
     // 세션 교체는 워크스페이스의 획 경계 합성과 같은 원리로 닫힌다 — 잘-형성 유지.
     expect(commandTypes(ws.commands)).toEqual([
       'begin-stroke',
@@ -351,6 +372,64 @@ describe('세션 라우터 — 라우팅 계약', () => {
     expect(ws.activeName()).toBe('eraser'); // 액션으로 소화 — 커맨드 스트림 오염 없음
     expect(commandTypes(ws.commands)).toEqual([]);
     expect(router.ledger()[0].outcome).toBe('delivered');
+  });
+
+  it('교차 소스는 라우터가 대신 끊거나 섞지 않는다 — 점유 규칙은 상류(허브)의 몫이다', () => {
+    const { hub, ws } = rig();
+    const ink = scriptedSink('ink', ['now'], hub); // 펜 세션을 연다
+    const router = createSessionRouter({ sinks: [ink] });
+
+    router.dispatch(pen('down', 10), { now: 1000 }); // pen live
+    // 펜 세션이 살아 있는 동안 패드가 프레스 — 라우터는 끊지 않고 드러낸다.
+    expect(router.dispatch(pad('down', 5), { now: 1010 }).outcome).toBe('foreign');
+    expect(router.dispatch(pad('drag', 6), { now: 1020 }).outcome).toBe('foreign');
+    expect(router.dispatch(pad('up', 6), { now: 1030 }).outcome).toBe('foreign');
+    expect(router.openSession().source).toBe('pen'); // 세션 무사
+
+    router.dispatch(pen('drag', 12), { now: 1040 }); // 펜 스트림은 계속된다
+    router.dispatch(pen('up', 14), { now: 1050 });
+
+    expect(commandTypes(ws.commands)).toEqual(['begin-stroke', 'extend-stroke', 'end-stroke']);
+    expect(ws.commands[1].point).toEqual([12, 0]); // 패드 샘플(6)이 획에 섞이지 않았다
+    expectAllSettled(router, 1); // foreign Down 은 상류(허브 drop)가 정산하는 영역
+  });
+
+  it('증거 문맥은 프레임에서 명시적으로 흘러온다 — 증거 없는 프레임에서는 승격하지 않는다', () => {
+    const { hub, ws } = rig();
+    let asks = 0;
+    const ink = {
+      name: 'ink',
+      // "증거가 있는 프레임에만 승인" 정책 — 꼬리 hover 승격 방지의 표본.
+      // 증거를 몰래 샘플링하지 않고 ctx 로 받는다는 점이 계약의 요점이다.
+      admit: (session, ctx) => (++asks === 1 ? 'hold' : ctx.evidence ? 'now' : 'hold'),
+      handle: toHub(hub),
+    };
+    const router = createSessionRouter({ sinks: [ink] });
+
+    router.dispatch(pen('down', 10), { now: 1000 }); // hold
+    router.frame({ now: 1010, evidence: false }); // 증거 없는 프레임 — hold 유지
+    expect(router.openSession().state).toBe('held');
+    router.frame({ now: 1020, evidence: true }); // 증거 도착 — 승격
+
+    expect(commandTypes(ws.commands)).toEqual(['begin-stroke']);
+    expect(router.ledger()[0]).toMatchObject({ outcome: 'delivered', promoted: true });
+  });
+
+  it('최종 상태 — 순수 기하 싱크에서는 hold/승격이 아예 발생하지 않는다 (땜질이 필요 없어지는 세상)', () => {
+    const { hub, ws } = rig();
+    // 마이그레이션 완료 형태: admit = geometry.contains(이벤트 좌표) — 샘플링 게이트가 사라지면
+    // 판정은 지연 없이 즉답하고, 라우터의 보류 장치는 하중을 지지지 않는 안전망이 된다.
+    const router = createSessionRouter({ sinks: [geometrySink('ink', hub, (p) => p[0] >= 0)] });
+
+    router.dispatch(pen('down', -5), { now: 900 }); // 캔버스 밖 → 닫힌 거절
+    router.dispatch(pen('up', -5), { now: 910 });
+    router.dispatch(pen('down', 10), { now: 1000 }); // 안 → 즉시 라이브
+    router.dispatch(pen('drag', 12), { now: 1010 });
+    router.dispatch(pen('up', 14), { now: 1020 });
+
+    expect(router.frame({ now: 1100 })).toBeNull(); // 보류가 없다 — frame 은 할 일이 없다
+    expect(commandTypes(ws.commands)).toEqual(['begin-stroke', 'extend-stroke', 'end-stroke']);
+    expect(router.ledger().map((r) => r.outcome)).toEqual(['refused', 'delivered']);
   });
 
   it('거절은 닫힌 거절이다 — 세션 없는 Drag 가 아무리 와도 세션은 생기지 않는다', () => {

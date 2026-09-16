@@ -192,14 +192,19 @@ Up도 `(false, up) → 무시` — 복구 경로가 0이었다.
 승인 전 Drag 유실, 장부 부재. "실패해야 통과"하므로 스위트는 녹색을 유지하면서
 구조 교체의 명세로 남는다.
 
-### 9.3 Rust 이식 경로 (제안)
+### 9.3 Rust 이식 경로
 
-1. `input.rs` 의 게이트를 순수 기하로 교체 (#2) — `geometry.contains(event 위치)`.
-   이 경우 잉크 싱크의 `admit` 은 사실상 항상 `'now'`, hold 는 포커스 유예에서만
-   발생한다 — 라우터의 보류 장치는 **하중을 지지지 않는 안전망**이 된다.
-2. `PendingDown` + 승격 블록을 `SessionRouter` 형태로 추출 — `STROKE-RECOVER`/
-   `STROKE-DROP` 로그가 곧 장부(resolution) 행이 된다.
-3. 어댑터 에지 보존(#4)을 선행해 "위치 없는 Down"을 라우터가 아예 못 받게 한다 —
-   라우터와 어댑터의 책임이 겹치지 않는다 (`stroke-edge.test.js` 합성 테스트 참고).
+상세 마이그레이션 계획은 **`session-router-migration.md`** (배치도 · 단계별 Rust
+변경 · JS 스펙↔Rust 테스트 1:1 매핑표 · 수용 기준 · 리스크) 로 분리했다. 요지:
+
+1. **선행** — 어댑터 에지 보존 (#4): "위치 없는 Down"을 라우터가 아예 못 받게 한다.
+2. **코어** — `SessionRouter` (순수 상태기계, egui 의존 0) + `Sink` 트레이트를
+   `app/input/session_router.rs` 에 두고 JS 스펙을 1:1 유닛 테스트로 이식.
+3. **싱크** — `InkSink.admit` = 순수 기하 (#2): 샘플링 게이트가 정책으로 강등되고
+   hold 는 포커스 유예에서만 발생 — 라우터의 보류 장치는 하중을 지지지 않는
+   안전망이 된다.
+4. **재배선** — `input.rs`: `hub.take → router.dispatch`, 프레임 말미
+   `router.frame`, `PendingDown`·승격 블록·`insert(0,…)` 삭제.
+5. **관측** — 장부(Resolution) → 기존 `STROKE-RECOVER`/`STROKE-DROP` 로그 형식 유지.
 
 
