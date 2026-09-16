@@ -3,6 +3,7 @@
 *.freedf.json
 *.annotations.json
 *.png
+*.log
 !crates/freedf/assets/icon/*.png
 pdfium.dll
 libpdfium.so
