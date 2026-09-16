@@ -87,8 +87,10 @@
 
 ### 2.3 [싱크] `InkSink` — 게이트를 정책으로 강등
 - `admit`: `geometry.contains_window(down.point)` (후속 #2 — **샘플링 게이트 삭제**).
-  포커스 유예(`focus_grace_until_ms`) 구간이면 `Hold` — 유예 해제는 `frame`의
-  재판정으로 자연 해소.
+  포커스 유예(`focus_grace_until_ms`) 구간이면 `Refuse` — 유예 프레스는
+  삼켜져야 하는 프레스다. `Hold` 로 두면 유예 프레스가 유예 해제 뒤 400ms
+  늦게 재생되는 지연·오동작이 된다. **hold 는 정말 "나중에 답이 생기는" 경우에만** —
+  기하 즉담 구조에서는 평시 경로에 지연이 0프레임이고, hold/TTL 은 안전망이다.
 - `handle`: 받은 이벤트를 `pointer_events`(혹은 직접 `workspace.handle`)로 —
   **Down→Drag→Up 순서 보존**이 싱크의 책임.
 - `evidence`: "이 프레임에 그 소스의 접촉 증거가 있었는가" (Rust: hub 소비 중
