@@ -1,4 +1,5 @@
     use super::*;
+    use crate::app::input::wheel_sink::WheelHit;
 
     /// 실제 렌더 경로(리본 → freedf-canvas 메시 → egui)를 돌려, 모든
     /// 정점이 유한하고 스트로크 근처에 머무는지 확인합니다.
@@ -194,14 +195,19 @@
 
     #[test]
     fn tilt_azimuth_maps_direction() {
-        let (az, cos) = tilt_azimuth(&[20.0, 0.0]);
+        // 틸트 방향 수학의 소유자는 **어휘**다 (어휘가 방향을 나르므로 —
+        // 앱은 별도 벡터/계산을 갖지 않는다). 테스트도 소유자를 직접 검사한다.
+        let (az, cos) = freedf_core::input_events::tilt_azimuth([20.0, 0.0]);
         assert!(az.abs() < 1e-3, "오른쪽 기울기 → 방위각 0");
         assert!((cos - 20.0f32.to_radians().cos()).abs() < 1e-4);
-        let (az2, _) = tilt_azimuth(&[0.0, 25.0]);
+        let (az2, _) = freedf_core::input_events::tilt_azimuth([0.0, 25.0]);
         assert!(
             (az2 - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
             "사용자 쪽 기울기 → +90°"
         );
+        // 모델용 0..1 크기 변환은 앱 경계에 남는다 (단위 변환만).
+        assert!((model_tilt([45.0, 0.0]) - 0.5).abs() < 1e-6);
+        assert_eq!(model_tilt([200.0, 0.0]), 1.0, "범위 밖은 클램프");
     }
 
     #[test]
@@ -236,9 +242,10 @@
 
     #[test]
     fn wheel_center_tap_returns_center() {
-        // 가운데(현재 색)를 탭하면 "변경 없이 닫기"다.
+        // 가운데(도넛 구멍)를 탭하면 지우개 전환 의도가 남는다.
+        // 판정은 **기하 소유자**(WheelGeom)가 한다 — 렌더와 판정이 같은 값이다.
         let wheel = make_wheel(100.0, 100.0, 4);
-        assert_eq!(wheel.hit(egui::pos2(100.0, 100.0)), WheelHit::Center);
+        assert_eq!(wheel.geom().hit([100.0, 100.0]), WheelHit::Center);
     }
 
     #[test]
@@ -246,7 +253,8 @@
         // 각 색의 바로 위를 탭하면 그 색이 선택된다.
         let wheel = make_wheel(200.0, 300.0, 4);
         for i in 0..4 {
-            assert_eq!(wheel.hit(wheel.swatch_pos(i)), WheelHit::Swatch(i));
+            let p = wheel.swatch_pos(i);
+            assert_eq!(wheel.geom().hit([p.x, p.y]), WheelHit::Swatch(i));
         }
     }
 
@@ -255,14 +263,14 @@
         // 색과 색 사이의 빈 곳을 탭하면 "그냥 닫기"다.
         // (40, 0)은 두 스와치(위/아래)에서 멀고, 휠 반지름(56) 안쪽이다.
         let wheel = make_wheel(0.0, 0.0, 2);
-        assert_eq!(wheel.hit(egui::pos2(40.0, 0.0)), WheelHit::Backplate);
+        assert_eq!(wheel.geom().hit([40.0, 0.0]), WheelHit::Backplate);
     }
 
     #[test]
-    fn wheel_outside_tap_is_ignored() {
-        // 휠 밖을 탭하면 아무 일도 없다 (닫기는 다른 곳에서 처리).
+    fn wheel_outside_tap_is_closed_without_ink() {
+        // 휠 밖 탭은 "닫기만" — 잉크(점)를 만들지 않는다 (WheelSink 정책과 동일).
         let wheel = make_wheel(0.0, 0.0, 3);
-        assert_eq!(wheel.hit(egui::pos2(0.0, 200.0)), WheelHit::Outside);
+        assert_eq!(wheel.geom().hit([0.0, 200.0]), WheelHit::Outside);
     }
 
     #[test]

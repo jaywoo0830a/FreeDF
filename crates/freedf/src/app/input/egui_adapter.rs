@@ -2,14 +2,15 @@
 //!
 //! ideation `idea4/devices.js`의 `attachMouse`/터치 어댑터에 해당한다.
 //! 능력 협상이 여기서 끝난다: egui 포인터에는 압력/기울기가 없으므로
-//! 어댑터가 기본값(1.0 / 0)을 채운다 — 소비자는 fallback을 모른다.
+//! 어댑터가 기본값(1.0 / [0,0])을 채운다 — 소비자는 fallback을 모른다.
+//! (틸트는 **벡터**다: 방향을 보고하지 않는 장치는 [0,0] = "수직"으로 채워진다.)
 //!
 //! 레이어링 규칙(목표): egui 포인터 이벤트를 직접 읽어 입력으로 해석하는
 //! 곳은 이 모듈로 한정한다. 기존 `canvas/input.rs` 등의 직접 소비 경로는
 //! PR2(툴/워크스페이스)에서 허브 경로로 걷어 낸다.
 
 use freedf_core::input_events::{
-    InputEvent, PointerPhase, PointerSource,
+    InputEvent, PointerPhase, PointerSource, NO_TILT,
 };
 
 /// egui 프레임 이벤트 목록 → 통합 입력 이벤트들 (순서 보존).
@@ -35,7 +36,7 @@ pub(crate) fn translate(events: &[egui::Event]) -> Vec<InputEvent> {
                     phase,
                     [pos.x, pos.y],
                     1.0,
-                    0.0,
+                    NO_TILT,
                 ));
             }
             egui::Event::PointerMoved(pos) => {
@@ -45,7 +46,7 @@ pub(crate) fn translate(events: &[egui::Event]) -> Vec<InputEvent> {
                     PointerPhase::Drag,
                     [pos.x, pos.y],
                     1.0,
-                    0.0,
+                    NO_TILT,
                 ));
             }
             egui::Event::Touch { phase, pos, force, .. } => {
@@ -61,7 +62,7 @@ pub(crate) fn translate(events: &[egui::Event]) -> Vec<InputEvent> {
                     p,
                     [pos.x, pos.y],
                     force.unwrap_or(1.0).clamp(0.0, 1.0),
-                    0.0,
+                    NO_TILT,
                 ));
             }
             _ => {}

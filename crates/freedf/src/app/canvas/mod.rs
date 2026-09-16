@@ -11,23 +11,12 @@
 
 pub(crate) use super::*;
 
-/// 펜 기울기 벡터(도, ±90) → 모델용 0..1 크기.
-fn tilt_magnitude(tilt: &[f32; 2]) -> f32 {
-    let m = (tilt[0] * tilt[0] + tilt[1] * tilt[1]).sqrt();
-    (m / 90.0).min(1.0).max(0.0)
-}
-
-/// 펜 틸트(±도) → (방위각 rad, 기울기 코사인).
-/// 방위각 0 = 오른쪽(+x), +π/2 = 아래(화면 y — tilt_y 양수가 사용자 쪽일 때).
-/// 기울기 0(수직)이면 (0, 1).
-fn tilt_azimuth(tilt: &[f32; 2]) -> (f32, f32) {
-    let (x, y) = (tilt[0], tilt[1]);
-    let mag = (x * x + y * y).sqrt();
-    if mag < 1e-3 {
-        return (0.0, 1.0);
-    }
-    let cos_pitch = (mag.min(90.0) * std::f32::consts::PI / 180.0).cos();
-    (y.atan2(x), cos_pitch)
+/// 어휘의 틸트 벡터(도) → 모델용 0..1 크기.
+///
+/// 틸트의 **수학**은 어휘(`freedf_core::input_events::tilt_*`)가 소유하고,
+/// 여기는 모델이 원하는 단위(0..1)로 옮기는 앱 경계의 변환만 남는다.
+fn model_tilt(tilt: [f32; 2]) -> f32 {
+    (freedf_core::input_events::tilt_magnitude(tilt) / 90.0).clamp(0.0, 1.0)
 }
 
 /// 틸트 소스가 없을 때의 펜 커서 기본 방위각 (rad) — 오른손잡이 관례 위-오른쪽.
@@ -85,26 +74,6 @@ fn clamp_azimuth_hand(az: f32, left_handed: bool) -> f32 {
 /// 펜 진단 로그 활성 스위치 — **Debug HUD가 켜져 있을 때만** 로그를 남깁니다
 /// (평소에는 로그 파일/콘솔 I/O 비용 0).
 static PEN_TRACE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// 이번 프레임의 탭(펜 터치 시작/마우스 클릭) 좌표 — 이벤트 소스에 무관하게
-/// 잡습니다 (Windows Ink 펜은 `Event::Touch`, 마우스는 `PointerButton`로 옴).
-fn frame_tap_pos(ctx: &egui::Context) -> Option<Pos2> {
-    ctx.input(|i| {
-        i.events.iter().find_map(|e| match e {
-            egui::Event::PointerButton {
-                pos,
-                pressed: true,
-                ..
-            } => Some(*pos),
-            egui::Event::Touch {
-                phase: egui::TouchPhase::Start,
-                pos,
-                ..
-            } => Some(*pos),
-            _ => None,
-        })
-    })
-}
 
 pub(crate) fn set_pen_trace(on: bool) {
     PEN_TRACE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -438,9 +407,9 @@ impl FreeDfApp {
                 ));
             }
             self.last_pen_state_ms = Some(self.now_ms());
-            // 틸트는 **장치 어댑터가 조건화한 벡터**를 그대로 쓴다 (노이즈
-            // 필터는 장치 경계의 소유 — 캔버스는 장치 사정을 모른다).
-            self.pen_tilt = self.pen_adapter.tilt();
+            // 틸트는 **장치 어댑터가 소유**한다 (조건화된 벡터 — 노이즈 필터도
+            // 장치 경계의 몫). 캔버스는 미러 필드를 두지 않는다: 렌더/모델이
+            // `pen_adapter.tilt()`를 직접 묻는다 (C2 — 이중 상태 제거).
             self.live_pressure = st.pressure;
             // 사이드 버튼 상태 (Debug HUD 표시용) — 에지 감지는 펜 어댑터가 소유.
             self.pen_buttons = st.buttons;
@@ -1048,6 +1017,7 @@ impl FreeDfApp {
 }
 
 mod commands;
+pub(crate) mod diagnostics;
 mod ink;
 mod input;
 mod overlays;
@@ -1060,4 +1030,5 @@ pub(crate) use projection::Projection;
 mod tests;
 
 // 원형 색상 휠의 순수 로직을 하위 모듈/테스트에서 편하게 쓰도록 재노출.
-pub(crate) use wheel::{ColorWheel, WheelHit};
+pub(crate) use crate::app::input::wheel_sink::WheelIntent;
+pub(crate) use wheel::ColorWheel;

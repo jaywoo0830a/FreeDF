@@ -29,6 +29,9 @@ pub struct PenEventAdapter {
     prev_contact: bool,
     /// 조건화된 틸트 벡터 (도, ±90) — [`smooth_tilt`] 참조.
     tilt: [f32; 2],
+    /// 장치 능력 (능력 협상) — "틸트를 보고하는 장치인가"를 **묻는** 창구.
+    /// 렌더가 스트림 존재로 근사하던 판정(C3)의 대체물이다.
+    caps: crate::pen_input::PenCapabilities,
 }
 
 /// 틸트 노이즈 필터 — 패드 진입 시(호버 시작) 격렬하게 떨리는 틸트 리포트를
@@ -49,6 +52,31 @@ pub fn smooth_tilt(prev: [f32; 2], next: [f32; 2]) -> [f32; 2] {
 }
 
 impl PenEventAdapter {
+    /// 장치 능력을 선언한 어댑터 — 능력 협상의 시작점 (장치 열거가 아는 사실).
+    pub fn with_capabilities(caps: crate::pen_input::PenCapabilities) -> Self {
+        Self {
+            caps,
+            ..Self::default()
+        }
+    }
+
+    /// 장치 능력 선언 (열거 이후에 알게 됐을 때).
+    pub fn set_capabilities(&mut self, caps: crate::pen_input::PenCapabilities) {
+        self.caps = caps;
+    }
+
+    /// 이 장치가 틸트를 보고하는가 — 렌더/모델의 **능력 질의**.
+    /// (스트림이 존재하는가와는 다른 질문이다: 압력만 보고하는 펜도 스트림은 있다.)
+    pub fn tilt_supported(&self) -> bool {
+        self.caps.has_tilt
+    }
+
+    /// 외부 훅(HID/WM_POINTER)이 틸트를 직접 주입합니다 — 장치 상태의 소유자는
+    /// 어댑터이므로, 앱이 별도 벡터를 들고 다니지 않게 하는 입구다.
+    pub fn set_tilt(&mut self, tilt: [f32; 2]) {
+        self.tilt = [tilt[0].clamp(-90.0, 90.0), tilt[1].clamp(-90.0, 90.0)];
+    }
+
     /// 조건화된 틸트 벡터 (도, ±90) — 렌더/모델의 틸트 원천.
     pub fn tilt(&self) -> [f32; 2] {
         self.tilt
@@ -67,8 +95,10 @@ impl PenEventAdapter {
         self.tilt = smooth_tilt(self.tilt, st.tilt);
 
         // 능력 협상의 끝 — 압력/기울기는 여기서 "항상 존재"하게 된다.
+        // 틸트는 **벡터 그대로** 나른다: 방향(방위각)이 어휘에 실려야 소비자가
+        // 별도 벡터를 들고 다니지 않는다 (C2).
         let pressure = st.pressure.unwrap_or(1.0);
-        let tilt = self.tilt[0].hypot(self.tilt[1]);
+        let tilt = self.tilt;
 
         // ── 에지 보존 (0916 계약 #4) ─────────────────────────────────────
         // 접촉 에지가 감지됐는데 이 패킷에 위치가 없으면, 에지를 **파괴하지
@@ -175,10 +205,12 @@ mod tests {
         assert_eq!(p.source, PointerSource::Pen);
         // 능력 협상: 압력/기울기가 어댑터에서 채워진다.
         assert_eq!(p.pressure, 0.7);
-        // 틸트는 **조건화된 벡터**의 크기다 (raw [3,4] → EMA 0.3 → [0.9,1.2]).
+        // 틸트는 **조건화된 벡터**다 (raw [3,4] → EMA 0.3 → [0.9,1.2]) —
         // 장치 노이즈 필터가 경계 안에 있으므로 첫 리포트는 raw보다 작다.
+        assert!((p.tilt[0] - 3.0 * 0.3).abs() < 1e-6, "이벤트가 조건화된 틸트 벡터를 나른다");
+        assert!((p.tilt[1] - 1.2).abs() < 1e-6);
         let expect = (0.9f32 * 0.9 + 1.2 * 1.2).sqrt();
-        assert!((p.tilt - expect).abs() < 1e-5, "tilt={} expect={expect}", p.tilt);
+        assert!((p.tilt_magnitude() - expect).abs() < 1e-5, "크기는 파생값");
         let evs = a.update(&st(false, false, false), Some([1.0, 1.0]));
         assert_eq!(pen(&evs[0]).phase, PointerPhase::Up);
     }
@@ -277,15 +309,39 @@ mod tests {
         let mut a = PenEventAdapter::default();
         let evs = a.update(&st(true, false, false), Some([1.0, 1.0]));
         let p = pen(&evs[0]);
-        // 첫 리포트: [3,4] → EMA 0.3 → [0.9, 1.2], 크기 = hypot.
+        // 첫 리포트: [3,4] → EMA 0.3 → [0.9, 1.2] — 벡터가 **그대로** 실린다.
         let t = a.tilt();
         assert!((t[0] - 0.9).abs() < 1e-5 && (t[1] - 1.2).abs() < 1e-5);
-        assert!((p.tilt - (t[0] * t[0] + t[1] * t[1]).sqrt()).abs() < 1e-5);
+        assert_eq!(p.tilt, t, "이벤트가 나르는 틸트 = 어댑터가 보관한 벡터");
+        // 크기/방위각은 어휘의 파생값이다 (별도 필드 없음).
+        assert!((p.tilt_magnitude() - (t[0] * t[0] + t[1] * t[1]).sqrt()).abs() < 1e-5);
+        let (az, cos_pitch) = p.tilt_azimuth();
+        assert!((az - (t[1]).atan2(t[0])).abs() < 1e-6, "방향이 보존된다");
+        assert!((cos_pitch - 1.0).abs() < 0.02, "작은 기울기 = 거의 수직");
         // 급격한 점프는 잘린다 (조건화가 어댑터 안에 있다).
         let mut wild = st(true, false, false);
         wild.tilt = [90.0, -90.0];
         a.update(&wild, Some([2.0, 2.0]));
         let t1 = a.tilt();
         assert!((t1[0] - t[0]).abs() <= 7.2 + 1e-3 && (t1[1] - t[1]).abs() <= 7.2 + 1e-3);
+    }
+
+    /// 능력 협상 (C3) — "틸트를 보고하는 장치인가"는 **장치가 대답한다**.
+    /// 스트림 존재로 근사하지 않는다 (압력만 보고하는 펜도 스트림은 있다).
+    #[test]
+    fn capability_negotiation_reports_tilt_support() {
+        use crate::pen_input::PenCapabilities;
+        // 모르면 낙관(보고하면 쓴다) — 구 동작 보존.
+        assert!(PenEventAdapter::default().tilt_supported());
+        // 열거가 "압력만"이라고 알려준 장치.
+        let a = PenEventAdapter::with_capabilities(PenCapabilities {
+            has_tilt: false,
+            has_pressure: true,
+        });
+        assert!(!a.tilt_supported(), "능력 질의는 스트림 존재와 다른 질문이다");
+        // 외부 훅(HID/WM_POINTER)의 틸트 주입도 장치 상태의 소유자를 거친다.
+        let mut b = PenEventAdapter::default();
+        b.set_tilt([200.0, -200.0]);
+        assert_eq!(b.tilt(), [90.0, -90.0], "장치 어휘 범위로 클램프");
     }
 }

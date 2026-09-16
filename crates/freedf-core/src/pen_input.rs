@@ -40,6 +40,37 @@ pub struct PenDeviceInfo {
     pub has_pressure: bool,
 }
 
+/// 펜 장치 **능력** — 능력 협상의 입력값. 장치가 무엇을 보고하는지.
+///
+/// 소비자(어댑터/렌더)가 "틸트를 보고하는 장치인가"를 스트림 존재로 **근사**하지
+/// 않도록, 장치 경계가 이 사실을 명시적으로 보고한다 (C3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PenCapabilities {
+    pub has_tilt: bool,
+    pub has_pressure: bool,
+}
+
+impl PenCapabilities {
+    /// 아는 것이 없을 때의 기본 — **낙관**: 보고하면 쓴다.
+    /// (사용자 공급 시임(`channel`)과 OTD 스트림에 적용된다: 구 동작
+    /// "스트림이 있으면 틸트를 쓴다"와 같다.)
+    pub const UNKNOWN: Self = Self {
+        has_tilt: true,
+        has_pressure: true,
+    };
+    /// 둘 다 보고하지 않는 장치 (압력/틸트 기본값 채움만 남는다).
+    pub const NONE: Self = Self {
+        has_tilt: false,
+        has_pressure: false,
+    };
+}
+
+impl Default for PenCapabilities {
+    fn default() -> Self {
+        Self::UNKNOWN
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::{PenDeviceInfo, PenState};
@@ -169,9 +200,15 @@ mod linux {
         pressure_max: i32,
         contact: bool,
         buttons: super::PenButtons,
+        /// 장치 능력 — 어댑터/렌더의 능력 협상 입력 (C3).
+        caps: super::PenCapabilities,
     }
 
     impl PenMonitor {
+        pub(super) fn capabilities(&self) -> super::PenCapabilities {
+            self.caps
+        }
+
         pub(super) fn open_best() -> Option<Self> {
             // 틸트 지원 장치 우선, 없으면 필압 장치.
             let devices = list_devices();
@@ -195,6 +232,10 @@ mod linux {
                 pressure_max,
                 contact: false,
                 buttons: super::PenButtons::default(),
+                caps: super::PenCapabilities {
+                    has_tilt: chosen.has_tilt,
+                    has_pressure: chosen.has_pressure,
+                },
             })
         }
 
@@ -299,6 +340,8 @@ pub fn list_devices() -> Vec<PenDeviceInfo> {
 pub fn open_best() -> Option<PenMonitor> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut inner = linux::PenMonitor::open_best()?;
+    // 능력은 장치 경계(evdev 열거)가 아는 사실 — 모니터가 함께 나른다.
+    let caps = inner.capabilities();
     std::thread::spawn(move || {
         loop {
             let st = inner.poll();
@@ -314,6 +357,7 @@ pub fn open_best() -> Option<PenMonitor> {
     Some(PenMonitor {
         rx,
         latest: PenState::default(),
+        caps,
     })
 }
 
@@ -336,6 +380,9 @@ pub fn channel() -> (std::sync::mpsc::Sender<PenState>, PenMonitor) {
         PenMonitor {
             rx,
             latest: PenState::default(),
+            // 직접 공급하는 쪽은 자기 장치 사양을 모를 수 있다 — 낙관(UNKNOWN).
+            // 정확히 알면 `set_capabilities`로 선언한다.
+            caps: PenCapabilities::UNKNOWN,
         },
     )
 }
@@ -345,14 +392,19 @@ pub fn from_receiver(rx: std::sync::mpsc::Receiver<PenState>) -> PenMonitor {
     PenMonitor {
         rx,
         latest: PenState::default(),
+        caps: PenCapabilities::UNKNOWN,
     }
 }
 
 /// 펜 상태 모니터 — 어떤 공급원(evdev/HID 스레드)이든 채널로 값을 넣으면
 /// [`PenMonitor::poll`]이 최신 상태를 돌려줍니다. 모든 OS에서 동일한 타입입니다.
+///
+/// 장치 능력([`PenCapabilities`])도 여기서 함께 나른다 — 어댑터/렌더가
+/// "이 장치가 틸트를 보고하는가"를 **묻는** 창구다 (스트림 존재로 근사 금지).
 pub struct PenMonitor {
     rx: std::sync::mpsc::Receiver<PenState>,
     latest: PenState,
+    caps: PenCapabilities,
 }
 
 impl PenMonitor {
@@ -373,6 +425,23 @@ impl PenMonitor {
     /// 현재 상태 스냅샷.
     pub fn snapshot(&self) -> PenState {
         self.latest
+    }
+
+    /// 장치 능력 (능력 협상 입력).
+    pub fn capabilities(&self) -> PenCapabilities {
+        self.caps
+    }
+
+    /// 능력을 직접 선언합니다 — 사용자 공급 시임(`channel`)에서 장치 사양을
+    /// 아는 경우에 씁니다.
+    pub fn set_capabilities(&mut self, caps: PenCapabilities) {
+        self.caps = caps;
+    }
+
+    /// 능력을 함께 지정한 생성 (빌더) — 시임 편의.
+    pub fn with_capabilities(mut self, caps: PenCapabilities) -> Self {
+        self.caps = caps;
+        self
     }
 }
 

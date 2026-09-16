@@ -3,21 +3,18 @@
 //! 화면에 그리는 것과 무관하게 "스와치가 어디에 있는지"와 "탭이 어디에
 //! 닿았는지"만 계산합니다 — egui 없이 순수 계산이라 단위 테스트로
 //! 완전히 검증할 수 있습니다.
+//!
+//! **히트테스트 수학의 소유자는 장치/라우터 축**(`app::input::wheel_sink`의
+//! [`WheelGeom`])이다: 같은 프레스를 잉크와 휠이 **같은 기하**로 판정해야
+//! 하므로, 판정식을 오버레이(egui) 쪽에 두지 않는다. 이 파일은 레이아웃
+//! 상수에서 기하를 만들어 넘기고(렌더 = 판정), 그리기를 담당한다.
+//!
+//! `WheelHit`/`WheelGeom`은 여기서 재수출된다 — 오버레이/테스트가 쓰는 이름은
+//! 그대로다 (정의만 소유자가 옮겨졌다).
 
 use super::*;
 
-/// 탭이 휠의 어디에 닿았는지.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WheelHit {
-    /// 중앙(도넛 구멍) — 지우개 도구로 전환.
-    Center,
-    /// 둘레 i번째 색 — 그 색을 적용.
-    Swatch(usize),
-    /// 뒷판 빈 곳 — 그냥 닫기.
-    Backplate,
-    /// 휠 바깥 — 닫지 않고 무시.
-    Outside,
-}
+pub(crate) use crate::app::input::wheel_sink::WheelGeom;
 
 /// 원형 색상 휠 — 중심 좌표와 둘레 색 목록만 갖는 아주 작은 객체입니다.
 pub(crate) struct ColorWheel {
@@ -43,29 +40,23 @@ impl ColorWheel {
         )
     }
 
+    /// 레이아웃 상수 → 판정 기하. **렌더와 판정이 같은 값**을 쓰게 하는 다리다
+    /// (앱이 이 값을 휠 싱크에 주입한다).
+    pub fn geom(&self) -> WheelGeom {
+        WheelGeom {
+            center: [self.center.x, self.center.y],
+            back_r: WHEEL_BACK_R,
+            ring_r: WHEEL_RING_R,
+            swatch_r: WHEEL_SWATCH_R,
+            center_r: WHEEL_CENTER_R,
+            ring_len: self.ring.len(),
+        }
+    }
+
     /// i번째 스와치의 위치 — 12시 방향부터 시계 방향으로 균등 배치.
     pub fn swatch_pos(&self, i: usize) -> Pos2 {
         debug_assert!(!self.ring.is_empty(), "휠에 색이 하나도 없습니다");
-        let angle = -std::f32::consts::TAU / 4.0
-            + std::f32::consts::TAU * (i as f32) / (self.ring.len() as f32);
-        self.center + egui::vec2(angle.cos(), angle.sin()) * WHEEL_RING_R
-    }
-
-    /// 탭 좌표가 휠의 어느 부분인지 판정합니다.
-    ///
-    /// 순서: 중앙 → 바깥 → 둘레 스와치 → 뒷판 빈 곳.
-    pub fn hit(&self, pos: Pos2) -> WheelHit {
-        if pos.distance(self.center) <= WHEEL_CENTER_R {
-            return WheelHit::Center;
-        }
-        if pos.distance(self.center) > WHEEL_BACK_R {
-            return WheelHit::Outside;
-        }
-        for i in 0..self.ring.len() {
-            if pos.distance(self.swatch_pos(i)) <= WHEEL_SWATCH_R + 3.0 {
-                return WheelHit::Swatch(i);
-            }
-        }
-        WheelHit::Backplate
+        let p = self.geom().swatch_pos(i);
+        egui::pos2(p[0], p[1])
     }
 }

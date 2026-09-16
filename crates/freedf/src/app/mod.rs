@@ -1015,9 +1015,6 @@ pub struct FreeDfApp {
     fountain_grain: InkGrain,
     /// 만년필 물리 모델 프로파일 (필압 × 속도 × 기울기).
     fountain_profile: FountainProfile,
-    /// 현재 펜 기울기 벡터 [tilt_x, tilt_y] (도, ±90). egui/winit이
-    /// 노출하지 않아 기본 [0,0] — HID/WM_POINTER 훅에서 `set_pen_tilt`로 주입.
-    pen_tilt: [f32; 2],
     /// 진행 중 스트로크를 오케스트라하는 InkPipeline (1€ 필터 + 선폭 확정 + 점 버퍼).
     /// 터치하지 않으면 None — `down()`으로 시작, `up()`으로 종료·동결.
     ink: Option<freedf_core::pipeline::InkPipeline>,
@@ -1049,7 +1046,7 @@ pub struct FreeDfApp {
     /// 땜질 PendingDown 대체, `session-router-migration.md`). 구 샘플링
     /// 게이트는 잉크 싱크의 순수 기하 정책으로, 보류/승격은 라우터의
     /// 세션 상태기계와 장부로 대체됐다.
-    input_router: input::SessionRouter<input::InkSink>,
+    input_router: input::SessionRouter<input::CanvasSinks>,
     /// OTD/evdev 펜 스트림이 마지막으로 도착한 시각 (ms) — 진단용.
     last_pen_state_ms: Option<u64>,
     /// 마지막 획의 진단 판정 문구 (Debug HUD 표시용).
@@ -1473,6 +1470,10 @@ impl FreeDfApp {
             .map(freedf_core::pen_input::from_receiver);
         #[cfg(not(target_os = "windows"))]
         let pen_monitor = freedf_core::pen_input::open_best();
+        // 장치 능력 (능력 협상 입력) — 어댑터가 "틸트를 보고하는 장치인가"에
+        // 답할 수 있도록 열거 결과를 그대로 넘긴다 (C3). 모니터가 소유자이므로
+        // 이동(필드 초기화) **전에** 읽는다.
+        let pen_caps = pen_monitor.as_ref().map(|m| m.capabilities());
         let pen_profile = s.pen.profile;
         let paper_style = s.paper.style;
         let paper_color = s.paper.color;
@@ -1664,7 +1665,6 @@ impl FreeDfApp {
             pen_grain,
             fountain_grain,
             fountain_profile,
-            pen_tilt: [0.0, 0.0],
             debug_hud,
             // 테스트 훅: `FREEDF_UI_GALLERY=1`이면 시작할 때 갤러리를 엽니다.
             // (egui 팝업 안 항목은 자동화가 클릭할 수 없어서, 메뉴 대신 이 경로로
@@ -1688,9 +1688,11 @@ impl FreeDfApp {
             workspace: freedf_core::input_workspace::Workspace::new(),
             control_map: freedf_core::input_controlmap::ControlMap::with_defaults(),
             projection: canvas::Projection::with_core(),
-            pen_adapter: Default::default(),
+            pen_adapter: pen_caps
+                .map(freedf_core::input_devices::PenEventAdapter::with_capabilities)
+                .unwrap_or_default(),
             input_hub: Default::default(),
-            input_router: input::SessionRouter::new(vec![input::InkSink::new()]),
+            input_router: input::SessionRouter::new(vec![input::CanvasSinks::new()]),
             input_sources: input::InputSources::default(),
             last_pen_state_ms: None,
             pen_verdict: None,
@@ -1874,9 +1876,12 @@ impl FreeDfApp {
     /// egui/winit은 기울기를 노출하지 않으므로 기본 [0,0]입니다 —
     /// WM_POINTER(POINTER_PEN_INFO.tiltX/tiltY) 또는 HID(X/Y Tilt usage)에서
     /// 읽은 값을 여기로 넣으면 만년필 모델이 기울기를 반영합니다.
+    ///
+    /// 주입 대상은 **장치 어댑터**다 (장치 상태의 소유자 — 앱은 미러를 두지
+    /// 않는다). 이벤트가 나르는 틸트와 렌더가 보는 틸트가 같은 값이 된다.
     #[allow(dead_code)] // HID/WM_POINTER 훅이 붙을 때까지 미사용.
     pub(crate) fn set_pen_tilt(&mut self, tilt_x: f32, tilt_y: f32) {
-        self.pen_tilt = [tilt_x.clamp(-90.0, 90.0), tilt_y.clamp(-90.0, 90.0)];
+        self.pen_adapter.set_tilt([tilt_x, tilt_y]);
     }
 
     /// 전역 기본 세션(마지막 펜 색/용지/도구 등)을 저장해 다음 시작 시 복원합니다.

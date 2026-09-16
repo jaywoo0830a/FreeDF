@@ -86,11 +86,17 @@ impl FreeDfApp {
             "device: {device}  (touch events/frame: {touch_events})"
         ));
         ui.label(format!("pressure: {pressure:.3}  (src: {p_src})"));
+        let tilt = self.pen_adapter.tilt();
         ui.label(format!(
             "tilt: [{:+.0}°, {:+.0}°]  (src: {})",
-            self.pen_tilt[0],
-            self.pen_tilt[1],
-            if self.pen_monitor.is_some() {
+            tilt[0],
+            tilt[1],
+            // C3 — 능력 질의: "이 장치가 틸트를 보고하는가"를 스트림 존재로
+            // 근사하지 않는다 (압력만 보고하는 펜도 스트림은 있다).
+            // (아래 `pen_monitor.is_some()`은 **어느 스트림인지** 라벨일 뿐이다.)
+            if !self.pen_adapter.tilt_supported() {
+                "device: no tilt"
+            } else if self.pen_monitor.is_some() {
                 pen_source
             } else {
                 "none"
@@ -267,7 +273,7 @@ impl FreeDfApp {
             tool,
             ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
         );
-        let tilt = tilt_magnitude(&self.pen_tilt);
+        let tilt = model_tilt(self.pen_adapter.tilt());
         let halves_pt = freedf_canvas::halves_for_stroke(
             tool,
             width,
@@ -284,7 +290,9 @@ impl FreeDfApp {
             tilt,
         );
         // ── 라이브 진단 (Debug HUD 켜져 있을 때만): 렌더 폭이 평평하면 경고.
-        if pen_trace_on() && n >= 8 && self.now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
+        // 조건/문구의 소유자는 `diagnostics` (설정/유실을 아는 단일 판정) —
+        // 여기는 스로틀과 로그만 맡는다 (C4).
+        if pen_trace_on() && self.now_ms().saturating_sub(self.pen_flat_log_ms) > 2000 {
             let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
             for h in &halves_pt {
                 wmn = wmn.min(*h);
@@ -295,12 +303,17 @@ impl FreeDfApp {
                 pmn = pmn.min(p.pressure);
                 pmx = pmx.max(p.pressure);
             }
-            if wmx - wmn < 0.05 {
+            let dev = diagnostics::DeviceFacts {
+                pressure_enabled: self.pressure_enabled,
+                tilt_supported: self.pen_adapter.tilt_supported(),
+                tilt: self.pen_adapter.tilt(),
+                live_pressure: self.live_pressure,
+            };
+            if let Some(reason) =
+                diagnostics::live_flat(n, (pmn, pmx), (wmn, wmx), &dev)
+            {
                 self.pen_flat_log_ms = self.now_ms();
-                pen_trace(&format!(
-                    "LIVE-FLAT: n={n} widths=[{wmn:.3}..{wmx:.3}] pressure=[{pmn:.3}..{pmx:.3}] live_pressure={:?}",
-                    self.live_pressure
-                ));
+                pen_trace(&reason);
             }
         }
         // ── 재구성 스로틀: 주사율 프리셋을 따릅니다 (60Hz=16ms, 120=8,
@@ -488,7 +501,7 @@ impl FreeDfApp {
             fountain_soak: scale_soak(self.fountain_soak),
             pen_grain: self.pen_grain,
             fountain_grain: self.fountain_grain,
-            tilt_magnitude: tilt_magnitude(&self.pen_tilt),
+            tilt_magnitude: model_tilt(self.pen_adapter.tilt()),
             feather_pt: 1.0 / self.view.zoom.max(1e-3), // 화면 1px에 해당하는 pt.
         }
     }
@@ -626,8 +639,11 @@ impl FreeDfApp {
                 } else {
                     Color32::from_rgb(250, 252, 255)
                 };
-                let (az_raw, cos_pitch) = if self.pen_monitor.is_some() {
-                    tilt_azimuth(&self.pen_tilt)
+                // 커서의 기울기는 **장치가 보고한 방향**이다 (어휘가 나르는
+                // 벡터 — 캔버스는 미러를 두지 않는다). 능력 질의(C3)로 분기한다:
+                // 틸트를 보고하지 않는 장치면 손잡이 기반 기본 방위각을 쓴다.
+                let (az_raw, cos_pitch) = if self.pen_adapter.tilt_supported() {
+                    freedf_core::input_events::tilt_azimuth(self.pen_adapter.tilt())
                 } else if self.left_handed {
                     (-std::f32::consts::PI - DEFAULT_PEN_AZ, 1.0) // 위-왼쪽 기본.
                 } else {

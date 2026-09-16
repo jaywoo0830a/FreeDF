@@ -32,7 +32,7 @@ ideation/
 ├─ package.json       # vitest 5.0.0 고정
 ├─ vitest.config.js   # tests/ 하위 *.test.{js,ts} 수집
 ├─ src/idea4/         # 계약 객체 — 아키텍처의 공개 표면
-│  ├─ events.js       # 통합 이벤트 어휘 (잎 — 의존성 0)
+│  ├─ events.js       # 통합 이벤트 어휘 (잎 — 의존성 0; 틸트는 **벡터**)
 │  ├─ descriptor.js   # 장치 기술자 (버튼 개수/압력 등 = 데이터)
 │  ├─ control-map.js  # 사용자 매핑 테이블 (tap/hold)
 │  ├─ hub.js          # 이벤트 허브 (충돌 규칙 + 재생 계약)
@@ -40,9 +40,16 @@ ideation/
 │  ├─ tools.js        # 툴 상태기계 (참조 구현 3개)
 │  ├─ workspace.js    # 정책의 집 (툴 선택·획 경계·hold 스택)
 │  └─ index.js        # 배럴
+├─ src/idea5/         # 계약 **상향** (C1~C4) — 바뀐 것만 스텁으로
+│  ├─ router.js       # 세션 라우터 골격 (우선순위 싱크 + 정산 요약)
+│  ├─ wheel-sink.js   # C1 휠 싱크 (순수 기하 + 의도) + 우선순위 복합
+│  ├─ pen.js          # C2/C3 펜 어댑터 (틸트 벡터·능력 질의)
+│  ├─ verdict.js      # C4 단일 판정 (설정 + 측정 + 라우터 장부)
+│  └─ index.js        # 배럴 (어휘는 idea4 것을 재수출 — 단일 소유자)
 └─ tests/
    ├─ sum.test.js     # 동작 확인용 샘플
    ├─ playground.test.js / idea*.test.js  # 아이디어별 프로토타입
+   ├─ idea5/          # C1~C4 실행 스펙 (README.md = 흐름 인덱스)
    └─ idea4/          # 아키텍처 설계 테스트
       ├─ README.md              # 획 시작 에지 계약 — 참고 문서 (2026-09-15 회귀)
       ├─ layering.test.js       # 의존성 규칙 (정적 검사)

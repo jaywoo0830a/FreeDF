@@ -230,7 +230,7 @@ impl CanvasSurface for FreeDfApp {
 mod tests {
     use super::*;
     use freedf_canvas::canvas_port::{CanvasOp, CanvasRecorder};
-    use freedf_core::input_events::{InputEvent, PointerEvent, PointerPhase, PointerSource};
+    use freedf_core::input_events::{InputEvent, PointerEvent, PointerPhase, PointerSource, NO_TILT};
     use freedf_core::input_workspace::Workspace;
 
     fn pointer(phase: PointerPhase, point: [f32; 2]) -> InputEvent {
@@ -239,7 +239,7 @@ mod tests {
             phase,
             point,
             pressure: 0.5,
-            tilt: 0.0,
+            tilt: NO_TILT,
         })
     }
 

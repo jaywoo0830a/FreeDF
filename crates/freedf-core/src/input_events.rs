@@ -95,8 +95,47 @@ pub struct PointerEvent {
     pub point: [f32; 2],
     /// 필압 0..1 (미지원 장치는 어댑터가 1.0으로 채움).
     pub pressure: f32,
-    /// 기울기 크기 (도, 0..=90). 미지원 장치는 0.
-    pub tilt: f32,
+    /// 기울기 **벡터** (도, 각 축 ±90) — 크기는 기울임 각(pitch), 방향은
+    /// 방위각(azimuth)이다. 미지원 장치는 [0, 0].
+    ///
+    /// 크기만 나르던 구 어휘(`tilt: f32`)는 방향을 표현할 수 없어서, 소비자
+    /// (렌더 커서)가 어휘 밖의 별도 벡터를 따로 들고 다녀야 했다 — 장치가
+    /// 안고 온 방향을 어휘가 나르면 그 이중 상태가 사라진다. 크기/방위각은
+    /// [`PointerEvent::tilt_magnitude`]·[`tilt_azimuth`]로 **파생**된다.
+    pub tilt: [f32; 2],
+}
+
+impl PointerEvent {
+    /// 기울기 크기 (도, 0..=90+) — 크기만 필요한 소비자(필기 모델)의 파생값.
+    pub fn tilt_magnitude(&self) -> f32 {
+        tilt_magnitude(self.tilt)
+    }
+
+    /// (방위각 rad, 기울기 코사인) — 방위각 0 = +x(오른쪽), +π/2 = +y(아래).
+    pub fn tilt_azimuth(&self) -> (f32, f32) {
+        tilt_azimuth(self.tilt)
+    }
+}
+
+/// 틸트 벡터 → 크기 (도). 0 벡터(수직)는 0.
+pub fn tilt_magnitude(tilt: [f32; 2]) -> f32 {
+    tilt[0].hypot(tilt[1])
+}
+
+/// 틸트 벡터 → (방위각 rad, 기울기 코사인).
+/// 방위각 0 = 오른쪽(+x), +π/2 = 아래(+y). 수직(0 벡터)이면 (0, 1).
+///
+/// 틸트 방향 수학의 **유일한 소유자**다 — 종전에는 앱(캔버스)이 이 계산을
+/// 들고 있었고, 어휘는 크기만 나르므로 방향이 필요한 쪽이 벡터를 따로
+/// 보관해야 했다.
+pub fn tilt_azimuth(tilt: [f32; 2]) -> (f32, f32) {
+    let (x, y) = (tilt[0], tilt[1]);
+    let mag = tilt_magnitude(tilt);
+    if mag < 1e-3 {
+        return (0.0, 1.0);
+    }
+    let cos_pitch = (mag.min(90.0) * std::f32::consts::PI / 180.0).cos();
+    (y.atan2(x), cos_pitch)
 }
 
 /// 논리 동작 이벤트 — `key`는 툴 레지스트리 네임스페이스의 열린 문자열.
@@ -127,6 +166,9 @@ pub enum InputEvent {
     Control(ControlEvent),
 }
 
+/// 기울기를 보고하지 않는 장치의 기본 틸트 벡터 (능력 협상의 결과값).
+pub const NO_TILT: [f32; 2] = [0.0, 0.0];
+
 impl InputEvent {
     /// 편의 생성자 — JS 프로토타입의 `Pointer()` 팩터리에 대응.
     pub fn pointer(
@@ -134,7 +176,7 @@ impl InputEvent {
         phase: PointerPhase,
         point: [f32; 2],
         pressure: f32,
-        tilt: f32,
+        tilt: [f32; 2],
     ) -> Self {
         InputEvent::Pointer(PointerEvent {
             source,

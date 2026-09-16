@@ -171,13 +171,16 @@ Up도 `(false, up) → 무시` — 복구 경로가 0이었다.
 
 ## 8.2 아직 남은 땜질 (다음 청소 대상)
 
-| # | 위치 | 무엇을 메우고 있나 | 구조적 대체 (계획) |
-|---|---|---|---|
-| C1 | `overlays.rs` 휠 탭 판정(`frame_tap_pos`, egui 리액션) | 오버레이 입력이 잉크와 **다른 시계**로 판정됨 | **WheelSink** — 라우터 싱크로 승격(기하 소유, 우선순위 선행). 컨트롤(펜 버튼)은 계속 흐르므로 버튼으로 휠 닫기도 가능해진다 |
-| C2 | 이벤트 어휘의 틸트가 **크기(float)** 뿐 | 방위각(방향)이 어휘에 없어 앱이 별도 벡터를 들고 렌더에 씀 (`tilt_azimuth`, `pen_monitor.is_some()` 분기) | `PointerEvent`에 틸트 벡터/방위각 추가 (events.js 스펙 동시 갱신) → 렌더 분기 소멸 |
-| C3 | `paint.rs`의 `pen_monitor.is_some()` 분기 2곳 | "틸트를 보고하는 장치인가"를 스트림 존재로 **근사** | 능력 협상: `pen_input`이 `reports_tilt` 능력을 보고 (어댑터가 통과) |
-| C4 | 진단 계열(`LIVE-FLAT`, `PENUP-CHANGED`, `pen_flat_log_ms`, `pen_verdict`) | 증상 추적용 하드코딩 판정 — 라우터 장부와 분리돼 있음 | 장부(`Resolution`)+접촉/압력 통계를 합친 단일 판정 (로그 형식 유지) |
-| C5 | `InputSources`의 `#[allow(dead_code)]` 선제 필드/접근자 | 쓰이지 않는 마우스/트랙패드 활동 추적 | 실제 소비자가 생길 때까지 삭제 (선제 구조 금지) |
+> **C1~C4 는 처리됐다** — 실행 스펙은 [`../idea5/`](../idea5/README.md)로 옮겼다
+> (C1 휠 싱크 · C2 틸트 벡터 · C3 틸트 능력 · C4 진단 단일화). 아래 표는 이력이다.
+
+| # | 위치 | 무엇을 메우고 있나 | 구조적 대체 (계획) | 상태 |
+|---|---|---|---|---|
+| C1 | `overlays.rs` 휠 탭 판정(`frame_tap_pos`, egui 리액션) | 오버레이 입력이 잉크와 **다른 시계**로 판정됨 | **WheelSink** — 라우터 싱크로 승격(기하 소유, 우선순위 선행) | **완료** (`idea5/wheel-sink.test.js`) |
+| C2 | 이벤트 어휘의 틸트가 **크기(float)** 뿐 | 방위각(방향)이 어휘에 없어 앱이 별도 벡터를 들고 렌더에 씀 | `PointerEvent`에 틸트 벡터 추가 (events.js 스펙 동시 갱신) | **완료** (`idea5/tilt-contract.test.js`) |
+| C3 | `paint.rs`의 `pen_monitor.is_some()` 분기 | "틸트를 보고하는 장치인가"를 스트림 존재로 **근사** | 능력 협상: `pen_input`이 `reports_tilt` 능력을 보고 | **완료** (`idea5/capability.test.js`) |
+| C4 | 진단 계열(`LIVE-FLAT`, `PENUP-CHANGED`, `pen_verdict`) | 증상 추적용 하드코딩 판정 — 라우터 장부와 분리 | 장부(`Resolution`)+접촉/압력 통계를 합친 단일 판정 | **완료** (`idea5/verdict.test.js`) |
+| C5 | `InputSources`의 `#[allow(dead_code)]` 선제 필드/접근자 | 쓰이지 않는 마우스/트랙패드 활동 추적 | 실제 소비자가 생길 때까지 삭제 | **완료** |
 
 ## 9. 다음 설계 — 세션 라우터 (땜질에서 구조로)
 

@@ -181,6 +181,56 @@ impl Resolution {
     }
 }
 
+/// 장부 요약 — 진단(단일 판정)의 재료. 유실은 상태가 아니라 **데이터**로
+/// 관측된다 (계약 ③): 필기 진단은 이 수치를 설정/측정값과 합쳐 한 판정을 낸다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct LedgerSummary {
+    /// 승인(Down 즉시/승격 포함) — 정상 경로로 세션이 열린 수.
+    pub delivered: usize,
+    /// 닫힌 거절 — 캔버스 밖/팬/포커스 제스처 등 (세션이 열리지 않았다).
+    pub refused: usize,
+    /// 보류 승격 — 늦게 승인된 프레스 (지연 복구 관측점).
+    pub promoted: usize,
+    /// 보류 TTL 만료 — 끝난 프레스가 나중 프레스에 붙지 않았다.
+    pub expired: usize,
+    /// 라이브 워치독 — Up 에지 유실을 합성 up 으로 닫았다 (필기 중단의 흔적).
+    pub stale: usize,
+    /// 보류 취소 (팬/싱크 거절 전환).
+    pub cancelled: usize,
+    /// 계약 위반 교체 (접촉 없이 Down).
+    pub replaced: usize,
+    /// 지금 열려 있는 세션이 있는가.
+    pub open: bool,
+}
+
+impl<S: Sink> SessionRouter<S> {
+    /// 장부 요약 — 진단이 "왜 이 획이 이상한가"를 라우터 사실과 함께 판단한다.
+    pub fn summary(&self) -> LedgerSummary {
+        let mut s = LedgerSummary {
+            open: self.open.is_some(),
+            stale: self.stale_count,
+            ..LedgerSummary::default()
+        };
+        for r in &self.resolutions {
+            match r.outcome {
+                Outcome::Delivered => {
+                    s.delivered += 1;
+                    if r.promoted {
+                        s.promoted += 1;
+                    }
+                }
+                Outcome::Refused => s.refused += 1,
+                Outcome::Expired => s.expired += 1,
+                Outcome::Stale => s.stale += 1,
+                Outcome::Cancelled => s.cancelled += 1,
+                Outcome::Replaced => s.replaced += 1,
+                _ => {}
+            }
+        }
+        s
+    }
+}
+
 /// 만료 정책 — 정책은 데이터다 (JS 스펙의 `onAbandon`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AbandonPolicy {
@@ -246,6 +296,10 @@ pub(crate) struct SessionRouter<S: Sink> {
     seq: u64,
     open: Option<OpenSession>,
     resolutions: Vec<Resolution>,
+    /// 워치독이 합성 up 으로 닫은 횟수 — 장부에 새 행을 쓰지 않는 사건이라
+    /// (그 세션의 Down 은 이미 delivered 로 정산됐다) 여기서 따로 센다.
+    /// 진단(단일 판정)이 "이 획의 Up 이 유실됐다"를 데이터로 관측하는 창구.
+    stale_count: usize,
 }
 
 impl<S: Sink> SessionRouter<S> {
@@ -262,6 +316,7 @@ impl<S: Sink> SessionRouter<S> {
             seq: 0,
             open: None,
             resolutions: Vec::new(),
+            stale_count: 0,
         }
     }
 
@@ -624,6 +679,7 @@ impl<S: Sink> SessionRouter<S> {
             tilt: open.down.tilt,
         };
         self.sink_by_name(name).handle(&[synth]);
+        self.stale_count += 1;
         // 장부에는 **새 행을 쓰지 않는다**: 이 세션의 Down 에지는 승인 시점에
         // 이미 `delivered` 로 정산됐다 (계약 ③ — Down 에지 하나당 정산 하나).
         // 워치독은 세션을 닫는 사건이고, 관측 채널은 이 Report(→ 로그)다.
@@ -766,7 +822,7 @@ impl<S: Sink> SessionRouter<S> {
 mod tests {
     use super::*;
     use freedf_core::input_commands::{check_well_formed, Command};
-    use freedf_core::input_events::{ActionSource, InputEvent};
+    use freedf_core::input_events::{ActionSource, InputEvent, NO_TILT};
     use freedf_core::input_workspace::Workspace;
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -778,7 +834,7 @@ mod tests {
             phase,
             point: [x, 0.0],
             pressure: 0.3,
-            tilt: 0.0,
+            tilt: NO_TILT,
         }
     }
 
@@ -788,7 +844,7 @@ mod tests {
             phase,
             point: [x, 0.0],
             pressure: 1.0,
-            tilt: 0.0,
+            tilt: NO_TILT,
         }
     }
 

@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 
 use crate::input_commands::Command;
 use crate::input_events::{
-    ActionEvent, ActionMode, ActionSource, InputEvent, PointerPhase, PointerSource,
+    ActionEvent, ActionMode, ActionSource, InputEvent, PointerPhase, PointerSource, NO_TILT,
 };
 use crate::input_tools::{default_tools, Tool};
 
@@ -114,12 +114,14 @@ impl Workspace {
         }
         let mut out: Vec<Command> = Vec::new();
         if self.pointer_down {
+            // 합성 경계 이벤트(툴 전환 시 up/down 쌍) — 장치가 없으므로
+            // 틸트는 능력 기본값([0,0])이다.
             let up = InputEvent::pointer(
                 self.last_source,
                 PointerPhase::Up,
                 self.last_point,
                 1.0,
-                0.0,
+                NO_TILT,
             );
             self.tools[self.active].handle(&up, &mut |c| out.push(c));
             self.active = target;
@@ -128,7 +130,7 @@ impl Workspace {
                 PointerPhase::Down,
                 self.last_point,
                 1.0,
-                0.0,
+                NO_TILT,
             );
             self.tools[self.active].handle(&down, &mut |c| out.push(c));
         } else {
@@ -188,7 +190,7 @@ impl Workspace {
 mod tests {
     use super::*;
     use crate::input_commands::{check_well_formed, command_kinds};
-    use crate::input_events::{ControlKind, PointerEvent};
+    use crate::input_events::{ControlKind, PointerEvent, NO_TILT};
 
     fn pointer(phase: PointerPhase, point: [f32; 2]) -> InputEvent {
         InputEvent::Pointer(PointerEvent {
@@ -196,7 +198,7 @@ mod tests {
             phase,
             point,
             pressure: 0.5,
-            tilt: 0.0,
+            tilt: NO_TILT,
         })
     }
 

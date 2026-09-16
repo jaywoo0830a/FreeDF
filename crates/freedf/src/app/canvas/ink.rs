@@ -46,61 +46,70 @@ impl FreeDfApp {
             .take(4)
             .map(|p| (p.pressure, p.width))
             .collect();
-        if before_penup != after_penup {
+        // ── 진단: 설정/측정/장부를 **한 판정**으로 (C4 — `diagnostics.rs`) ──────
+        //
+        // 종전에는 ① 꼬리 변화(`PENUP-CHANGED`)와 ② 획 종료 판정(`stroke end`)이
+        // 각각 로그를 냈고, 프레임 단위 `LIVE-FLAT`(paint.rs)까지 셋으로 흩어져
+        // 있었다 — 각자 다른 재료만 봐서 "설정이 꺼져 있어서 평평하다"와 "입력이
+        // 유실되어 평평하다"를 구분하지 못했다. 이제 재료 세 종류(설정/장치,
+        // 측정, 라우터 장부)가 한 함수에 들어가고 로그도 **한 줄**이다.
+        let tail_changed = before_penup != after_penup;
+        if active.tool != ToolType::Highlighter {
+            // 측정 — 필압/폭/절반폭 통계 (판정의 재료일 뿐, 판정은 여기서 하지 않는다).
+            let n_pt = active.points.len();
+            let (mut pmn, mut pmx) = (f32::MAX, f32::MIN);
+            let (mut wmn, mut wmx) = (0.0f32, 0.0f32);
+            let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
+            let mut unlocked = 0usize;
+            let mut widths_seen = false;
+            for p in &active.points {
+                pmn = pmn.min(p.pressure);
+                pmx = pmx.max(p.pressure);
+                if p.width > 0.0 {
+                    let (w0, w1) = (wmn, wmx);
+                    wmn = if widths_seen { w0.min(p.width) } else { p.width };
+                    wmx = if widths_seen { w1.max(p.width) } else { p.width };
+                    widths_seen = true;
+                    // 실제 렌더에 쓰이는 절반 폭 (freedf_canvas::halves_for_stroke와 동일 규칙).
+                    let h = (p.width * 0.5).max(0.05);
+                    hmn = hmn.min(h);
+                    hmx = hmx.max(h);
+                } else {
+                    unlocked += 1;
+                }
+            }
+            if !widths_seen {
+                hmn = 0.0;
+                hmx = 0.0;
+            }
+            let facts = diagnostics::StrokeFacts {
+                n_pt,
+                pressure_min: pmn,
+                pressure_max: pmx,
+                width_min: wmn,
+                width_max: wmx,
+                half_min: hmn,
+                half_max: hmx,
+                unlocked,
+                tail_changed,
+            };
+            let dev = diagnostics::DeviceFacts {
+                pressure_enabled: self.pressure_enabled,
+                tilt_supported: self.pen_adapter.tilt_supported(),
+                tilt: self.pen_adapter.tilt(),
+                live_pressure: self.live_pressure,
+            };
+            let ledger = diagnostics::LedgerFacts::from(self.input_router.summary());
+            let v = diagnostics::stroke_verdict(tool_type_name(active.tool), &facts, &dev, &ledger);
+            self.pen_verdict = Some(v.text);
+            pen_trace(&v.line);
+        } else if tail_changed {
+            // 하이라이터는 폭 판정 대상이 아니지만 꼬리 변화는 남긴다 (grep 토큰 유지).
             pen_trace(&format!(
-                "PENUP-CHANGED: 표시={before_penup:?} 확정={after_penup:?} live_pressure={:?} ← 펜 떼는 순간 폭 데이터가 바뀜!",
-                self.live_pressure
-            ));
-        } else {
-            pen_trace(&format!(
-                "penup tail (pressure,width): {after_penup:?} live_pressure={:?}",
+                "PENUP-CHANGED: (Highlighter) 표시={before_penup:?} 확정={after_penup:?} live_pressure={:?}",
                 self.live_pressure
             ));
         }
-            // ── 펜 진단: 획이 끝나면 필압/**렌더 폭** 변화량을 로그로 남깁니다.
-            if active.tool != ToolType::Highlighter {
-                let n_pt = active.points.len();
-                let (mut pmn, mut pmx) = (f32::MAX, f32::MIN);
-                let (mut wmn, mut wmx) = (f32::MAX, f32::MIN);
-                let (mut hmn, mut hmx) = (f32::MAX, f32::MIN);
-                let mut unlocked = 0usize;
-                for p in &active.points {
-                    pmn = pmn.min(p.pressure);
-                    pmx = pmx.max(p.pressure);
-                    if p.width > 0.0 {
-                        wmn = wmn.min(p.width);
-                        wmx = wmx.max(p.width);
-                        // 실제 렌더에 쓰이는 절반 폭 (freedf_canvas::halves_for_stroke와 동일 규칙).
-                        let h = (p.width * 0.5).max(0.05);
-                        hmn = hmn.min(h);
-                        hmx = hmx.max(h);
-                    } else {
-                        unlocked += 1;
-                    }
-                }
-                let verdict = if !self.pressure_enabled {
-                    // 필압 민감도가 꺼진 설정에서는 폭이 필압과 무관한 것이 정상이다
-                    // (writing.log 오진: "필압 일정 → 입력 문제(OTD 확인)").
-                    "필압 꺼짐 (설정) — 폭은 필압과 무관"
-                } else if n_pt == 1 {
-                    "탭 (1점 — 정상)"
-                } else if n_pt < 8 {
-                    "점 부족 — 짧은 획"
-                } else if pmx - pmn < 0.05 {
-                    "필압 일정 → 입력 문제 (OTD 연결/필압 소스 확인)"
-                } else if unlocked > 0 {
-                    "폭 잠금 안 됨 → locker 버그"
-                } else if hmx - hmn < 0.02 {
-                    "필압은 변하는데 렌더 폭 고정 → 모델/바닥값 버그"
-                } else {
-                    "OK — 렌더 폭 변화 정상"
-                };
-                self.pen_verdict = Some(verdict.to_string());
-                pen_trace(&format!(
-                    "stroke end: tool={:?} n={n_pt} pressure=[{pmn:.3}..{pmx:.3}] width=[{wmn:.3}..{wmx:.3}] half=[{hmn:.3}..{hmx:.3}] unlocked={unlocked} live_pressure={:?} tilt=[{:+.0},{:+.0}] → {verdict}",
-                    active.tool, self.live_pressure, self.pen_tilt[0], self.pen_tilt[1]
-                ));
-            }
             // 하이라이터 + 텍스트 인식 모드면 스와이프가 닿은 문서 텍스트 위로
             // 깔끔한 하이라이트를 만들어 저장하고, 원본 자유선은 버립니다.
             if active.tool == ToolType::Highlighter

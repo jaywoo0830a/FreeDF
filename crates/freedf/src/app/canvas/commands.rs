@@ -90,7 +90,7 @@ impl FreeDfApp {
         } else {
             0.0
         };
-        let tilt = tilt_magnitude(&self.pen_tilt);
+        let tilt = model_tilt(self.pen_adapter.tilt());
         let mut pipeline = freedf_core::pipeline::InkPipeline::new(
             Materials::new(self.pen_profile, self.fountain_profile),
             width,
@@ -113,6 +113,7 @@ impl FreeDfApp {
             width,
             points: vec![tip],
         });
+        let tilt_deg = self.pen_adapter.tilt();
         pen_trace(&format!(
             "stroke start: tool={:?} (pkg:{tool}) base_w={width:.1}pt pressure_enabled={} src={:?} p={pressure:.3} p_k={:.2} s_k={:.2} tilt=[{:+.0},{:+.0}]",
             self.tool,
@@ -120,8 +121,8 @@ impl FreeDfApp {
             self.last_pointer_source,
             self.pen_profile.pressure_k,
             self.pen_profile.speed_k,
-            self.pen_tilt[0],
-            self.pen_tilt[1]
+            tilt_deg[0],
+            tilt_deg[1]
         ));
     }
 

@@ -109,7 +109,7 @@ impl Sink for InkSink {
 mod tests {
     use super::*;
     use super::super::session_router::{Outcome, SessionRouter};
-    use freedf_core::input_events::{PointerPhase, PointerSource};
+    use freedf_core::input_events::{PointerPhase, PointerSource, NO_TILT};
 
     fn down(p: [f32; 2]) -> PointerEvent {
         PointerEvent {
@@ -117,7 +117,7 @@ mod tests {
             phase: PointerPhase::Down,
             point: p,
             pressure: 0.3,
-            tilt: 0.0,
+            tilt: NO_TILT,
         }
     }
 
@@ -213,9 +213,9 @@ mod tests {
         let mut router = SessionRouter::new(vec![sink]);
         let mut ws = Workspace::new();
 
-        let mut pump = |adapter: &mut PenEventAdapter,
-                        router: &mut SessionRouter<InkSink>,
-                        ws: &mut Workspace,
+        let pump = |adapter: &mut PenEventAdapter,
+                    router: &mut SessionRouter<InkSink>,
+                    ws: &mut Workspace,
                         st: &PenState,
                         point: [f32; 2],
                         now: u64,

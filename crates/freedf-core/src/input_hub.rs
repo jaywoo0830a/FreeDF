@@ -99,10 +99,10 @@ pub fn replay(hub: &mut Hub, events: impl IntoIterator<Item = InputEvent>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input_events::{ActionSource, ControlKind, ControlPhase};
+    use crate::input_events::{ActionSource, ControlKind, ControlPhase, NO_TILT};
 
     fn pointer(source: PointerSource, phase: PointerPhase) -> InputEvent {
-        InputEvent::pointer(source, phase, [1.0, 2.0], 0.5, 0.0)
+        InputEvent::pointer(source, phase, [1.0, 2.0], 0.5, NO_TILT)
     }
 
     #[test]

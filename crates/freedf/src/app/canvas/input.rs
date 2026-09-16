@@ -20,29 +20,19 @@ impl FreeDfApp {
     ) {
         let pointer_abs = response.interact_pointer_pos();
 
-        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 프레스의 소유자는 휠이다.
+        // ── 원형 색상 팔레트(펜 버튼)가 열려 있으면 — 프레스의 소유자는 휠이다 (C1).
         //
-        // 종전에는 여기서 `return` 만 하고 허브를 소비하지 않았다: 포인터 이벤트가
-        // 매 프레임 큐에 **적체**하다가, 휠이 닫히는 순간 묵은 Down/Up 이 한꺼번에
-        // 라우팅되어 페이지에 유령 점이 찍힐 수 있었다 (그 자리를 삼킴 표식
-        // `wheel_swallow_click` 이 손으로 막고 있었다).
-        // 이제는 소유권을 명시한다: 휠이 열려 있는 동안 포인터 스트림은 **즉시
-        // 소비·폐기**된다 (휠의 탭 판정은 오버레이가 담당). 적체도, 유령 점도,
-        // 삼킴 표식도 필요 없다.
+        // 종전에는 여기서 egui 원시 이벤트(`frame_tap_pos`)로 탭을 **다시** 판정했다:
+        // 잉크와 다른 시계로 같은 프레스를 해석한 것이라, 삼킴 표식과 적체된
+        // 이벤트(유령 점) 문제가 따라붙었다.
+        // 이제 휠은 라우터의 **싱크**다 — 프레스는 잉크와 같은 어휘·같은 기하로
+        // 판정되고(`WheelSink`가 우선순위 1), 이 프레임의 캔버스 정책(줌/팬/잉크)은
+        // 적용되지 않는다 (휠 프레임).
         if self.color_wheel_open {
-            self.input_hub.take(|_| {});
-            if let Some(abs) = frame_tap_pos(ctx) {
-                let canvas_rect =
-                    egui::Rect::from_min_size(origin, egui::vec2(canvas_size[0], canvas_size[1]));
-                let wheel_center = self.color_wheel_center(canvas_rect);
-                if abs.distance(wheel_center) <= WHEEL_BACK_R + 4.0 {
-                    // 휠 안 탭 — color_wheel_overlay가 처리, 캔버스 입력은 스킵.
-                    return;
-                }
-                // 바깥 탭 — 닫고 점 없이 삼킵니다 (프레스는 이미 휠 소유로 소비됐다).
-                self.color_wheel_open = false;
-                return;
-            }
+            self.inject_wheel_state(origin, canvas_size);
+            self.route_pointer_frame(ctx, origin, canvas_size, false);
+            self.apply_wheel_intents();
+            return;
         }
 
         // Zoom (pinch / trackpad pinch / Ctrl+wheel / Ctrl+two-finger scroll)
@@ -78,8 +68,7 @@ impl FreeDfApp {
             if ctrl_down {
                 // egui의 smooth_scroll_delta는 스무딩돼 노치 1개가 크게
                 // 튈 수 있으므로, 이번 프레임의 원시 휠 이벤트를 셉니다.
-                let events: Vec<egui::Event> =
-                    ctx.input(|i| i.events.iter().cloned().collect());
+                let events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
                 for ev in &events {
                     if let egui::Event::MouseWheel {
                         unit,
@@ -198,105 +187,8 @@ impl FreeDfApp {
                     ToolType::Pen | ToolType::Fountain | ToolType::Highlighter | ToolType::Eraser
                 ));
 
-        // ── 허브 소비 → 컨트롤 맵/워크스페이스 → 문서 커맨드 ─────────────────
-        // 컨트롤(펜 버튼)은 팬 중에도 처리하고, 포인터는 캔버스 정책을 통과한
-        // 것만 툴에 준다. 캔버스 밖 누름·포커스 제스처·팬 정책은 앱 경계의 몫 —
-        // 워크스페이스와 툴 상태기계는 UI/장치 지식이 없다.
-        let mut hub = std::mem::take(&mut self.input_hub);
-        // 이번 프레임의 시각 — 보류 세션 승격/만료 판정에 쓴다 (대여 충돌 회피).
-        let now_ms = self.now_ms();
-        // ── 프레임 정책 문맥 — egui 상태를 프레임당 한 번 계산해 **명시 전달**한다.
-        // 라우터/싱크는 이 문맥 밖의 아무것도 보지 못한다 (암묵 샘플링 금지 —
-        // 구 게이트 `response.is_pointer_button_down_on()` 샘플링의 대체물).
-        let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
-        let mut router_ctx = Ctx {
-            now_ms,
-            // 접촉 증거 — ① egui가 프레스를 안다(마우스/펜 공통) ② **펜이 표면에
-            // 닿아 있다**(하드웨어 사실 — evdev/OTD와 같은 시계라 경합 없음)
-            // ③ 이번 프레임에 같은 스트림의 Drag가 흘렀다(아래에서 켠다).
-            // 워치독(라이브 세션 TTL)과 보류 승격이 이 값을 재료로 쓴다.
-            evidence: primary_down || self.pen_contact,
-            panning,
-            focus_grace: self.focus_grace_until_ms.is_some_and(|t| now_ms < t),
-            focus_grab_pending: unfocused && !self.focus_grabbed,
-        };
-        self.input_router.sinks_mut()[0]
-            .set_canvas([origin.x, origin.y], canvas_size);
-        hub.take(|ev| match ev {
-            freedf_core::input_events::InputEvent::Control(c) => {
-                // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
-                // **포커스된 창만** 사이드 버튼에 반응한다 — 배경 창의 휠이
-                // 함께 열리는 버그 방지 (PR1 동작 보존).
-                if !wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
-                    return;
-                }
-                // 원시 컨트롤 → 사용자 매핑 → action. 미바인딩은 조용히 무시.
-                if let Some(action) = self.control_map.translate(&c) {
-                    self.workspace.handle(&action);
-                }
-            }
-            freedf_core::input_events::InputEvent::Action(a) => {
-                self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
-            }
-            freedf_core::input_events::InputEvent::Pointer(p) => {
-                // 마지막으로 라우팅한 소스 — 장치 판정은 이벤트가 안고 온다.
-                // (팬 정책은 허브 점유 소스를 쓰고, 표시/로그는 이 값.)
-                self.last_pointer_source = Some(p.source);
-                // ── 세션 라우터 — 프레스의 목적지와 완결을 소유한다 ──────────
-                // 게이트는 더 이상 egui 레벨 샘플링이 아니라 이벤트가 안고 있는
-                // 좌표의 **순수 기하**다 (잉크 싱크) — Down 에지 1회 판정이
-                // 시계 경합으로 파괴될 여지가 구조적으로 없다 (0916 수정의
-                // 땜질 PendingDown 은 라우터의 세션/장부로 대체됐다).
-                if p.phase == PointerPhase::Drag {
-                    router_ctx.evidence = true; // 같은 소스 Drag = 접촉 증거
-                }
-                let rep = self.input_router.dispatch(&p, &router_ctx);
-                Self::log_router_report(rep, panning);
-            }
-        });
-        self.input_hub = hub;
-
-        // ── 포커스 획득 제스처 — 싱크가 삼킨 프레스의 표식을 소화한다 ─────────
-        // (이 프레스는 잉크 세션을 열지 않았다 — 릴리스도 세션 밖이라 점이 남지
-        //  않는다. 종전의 `focus_swallow_next_click` 삼킴 표식은 불필요해졌다.)
-        if self.input_router.sinks_mut()[0].take_focus_request() {
-            self.focus_grabbed = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
-
-        // ── 프레임 말미 — 보류 세션 재판정 (라우터의 유일한 시간 진입점) ─────
-        // 기하 즉담 구조에서는 hold 가 발생하지 않아 생산 경로에서는 no-op —
-        // 안전망이다 (어떤 정책이 hold 를 쓰더라도 유실은 장부로 정산된다).
-        // 팬 프레임의 보류 세션도 여기서 취소 정산된다 (구 "팬이 프레스를
-        // 가져감" 폐기 경로의 대체물).
-        if let Some(rep) = self.input_router.frame(&router_ctx) {
-            Self::log_router_report(rep, panning);
-        }
-
-        // 활성 툴 동기화 — 워크스페이스가 진실원 (컨트롤 맵 전환·홀드 포함),
-        // self.tool은 렌더/저장용 파생 캐시다.
-        if let Some(t) = tool_type_of_name(self.workspace.active_name()) {
-            if self.tool != t {
-                self.tool = t;
-            }
-        }
-
-        if !panning {
-            // 라우터가 순서를 보존해 모은 이벤트 (보류 승격 시 [down, …drags]
-            // 온전한 세션 재생 포함)를 툴 상태기계에 먹인다 — 툴은 문서 커맨드만
-            // 생산한다.
-            for p in self.input_router.sinks_mut()[0].drain() {
-                self.workspace
-                    .handle(&freedf_core::input_events::InputEvent::Pointer(p));
-            }
-        } // 팬 프레임의 포인터는 팬 경로가 가져간다 (아래) — 툴 세션이 열려 있지
-        //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
-
-        // 워크스페이스가 생산한 문서 커맨드를 앱 상태에 적용한다.
-        // (take 중 워크스페이스를 밖에 꺼내 소유권 충돌을 피한다.)
-        let mut ws = std::mem::take(&mut self.workspace);
-        ws.take_commands(|cmd| self.execute_command(cmd, ctx, origin, canvas_size));
-        self.workspace = ws;
+        // ── 허브 소비 → 라우터 → 문서 커맨드 (이 프레임의 포인터 파이프라인) ──
+        self.route_pointer_frame(ctx, origin, canvas_size, panning);
 
         if panning {
             if response.dragged() || response.is_pointer_button_down_on() {
@@ -350,6 +242,176 @@ impl FreeDfApp {
     }
 
     // ---------- Stroke painting ----------
+
+    /// 이번 프레임의 포인터 파이프라인 — 허브 소비 → 라우터 → 워크스페이스 →
+    /// 문서 커맨드. 휠 프레임과 일반 프레임이 **같은 길**을 쓴다 (판정 주체만
+    /// 싱크 우선순위가 가른다).
+    ///
+    /// 컨트롤(펜 버튼)은 팬/휠 프레임에도 처리하고, 포인터는 캔버스 정책을
+    /// 통과한 것만 툴에 준다. 캔버스 밖 누름·포커스 제스처·팬 정책은 앱 경계의
+    /// 몫 — 워크스페이스와 툴 상태기계는 UI/장치 지식이 없다.
+    fn route_pointer_frame(
+        &mut self,
+        ctx: &egui::Context,
+        origin: Pos2,
+        canvas_size: [f32; 2],
+        panning: bool,
+    ) {
+        let mut hub = std::mem::take(&mut self.input_hub);
+        // 이번 프레임의 시각 — 보류 세션 승격/만료 판정에 쓴다 (대여 충돌 회피).
+        let now_ms = self.now_ms();
+        // ── 프레임 정책 문맥 — egui 상태를 프레임당 한 번 계산해 **명시 전달**한다.
+        // 라우터/싱크는 이 문맥 밖의 아무것도 보지 못한다 (암묵 샘플링 금지 —
+        // 구 게이트 `response.is_pointer_button_down_on()` 샘플링의 대체물).
+        let unfocused = ctx.input(|i| i.viewport().focused == Some(false));
+        let mut router_ctx = Ctx {
+            now_ms,
+            // 접촉 증거 — ① egui가 프레스를 안다(마우스/펜 공통) ② **펜이 표면에
+            // 닿아 있다**(하드웨어 사실 — evdev/OTD와 같은 시계라 경합 없음)
+            // ③ 이번 프레임에 같은 스트림의 Drag가 흘렀다(아래에서 켠다).
+            // 워치독(라이브 세션 TTL)과 보류 승격이 이 값을 재료로 쓴다.
+            evidence: ctx.input(|i| i.pointer.primary_down()) || self.pen_contact,
+            panning,
+            focus_grace: self.focus_grace_until_ms.is_some_and(|t| now_ms < t),
+            focus_grab_pending: unfocused && !self.focus_grabbed,
+        };
+        self.input_router.sinks_mut()[0]
+            .ink
+            .set_canvas([origin.x, origin.y], canvas_size);
+        hub.take(|ev| match ev {
+            freedf_core::input_events::InputEvent::Control(c) => {
+                // ── 창 간 격리: 두 창이 같은 펜 장치(evdev/OTD)를 공유하므로,
+                // **포커스된 창만** 사이드 버튼에 반응한다 — 배경 창의 휠이
+                // 함께 열리는 버그 방지 (PR1 동작 보존).
+                if !wheel_toggle_allowed(ctx.input(|i| i.viewport().focused)) {
+                    return;
+                }
+                // 원시 컨트롤 → 사용자 매핑 → action. 미바인딩은 조용히 무시.
+                if let Some(action) = self.control_map.translate(&c) {
+                    self.workspace.handle(&action);
+                }
+            }
+            freedf_core::input_events::InputEvent::Action(a) => {
+                self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
+            }
+            freedf_core::input_events::InputEvent::Pointer(p) => {
+                // 마지막으로 라우팅한 소스 — 장치 판정은 이벤트가 안고 온다.
+                // (팬 정책은 허브 점유 소스를 쓰고, 표시/로그는 이 값.)
+                self.last_pointer_source = Some(p.source);
+                // 휠 열림 상태는 **프레스 직전**의 것이다: 같은 프레임에 펜
+                // 버튼(휠 토글)과 팁 프레스가 함께 오면 큐 순서가 곧 시간 순서다.
+                let wheel_open = self.color_wheel_open;
+                self.input_router.sinks_mut()[0].wheel.set_open(wheel_open);
+                // ── 세션 라우터 — 프레스의 목적지와 완결을 소유한다 ──────────
+                // 게이트는 더 이상 egui 레벨 샘플링이 아니라 이벤트가 안고 있는
+                // 좌표의 **순수 기하**다 (잉크/휠 싱크) — Down 에지 1회 판정이
+                // 시계 경합으로 파괴될 여지가 구조적으로 없다 (0916 수정의
+                // 땜질 PendingDown 은 라우터의 세션/장부로 대체됐다).
+                if p.phase == PointerPhase::Drag {
+                    router_ctx.evidence = true; // 같은 소스 Drag = 접촉 증거
+                }
+                let rep = self.input_router.dispatch(&p, &router_ctx);
+                Self::log_router_report(rep, panning);
+            }
+        });
+        self.input_hub = hub;
+
+        // ── 포커스 획득 제스처 — 싱크가 삼킨 프레스의 표식을 소화한다 ─────────
+        // (이 프레스는 잉크 세션을 열지 않았다 — 릴리스도 세션 밖이라 점이 남지
+        //  않는다. 종전의 `focus_swallow_next_click` 삼킴 표식은 불필요해졌다.)
+        if self.input_router.sinks_mut()[0].ink.take_focus_request() {
+            self.focus_grabbed = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
+        // ── 프레임 말미 — 보류 세션 재판정 (라우터의 유일한 시간 진입점) ─────
+        // 기하 즉담 구조에서는 hold 가 발생하지 않아 생산 경로에서는 no-op —
+        // 안전망이다 (어떤 정책이 hold 를 쓰더라도 유실은 장부로 정산된다).
+        // 팬 프레임의 보류 세션도 여기서 취소 정산된다 (구 "팬이 프레스를
+        // 가져감" 폐기 경로의 대체물).
+        if let Some(rep) = self.input_router.frame(&router_ctx) {
+            Self::log_router_report(rep, panning);
+        }
+
+        // 활성 툴 동기화 — 워크스페이스가 진실원 (컨트롤 맵 전환·홀드 포함),
+        // self.tool은 렌더/저장용 파생 캐시다.
+        if let Some(t) = tool_type_of_name(self.workspace.active_name()) {
+            if self.tool != t {
+                self.tool = t;
+            }
+        }
+
+        if !panning {
+            // 라우터가 순서를 보존해 모은 이벤트 (보류 승격 시 [down, …drags]
+            // 온전한 세션 재생 포함)를 툴 상태기계에 먹인다 — 툴은 문서 커맨드만
+            // 생산한다.
+            for p in self.input_router.sinks_mut()[0].ink.drain() {
+                self.workspace
+                    .handle(&freedf_core::input_events::InputEvent::Pointer(p));
+            }
+        } // 팬 프레임의 포인터는 팬 경로가 가져간다 — 툴 세션이 열려 있지
+        //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
+
+        // 워크스페이스가 생산한 문서 커맨드를 앱 상태에 적용한다.
+        // (take 중 워크스페이스를 밖에 꺼내 소유권 충돌을 피한다.)
+        let mut ws = std::mem::take(&mut self.workspace);
+        ws.take_commands(|cmd| self.execute_command(cmd, ctx, origin, canvas_size));
+        self.workspace = ws;
+    }
+
+    /// 휠 둘레 색 목록 — 사용자 팔레트(즐겨찾기)만, 비어 있으면 기본값.
+    ///
+    /// **렌더와 탭 적용이 같은 목록**을 쓴다 (색 인덱스 해석이 한 곳 — 싱크는
+    /// 인덱스만 나른다).
+    pub(crate) fn wheel_ring(&self) -> Vec<[u8; 4]> {
+        let mut ring = self.favorite_colors.clone();
+        if ring.is_empty() {
+            ring = crate::settings::SessionState::default().panels.favorite_colors;
+        }
+        ring.truncate(MAX_FAVORITE_COLORS);
+        ring
+    }
+
+    /// 휠 싱크에 이번 프레임의 상태(열림/기하)를 주입한다 — **렌더가 그리는
+    /// 기하와 판정이 보는 기하가 같은 값**이 된다 (C1).
+    fn inject_wheel_state(&mut self, origin: Pos2, canvas_size: [f32; 2]) {
+        let canvas_rect =
+            egui::Rect::from_min_size(origin, egui::vec2(canvas_size[0], canvas_size[1]));
+        let wheel = ColorWheel {
+            center: self.color_wheel_center(canvas_rect),
+            ring: self.wheel_ring(),
+        };
+        let geom = wheel.geom();
+        let open = self.color_wheel_open;
+        let sinks = self.input_router.sinks_mut();
+        sinks[0].wheel.set_geometry(geom);
+        sinks[0].wheel.set_open(open);
+    }
+
+    /// 휠 싱크가 남긴 **의도**를 앱 상태에 적용한다 (싱크는 색/툴을 모른다).
+    fn apply_wheel_intents(&mut self) {
+        let intents = self.input_router.sinks_mut()[0].wheel.drain_intents();
+        if intents.is_empty() {
+            return;
+        }
+        let ring = self.wheel_ring();
+        for intent in intents {
+            match intent {
+                // 중앙(도넛 구멍) 탭 = 지우개 (굿노트 관례).
+                WheelIntent::SelectEraser => {
+                    self.select_tool_type(ToolType::Eraser);
+                    self.save_default_session();
+                    self.save_session();
+                }
+                WheelIntent::PickSwatch(i) => {
+                    if let Some(color) = ring.get(i).copied() {
+                        self.apply_wheel_color(color);
+                    }
+                }
+                WheelIntent::Close => self.color_wheel_open = false,
+            }
+        }
+    }
 
     /// 라우터 정산 보고 → 진단 로그. 형식은 땜질(PendingDown) 시절과 유지해
     /// 기존 장비 로그(`freedf_pendebug.log`)와 비교 가능하게 한다 — 구

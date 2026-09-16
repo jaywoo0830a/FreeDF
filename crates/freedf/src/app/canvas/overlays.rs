@@ -62,11 +62,8 @@ impl FreeDfApp {
             return;
         }
         // 둘레 색: **사용자가 지정한 팔레트(즐겨찾기)만** 사용.
-        let mut ring = self.favorite_colors.clone();
-        if ring.is_empty() {
-            ring = crate::settings::SessionState::default().panels.favorite_colors;
-        }
-        ring.truncate(MAX_FAVORITE_COLORS);
+        // (탭 적용도 같은 목록을 쓴다 — `wheel_ring()`의 소유자는 앱이다.)
+        let ring = self.wheel_ring();
         let current = self.current_drawing_style().0;
 
         // 레이아웃/히트테스트는 순수 객체(ColorWheel)가 담당 — 테스트 대상.
@@ -166,26 +163,14 @@ impl FreeDfApp {
                 ui.allocate_space(egui::vec2(WHEEL_BACK_R * 2.0, WHEEL_BACK_R * 2.0));
             });
 
-        let Some(pos) = frame_tap_pos(ctx) else {
-            return;
-        };
-        match wheel.hit(pos) {
-            // 중앙(도넛 구멍) = 지우개 도구로 전환.
-            WheelHit::Center => {
-                self.select_tool_type(ToolType::Eraser);
-                self.save_default_session();
-                self.save_session();
-                self.color_wheel_open = false;
-            }
-            WheelHit::Swatch(i) => {
-                if let Some(color) = wheel.ring.get(i).copied() {
-                    self.apply_wheel_color(color);
-                }
-                self.color_wheel_open = false;
-            }
-            WheelHit::Backplate => self.color_wheel_open = false, // 그냥 닫기.
-            WheelHit::Outside => {} // 바깥 탭은 handle_canvas_input 가드가 닫습니다.
-        }
+        // ── 탭 판정은 **휠 싱크**가 소유한다 (C1) ────────────────────────────
+        //
+        // 종전에는 여기서 egui 원시 이벤트(`frame_tap_pos`)로 탭을 다시 읽어
+        // 히트테스트했다 — 잉크와 다른 시계. 이제 프레스는 라우터를 타고
+        // `WheelSink`에 도착하고(이벤트가 안고 온 좌표), 의도가 앱에 적용된다
+        // (`apply_wheel_intents` — 캔버스 입력이 프레임 앞부분에서 소화).
+        // 이 함수는 **그리기만** 한다: 열림/기하의 소유자로서 렌더가 그린 자리와
+        // 판정이 보는 자리는 같은 값이다.
     }
 
     /// 원형 팔레트의 화면 중심 — 펜 위치(버튼을 누른 순간의 포인터)를
