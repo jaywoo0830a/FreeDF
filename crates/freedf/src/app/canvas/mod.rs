@@ -1082,7 +1082,6 @@ mod overlays;
 mod paint;
 mod projection;
 mod wheel;
-pub(crate) use input::PendingDown;
 pub(crate) use paint::{canvas_stroke, InkBakeWorker};
 pub(crate) use projection::Projection;
 #[cfg(test)]

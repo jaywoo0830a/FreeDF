@@ -10,7 +10,8 @@
 //!
 //! drop 계약: [`Hub::emit`]의 반환값(`false` = 규칙에 의해 drop)은 장치
 //! 어댑터의 emit 체인에서 관찰되지 않는다 — drop 여부는 다운스트림
-//! 커맨드(그리기가 시작됐는가)로 관찰하는 것이 계약이다.
+//! 커맨드(그리기가 시작됐는가)로 관찰하는 것이 계약이다. (허브가 [`Hub::dropped`]
+//! 카운터로 drop 누적을 보관한다 — 진단 계약 4.3.)
 
 use std::collections::VecDeque;
 
@@ -24,6 +25,8 @@ pub struct Hub {
     queue: VecDeque<InputEvent>,
     /// 현재 포인터를 점유 중인 소스 — Down에 진입, Up에 탈출.
     active_source: Option<PointerSource>,
+    /// 충돌 규칙에 의해 drop된 이벤트 누적 (진단 계약 4.3 — 유실 관측).
+    dropped_count: usize,
 }
 
 impl Hub {
@@ -42,6 +45,7 @@ impl Hub {
                 // (Up도 예외가 아니다 — 엉뚱한 소스의 Up이 점유를 풀지 못하게.)
                 if let Some(active) = self.active_source {
                     if active != p.source {
+                        self.dropped_count += 1;
                         return false;
                     }
                 }
@@ -66,6 +70,12 @@ impl Hub {
     /// 아직 소비되지 않은 이벤트 수 (진단/테스트용).
     pub fn pending(&self) -> usize {
         self.queue.len()
+    }
+
+    /// 충돌 규칙("한 번에 한 포인터")에 의해 drop된 이벤트 누적 (진단 계약 4.3).
+    /// 유실이 장치 축에서 일어났는지를 데이터로 관측하는 창구다.
+    pub fn dropped(&self) -> usize {
+        self.dropped_count
     }
 }
 
@@ -93,6 +103,7 @@ mod tests {
         // 펜이 점유 중 — 마우스 Down/Up은 drop (엉뚱한 Up이 점유를 풀지도 못한다).
         assert!(!hub.emit(pointer(PointerSource::Mouse, PointerPhase::Down)));
         assert!(!hub.emit(pointer(PointerSource::Mouse, PointerPhase::Up)));
+        assert_eq!(hub.dropped(), 2, "drop은 카운터로 관측된다 (진단 계약 4.3)");
         assert_eq!(hub.pending(), 1);
         hub.take(|_| {});
         // 펜이 여전히 점유 중 (Up이 없음) — 큐를 비워도 규칙은 유지된다.

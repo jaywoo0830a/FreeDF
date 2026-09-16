@@ -1,5 +1,13 @@
 # 세션 라우터 마이그레이션 — 땜질(PendingDown)을 구조로 교체
 
+> **적용 완료** (2026-09-16). 5단계 전부 코드베이스에 반영됐다:
+> #4 어댑터 에지 보존(`input_devices.rs`), `Hub::dropped()` 카운터,
+> 코어 `app/input/session_router.rs` (JS 스펙 13건 1:1 이식),
+> `app/input/ink_sink.rs` (순수 기하 즉담 — 생산 경로 hold 없음),
+> `input.rs` 재배선 (땜질/게이트/`insert(0,…)` 삭제), 장부 → 기존
+> STROKE-RECOVER/STROKE-DROP 로그. `cargo test --workspace` 통과.
+> 이하 문서는 당시 계획이다.
+>
 > 대상 브랜치: `fix/stroke-down-edge-defer` · 스펙: `session-router.test.js` (15 tests) ·
 > 참고: `stroke-edge.test.js`, 같은 디렉터리 README.md §9
 

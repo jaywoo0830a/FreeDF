@@ -7,5 +7,9 @@
 
 pub(crate) mod egui_adapter;
 pub(crate) mod hooks;
+pub(crate) mod ink_sink;
+pub(crate) mod session_router;
 
 pub(crate) use hooks::InputSources;
+pub(crate) use ink_sink::InkSink;
+pub(crate) use session_router::SessionRouter;

@@ -39,34 +39,47 @@ impl PenEventAdapter {
         let pressure = st.pressure.unwrap_or(1.0);
         let tilt = st.tilt[0].hypot(st.tilt[1]);
 
-        if st.contact != self.prev_contact {
-            let phase = if st.contact {
-                PointerPhase::Down
-            } else {
-                PointerPhase::Up
-            };
-            if let Some(p) = point {
-                out.push(InputEvent::pointer(
-                    PointerSource::Pen,
-                    phase,
-                    p,
-                    pressure,
-                    tilt,
-                ));
+        // ── 에지 보존 (0916 계약 #4) ─────────────────────────────────────
+        // 접촉 에지가 감지됐는데 이 패킷에 위치가 없으면, 에지를 **파괴하지
+        // 않고** 다음 패킷으로 미룬다 — `prev_contact` 를 갱신하지 않는다.
+        // evdev는 egui보다 빠른 시계라 위치 조회가 에지보다 늦을 수 있는데,
+        // 여기서 에지를 소비해 버리면 위로 보낼 Down 자체가 사라진다 (0916
+        // 유실의 상류 원인). 원칙: **위치 없는 Down 은 라우터에 도달하지
+        // 않는다** — 에지는 위치가 확인된 첫 패킷에서 온전히 태어난다.
+        let contact_edge = st.contact != self.prev_contact;
+        if contact_edge && point.is_none() {
+            // 에지 보류 — 접촉 상태만 "아직 미확정"으로 둔다. 버튼 에지는
+            // 위치와 무관하므로 아래에서 계속 처리한다.
+        } else {
+            if contact_edge {
+                let phase = if st.contact {
+                    PointerPhase::Down
+                } else {
+                    PointerPhase::Up
+                };
+                if let Some(p) = point {
+                    out.push(InputEvent::pointer(
+                        PointerSource::Pen,
+                        phase,
+                        p,
+                        pressure,
+                        tilt,
+                    ));
+                }
+            } else if st.contact {
+                // 접촉 유지 = 드래그. 위치를 알 때만 (패킷 1건 = 포인터 1건).
+                if let Some(p) = point {
+                    out.push(InputEvent::pointer(
+                        PointerSource::Pen,
+                        PointerPhase::Drag,
+                        p,
+                        pressure,
+                        tilt,
+                    ));
+                }
             }
-        } else if st.contact {
-            // 접촉 유지 = 드래그. 위치를 알 때만 (패킷 1건 = 포인터 1건).
-            if let Some(p) = point {
-                out.push(InputEvent::pointer(
-                    PointerSource::Pen,
-                    PointerPhase::Drag,
-                    p,
-                    pressure,
-                    tilt,
-                ));
-            }
+            self.prev_contact = st.contact;
         }
-
         // 사이드 버튼 에지 — (종류, 번호) 쌍의 원시 컨트롤. 번역(사용자 매핑 →
         // action)은 컨트롤 맵 계층이 하고, 어댑터는 개수를 몰라도 된다.
         for (index, (now, prev)) in [
@@ -93,7 +106,8 @@ impl PenEventAdapter {
         }
 
         self.prev_buttons = st.buttons;
-        self.prev_contact = st.contact;
+        // prev_contact 갱신은 위 에지 보존 블록이 소유한다 — 위치 없는 에지는
+        // "미확정" 상태로 남아 다음 패킷으로 미뤄진다.
         out
     }
 }
@@ -168,5 +182,36 @@ mod tests {
                 InputEvent::control(ControlKind::StylusButton, 2, ControlPhase::Down),
             ]
         );
+    }
+
+    /// 0916 계약 #4 — 위치 없는 접촉 에지는 파괴되지 않고 다음 패킷으로
+    /// 미뤄진다. evdev(빠른 시계)가 egui(느린 시계)보다 먼저 접촉을 봐도,
+    /// 위로 보낼 Down 이 사라지지 않는다 (라우터 마이그레이션의 상류 전제).
+    #[test]
+    fn positionless_contact_edge_is_deferred_not_destroyed() {
+        let mut a = PenEventAdapter::default();
+        // 에지 프레임에 위치가 없다 — 이벤트는 안 만들지만 에지를 소비하지도 않는다.
+        let evs = a.update(&st(true, false, false), None);
+        assert!(evs.is_empty(), "위치 없는 에지는 이벤트로 나오지 않는다");
+        // 다음 패킷에 위치 도착 — **Down** 이 살아난다 (Drag 로 훼손되지 않는다).
+        let evs = a.update(&st(true, false, false), Some([7.0, 9.0]));
+        assert_eq!(evs.len(), 1);
+        let p = pen(&evs[0]);
+        assert_eq!(p.phase, PointerPhase::Down, "에지 보존 — 온전한 Down");
+        assert_eq!(p.point, [7.0, 9.0], "첫 점은 실제 위치다");
+    }
+
+    #[test]
+    fn positionless_up_edge_is_deferred_too() {
+        let mut a = PenEventAdapter::default();
+        let _ = a.update(&st(true, false, false), Some([1.0, 1.0])); // down
+        // Up 에지에 위치가 없다 — 다음 패킷으로 미뤄진다.
+        let evs = a.update(&st(false, false, false), None);
+        assert!(evs.is_empty());
+        let evs = a.update(&st(false, false, false), Some([1.0, 1.0]));
+        assert_eq!(pen(&evs[0]).phase, PointerPhase::Up);
+        // 미뤄진 뒤 접촉이 재개돼도 유령 Down 이 생기지 않는다 (prev_contact 미갱신).
+        let evs = a.update(&st(true, false, false), Some([2.0, 2.0]));
+        assert_eq!(pen(&evs[0]).phase, PointerPhase::Down);
     }
 }
