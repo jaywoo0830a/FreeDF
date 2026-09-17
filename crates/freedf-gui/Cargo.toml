@@ -9,6 +9,12 @@ default-run = "freedf-gui"
 name = "freedf-gui"
 path = "src/main.rs"
 
+[features]
+# AI/에이전트가 freedf-gui GUI를 직접 보고 조작하기 위한 eguidev 계측.
+#   cargo run -p freedf-gui --features dev-automation
+# EGUIDEV_MCP_ADDR 주입이 없는 실행에선 완전 no-op입니다.
+dev-automation = ["dep:eguidev", "dep:eguidev_runtime"]
+
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
@@ -17,3 +23,10 @@ elm-magic.workspace = true
 elm-magic-egui.workspace = true
 # Phase 1 (docs/freedf-gui-migration.md) — 저장소/동기화/PDF/설정 서비스 계층 공유.
 freedf-services = { path = "../freedf-services" }
+# Phase 2 — 캔버스: 잉크 메시(freedf-canvas) + 모델/저장소/변환(freedf-core).
+freedf-canvas = { path = "../freedf-canvas" }
+freedf-core = { path = "../freedf-core" }
+
+# eguidev 계측/런타임 — `dev-automation` 기능에서만 링크됩니다 (워크스페이스 핀 고정).
+eguidev = { workspace = true, optional = true }
+eguidev_runtime = { workspace = true, optional = true }

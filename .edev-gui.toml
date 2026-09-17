@@ -1,0 +1,20 @@
+# EDEV 런처 설정 — **freedf-gui** (elm-magic 재작성 앱)용.
+# freedf(구 앱)는 루트의 `.edev.toml`을 씁니다.
+#
+#   scripts/edev-run.sh --config .edev-gui.toml dump
+#   scripts/edev-run.sh --config .edev-gui.toml smoke
+#
+# 계약 id는 `docs/freedf-gui-migration.md` Phase 3 참고:
+#   freedf-gui.root · gui.<버튼 라벨 슬러그> · canvas.surface
+
+[app]
+# `--locked` 필수: 스모크 실행이 의존성 드리프트로 Cargo.lock을 갱신하지 않게 합니다.
+command = [
+  "cargo", "run", "--locked",
+  "-p", "freedf-gui", "--bin", "freedf-gui",
+  "--features", "dev-automation",
+]
+
+[smoke]
+suite_dir = "smoketest-gui"
+script_timeout_secs = 120

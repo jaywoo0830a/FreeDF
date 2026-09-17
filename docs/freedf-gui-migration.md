@@ -58,8 +58,34 @@
 - **종료 조건**: freedf-gui에서 PDF 열기 → 확대/이동 → 잉크 스트로크 저장까지
   (freedf-core 저장소로) 동작. smoketest `20_ink_tool_picker` 상응 검증.
 
-### Phase 3 — 위젯 UI 전면 재작성 (freedf-gui v2)
+### Phase 2 — 캔버스 (freedf-gui v1) — **✅ 완료 (2026-09-17)**
 
+- **완료**: `crates/freedf-gui/src/canvas.rs` — `<Raw>` 경계 뒤의 명령형 캔버스.
+  잉크 지오메트리는 freedf와 같은 생성기(`freedf-canvas` mesher), 변환은
+  `ViewTransform`, 저장은 `AnnotationStore`. 입력: 좌드래그=잉크, 우드래그=팬,
+  휠=포인터 고정 줌. PDF 열기(모달 경로 입력) + 페이지 텍스처.
+- 셸 통합: 툴바 줌/Open PDF/Clear Ink 버튼(elm 핸들러 → `canvas::*` 커맨드),
+  상태바 캔버스 상태. **레이아웃 실측 노트**: 수평 Row 안의 수직 Col은 컨텐츠
+  높이만 가용 높이로 받음(실측 57px) — 캔버스 `<Raw>`는 루트 Col 직접 자식.
+- **검증**: 헤드리스 테스트 15건(egui 포인터 이벤트 주입 end-to-end 포함) 전부
+  통과 + Xvfb 실행 캡처. `cargo test --workspace` 전체 통과.
+- **v1 한계**: 필압 명목 1.0(Phase 4), PDF 페이지 이동(v2), 프레임마다 메시
+  재굽기(BakeService 이식은 획 수 증가 시).
+
+### Phase 3 — 위젯 UI 전면 재작성 (freedf-gui v2) — **진행 중 (2026-09-17 착수)**
+
+- **✅ 계측 인프라 (완료)**: `dev.rs` 헬퍼 + `dev-automation` feature + 루트 스코프
+  `freedf-gui.root` + 어댑터 버튼 `gui.<라벨 슬러그>`(중복 `.<n>`) + `canvas.surface`
+  publish. 런처 `.edev-gui.toml`, 스모크 `smoketest-gui/10_launch_gui.luau` 통과.
+  Phase 2 견고화도 함께 완료: 모달 뒤 잉크 차단(`sync_and_status` 동기화),
+  팬 경계, PDF 렌더 재시도 루프 제거, 빈 탭 이름 가드, PDF 페이지 이동.
+- **✅ 진짜 문서 탭 + 북마크/아웃라인 패널 (완료)**: 캔버스 엔진이 문서 목록(`Doc`)을
+  소유하고 셸은 `tab_names()`/`active_tab_id()`만 읽어 렌더 — 탭 이름과 문서의
+  이중 소스 오브 트루스 제거. 탭 id(u64)로 선택(중복 이름 허용), 마지막 탭 닫기는
+  빈 문서 리셋, 탭 전환/닫기 전 진행 중 획 마무리. 북마크 패널(토글/목록/점프,
+  `freedf-core` store 북마크 API), 아웃라인 패널(`pdf.outline()` 트리 평탄화 —
+  들여쓰기는 canvas 쪽에서 미리 계산). Open PDF는 새 문서 탭으로 열림.
+  테스트 24건(문서별 잉크 분리·북마크·아웃라인 평탄화·탭 라이프사이클) 전부 통과.
 - 라이브러리/아웃라인/북마크/미디어 패널, 3단 툴바, 설정 창, 검색 바, 토스트를
   elm-magic으로 **재작성** (기존 코드 복사가 아니라 `view!` 설계로 다시 씀 —
   이게 이 크레이트의 존재 이유).

@@ -89,6 +89,14 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔�
 | `toast.stack` | 토스트 스택 사각형 (우측 하단) — "무엇을 덮고 있는지" 측정용 |
 | `toast.dismiss.<id>` | 토스트 닫기 버튼 (`<id>`는 토스트의 안정 키) |
 
+### **freedf-gui** 계약 (Phase 3 — `crates/freedf-gui`, 런처 `.edev-gui.toml`)
+
+| id | 대상 |
+|---|---|
+| `freedf-gui.root` | 루트 프레임 스코프 |
+| `gui.<라벨 슬러그>` | 어댑터(elm-magic)가 그린 버튼/탭 — 라벨 소문자+공백→`_`. 같은 라벨이 한 프레임에 두 번 이상이면 `.<n>` 접미사 (`gui.untitled`, `gui.untitled.1`) |
+| `canvas.surface` | 잉크 캔버스 영역 (freedf와 동일 이름) |
+
 ### `More` 오버레이 메뉴 (`menu.*`)
 
 오버레이 항목은 **메뉴가 열려 있을 때만** 존재합니다(닫혀 있으면 위젯 자체가

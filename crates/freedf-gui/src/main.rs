@@ -12,6 +12,9 @@
 //! 캔버스(PDF/잉크)는 어댑터 어휘 밖이므로 `<Raw>` 플레이스홀더로 자리만 잡아
 //! 둔다 (v0 스코프 — 앱 셸 우선).
 
+mod canvas;
+mod dev;
+mod fonts;
 mod shell;
 
 #[cfg(test)]
@@ -43,7 +46,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "freedf-gui",
         options,
-        Box::new(|_cc| Ok(Box::new(Host::default()))),
+        Box::new(|cc| {
+            fonts::install(&cc.egui_ctx);
+            Ok(Box::new(Host::default()))
+        }),
     )
 }
 
@@ -53,16 +59,34 @@ fn main() -> eframe::Result {
 /// 만지지 않는다(렌더 + 어댑터 전달만) — "상태는 변수, 화면은 함수 본문".
 struct Host {
     elm: elm_magic::Ctx,
+    /// eguidev 자동화 핸들 — `dev-automation` 기능에서만 존재 (기본 빌드 no-op).
+    #[cfg(feature = "dev-automation")]
+    devmcp: eguidev::DevMcp,
 }
 
 impl Default for Host {
     fn default() -> Self {
-        Self { elm: elm_magic::Ctx::default() }
+        Self {
+            elm: elm_magic::Ctx::default(),
+            #[cfg(feature = "dev-automation")]
+            devmcp: dev::attach(),
+        }
     }
 }
 
 impl eframe::App for Host {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ── eguidev 자동화 프레임 스코프 ────────────────────────────────
+        // EDEV가 시작한 실행(EGUIDEV_MCP_ADDR 주입)이 아니면 사실상 no-op.
+        #[cfg(feature = "dev-automation")]
+        let devmcp = self.devmcp.clone();
+
+        #[cfg(feature = "dev-automation")]
+        eguidev::frame_scope(&devmcp, ui, "freedf-gui.root", |ui| {
+            shell::render_shell(ui, &mut self.elm);
+        });
+
+        #[cfg(not(feature = "dev-automation"))]
         shell::render_shell(ui, &mut self.elm);
     }
 }

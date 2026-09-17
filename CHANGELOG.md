@@ -5,6 +5,70 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 3 — 진짜 문서 탭 + 북마크/아웃라인 패널 (docs/freedf-gui-migration.md)
+- **탭 = 문서**: 캔버스 엔진이 문서 목록(`Doc`: AnnotationStore·페이지·뷰·PDF·텍스처)을
+  소유하고, 셸은 `canvas::tab_names()`/`active_tab_id()`를 매 프레임 읽어 렌더만
+  한다 — **두 소스 오브 트루스 문제를 제거** (이전: elm 슬롯의 탭 이름과 엔진 상태
+  분리 → 이름만 있고 문서가 없는 유령 탭). 탭 id는 u64 고유값 — 이름이 같은 탭도
+  구분해 선택 가능.
+- 커맨드 추가: `add_tab`/`close_tab`(마지막 탭은 빈 문서로 리셋)/`select_tab(id)`/
+  `toggle_bookmark`/`go_to_page`/`bookmark_list`. 탭 전환·닫기 전 진행 중 획을
+  마쳐 잘못된 문서 기록을 방지.
+- **북마크 패널**: 툴바 Bookmark(현재 페이지 토글)·Bookmarks(패널 토글) 버튼 —
+  북마크 목록 행 클릭 시 해당 페이지로 점프. 상태바에 `북마크 n` 표시.
+- **아웃라인 패널**: Outline 버튼 → PDF 북마크 트리를 깊이 들여쓰기로 평탄화해
+  표시(`flatten_outline` 순수 함수), 행 클릭 시 해당 페이지로 점프. 들여쓰기는
+  문자열 보간 밖(canvas 쪽)에서 계산 — 보간 안의 중첩 문자열 식은 format string을
+  깨뜨린다는 실측 노트.
+- Open PDF가 이제 **새 문서 탭**으로 열린다 (이름 = 파일 스템, 페이지 크기 = PDF 1페이지).
+- 검증: freedf-gui 테스트 **24건 전부 통과** (탭 라이프사이클·문서별 잉크 분리·
+  북마크 토글/점프·아웃라인 평탄화·리셋 경로 추가). `edev smoke` 통과(툴바 계약
+  12개 id 포함), Xvfb 실행 캡처 확인, 워크스페이스 전체 테스트 통과.
+
+### Phase 3 착수 — freedf-gui eguidev 계측 인프라 + 견고화 (docs/freedf-gui-migration.md)
+- **계측 인프라**: `crates/freedf-gui/src/dev.rs` (freedf `app/dev.rs`와 동일 헬퍼
+  패턴 — `dev-automation` 기능 게이트 no-op). 루트 프레임 스코프 `freedf-gui.root`,
+  어댑터가 그린 버튼/탭은 `Pass.buttons`에서 **`gui.<라벨 슬러그>`** id로 등록
+  (같은 라벨 중복 시 `.<n>` 접미사 — eguidev 중복 id 결함 방지), 캔버스는
+  `canvas.surface` publish. 런처 설정 `.edev-gui.toml` + 스모크 스위트
+  `smoketest-gui/10_launch_gui.luau` — **edev smoke 통과**로 계약 등록 검증.
+- **버그 검토·수정 (canvas.rs)**:
+  1. 모달 창이 캔버스 위에 떠 있을 때 뒤에서 잉크가 그려지는 버그 — 셸이 매
+     프레임 `sync_and_status(modal_open)`으로 캔버스 입력 활성화를 동기화
+     (egui `hovered()`는 헤드리스/신규 인터랙션 모델에서 불안정해 플래그 방식 채택).
+  2. 캔버스 밖에서 누른 오른쪽 드래그가 팬으로 새는 버그 — `pan_active` 플래그로
+     캔버스 안에서 눌렀을 때만 팬 시작.
+  3. PDF 페이지 렌더 실패 시 **매 프레임 블로킹 렌더 재시도**(프리즈) 버그 —
+     `tex_attempted`로 페이지당 1회만 시도.
+  4. 빈 이름 탭 생성 — "Untitled"로 대체.
+  5. **PDF 페이지 이동 추가** (Phase 2 잔여): Prev/Next Page 버튼 + 상태바
+     `PDF n/m` 표시 (PDF 없을 때 no-op).
+- 검증: freedf-gui 테스트 17건(+입력 차단·페이지 이동·모달 흐름) 전부 통과,
+  `dev-automation` 빌드 경고 0, `edev smoke` 통과, 워크스페이스 전체 테스트 통과.
+
+### Phase 2 완료 — freedf-gui 캔버스 v1 (docs/freedf-gui-migration.md)
+- **`crates/freedf-gui/src/canvas.rs`** — `<Raw>` 경계 뒤의 명령형 캔버스 엔진:
+  - 잉크 지오메트리/스밈은 freedf와 **같은 생성기**(`freedf-canvas`의
+    `halves_for_stroke` + `append_stroke_ribbon` + `alphas_for_stroke`),
+    페이지↔화면 변환은 `ViewTransform`, 저장은 `freedf-core::store::AnnotationStore`.
+  - 입력: 좌클릭 드래그 = 잉크(획 종료 시 저장소 기록), 우클릭 드래그 = 팬,
+    휠 = 포인터 고정 줌(`zoom_at_view` 순수 함수 — freedf-core MIN/MAX_ZOOM 클램프).
+  - PDF: `freedf-services::pdf`로 열기(셸 모달 경로 입력) + 페이지 텍스처 렌더.
+    pdfium 부재 시 오류를 상태바에 표시하고 빈 페이지로 잉크는 계속 동작.
+- 셸 통합: 툴바에 Zoom In/Out · Fit · Open PDF · Clear Ink(확인 모달) 추가,
+  상태바에 캔버스 상태(페이지/줌/획 수) 표시. 커맨드는 elm 핸들러에서
+  `canvas::zoom_in()` 등으로 호출.
+- 레이아웃 실측 노트: egui에서 **수평 Row 안의 수직 Col은 컨텐츠 높이만** 가용
+  높이로 받는다(실측 57px) — 캔버스 `<Raw>`는 루트 Col 직접 자식으로 배치
+  (남은 높이 전체). 한글 렌더를 위해 freedf의 임베드 폰트(Asta Sans/NanumGothic)를
+  freedf-gui `fonts.rs`에서 공유.
+- 검증: 헤드리스 테스트 15건 전부 통과 — 줌 수학(포인터 고정/클램프),
+  **egui 원시 포인터 이벤트 주입으로 획이 저장소에 기록되는 end-to-end**,
+  clear/open_pdf 오류 경로, 셸 버튼↔캔버스 상태 연동. Xvfb 실행 캡처로
+  페이지/툴바/한글 상태바 확인. 워크스페이스 전체 테스트 통과, 경고 0.
+- v1 한계(문서화): 필압 명목 1.0(Phase 4 어댑터 과제), PDF 페이지 이동 v2,
+  프레임마다 메시 재굽기(획 수가 커지면 freedf의 BakeService 이식).
+
 ### Phase 1 완료 — freedf-services 서비스 계층 추출 (docs/freedf-gui-migration.md)
 - **`crates/freedf-services` 신설** — freedf에서 `storage`·`sync_storage`·`server`·
   `sync_client`·`pdf`·`settings`·`recent`·`recording`·`player`를 `git mv`로 이동

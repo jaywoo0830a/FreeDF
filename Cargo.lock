@@ -1795,8 +1795,12 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "eguidev",
+ "eguidev_runtime",
  "elm-magic",
  "elm-magic-egui",
+ "freedf-canvas",
+ "freedf-core",
  "freedf-services",
 ]
 
