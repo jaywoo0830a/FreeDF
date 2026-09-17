@@ -4,6 +4,7 @@ members = [
     "crates/freedf-canvas",
     "crates/freedf-core",
     "crates/freedf",
+    "crates/freedf-gui",
     "crates/freedf-sync",
 ]
 

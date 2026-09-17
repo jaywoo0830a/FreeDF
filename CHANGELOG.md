@@ -5,6 +5,29 @@
 
 ## [Unreleased] — 2026-09-13
 
+### freedf-gui 신규 크레이트 — elm-magic으로 앱 셸을 처음부터 재작성 (v0)
+- **`crates/freedf-gui`** — 마이그레이션이 아니라 **재작성** 실험. eframe 호스트가
+  `elm_magic::Ctx`를 프레임 간 유지하고, 매 프레임 `elm_magic::frame` →
+  `elm_magic_egui::render`로 `Shell` 컴포넌트를 그린다. 상태는 전부 컴포넌트
+  매개변수 슬롯(tabs/active/sidebar_open/status/modal/input).
+- **셸 구성(전부 순수 elm-magic)**: 툴바(Sidebar 토글 · New Tab · Close Tab · About),
+  사이드바(Library · Notes/PDFs/Recents 행, 클릭 시 상태바 갱신), 탭 스트립
+  (`tabs.map` + `<Tab active>` — 클릭 선택, 모달 확인 후 `remove` 삭제), 캔버스는
+  `<Raw>` 플레이스홀더(페인터 테두리 + 안내문), 상태바, `match modal` 다이얼로그 3종
+  (New Tab 입력 · Close 확인 · About).
+- **실행**: `cargo run -p freedf-gui` · 검증: 헤드리스 테스트 6건 전부 통과 +
+  Xvfb 실행 캡처로 실제 렌더 확인. 워크스페이스 `cargo check --workspace` 경고 0.
+- **발견한 elm-magic 버그(우회법 포함, 업스트림 보고 대상)**:
+  1. `view!`에 `pub fn`을 쓰면 `pub #[derive(...)]`를 출력해 컴파일 실패 →
+     컴포넌트는 모듈 프라이빗으로 두고 `render_shell()` 진입 함수로 노출.
+  2. `remove(x)` 특수 폼 이후의 문장이 `,`로 이어져 생성됨 → `remove`를
+     핸들러의 **마지막** 문장으로 배치해 우회.
+  3. `{if ...}` 식 내부의 `.iter().map(...)`은 소유 반복으로 재작성되지 않아
+     지역 배열을 빌린 핸들러 캡처가 E0716 → 지역 컬렉션은 `into_iter()`로 명시.
+- 다음 단계(v1): 캔버스 `<Raw>`에 freedf-core/freedf-canvas 페인팅 연결, storage 백엔드 연동.
+- **이후 방침**: freedf → freedf-gui 점진적 이전 계획은 `docs/freedf-gui-migration.md`,
+  발견한 elm-magic 버그의 업스트림 리포트는 `docs/elm-magic-bug-report.md`.
+
 ### elm-magic PoC — fallback_dialog 본문을 `view!`로 렌더링 (ui/elm_modal.rs)
 - **파일럿**: 모달(AskText/Confirm/Alert)의 **본문만** `elm_magic::view!` 컴포넌트로
   그린다. 윈도우 타이틀/폭/여백은 기존 `ui::dialog::modal`을 그대로 재사용하고,

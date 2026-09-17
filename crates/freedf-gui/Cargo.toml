@@ -1,0 +1,17 @@
+[package]
+name = "freedf-gui"
+version.workspace = true
+edition.workspace = true
+description = "FreeDF GUI — elm-magic으로 처음부터 다시 만드는 UI 셸 (PoC)"
+default-run = "freedf-gui"
+
+[[bin]]
+name = "freedf-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+# UI는 전부 elm-magic(view!)으로 그린다 — egui 어댑터가 Element 트리를 위젯으로 렌더.
+elm-magic.workspace = true
+elm-magic-egui.workspace = true

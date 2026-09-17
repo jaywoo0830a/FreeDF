@@ -1792,6 +1792,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "freedf-gui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "elm-magic",
+ "elm-magic-egui",
+]
+
+[[package]]
 name = "freedf-sync"
 version = "0.1.0"
 dependencies = [
