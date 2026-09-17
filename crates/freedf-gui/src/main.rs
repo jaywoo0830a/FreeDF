@@ -38,6 +38,13 @@ use eframe::egui;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
+        // 기본: OpenGL(glow) — freedf와 동일. wgpu(DX12)는 일부 Windows에서
+        // 시작 시 0xc0000005 크래시 (워크스페이스 Cargo.toml 주석 참고).
+        // `FREEDF_RENDERER=wgpu`로 실행하면 wgpu 백엔드로 시도한다.
+        renderer: match std::env::var("FREEDF_RENDERER").as_deref() {
+            Ok("wgpu") => eframe::Renderer::Wgpu,
+            _ => eframe::Renderer::Glow,
+        },
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
             .with_title("FreeDF GUI (elm-magic)"),
