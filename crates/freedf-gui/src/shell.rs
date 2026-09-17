@@ -37,6 +37,11 @@ elm_magic::view! {
         let outline_entries = crate::canvas::outline_list();
         // 모달 열림 여부를 캔버스에 동기화(모달 뒤 잉크 방지) + 상태바 문자열.
         let canvas_status = crate::canvas::sync_and_status(matches!(modal, ShellModal::None));
+        // 리본/토스트 — 캔버스 엔진이 소유한 상태를 매 프레임 읽어 렌더만 한다.
+        let tool = crate::canvas::tool_name();
+        let color = crate::canvas::color_name();
+        let width = crate::canvas::width_name();
+        let toast = crate::canvas::toast().unwrap_or_default();
         <Col>
             // ── 툴바 ─────────────────────────────────────────────
             <Row>
@@ -59,6 +64,64 @@ elm_magic::view! {
                 <Button on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
                 <Divider />
                 <Button on_click={modal = ShellModal::About}>"About"</Button>
+            </Row>
+            <Divider />
+            // ── 잉크 리본: 도구/색상/굵기 — 활성 항목은 Strong(비활성은 Button) ──
+            // 색상 팔레트는 settings 서비스 기본 즐겨찾기(블랙/레드/블루)와 동일.
+            <Row>
+                <Strong>"Ink"</Strong>
+                {if tool == "Pen" {
+                    <Strong>"[Pen]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_tool("Pen")}>"Pen"</Button>
+                }}
+                {if tool == "Fountain" {
+                    <Strong>"[Fountain]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_tool("Fountain")}>"Fountain"</Button>
+                }}
+                {if tool == "Highlighter" {
+                    <Strong>"[Highlighter]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_tool("Highlighter")}>"Highlighter"</Button>
+                }}
+                {if tool == "Eraser" {
+                    <Strong>"[Eraser]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_tool("Eraser")}>"Eraser"</Button>
+                }}
+                <Divider />
+                {if color == "Black" {
+                    <Strong>"[Black]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_color("Black")}>"Black"</Button>
+                }}
+                {if color == "Red" {
+                    <Strong>"[Red]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_color("Red")}>"Red"</Button>
+                }}
+                {if color == "Blue" {
+                    <Strong>"[Blue]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_color("Blue")}>"Blue"</Button>
+                }}
+                <Divider />
+                {if width == "Thin" {
+                    <Strong>"[Thin]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_width("Thin")}>"Thin"</Button>
+                }}
+                {if width == "Medium" {
+                    <Strong>"[Medium]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_width("Medium")}>"Medium"</Button>
+                }}
+                {if width == "Thick" {
+                    <Strong>"[Thick]"</Strong>
+                } else {
+                    <Button on_click={crate::canvas::select_width("Thick")}>"Thick"</Button>
+                }}
             </Row>
             <Divider />
             // ── 본문: 사이드바 + 북마크 패널 + 탭 스트립 ─────────
@@ -104,8 +167,13 @@ elm_magic::view! {
                     {tab_names.into_iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
                 </Row>
             </Row>
-            // 상태바 — 캔버스 위(항상 보이는 자리).
-            "{status} · {canvas_status}"
+            // 상태바 — 캔버스 위(항상 보이는 자리). 토스트가 있으면 대신 표시하고
+            // TOAST_SECS(3초) 뒤 자동 복귀 (만료는 캔버스 엔진이 소유).
+            {if toast.is_empty() {
+                "{status} · {canvas_status}"
+            } else {
+                "{toast}"
+            }}
             // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs,
             // docs/freedf-gui-migration.md Phase 2). 위젯 트리 밖의 상태는
             // canvas 모듈의 UI-스레드 엔진이 소유한다.
@@ -248,13 +316,30 @@ mod tests {
     }
 
     #[test]
+    fn ribbon_updates_canvas_engine() {
+        // 리본 클릭 → 캔버스 엔진의 도구/색/굵기가 실제로 바뀐다 (다음 획에 반영).
+        with(|c| *c = Canvas::default());
+        let mut app = elm_magic::mount!(Shell);
+        app.click("Fountain");
+        app.click("Red");
+        app.click("Thick");
+        with(|c| {
+            assert_eq!(c.tool, ToolType::Fountain);
+            assert_eq!(c.color, [255, 71, 66, 255]);
+            assert_eq!(c.width, 4.0);
+        });
+    }
+
+    #[test]
     fn bookmarks_panel_flow() {
         let mut app = elm_magic::mount!(Shell);
         app.click("Bookmarks");
         app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
         app.click("Bookmark"); // 현재 페이지(0) 북마크
         app.expect_text("페이지 0");
-        app.expect_text("북마크 1");
+        // 상태바는 3초 토스트("북마크 추가")로 대체된다 — 만료는 엔진 소유라
+        // headless 테스트에서 시간이 지나지 않으므로 토스트 문구로 검증한다.
+        app.expect_text("북마크 추가: 0페이지");
         app.click("Bookmark"); // 다시 토글 → 해제
         app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
     }

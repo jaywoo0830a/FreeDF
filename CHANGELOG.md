@@ -5,6 +5,20 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 3 — 잉크 리본 + 토스트 (docs/freedf-gui-migration.md)
+- **잉크 리본**: 툴바 아래 2단 Row — 도구(Pen/Fountain/Highlighter/Eraser)·
+  색상(Black/Red/Blue — settings 서비스 기본 즐겨찾기 팔레트)·굵기(Thin/Medium/
+  Thick) 선택. 활성 항목은 Strong, 비활성은 Button으로 렌더 (`view!`의 조건부
+  분기). 문자열 기반 커맨드(`select_tool`/`select_color`/`select_width`)로
+  이벤트 경로를 단순화 — 알 수 없는 값은 프리셋 기본값 폴백.
+- **토스트**: 시간 기반 자동 만료 알림(3초) — 캔버스 엔진이 (메시지, 시작 시각)을
+  소유하고 `toast()`로 만료를 판정. 상태바 자리를 대신 사용해 레이아웃 흔들림
+  없음. Bookmark 토글/잉크 지우기/PDF 열기 성공·실패에 연결.
+- 검증: freedf-gui 테스트 **28건 전부 통과** (리본 선택·폴백·토스트 만료·리본→
+  엔진 반영 end-to-end 추가, 북마크 플로우 테스트를 토스트 문구 기준으로 갱신).
+  `edev smoke` 통과(리본 계약 id 5종 추가), Xvfb 캡처로 리본 렌더 + 토스트 표시
+  확인, 워크스페이스 전체 테스트 통과.
+
 ### Phase 3 — 진짜 문서 탭 + 북마크/아웃라인 패널 (docs/freedf-gui-migration.md)
 - **탭 = 문서**: 캔버스 엔진이 문서 목록(`Doc`: AnnotationStore·페이지·뷰·PDF·텍스처)을
   소유하고, 셸은 `canvas::tab_names()`/`active_tab_id()`를 매 프레임 읽어 렌더만

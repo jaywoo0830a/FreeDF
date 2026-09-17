@@ -79,6 +79,12 @@
   publish. 런처 `.edev-gui.toml`, 스모크 `smoketest-gui/10_launch_gui.luau` 통과.
   Phase 2 견고화도 함께 완료: 모달 뒤 잉크 차단(`sync_and_status` 동기화),
   팬 경계, PDF 렌더 재시도 루프 제거, 빈 탭 이름 가드, PDF 페이지 이동.
+- **✅ 잉크 리본 + 토스트 (완료)**: 툴바 아래 2단 리본 — 도구(Pen/Fountain/
+  Highlighter/Eraser)·색상(Black/Red/Blue)·굵기(Thin/Medium/Thick) 선택, 활성
+  항목은 Strong 렌더. 문자열 커맨드(`select_tool`/`select_color`/`select_width`,
+  알 수 없는 값은 기본값 폴백). 토스트는 3초 자동 만료 — 엔진이 (메시지, 시작
+  시각)을 소유하고 상태바 자리를 대신 사용(레이아웃 흔들림 없음). Bookmark/잉크
+  지우기/PDF 열기에 연결. 테스트 28건(리본→엔진 반영 end-to-end 포함) 통과.
 - **✅ 진짜 문서 탭 + 북마크/아웃라인 패널 (완료)**: 캔버스 엔진이 문서 목록(`Doc`)을
   소유하고 셸은 `tab_names()`/`active_tab_id()`만 읽어 렌더 — 탭 이름과 문서의
   이중 소스 오브 트루스 제거. 탭 id(u64)로 선택(중복 이름 허용), 마지막 탭 닫기는

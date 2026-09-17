@@ -97,6 +97,14 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔�
 | `gui.<라벨 슬러그>` | 어댑터(elm-magic)가 그린 버튼/탭 — 라벨 소문자+공백→`_`. 같은 라벨이 한 프레임에 두 번 이상이면 `.<n>` 접미사 (`gui.untitled`, `gui.untitled.1`) |
 | `canvas.surface` | 잉크 캔버스 영역 (freedf와 동일 이름) |
 
+셸 툴바/리본의 스모크 검증 id (`smoketest-gui/10_launch_gui.luau`):
+`gui.sidebar` · `gui.new_tab` · `gui.close_tab` · `gui.bookmark` · `gui.bookmarks` ·
+`gui.outline` · `gui.zoom_in` · `gui.zoom_out` · `gui.fit` · `gui.prev_page` ·
+`gui.next_page` · `gui.open_pdf` · `gui.clear_ink` · `gui.about` · `gui.fountain` ·
+`gui.highlighter` · `gui.eraser` · `gui.red` · `gui.blue` · `canvas.surface`.
+잉크 리본의 **활성** 항목(Pen/Black/Medium 등)은 Button이 아닌 Strong으로 그려지므로
+계약 id가 없다 — 비활성 상태 버튼의 id만 계약이다.
+
 ### `More` 오버레이 메뉴 (`menu.*`)
 
 오버레이 항목은 **메뉴가 열려 있을 때만** 존재합니다(닫혀 있으면 위젯 자체가

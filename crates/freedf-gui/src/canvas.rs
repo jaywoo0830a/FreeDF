@@ -121,9 +121,9 @@ pub(crate) struct Canvas {
     /// 활성 문서 인덱스 (docs 내) — docs는 절대 비지 않는다.
     active: usize,
     next_doc_id: u64,
-    tool: ToolType,
-    color: [u8; 4],
-    width: f32,
+    pub(crate) tool: ToolType,
+    pub(crate) color: [u8; 4],
+    pub(crate) width: f32,
     active_stroke: Option<ActiveStroke>,
     /// 오른쪽 버튼 팬 진행 중 — **캔버스 안에서 눌렀을 때만** 켜진다
     /// (캔버스 밖에서 누른 드래그가 팬으로 새는 버그 방지).
@@ -134,6 +134,8 @@ pub(crate) struct Canvas {
     last_pointer: Option<egui::Pos2>,
     pdfium: Option<Pdfium>,
     pub pdf_error: Option<String>,
+    /// 토스트 — (메시지, 표시 시작 시각). 시간 만료는 엔진이 소유 (`toast()`).
+    toast: Option<(String, std::time::Instant)>,
     mesher: freedf_canvas::CoreRibbonMesher,
 }
 
@@ -152,6 +154,7 @@ impl Default for Canvas {
             last_pointer: None,
             pdfium: None,
             pdf_error: None,
+            toast: None,
             mesher: freedf_canvas::CoreRibbonMesher {
                 materials: Materials::new(Default::default(), Default::default()),
                 pen_soak: Default::default(),
@@ -231,6 +234,7 @@ pub fn clear_ink() {
         let page = c.doc().page;
         let ids: Vec<u64> = c.doc().store.strokes_on(page).iter().map(|s| s.id).collect();
         c.doc().store.remove_strokes(page, &ids);
+        c.toast_now(String::from("페이지 잉크를 지웠습니다"));
     });
 }
 
@@ -269,12 +273,113 @@ pub fn toggle_bookmark() {
     with(|c| {
         let page = c.doc().page;
         c.doc().store.toggle_bookmark(page);
+        let marked = c.doc().store.bookmarks().contains(&page);
+        c.toast_now(if marked {
+            format!("북마크 추가: {page}페이지")
+        } else {
+            format!("북마크 제거: {page}페이지")
+        });
     });
 }
 
 /// 북마크된 페이지 목록 (오름차순 — store가 정렬해 둔다).
 pub fn bookmark_list() -> Vec<usize> {
     with(|c| c.doc().store.bookmarks().to_vec())
+}
+
+// ── 토스트 — 시간 기반 자동 만료 알림 (엔진 소유, 셸은 읽기만) ─────────
+
+/// 토스트 표시 시간 (초).
+const TOAST_SECS: u64 = 3;
+
+impl Canvas {
+    /// 토스트를 지금 시각으로 표시한다.
+    fn toast_now(&mut self, msg: String) {
+        self.toast = Some((msg, std::time::Instant::now()));
+    }
+}
+
+/// 토스트 표시 — `TOAST_SECS`초 뒤 자동으로 사라진다.
+pub fn show_toast(msg: impl Into<String>) {
+    with(|c| c.toast_now(msg.into()));
+}
+
+/// 아직 유효한 토스트 메시지 (만료 시 None) — 셸이 매 프레임 읽는다.
+pub fn toast() -> Option<String> {
+    with(|c| match &c.toast {
+        Some((msg, at)) if at.elapsed().as_secs() < TOAST_SECS => Some(msg.clone()),
+        _ => None,
+    })
+}
+
+// ── 잉크 리본 — 도구/색상/굵기 (문자열 기반 커맨드 — view! 이벤트 단순화) ──
+
+/// 도구 선택 (Pen/Fountain/Highlighter/Eraser — 그 외 값은 Pen).
+pub fn select_tool(name: &str) {
+    with(|c| {
+        c.tool = match name {
+            "Fountain" => ToolType::Fountain,
+            "Highlighter" => ToolType::Highlighter,
+            "Eraser" => ToolType::Eraser,
+            _ => ToolType::Pen,
+        };
+    });
+}
+
+/// 현재 도구 이름 (리본 활성 표시용).
+pub fn tool_name() -> String {
+    with(|c| {
+        String::from(match c.tool {
+            ToolType::Pen => "Pen",
+            ToolType::Fountain => "Fountain",
+            ToolType::Highlighter => "Highlighter",
+            ToolType::Eraser => "Eraser",
+            ToolType::Pan => "Pan",
+        })
+    })
+}
+
+/// 즐겨찾기 색상 선택 (Black/Red/Blue — settings 서비스 기본 팔레트와 동일).
+pub fn select_color(name: &str) {
+    let rgba: [u8; 4] = match name {
+        "Red" => [255, 71, 66, 255],
+        "Blue" => [72, 166, 235, 255],
+        _ => [26, 26, 28, 255],
+    };
+    with(|c| c.color = rgba);
+}
+
+/// 현재 색상 이름 (팔레트에 없으면 "Custom").
+pub fn color_name() -> String {
+    with(|c| match c.color {
+        [255, 71, 66, 255] => String::from("Red"),
+        [72, 166, 235, 255] => String::from("Blue"),
+        [26, 26, 28, 255] => String::from("Black"),
+        _ => String::from("Custom"),
+    })
+}
+
+/// 굵기 프리셋 (pt) — Thin/Medium/Thick.
+pub fn select_width(name: &str) {
+    let w = match name {
+        "Thin" => 1.5,
+        "Thick" => 4.0,
+        _ => 2.5,
+    };
+    with(|c| c.width = w);
+}
+
+/// 현재 굵기 프리셋 이름 (프리셋이 아니면 "Medium").
+pub fn width_name() -> String {
+    with(|c| {
+        if (c.width - 1.5).abs() < 0.01 {
+            String::from("Thin")
+        } else if (c.width - 4.0).abs() < 0.01 {
+            String::from("Thick")
+        } else {
+            String::from("Medium")
+        }
+    })
 }
 
 /// 북마크/아웃라인 클릭 → 해당 페이지로 점프.
@@ -392,12 +497,14 @@ pub fn open_pdf(path: String) {
                     .unwrap_or_else(|| String::from("PDF"));
                 let id = c.next_doc_id;
                 c.next_doc_id += 1;
-                let doc = Doc::from_pdf(id, name, doc_view);
+                let doc = Doc::from_pdf(id, name.clone(), doc_view);
                 c.docs.push(doc);
                 c.active = c.docs.len() - 1;
+                c.toast_now(format!("PDF 열기: {name}"));
             }
             Err(e) => {
                 c.pdf_error = Some(format!("Could not open PDF: {e}"));
+                c.toast_now(String::from("PDF 열기 실패 — 상태바 확인"));
             }
         }
     });
@@ -954,6 +1061,65 @@ mod tests {
     fn outline_list_without_pdf_is_empty() {
         with(|c| *c = Canvas::default());
         assert!(outline_list().is_empty());
+    }
+
+    #[test]
+    fn ribbon_selects_tool_color_width() {
+        with(|c| *c = Canvas::default());
+        assert_eq!(tool_name(), "Pen");
+        assert_eq!(color_name(), "Black");
+        assert_eq!(width_name(), "Medium");
+        select_tool("Highlighter");
+        assert_eq!(tool_name(), "Highlighter");
+        select_tool("Fountain");
+        assert_eq!(tool_name(), "Fountain");
+        select_tool("Eraser");
+        assert_eq!(tool_name(), "Eraser");
+        select_tool("Pen");
+        assert_eq!(tool_name(), "Pen");
+        select_color("Red");
+        assert_eq!(color_name(), "Red");
+        select_color("Blue");
+        assert_eq!(color_name(), "Blue");
+        select_color("Black");
+        assert_eq!(color_name(), "Black");
+        select_width("Thin");
+        assert_eq!(width_name(), "Thin");
+        select_width("Thick");
+        assert_eq!(width_name(), "Thick");
+        // 알 수 없는 값 — 프리셋 기본값으로 폴백.
+        select_tool("Nonsense");
+        assert_eq!(tool_name(), "Pen");
+        select_color("Nonsense");
+        assert_eq!(color_name(), "Black");
+        select_width("Nonsense");
+        assert_eq!(width_name(), "Medium");
+    }
+
+    #[test]
+    fn toast_expires_after_delay() {
+        with(|c| *c = Canvas::default());
+        assert!(toast().is_none());
+        show_toast("hello");
+        assert_eq!(toast().as_deref(), Some("hello"));
+        // 표시 시작 시각을 만료 시각 이전으로 되돌려 시간 경과를 시뮬레이션.
+        with(|c| {
+            if let Some((_, at)) = c.toast.as_mut() {
+                *at -= std::time::Duration::from_secs(TOAST_SECS + 1);
+            }
+        });
+        assert!(toast().is_none());
+    }
+
+    #[test]
+    fn actions_raise_toasts() {
+        with(|c| *c = Canvas::default());
+        toggle_bookmark();
+        assert!(toast().unwrap().contains("북마크 추가"));
+        toggle_bookmark();
+        assert!(toast().unwrap().contains("북마크 제거"));
+        clear_ink();
+        assert!(toast().unwrap().contains("잉크"));
     }
 
     #[test]
