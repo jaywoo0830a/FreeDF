@@ -5,6 +5,27 @@
 
 ## [Unreleased] — 2026-09-13
 
+### 에러 바운더리 구축 + 테스트 전면 `tests/` 이동 (freedf-core · freedf-canvas)
+- **3계층 에러 바운더리 정책** 수립 (계약 문서: `crates/freedf-core/src/error.rs` ·
+  `crates/freedf-canvas/src/error.rs` 모듈 문서):
+  1. **모듈 경계** — 도메인 에러는 thiserror로 타입화: `NoteError`(수제 Display 제거),
+     `BakeError`, 신규 `input_commands::MalformedStream`(기존 `Result<(), String>` 대체).
+  2. **크레이트 경계** — 신규 `freedf_core::Error`/`freedf_canvas::Error`가 `#[from]`으로
+     수렴 + `Result` 별칭. fallible 공개 API 통일: `Logger::to_file`(io::Result→crate Result),
+     `AnnotationStore::from_json`(serde_json::Error→crate Result),
+     `check_well_formed`(String→`MalformedStream`).
+  3. **앱 경계** — 크레이트 밖(`freedf`, `freedf-gui`, 통합 테스트)은 `anyhow::Result`로
+     수렴. `?` 자동 변환 + `chain()`으로 도메인 변형 복원 검증.
+- **의존성**: workspace에 `thiserror = "2"`, `anyhow = "1"`. 라이브러리 크레이트는
+  thiserror(컴파일 타임 파생만 추가 — 런타임 의존 아님), anyhow는 dev-dependency로
+  바운더리 테스트에서만 사용.
+- **비공개 헬퍼 공개화**(테스트가 참조): `search::union`, `pen::signed_area2` → `pub`.
+- **테스트 이동**: src의 `#[cfg(test)]` 인라인 모듈 **28개 전부** `tests/` 통합 테스트로
+  이동 (core 19 + canvas 9, 예: `notes_tests.rs`, `bake_tests.rs`). src는 소스만 남음.
+  `tests/error_boundary_tests.rs`(2크레이트, 6테스트)로 바운더리 계약 상시 검증.
+- 검증: `cargo test --workspace` **44 스위트 전부 통과**, core/canvas 경고 0건,
+  앱 크레이트 코드 변경 0건(호환 시그니처 — 호출부는 `.is_ok()`/`.expect()`만 사용).
+
 ### Phase 3 — elm-magic 0.5.0 마이그레이션 (docs/elm-magic-bug-report.md)
 - **의존성**: 리비전 핀(`14f11eb9…`, git) → **crates.io `elm-magic = "0.5.0"` /
   `elm-magic-egui = "0.5.0"`**. 발행본이 dev 브랜치 `d063fb21…`와 소스 동일임을

@@ -10,6 +10,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 커맨드 스트림 불변식 위반 — 첫 위반 지점의 설명을 담는다.
+///
+/// [`check_well_formed`]가 반환하고, 크레이트 경계(`crate::error::Error`)에서
+/// `#[from]`으로 수렴됩니다. 앱은 `?`로 anyhow 경계까지 그대로 흘려보낼 수
+/// 있고, 필요하면 `downcast_ref::<MalformedStream>()`으로 복원됩니다.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("커맨드 스트림 불변식 위반: {0}")]
+pub struct MalformedStream(pub String);
+
 /// 문서 커맨드 — 툴 상태기계가 포인터 이벤트를 번역한 결과물.
 ///
 /// 좌표는 툴이 받은 그대로의 경계 좌표(스크린/UI 공간)다. 페이지 좌표로의
@@ -54,8 +63,10 @@ impl Command {
 
 /// 커맨드 스트림의 잘-형성(well-formed) 검사 — 세션 불변식.
 ///
-/// 반환: `Ok(())` 또는 첫 위반의 설명. `Immediate`/`Undo`는 언제나 허용.
-pub fn check_well_formed(stream: &[Command]) -> Result<(), String> {
+/// 반환: `Ok(())` 또는 첫 위반. 위반은 [`MalformedStream`]으로 타입화되고
+/// 크레이트 경계에서 [`crate::error::Error::MalformedStream`]으로 수렴됩니다.
+/// `Immediate`/`Undo`는 언제나 허용.
+pub fn check_well_formed(stream: &[Command]) -> Result<(), MalformedStream> {
     #[derive(PartialEq, Clone, Copy, Debug)]
     enum Mode {
         Stroke,
@@ -71,26 +82,26 @@ pub fn check_well_formed(stream: &[Command]) -> Result<(), String> {
         match c {
             Command::BeginStroke { .. } => {
                 if mode.is_some() {
-                    return Err(format!("세션 중복 begin (현재 {:?})", mode));
+                    return Err(MalformedStream(format!("세션 중복 begin (현재 {mode:?})")));
                 }
                 mode = Some(Mode::Stroke);
                 begins += 1;
             }
             Command::ExtendStroke { .. } => {
                 if mode != Some(Mode::Stroke) {
-                    return Err("획 세션 밖 extend-stroke".into());
+                    return Err(MalformedStream("획 세션 밖 extend-stroke".into()));
                 }
             }
             Command::EndStroke => {
                 if mode != Some(Mode::Stroke) {
-                    return Err("획 세션 밖 end-stroke".into());
+                    return Err(MalformedStream("획 세션 밖 end-stroke".into()));
                 }
                 mode = None;
                 ends += 1;
             }
             Command::EraseAt { .. } => {
                 if mode == Some(Mode::Stroke) {
-                    return Err("획 진행 중 erase-at".into());
+                    return Err(MalformedStream("획 진행 중 erase-at".into()));
                 }
                 if mode != Some(Mode::Erase) {
                     mode = Some(Mode::Erase);
@@ -99,7 +110,7 @@ pub fn check_well_formed(stream: &[Command]) -> Result<(), String> {
             }
             Command::EndErase => {
                 if mode != Some(Mode::Erase) {
-                    return Err("erase 세션 밖 end-erase".into());
+                    return Err(MalformedStream("erase 세션 밖 end-erase".into()));
                 }
                 mode = None;
                 erase_closes += 1;
@@ -109,13 +120,15 @@ pub fn check_well_formed(stream: &[Command]) -> Result<(), String> {
     }
 
     if let Some(m) = mode {
-        return Err(format!("닫히지 않은 세션: {m:?}"));
+        return Err(MalformedStream(format!("닫히지 않은 세션: {m:?}")));
     }
     if begins != ends {
-        return Err(format!("begin/end 불일치: {begins}/{ends}"));
+        return Err(MalformedStream(format!("begin/end 불일치: {begins}/{ends}")));
     }
     if erase_opens != erase_closes {
-        return Err(format!("erase 세션 불일치: {erase_opens}/{erase_closes}"));
+        return Err(MalformedStream(format!(
+            "erase 세션 불일치: {erase_opens}/{erase_closes}"
+        )));
     }
     Ok(())
 }

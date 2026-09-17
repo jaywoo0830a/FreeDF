@@ -28,6 +28,7 @@
 pub mod bake;
 pub mod clock;
 pub mod core_mesh;
+pub mod error;
 pub mod geom;
 pub mod ink;
 pub mod canvas_port;
@@ -37,6 +38,7 @@ pub mod surface;
 
 pub use bake::{BakeError, BakeParams, BakeService, BakeWorker, BakedPage, SimpleWorker};
 pub use clock::{Clock, FakeClock, SystemClock};
+pub use error::{Error, Result};
 pub use core_mesh::{
     alphas_for_stroke, append_stroke_ribbon, halves_for_stroke, CoreRibbonMesher,
 };

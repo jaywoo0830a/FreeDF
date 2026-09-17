@@ -18,6 +18,11 @@ edition = "2021"
 # freedf-canvas는 **무의존성**(100% std) 크레이트 — 순수성/결정성 보장.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 에러 처리 — 라이브러리 크레이트(freedf-core/canvas)는 thiserror로 타입화된
+# 에러를, 앱 경계(크레이트 밖 · 통합 테스트)는 anyhow로 수렴합니다.
+# (docs: crates/freedf-core/src/error.rs 모듈 문서의 3계층 에러 바운더리 정책)
+thiserror = "2"
+anyhow = "1"
 egui = "0.36"
 # eframe 0.36 기본 렌더러는 wgpu(DX12) — 일부 Windows에서 시작 시 0xc0000005 크래시.
 # 호환성이 좋은 OpenGL(glow) 백엔드를 기본으로 사용하되, GPU 오프로드를 원하면

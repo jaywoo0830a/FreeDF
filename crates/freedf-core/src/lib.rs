@@ -18,8 +18,10 @@
 //! - [`ink`]: 잉크 질감(입체적 불균일) 모델 — 결정적 노이즈 + 도구별 잉크 물리
 //! - [`paper`]: 용지 스타일(그리드/줄/점선) + 배경 색
 //! - [`logging`]: 분석용 구조적 로그(JSON Lines)
+//! - [`error`]: 에러 바운더리 — 크레이트 공통 [`error::Error`]/[`error::Result`]
 
 pub mod dictionary;
+pub mod error;
 pub mod history;
 pub mod ink;
 pub mod input_commands;
@@ -42,3 +44,5 @@ pub mod search;
 pub mod store;
 pub mod text;
 pub mod transform;
+
+pub use error::{Error, Result};

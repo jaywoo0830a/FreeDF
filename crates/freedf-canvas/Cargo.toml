@@ -7,4 +7,10 @@ description = "FreeDF 캔버스 엔진 — UI 무블록·순수·컴포저블한
 [dependencies]
 # 순수 계산 의존만 — 물리 모델(폭 리본/잉크 스밈/질감)은 freedf-core의
 # 검증된 구현을 재사용합니다. IO·GPU·스레드 의존은 없습니다.
+# (thiserror는 컴파일 타임 파생 코드만 추가 — 런타임 의존 아님.)
 freedf-core = { path = "../freedf-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# 에러 바운더리(앱 경계) 테스트용 — 크레이트 에러 → anyhow 변환 검증.
+anyhow.workspace = true

@@ -7,6 +7,7 @@ description = "FreeDF 핵심 로직: 메모/필기 스트로크 모델, 페이�
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 # Linux evdev 펜 입력(틸트/필압) — pen_input 모듈용.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -14,3 +15,5 @@ libc = "0.2"
 
 [dev-dependencies]
 approx = "0.5"
+# 에러 바운더리(앱 경계) 테스트용 — 크레이트 에러 → anyhow 변환 검증.
+anyhow.workspace = true
