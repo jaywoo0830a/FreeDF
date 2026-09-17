@@ -125,6 +125,15 @@
   - **주의(도구)**: eguidev 인프로세스 캡처는 반투명 클리어 색이 배경과 합성되어
     회색(58~80)으로 **잘못** 보였다 — 배경/클리어 색 검증은 반드시 실제 창 캡처
     (`xwininfo` + `import -window`)로 교차 확인한다.
+- **✅ elm-magic 0.5.0 마이그레이션 (완료)**: crates.io 발행 0.5.0으로 전환(리비전 핀 제거
+  — 발행본이 dev 브랜치 `d063fb21…`과 **소스 동일**임을 확인). `docs/elm-magic-bug-report.md`의
+  3건이 수정되어 **워크어라운드 전부 제거**: 셸 컴포넌트가 `pub(crate) fn Shell`(vis 보존),
+  `{if}` 안 지역 컬렉션이 `.iter().map(..)`(`sections`·`bookmarks`·`outline_entries`·`tab_names`),
+  `remove(x)` 뒤에 다른 문장 허용. 파급: 전개가 클론을 하므로 `OutlineEntry`에 `#[derive(Clone)]`.
+  회귀 테스트 3건(`bug1_*`/`bug2_*`/`bug3_*`)이 같은 3건을 고정 — 다시 깨지면 컴파일이 실패한다.
+  검증: `ELM_MAGIC_DUMP=1` 덤프로 `#[derive] pub(crate) struct ShellProps`와
+  `(sections).clone().into_iter().map` 확인, 0.5.0 이전 리비전으로는 26개 에러(대조군),
+  freedf-gui 테스트 34건 통과. freedf(PoC 모달)는 코드 변경 없이 그대로 빌드된다.
 - 라이브러리/아웃라인/북마크/미디어 패널, 3단 툴바, 설정 창, 검색 바, 토스트를
   elm-magic으로 **재작성** (기존 코드 복사가 아니라 `view!` 설계로 다시 씀 —
   이게 이 크레이트의 존재 이유).
@@ -153,8 +162,8 @@
 
 | 리스크 | 영향 | 완화 |
 |---|---|---|
-| elm-magic 미성숙 — 발견된 버그 3건(`docs/elm-magic-bug-report.md`) + 문서화된 제약(렌더 순서 기반 슬롯, 리스트 아이템 필드 대입 불가 등) | 재작성 중 컴파일/동작 장애 | rev 고정 유지, 워크어라운드를 `freedf-gui` 내 한 곳(`shell.rs` 헤더 주석)에 모으고 업스트림 수정 시 제거 |
-| **렌더 순서 기반 슬롯** — 조건부로 등장하는 컴포넌트 순서가 바뀌면 상태 슬롯 섞임 (v0.4 keyed 대기) | 패널 on/off 등 동적 UI에서 상태 오염 | Phase 3까지 상태를 컴포넌트 최상위에 두고, 동적 자식 컴포넌트는 `key` 사용 or 순서 고정. keyed 트리 안정화되면 재평가 |
+| elm-magic 미성숙 — **버그 3건은 0.5.0에서 수정 완료**(`docs/elm-magic-bug-report.md`). 남은 제약: 리스트 아이템 필드 대입(`t.done = !t.done`), 한 행에 아이템 캡처 핸들러 2개 이상 | 재작성 중 컴파일/동작 장애 | crates.io 0.5.0 **버전 의존**(리비전 핀 해제) + 회귀 테스트 3건으로 고정. 잔여 제약은 설계로 회피(목록은 읽기 전용 + 커맨드 호출) |
+| **렌더 순서 기반 슬롯** — 조건부로 등장하는 컴포넌트 순서가 바뀌면 상태 슬롯 섞임. **0.5.0에 keyed 슬롯(`<Row key={id}>` / `Arena::keyed_slot`)이 추가됨** | 패널 on/off 등 동적 UI에서 상태 오염 | freedf-gui는 상태를 컴포넌트 최상위에 두고 순서를 고정해 회피 중. 리스트/동적 자식에 keyed 슬롯을 도입하면 리스크 자체가 사라진다(다음 단계 후보) |
 | eguidev 계약 id 재등록 누락 | 자동화/시각 리뷰 회귀 | 계약 표를 체크리스트화, smoketest를 스위치오버 게이트로 |
 | 캔버스 성능/부드러움 재현 (연속 줌 최적화, One Euro 필터 등 freedf의 실측 튜닝) | 사용성 퇴보 | `ZOON-OPT.md`·`docs/OPTIMIZATION.md`의 계수/전략을 그대로 이식, 기존 테스트(freedf-core)가 로직을 보존 |
 | Windows 전용 기능 (DWM/Mica, 잉크 압력) | Windows 품질 | Phase 4를 별도 단계로 분리 — Linux에서 먼저 기능 패리티 |
@@ -164,5 +173,5 @@
 
 - [ ] `freedf` 리포지토리에 feature freeze 선언 (버그 픽스만)
 - [x] Phase 1 완료: `freedf-services` 추출 (2026-09-17 — 위 참고)
-- [ ] `docs/elm-magic-bug-report.md` 업스트림 전달 → 수정 리비전 나오면 워크어라운드 제거
+- [x] `docs/elm-magic-bug-report.md` 업스트림 전달 → **0.5.0에서 3건 수정 완료, freedf-gui 워크어라운드 전부 제거 (2026-09-17)**
 - [ ] 패리티 원장: README Features 목록을 체크리스트로 `docs/freedf-gui-parity.md`에 옮기고 Phase마다 갱신

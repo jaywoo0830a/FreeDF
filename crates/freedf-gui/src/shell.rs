@@ -1,10 +1,3 @@
-//! `Shell` — freedf-gui의 루트 컴포넌트. 툴바 · 사이드바 · 탭 스트립 ·
-//! 캔버스 플레이스홀더(`<Raw>`) · 상태바 · 모달 다이얼로그를 전부 `view!`로 그린다.
-//!
-//! 매개변수 = 상태 슬롯(선언 순서 = 슬롯 인덱스), 이벤트 = 슬롯 대입.
-//! 탭은 `Vec<String>` — 항목 선택은 `position()`으로 인덱스를 찾고, 닫기는
-//! `remove(usize)`(인덱스 삭제)를 쓴다 (elm-magic 3.3 문법).
-
 /// 모달 종류 — `match modal { … }`로 분기 렌더링한다 (사양서 3.4).
 #[derive(Clone, PartialEq)]
 pub(crate) enum ShellModal {
@@ -18,7 +11,7 @@ pub(crate) enum ShellModal {
 }
 
 elm_magic::view! {
-    fn Shell(
+    pub(crate) fn Shell(
         sidebar_open = true,
         bookmarks_open = false,
         outline_open = false,
@@ -134,7 +127,7 @@ elm_magic::view! {
                 {if sidebar_open {
                     <Col>
                         <Strong>"Library"</Strong>
-                        {sections.into_iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s.clone())}>"{s}"</Row>)}
+                        {sections.iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s)}>"{s}"</Row>)}
                     </Col>
                 } else {
                     <Text>""</Text>
@@ -145,7 +138,7 @@ elm_magic::view! {
                         {if bookmarks.is_empty() {
                             <Text>"북마크 없음 — Bookmark 버튼으로 추가"</Text>
                         } else {
-                            bookmarks.into_iter().map(|p| <Row on_click={crate::canvas::go_to_page(p)}>"페이지 {p}"</Row>)
+                            bookmarks.iter().map(|p| <Row on_click={crate::canvas::go_to_page(p)}>"페이지 {p}"</Row>)
                         }}
                     </Col>
                 } else {
@@ -157,7 +150,7 @@ elm_magic::view! {
                         {if outline_entries.is_empty() {
                             <Text>"PDF를 열면 목차가 표시됩니다"</Text>
                         } else {
-                            outline_entries.into_iter().map(|e| <Row on_click={crate::canvas::go_to_page(e.page)}>"{e.title}"</Row>)
+                            outline_entries.iter().map(|e| <Row on_click={crate::canvas::go_to_page(e.page)}>"{e.title}"</Row>)
                         }}
                     </Col>
                 } else {
@@ -166,7 +159,7 @@ elm_magic::view! {
                 <Divider />
                 // 탭 스트립 — id 기준 선택 (이름은 중복될 수 있다)
                 <Row>
-                    {tab_names.into_iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
+                    {tab_names.iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
                 </Row>
             </Row>
             // 상태바 — 캔버스 위(항상 보이는 자리). 토스트가 있으면 대신 표시하고
@@ -234,8 +227,11 @@ elm_magic::view! {
     }
 }
 
-/// main.rs용 진입점 — 매크로의 `pub fn` 버그(pub #[derive] 출력)를 피하려고
-/// 생성 타입은 모듈 프라이빗으로 두고 여기서만 렌더링한다.
+/// main.rs용 진입점 — 트리를 그린 뒤 어댑터 패스에 eguidev 계약 id를 붙인다.
+///
+/// 컴포넌트 자체는 `pub(crate) fn Shell`(elm-magic 0.5.0에서 vis 보존 — 버그 1 수정)이라
+/// 타입 가시성 문제는 없다. 계측 태깅은 어댑터 `Response`가 필요해 셸 모듈이
+/// 소유하는 게 맞으므로 여기서 한 번에 처리한다 — main.rs는 `render_root`만 알면 된다.
 pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     let props = ShellProps::default();
     let tree = elm_magic::frame::<Shell>(ctx, &props);
@@ -445,10 +441,24 @@ mod tests {
         with(|c| {
             *c = Canvas::default();
             let pts = vec![
-                StrokePoint { x: 1.0, y: 1.0, pressure: 1.0, t_ms: 0, width: 2.0 },
-                StrokePoint { x: 9.0, y: 9.0, pressure: 1.0, t_ms: 0, width: 2.0 },
+                StrokePoint {
+                    x: 1.0,
+                    y: 1.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
+                StrokePoint {
+                    x: 9.0,
+                    y: 9.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
             ];
-            c.doc().store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
+            c.doc()
+                .store
+                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
         });
         // 주의: with() 안에서 add_tab을 부르지 않는다 (RefCell 이중 대여).
         crate::canvas::add_tab("Second".to_string());

@@ -5,6 +5,28 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 3 — elm-magic 0.5.0 마이그레이션 (docs/elm-magic-bug-report.md)
+- **의존성**: 리비전 핀(`14f11eb9…`, git) → **crates.io `elm-magic = "0.5.0"` /
+  `elm-magic-egui = "0.5.0"`**. 발행본이 dev 브랜치 `d063fb21…`와 소스 동일임을
+  `.crate` 다운로드 후 diff로 확인(코어/매크로/어댑터 3크레이트 전부).
+- **버그 리포트 3건 수정 반영 — freedf-gui의 워크어라운드 전부 제거**:
+  1. `pub fn`/`pub(crate) fn` 컴포넌트 → 셸을 `pub(crate) fn Shell`로 선언(vis 보존),
+     진입 래퍼 `render_shell`은 eguidev 계측 태깅 때문에만 잔존.
+  2. `remove(x)` 뒤 문장 구분자 → 리포트 재현 형태(`remove`가 **첫 문장** + 뒤 대입)를
+     회귀 테스트로 편입.
+  3. `{if}` 안 지역 컬렉션 `.iter().map(..)` → `sections`·`bookmarks`·`outline_entries`·
+     `tab_names` 전부 `.iter()`로 복원(이전엔 `.into_iter()` 우회).
+- **파급 수정**: 전개가 `(x).clone().into_iter()`라 **컬렉션이 `Clone`이어야** 한다 —
+  `canvas::OutlineEntry`에 `#[derive(Clone)]`.
+- **회귀 테스트 3건 추가**(`shell.rs`): `bug1_pub_fn_component_is_usable_outside_its_module`,
+  `bug2_remove_before_assignment_and_bug3_local_iter_in_conditional`,
+  `bug3_conditional_branch_hides_local_collection` — 3건이 다시 깨지면 컴파일/테스트 실패.
+- 검증: `ELM_MAGIC_DUMP=1`로 `#[derive(..)] pub(crate) struct ShellProps`와
+  `(sections).clone().into_iter().map` 전개 확인 · 0.5.0 이전 리비전으로 되돌리면
+  `visibility pub is not followed by an item` 등 **26개 에러**(대조군) ·
+  freedf-gui 테스트 **34건 통과** · `cargo build --workspace` 통과(freedf PoC 모달은
+  코드 변경 없이 그대로 빌드).
+
 ### Phase 3 — 테마 공유(`freedf-theme`) + 창 배경 회귀 수정 (docs/freedf-gui-migration.md)
 - **버그(실측)**: freedf-gui 창 배경이 Nord가 아니라 `#080808`(근사 검정)이었다.
   eframe `clear_color` 기본값 `(12,12,12,α180)` + 배경을 칠하는 주체 없음(elm-magic

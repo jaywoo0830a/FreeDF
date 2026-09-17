@@ -502,6 +502,11 @@ pub fn active_tab_id() -> u64 {
 
 /// 북마크/아웃라인 패널용 항목 — 제목에는 깊이만큼 들여쓰기가 **미리 반영**된다
 /// (문자열 보간 안에서 repeat 식을 쓰면 format string이 깨지므로 여기서 계산).
+///
+/// `Clone`: elm-magic 0.5.0은 지역 컬렉션의 `.iter().map(..)`을
+/// `(x).clone().into_iter().map(..)`으로 전개한다(지역 변수 재사용 보존) —
+/// 목록이 `Clone`이어야 `{if ..}` 안에서 `.iter()`를 쓸 수 있다.
+#[derive(Clone)]
 pub(crate) struct OutlineEntry {
     pub title: String,
     pub page: usize,
