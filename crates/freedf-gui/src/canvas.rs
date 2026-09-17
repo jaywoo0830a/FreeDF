@@ -614,10 +614,9 @@ impl Canvas {
         let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
-        // 캔버스 바탕 — 원본 freedf의 드로잉 스테이지와 같은 `faint_bg_color`
-        // (Nord3 `#4C566A`). 칠하지 않으면 창 클리어 색이 드러나 검정으로 보인다
-        // (실측: 원본 freedf 캔버스 주변 = #4C566A, 수정 전 freedf-gui = #080808).
-        let stage_bg = ui.visuals().faint_bg_color;
+        // 캔버스 바탕 — 스테이지 색도 CSS 팔레트 토큰에서 온다(`style::stage_color`
+        // = `surface_alt`). 칠하지 않으면 창 클리어 색이 드러나 검정으로 보인다.
+        let stage_bg = crate::style::stage_color();
         painter.rect_filled(rect, 0.0, stage_bg);
 
         // eguidev 계약 — 캔버스 기하 공개 (docs/eguidev-automation.md).
@@ -637,14 +636,12 @@ impl Canvas {
 
     fn draw_paper(&self, painter: &egui::Painter, origin: egui::Pos2) {
         let rect = self.doc_ref().page_rect(origin);
-        painter.rect_filled(rect.expand(1.0), 2.0, egui::Color32::from_rgb(70, 74, 84));
+        // 종이 경계/그림자 색도 팔레트 토큰(`border`) — 캔버스는 CSS 밖(painter)이라
+        // style.rs가 색을 제공하고 여기서는 옮기기만 한다.
+        let border = crate::style::page_border_color();
+        painter.rect_filled(rect.expand(1.0), 2.0, border);
         painter.rect_filled(rect, 0.0, egui::Color32::WHITE);
-        painter.rect_stroke(
-            rect,
-            0.0,
-            (1.0, egui::Color32::from_rgb(120, 124, 134)),
-            egui::StrokeKind::Outside,
-        );
+        painter.rect_stroke(rect, 0.0, (1.0, border), egui::StrokeKind::Outside);
     }
 
     fn draw_pdf(&self, painter: &egui::Painter, origin: egui::Pos2) {

@@ -16,6 +16,7 @@ mod canvas;
 mod dev;
 mod fonts;
 mod shell;
+mod style;
 
 #[cfg(test)]
 mod services_smoke {
@@ -57,10 +58,11 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
-            // Nord 테마 — 원본 freedf와 **같은** 팔레트/스타일을 설치하고 다크
-            // 모드로 고정한다. 설치하지 않으면 egui 기본 다크(거의 검정) 배경이
-            // 그대로 드러난다 (실측 회귀: 배경 #080808 — docs/freedf-gui-migration.md).
-            freedf_theme::nord::install(&cc.egui_ctx);
+            // 스타일은 전부 elm-magic 0.6 CSS 속성(`src/style.rs`의 `css!` 규칙 +
+            // 팔레트 토큰)이다. 설치할 egui Style/Visuals는 **없다** — freedf-theme
+            // 의존 0. 다만 elm-magic CSS가 닿지 않는 egui 네이티브 위젯(`<Raw>`
+            // 캔버스, `<Input>`, 창 크롬)의 최소 설정만 여기서 넣는다.
+            style::install_egui_visuals(&cc.egui_ctx);
             // DPI 디버그 — `FREEDF_GUI_PPP=1.5` 처럼 지정해 Windows 배율을 흉내 낸다.
             if let Ok(ppp) = std::env::var("FREEDF_GUI_PPP") {
                 if let Ok(v) = ppp.parse::<f32>() {
@@ -97,10 +99,10 @@ impl Default for Host {
 
 impl eframe::App for Host {
     /// 창 클리어 색 — eframe 기본값은 반투명 근사 검정 `(12,12,12,α180)`이라
-    /// 배경을 칠하지 않은 영역이 검정(#080808)으로 보인다. 테마의 창 배경
-    /// (Nord0 `#2E3440`)을 불투명하게 돌려준다 — 원본 freedf 상태바와 같은 색.
-    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        visuals.window_fill.to_normalized_gamma_f32()
+    /// elm-magic CSS가 덮지 않는 영역(창 여백)이 검정으로 보인다. CSS 팔레트의
+    /// `background` 토큰(루트 `.app`의 `bg`와 같은 값)을 불투명하게 돌려준다.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        style::clear_color()
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

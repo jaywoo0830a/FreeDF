@@ -36,9 +36,12 @@ elm_magic::view! {
         let color = crate::canvas::color_name();
         let width = crate::canvas::width_name();
         let toast = crate::canvas::toast().unwrap_or_default();
-        <Col>
+        // 루트 클래스 `.app` — 창 배경(`bg: background`) + 방어 여백(`padding: 8`,
+        // Windows 최대화 시 창을 좌우로 밀어내는 문제) + 기본 간격(`gap`).
+        // 예전 egui Frame 래퍼(shell::render_root의 ROOT_INNER_MARGIN)를 CSS가 대체한다.
+        <Col class="app">
             // ── 툴바 ─────────────────────────────────────────────
-            <Row>
+            <Row class="toolbar">
                 <Strong>"FreeDF"</Strong>
                 <Divider />
                 <Button on_click={sidebar_open = !sidebar_open}>"Sidebar"</Button>
@@ -63,7 +66,7 @@ elm_magic::view! {
             <Divider />
             // ── 잉크 리본: 도구/색상/굵기 — 활성 항목은 Strong(비활성은 Button) ──
             // 색상 팔레트는 settings 서비스 기본 즐겨찾기(블랙/레드/블루)와 동일.
-            <Row>
+            <Row class="ribbon">
                 <Strong>"Ink"</Strong>
                 {if tool == "Pen" {
                     <Strong>"[Pen]"</Strong>
@@ -125,32 +128,32 @@ elm_magic::view! {
             // (실측: Row 안 57px → 루트 Col 직접 자식은 남은 높이 전체).
             <Row>
                 {if sidebar_open {
-                    <Col>
-                        <Strong>"Library"</Strong>
-                        {sections.iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s)}>"{s}"</Row>)}
+                    <Col class="panel">
+                        <Strong class="panel_title">"Library"</Strong>
+                        {sections.iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s)}><Text class="panel_item">"{s}"</Text></Row>)}
                     </Col>
                 } else {
                     <Text>""</Text>
                 }}
                 {if bookmarks_open {
-                    <Col>
-                        <Strong>"Bookmarks"</Strong>
+                    <Col class="panel">
+                        <Strong class="panel_title">"Bookmarks"</Strong>
                         {if bookmarks.is_empty() {
                             <Text>"북마크 없음 — Bookmark 버튼으로 추가"</Text>
                         } else {
-                            bookmarks.iter().map(|p| <Row on_click={crate::canvas::go_to_page(p)}>"페이지 {p}"</Row>)
+                            bookmarks.iter().map(|p| <Row on_click={crate::canvas::go_to_page(p)}><Text class="panel_item">"페이지 {p}"</Text></Row>)
                         }}
                     </Col>
                 } else {
                     <Text>""</Text>
                 }}
                 {if outline_open {
-                    <Col>
-                        <Strong>"Outline"</Strong>
+                    <Col class="panel">
+                        <Strong class="panel_title">"Outline"</Strong>
                         {if outline_entries.is_empty() {
                             <Text>"PDF를 열면 목차가 표시됩니다"</Text>
                         } else {
-                            outline_entries.iter().map(|e| <Row on_click={crate::canvas::go_to_page(e.page)}>"{e.title}"</Row>)
+                            outline_entries.iter().map(|e| <Row on_click={crate::canvas::go_to_page(e.page)}><Text class="panel_item">"{e.title}"</Text></Row>)
                         }}
                     </Col>
                 } else {
@@ -158,17 +161,20 @@ elm_magic::view! {
                 }}
                 <Divider />
                 // 탭 스트립 — id 기준 선택 (이름은 중복될 수 있다)
-                <Row>
+                <Row class="tabs">
                     {tab_names.iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
                 </Row>
             </Row>
-            // 상태바 — 캔버스 위(항상 보이는 자리). 토스트가 있으면 대신 표시하고
-            // TOAST_SECS(3초) 뒤 자동 복귀 (만료는 캔버스 엔진이 소유).
-            {if toast.is_empty() {
-                "{status} · {canvas_status}"
-            } else {
-                "{toast}"
-            }}
+            // 상태바 — 캔버스 위(항상 보이는 자리). `.status`가 배경/여백을,
+            // 안쪽 `Text`가 색을 담당한다 (Text에는 bg/padding이 적용되지 않는다).
+            // 토스트가 있으면 대신 표시하고 TOAST_SECS(3초) 뒤 자동 복귀.
+            <Row class="status">
+                {if toast.is_empty() {
+                    <Text class="muted">"{status} · {canvas_status}"</Text>
+                } else {
+                    <Text class="muted">"{toast}"</Text>
+                }}
+            </Row>
             // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs,
             // docs/freedf-gui-migration.md Phase 2). 위젯 트리 밖의 상태는
             // canvas 모듈의 UI-스레드 엔진이 소유한다.
@@ -181,7 +187,7 @@ elm_magic::view! {
                 ShellModal::NewTab => <Modal title="New Tab" on_close={modal = ShellModal::None}>
                     <Text>"Tab name:"</Text>
                     <Input value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
-                    <Row>
+                    <Row class="modal_actions">
                         <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
                         <Button on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })}>"OK"</Button>
                     </Row>
@@ -189,21 +195,21 @@ elm_magic::view! {
                 ShellModal::OpenPdf => <Modal title="Open PDF" on_close={modal = ShellModal::None}>
                     <Text>"PDF file path:"</Text>
                     <Input value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
-                    <Row>
+                    <Row class="modal_actions">
                         <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
                         <Button on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())}>"OK"</Button>
                     </Row>
                 </Modal>,
                 ShellModal::ClearInk => <Modal title="Clear Ink" on_close={modal = ShellModal::None}>
                     <Text>"Remove all ink on this page?"</Text>
-                    <Row>
+                    <Row class="modal_actions">
                         <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
                         <Button on_click={modal = ShellModal::None, crate::canvas::clear_ink()}>"Delete"</Button>
                     </Row>
                 </Modal>,
                 ShellModal::CloseConfirm => <Modal title="Close Tab" on_close={modal = ShellModal::None}>
                     <Text>"Close this tab?"</Text>
-                    <Row>
+                    <Row class="modal_actions">
                         <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
                         <Button on_click={modal = ShellModal::None, crate::canvas::close_tab()}>"Delete"</Button>
                     </Row>
@@ -229,13 +235,15 @@ elm_magic::view! {
 
 /// main.rs용 진입점 — 트리를 그린 뒤 어댑터 패스에 eguidev 계약 id를 붙인다.
 ///
-/// 컴포넌트 자체는 `pub(crate) fn Shell`(elm-magic 0.5.0에서 vis 보존 — 버그 1 수정)이라
+/// 컴포넌트 자체는 `pub(crate) fn Shell`(elm-magic의 vis 보존 패치 이후)이라
 /// 타입 가시성 문제는 없다. 계측 태깅은 어댑터 `Response`가 필요해 셸 모듈이
 /// 소유하는 게 맞으므로 여기서 한 번에 처리한다 — main.rs는 `render_root`만 알면 된다.
 pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     let props = ShellProps::default();
     let tree = elm_magic::frame::<Shell>(ctx, &props);
-    let pass = elm_magic_egui::render(ui, &tree, &mut ctx.arena);
+    // 팔레트를 넘겨 CSS 색 토큰(`bg: surface` …)을 실제 색으로 해석시킨다.
+    // 스타일 해석 자체는 elm-magic 코어의 몫이라 freedf-gui는 값을 옮기기만 한다.
+    let pass = elm_magic_egui::render_with_palette(ui, &tree, &mut ctx.arena, &crate::style::palette());
     // ── eguidev 계약 등록 (Phase 3 — docs/freedf-gui-migration.md) ──
     // 어댑터가 그린 버튼/탭을 계약 id로 등록. id 규칙: `gui.<라벨 슬러그>`,
     // 같은 라벨이 한 프레임에 두 번 이상 나오면 `.<n>` 접미사 (이름 없는 탭 둘 →
@@ -254,28 +262,14 @@ pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) 
     }
 }
 
-/// 셸 루트 프레임의 안쪽 여백(pt).
+/// 한 프레임 렌더 — 셸 하나만 그린다.
 ///
-/// 셸이 x=0에서 시작하지 않게 방어한다 — Windows는 최대화 시 창을 좌우 ~8px씩
-/// 화면 밖으로 밀어내므로(DPI 배율에 따라 증가) 여백이 없으면 행 첫 글자가
-/// 잘린다 (실측: 150% 배율).
-pub(crate) const ROOT_INNER_MARGIN: i8 = 8;
-
-/// 한 프레임 렌더 — 루트 프레임(배경 + 방어 여백) + 셸.
-///
-/// eframe 호스트(main.rs)와 테스트가 **같은 경로**를 지나야 배경 회귀를
-/// 테스트로 잡을 수 있으므로 렌더 진입점을 여기 둔다.
-///
-/// 배경은 테마의 **창** 색(Nord0 `#2E3440`) — `clear_color`와 같은 값이라 리사이즈
-/// 중에도 이음새가 없고, 원본 freedf의 크롬(툴바·상태바 = 실측 `#2E3440`)과 일치한다.
-/// elm-magic 셸은 egui 패널을 쓰지 않으므로 명시적으로 칠하지 않으면 창 클리어
-/// 색(eframe 기본 = 근사 검정)이 그대로 드러난다 (실측 회귀: 창 배경 `#080808`).
+/// 배경/여백은 **CSS가 담당한다** (`.app { bg: background; padding: 8 }` on the
+/// 루트 `Col`) — 예전 egui Frame 래퍼(테마 `window_fill` 채우기 + 하드코딩된
+/// 안쪽 여백)를 elm-magic 0.6 CSS 속성이 대체했다. 창 클리어 색은 main.rs의
+/// `clear_color`가 같은 팔레트 토큰으로 채운다 (elm-magic CSS 밖 영역).
 pub(crate) fn render_root(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
-    let bg = ui.visuals().window_fill;
-    eframe::egui::Frame::default()
-        .fill(bg)
-        .inner_margin(eframe::egui::Margin::same(ROOT_INNER_MARGIN))
-        .show(ui, |ui| render_shell(ui, ctx));
+    render_shell(ui, ctx);
 }
 
 #[cfg(test)]
@@ -284,55 +278,6 @@ mod tests {
     use crate::canvas::{with, Canvas};
     use freedf_core::model::StrokePoint;
     use freedf_core::model::ToolType;
-
-    /// 배경 회귀 방지 — 루트 프레임은 테마 창 색(Nord0), 캔버스 바탕은
-    /// Nord3(`faint_bg_color`)을 칠해야 한다. 아무것도 칠하지 않으면 창 클리어
-    /// 색(`#080808`)이 드러나 배경이 검정으로 보인다 (실측: Windows 실제 창).
-    #[test]
-    fn root_frame_and_canvas_paint_nord_backgrounds() {
-        use eframe::egui::{self, Color32, Shape};
-        use freedf_theme::nord::semantic;
-        with(|c| *c = Canvas::default());
-
-        let ctx = egui::Context::default();
-        freedf_theme::nord::install(&ctx);
-        let mut elm = elm_magic::Ctx::default();
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(900.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let mut out = ctx.run_ui(input, |ui| {
-            // CentralPanel 자체는 배경을 칠하지 않는다 — 루트 프레임만 검증한다.
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE)
-                .show(ui, |ui| render_root(ui, &mut elm));
-        });
-        out.textures_delta.clear(); // headless: 폰트 아틀라스 델타 소비
-
-        let fills: Vec<Color32> = out
-            .shapes
-            .iter()
-            .filter_map(|s| match &s.shape {
-                Shape::Rect(r) => Some(r.fill),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            fills.contains(&semantic::BG_WINDOW),
-            "루트 프레임이 Nord 창 배경(Nord0)을 칠해야 한다: {fills:?}"
-        );
-        assert!(
-            fills.contains(&semantic::BG_MUTED),
-            "캔버스 바탕이 Nord3(faint_bg_color)여야 한다: {fills:?}"
-        );
-        assert!(
-            !fills.contains(&Color32::from_rgb(8, 8, 8)),
-            "창 클리어 색이 드러나면 안 된다: {fills:?}"
-        );
-    }
 
     #[test]
     fn shell_renders_chrome() {

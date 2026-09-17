@@ -36,13 +36,9 @@ pdfium-render = "0.9.3"
 # `crates/freedf`의 `dev-automation` 기능에서만 실제로 링크됩니다.
 eguidev = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 eguidev_runtime = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
-# elm-magic — JSX 스타일 순수 함수형 UI 매크로 + egui 어댑터 (freedf-gui 셸 · freedf PoC 모달).
-# 0.5.0부터 crates.io에 발행되어 **리비전 핀 → 버전 의존**으로 전환했습니다.
-# 0.5.0이 `docs/elm-magic-bug-report.md`의 3건(=`pub fn` vis · `remove(x)` 뒤 문장
-# 구분자 · 지역 컬렉션 `.iter().map()` E0716)을 수정해 freedf-gui의 워크어라운드가
-# 필요 없어졌습니다. (리비전 핀 시절: `14f11eb9…` — 이전 워크어라운드의 근거.)
-elm-magic = "0.5.0"
-elm-magic-egui = "0.5.0"
+
+elm-magic = "0.6.0"
+elm-magic-egui = "0.6.0"
 
 [profile.release]
 opt-level = 2

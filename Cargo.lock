@@ -1451,18 +1451,18 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elm-magic"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "021dbadd45a9fab340f902991889f7cea42a593e7448d7a86876fd5d5baae9ca"
+checksum = "c56dd20d4d3840ceda3409777c50742b212a023c69603f9ef19e38e1b38c14c6"
 dependencies = [
  "elm-magic-macros",
 ]
 
 [[package]]
 name = "elm-magic-egui"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d8f62c64eccabc1a9758b45574044e17263bb8c2310d1a7feeb2314226a847f"
+checksum = "3402d25c4558f8b967da8806494c02a8a2ea5e6395e0008bdede58d60b019f91"
 dependencies = [
  "egui",
  "elm-magic",
@@ -1470,9 +1470,9 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-macros"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "193ba13ec406d15ada5ea326a6278e5fdf717aea05753e2309110ea650e77581"
+checksum = "0dec53febc2201a18122ac5b7e3641a4d2cdf5787d396db022ab313f41fcad46"
 
 [[package]]
 name = "emath"
@@ -1816,7 +1816,6 @@ dependencies = [
  "freedf-canvas",
  "freedf-core",
  "freedf-services",
- "freedf-theme",
  "serde",
  "serde_json",
 ]
