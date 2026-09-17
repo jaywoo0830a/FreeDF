@@ -7,6 +7,7 @@ members = [
     "crates/freedf-gui",
     "crates/freedf-services",
     "crates/freedf-sync",
+    "crates/freedf-theme",
 ]
 
 [workspace.package]

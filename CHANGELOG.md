@@ -5,6 +5,27 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 3 — 테마 공유(`freedf-theme`) + 창 배경 회귀 수정 (docs/freedf-gui-migration.md)
+- **버그(실측)**: freedf-gui 창 배경이 Nord가 아니라 `#080808`(근사 검정)이었다.
+  eframe `clear_color` 기본값 `(12,12,12,α180)` + 배경을 칠하는 주체 없음(elm-magic
+  셸은 egui 패널 미사용) → 불투명 검정 위에 합성. **플랫폼 무관** 버그(Windows 실측 +
+  Linux 실제 X11 창 캡처 모두 동일).
+- **수정**: `Host::clear_color` = 테마 `window_fill`(Nord0 `#2E3440`) **불투명**,
+  루트 프레임 = 같은 `window_fill`(Nord0 — 리사이즈 이음새 없음, 원본 freedf 크롬과
+  동일: 툴바·상태바 실측 `#2E3440`), 캔버스 스테이지 = `faint_bg_color`(Nord3).
+  렌더 진입점을 `shell::render_root`로 뽑아 앱과 테스트가 같은 경로를 지난다.
+- **테마 추출**: `crates/freedf-theme` 신설 — `nord.rs`/`tokens.rs` 이동(이력 보존),
+  `freedf`는 `pub use freedf_theme::{nord, tokens}` 재노출로 호출부 무변화. egui 외
+  의존 없음(서비스 계층과 같은 원칙 — Phase 1 참고).
+- **Windows 최대화 잘림 방어**: 루트 안쪽 여백 8px(`shell::ROOT_INNER_MARGIN`) —
+  150% 배율에서 창이 좌우로 화면 밖에 밀려 첫 글자가 잘리는 문제.
+- **DPI 재현**: `FREEDF_GUI_PPP=1.5`(환경변수)로 배율 흉내 — 기본 동작 무변화.
+- 검증: 실제 X11 창 캡처 실측 — 배경 `#2E3440`·스테이지 `#4C566A`·`#080808` 없음.
+  회귀 테스트 2건 추가(freedf-theme 팔레트/설치, freedf-gui 루트 프레임+캔버스 배경)
+  — freedf-gui 31건 · freedf-theme 2건 통과, 워크스페이스 전체 테스트 통과.
+  **주의**: eguidev 인프로세스 캡처는 클리어 색 합성 때문에 배경을 회색으로 오판하게
+  한다 — 배경 검증은 실제 창 캡처로 교차 확인.
+
 ### Phase 3 — 설정 창 + 잉크 기본값 저장/복원 (docs/freedf-gui-migration.md)
 - **설정 창**: Settings 버튼 → 모달 — 현재 잉크 기본값(도구·색상·굵기 표시 이름)을
   보여주고 "Save as default"로 저장. 성공/실패는 토스트로 보고.

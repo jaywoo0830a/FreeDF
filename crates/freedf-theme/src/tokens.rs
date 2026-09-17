@@ -4,7 +4,7 @@
 //! **Nord** 16-color palette; spacing and typography are numeric tokens.
 //!
 //! Nothing here knows about `egui::Style`/`Visuals`. The semantic tokens in
-//! [`super::nord::semantic`] map these primitives to UI roles.
+//! [`crate::nord::semantic`] map these primitives to UI roles.
 
 // The full palette is defined as a token library; not every token is consumed
 // by the current theme (they stay available for future roles / theming).

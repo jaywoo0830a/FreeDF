@@ -27,6 +27,8 @@ freedf-sync = { path = "../freedf-sync" }
 # settings/recent/recording/player)은 freedf-services 크레이트로 이동했고, 이
 # 크레이트는 아래 셔임 모듈로 기존 `crate::*` 경로를 유지합니다.
 freedf-services = { path = "../freedf-services" }
+# 디자인 토큰/Nord 테마 — elm-magic 셸(freedf-gui)과 공유하는 크레이트.
+freedf-theme = { path = "../freedf-theme" }
 eframe.workspace = true
 egui.workspace = true
 pdfium-render.workspace = true

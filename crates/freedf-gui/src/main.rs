@@ -57,6 +57,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
+            // Nord 테마 — 원본 freedf와 **같은** 팔레트/스타일을 설치하고 다크
+            // 모드로 고정한다. 설치하지 않으면 egui 기본 다크(거의 검정) 배경이
+            // 그대로 드러난다 (실측 회귀: 배경 #080808 — docs/freedf-gui-migration.md).
+            freedf_theme::nord::install(&cc.egui_ctx);
             // DPI 디버그 — `FREEDF_GUI_PPP=1.5` 처럼 지정해 Windows 배율을 흉내 낸다.
             if let Ok(ppp) = std::env::var("FREEDF_GUI_PPP") {
                 if let Ok(v) = ppp.parse::<f32>() {
@@ -92,6 +96,13 @@ impl Default for Host {
 }
 
 impl eframe::App for Host {
+    /// 창 클리어 색 — eframe 기본값은 반투명 근사 검정 `(12,12,12,α180)`이라
+    /// 배경을 칠하지 않은 영역이 검정(#080808)으로 보인다. 테마의 창 배경
+    /// (Nord0 `#2E3440`)을 불투명하게 돌려준다 — 원본 freedf 상태바와 같은 색.
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        visuals.window_fill.to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // ── eguidev 자동화 프레임 스코프 ────────────────────────────────
         // EDEV가 시작한 실행(EGUIDEV_MCP_ADDR 주입)이 아니면 사실상 no-op.
@@ -102,9 +113,10 @@ impl eframe::App for Host {
         // 최대화 시 창을 좌우 ~8px씩 화면 밖으로 밀어내므로(DPI 배율에 따라
         // 증가) 여백이 없으면 행 첫 글자가 잘린다 (실측: 150% 배율).
         let body = |ui: &mut egui::Ui, elm: &mut elm_magic::Ctx| {
-            egui::Frame::default()
-                .inner_margin(egui::Margin::same(8))
-                .show(ui, |ui| shell::render_shell(ui, elm));
+            // 루트 프레임(배경 = 테마 창 색 Nord0 + 방어 여백)은 shell::render_root —
+            // 배경을 명시적으로 칠해야 창 클리어 색(근사 검정)이 드러나지 않는다.
+            // 테스트(shell::tests)가 같은 경로를 검증한다.
+            shell::render_root(ui, elm);
         };
 
         #[cfg(feature = "dev-automation")]

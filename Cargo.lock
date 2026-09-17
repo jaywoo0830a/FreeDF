@@ -1760,6 +1760,7 @@ dependencies = [
  "freedf-core",
  "freedf-services",
  "freedf-sync",
+ "freedf-theme",
  "gilrs",
  "image",
  "pdfium-render",
@@ -1802,6 +1803,7 @@ dependencies = [
  "freedf-canvas",
  "freedf-core",
  "freedf-services",
+ "freedf-theme",
  "serde",
  "serde_json",
 ]
@@ -1834,6 +1836,13 @@ dependencies = [
  "ureq",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "freedf-theme"
+version = "0.1.0"
+dependencies = [
+ "egui",
 ]
 
 [[package]]

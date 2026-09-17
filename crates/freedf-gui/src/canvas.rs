@@ -609,6 +609,12 @@ impl Canvas {
         let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
+        // 캔버스 바탕 — 원본 freedf의 드로잉 스테이지와 같은 `faint_bg_color`
+        // (Nord3 `#4C566A`). 칠하지 않으면 창 클리어 색이 드러나 검정으로 보인다
+        // (실측: 원본 freedf 캔버스 주변 = #4C566A, 수정 전 freedf-gui = #080808).
+        let stage_bg = ui.visuals().faint_bg_color;
+        painter.rect_filled(rect, 0.0, stage_bg);
+
         // eguidev 계약 — 캔버스 기하 공개 (docs/eguidev-automation.md).
         crate::dev::publish_rect(ui, "canvas.surface", rect);
 

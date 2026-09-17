@@ -258,12 +258,85 @@ pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) 
     }
 }
 
+/// 셸 루트 프레임의 안쪽 여백(pt).
+///
+/// 셸이 x=0에서 시작하지 않게 방어한다 — Windows는 최대화 시 창을 좌우 ~8px씩
+/// 화면 밖으로 밀어내므로(DPI 배율에 따라 증가) 여백이 없으면 행 첫 글자가
+/// 잘린다 (실측: 150% 배율).
+pub(crate) const ROOT_INNER_MARGIN: i8 = 8;
+
+/// 한 프레임 렌더 — 루트 프레임(배경 + 방어 여백) + 셸.
+///
+/// eframe 호스트(main.rs)와 테스트가 **같은 경로**를 지나야 배경 회귀를
+/// 테스트로 잡을 수 있으므로 렌더 진입점을 여기 둔다.
+///
+/// 배경은 테마의 **창** 색(Nord0 `#2E3440`) — `clear_color`와 같은 값이라 리사이즈
+/// 중에도 이음새가 없고, 원본 freedf의 크롬(툴바·상태바 = 실측 `#2E3440`)과 일치한다.
+/// elm-magic 셸은 egui 패널을 쓰지 않으므로 명시적으로 칠하지 않으면 창 클리어
+/// 색(eframe 기본 = 근사 검정)이 그대로 드러난다 (실측 회귀: 창 배경 `#080808`).
+pub(crate) fn render_root(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
+    let bg = ui.visuals().window_fill;
+    eframe::egui::Frame::default()
+        .fill(bg)
+        .inner_margin(eframe::egui::Margin::same(ROOT_INNER_MARGIN))
+        .show(ui, |ui| render_shell(ui, ctx));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::canvas::{with, Canvas};
     use freedf_core::model::StrokePoint;
     use freedf_core::model::ToolType;
+
+    /// 배경 회귀 방지 — 루트 프레임은 테마 창 색(Nord0), 캔버스 바탕은
+    /// Nord3(`faint_bg_color`)을 칠해야 한다. 아무것도 칠하지 않으면 창 클리어
+    /// 색(`#080808`)이 드러나 배경이 검정으로 보인다 (실측: Windows 실제 창).
+    #[test]
+    fn root_frame_and_canvas_paint_nord_backgrounds() {
+        use eframe::egui::{self, Color32, Shape};
+        use freedf_theme::nord::semantic;
+        with(|c| *c = Canvas::default());
+
+        let ctx = egui::Context::default();
+        freedf_theme::nord::install(&ctx);
+        let mut elm = elm_magic::Ctx::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(900.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            // CentralPanel 자체는 배경을 칠하지 않는다 — 루트 프레임만 검증한다.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| render_root(ui, &mut elm));
+        });
+        out.textures_delta.clear(); // headless: 폰트 아틀라스 델타 소비
+
+        let fills: Vec<Color32> = out
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                Shape::Rect(r) => Some(r.fill),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            fills.contains(&semantic::BG_WINDOW),
+            "루트 프레임이 Nord 창 배경(Nord0)을 칠해야 한다: {fills:?}"
+        );
+        assert!(
+            fills.contains(&semantic::BG_MUTED),
+            "캔버스 바탕이 Nord3(faint_bg_color)여야 한다: {fills:?}"
+        );
+        assert!(
+            !fills.contains(&Color32::from_rgb(8, 8, 8)),
+            "창 클리어 색이 드러나면 안 된다: {fills:?}"
+        );
+    }
 
     #[test]
     fn shell_renders_chrome() {

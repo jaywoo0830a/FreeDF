@@ -1,15 +1,14 @@
 //! # Nord egui theme — semantic tokens + style builder
 //!
-//! Semantic tokens map the primitive tokens ([`super::tokens`]) to UI roles,
+//! Semantic tokens map the primitive tokens ([`crate::tokens`]) to UI roles,
 //! then [`nord_style`] assigns them to `egui::Style`/`Visuals` fields.
 //!
 //! This is a **dark-mode** theme (PDF viewers are for long reading sessions),
 //! so the app is locked to dark mode via [`install`].
 
-use eframe::egui;
 use egui::{Color32, CornerRadius, FontId, Margin, Stroke, TextStyle, Vec2};
 
-use super::tokens::{colors, spacing, typography};
+use crate::tokens::{colors, spacing, typography};
 
 /// Semantic color tokens — roles derived from the Nord palette.
 // The full set is defined for consistency; unused roles stay available.
