@@ -2,7 +2,7 @@
 name = "freedf-theme"
 version.workspace = true
 edition.workspace = true
-description = "FreeDF 공용 테마 — Nord 디자인 토큰 + egui Style 빌더/설치기 (freedf·freedf-gui 공유)"
+description = "FreeDF 테마 — Nord 디자인 토큰 + egui Style 빌더/설치기 (freedf 전용)"
 
 [dependencies]
 egui.workspace = true

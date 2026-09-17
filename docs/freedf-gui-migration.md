@@ -122,9 +122,35 @@
     (`freedf-theme`: 팔레트/설치가 라이트·다크 모두에 적용, `freedf-gui`: 루트 프레임과
     캔버스가 Nord 배경을 칠하고 클리어 색을 노출하지 않음) — 셸과 테스트가 같은
     렌더 경로(`render_root`)를 지나므로 배경이 다시 비면 테스트가 실패한다.
+    *(이후 0.6 CSS 전환에서 freedf-gui 쪽 배경 렌더 테스트는 제거 — 스타일 해석은
+    elm-magic의 계약이라 그쪽 테스트가 담당한다.)*
   - **주의(도구)**: eguidev 인프로세스 캡처는 반투명 클리어 색이 배경과 합성되어
     회색(58~80)으로 **잘못** 보였다 — 배경/클리어 색 검증은 반드시 실제 창 캡처
     (`xwininfo` + `import -window`)로 교차 확인한다.
+- **✅ freedf-gui 스타일을 elm-magic 0.6 CSS로 전환 (완료)**: freedf-gui의
+  `freedf-theme` 의존을 **0**으로 만들고, 셸의 시각 결정을 전부 elm-magic 0.6의
+  CSS 속성으로 옮겼다.
+  - **elm-magic 0.6.0**: 0.5까지 `css!`가 등록만 하던 것과 달리 **실제로 렌더**된다 —
+    셀렉터(태그·클래스·`*`·복합·후손·자식·목록) · 캐스케이드(명시도→선언순) ·
+    상속 · 상태(`:hover` `:active` `:focus` `:disabled`) · **36개 속성** ·
+    팔레트 14토큰(`Palette`/`Token`/`Color`) · 스타일 적용 태그 14종.
+  - **구성**: `crates/freedf-gui/src/style.rs` 하나가 스타일 출처 —
+    `css!` 규칙(`.app` `.toolbar` `.ribbon` `.panel` `.panel_title` `.panel_item`
+    `.status` `.muted` `.tabs` `.modal_actions` + 태그 `Col` `Row` `Button` `Text`
+    `Strong` `Modal`)과 `palette()`. 렌더는 어댑터의
+    `render_with_palette`로 팔레트를 넘겨 색 토큰(`bg: surface`)을 해석시킨다.
+  - **대체된 것**: ① 배경/여백 — egui Frame 래퍼와 하드코딩 상수
+    (`ROOT_INNER_MARGIN`)를 제거하고 루트 `Col`의 `.app { bg: background; padding: 8 }`
+    가 담당. ② 버튼 — egui `Visuals` 대신 `Button` `Button:hover` `Button:active`
+    규칙(CSS가 상태를 안다). ③ 툴바/리본/패널/상태바/모달 — 배경·여백·라운드·
+    그림자를 CSS가 지정. ④ 캔버스(`<Raw>` painter, CSS 밖) — `style.rs`가 토큰
+    색을 제공(`stage_color`/`page_border_color`)하고 canvas는 옮기기만 한다.
+  - **남은 egui 설정은 예외 하나**: `<Raw>` 캔버스 · `<Input>` · 창 크롬 ·
+    스크롤바는 elm-magic CSS가 닿지 않으므로 `style::install_egui_visuals`가
+    최소한만 설정한다(색은 같은 팔레트 토큰 — 출처는 여전히 하나).
+  - **스타일 테스트는 두지 않는다**: 스타일 해석/렌더는 elm-magic의 계약이라
+    그쪽 테스트(`tests/style.rs` 25건 등, 워크스페이스 135건)가 담당한다.
+    freedf-gui는 셸 동작 테스트만 유지한다.
 - **✅ elm-magic 0.5.0 마이그레이션 (완료)**: crates.io 발행 0.5.0으로 전환(리비전 핀 제거
   — 발행본이 dev 브랜치 `d063fb21…`과 **소스 동일**임을 확인). `docs/elm-magic-bug-report.md`의
   3건이 수정되어 **워크어라운드 전부 제거**: 셸 컴포넌트가 `pub(crate) fn Shell`(vis 보존),

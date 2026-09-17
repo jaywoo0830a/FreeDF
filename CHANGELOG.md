@@ -5,6 +5,31 @@
 
 ## [Unreleased] — 2026-09-13
 
+### freedf-gui — freedf-theme 의존 0 + elm-magic 0.6 CSS 속성으로 스타일 전환
+- **elm-magic 0.5.0 → 0.6.0 / elm-magic-egui 0.6.0** (crates.io 발행본). 0.5까지
+  `css!`는 규칙을 등록만 했지만, 0.6부터 **실제로 렌더**됩니다: 셀렉터 매칭
+  (태그·클래스·`*`·복합·후손·자식·목록) · 캐스케이드(명시도→선언순) · 상속 ·
+  상태(`:hover` `:active` `:focus` `:disabled`) · **36개 CSS 속성** ·
+  팔레트 14토큰(`Palette`/`Token`/`Color`) · 스타일 적용 태그 14종.
+- **freedf-gui는 `freedf-theme`를 더 이상 쓰지 않습니다 (의존 0)**. 스타일 출처는
+  신설 `crates/freedf-gui/src/style.rs` 하나 — `css!` 규칙 + `palette()`:
+  - 클래스: `.app`(창 배경+여백) `.toolbar` `.ribbon` `.panel` `.panel_title`
+    `.panel_item` `.status` `.muted` `.tabs` `.modal_actions`
+  - 태그/상태: `Col` `Row` `Button` `Button:hover` `Button:active` `Text`
+    `Strong` `Modal`
+  - 렌더는 `elm_magic_egui::render_with_palette`로 팔레트를 넘겨 `bg: surface`
+    같은 색 토큰을 해석시킵니다.
+- **egui 코드가 사라진 부분**: 루트 Frame 래퍼와 `ROOT_INNER_MARGIN` 상수(→
+  `.app { bg: background; padding: 8 }`), 버튼 스타일(→ CSS 상태 규칙), 패널/
+  상태바/모달 배경·여백·라운드·그림자(→ CSS 속성).
+- **남은 egui 설정은 예외 하나**: elm-magic CSS가 닿지 않는 egui 네이티브 위젯
+  (`<Raw>` 캔버스 · `<Input>` · 창 크롬 · 스크롤바)만 `style::install_egui_visuals`
+  가 최소한 설정하고, 캔버스 색은 `style::stage_color`/`page_border_color`(팔레트
+  토큰)를 씁니다 — 색 출처는 여전히 한 곳입니다.
+- **테스트**: freedf-gui의 스타일/렌더 테스트는 제거했습니다(스타일 해석·렌더는
+  elm-magic의 계약 — 그쪽 테스트가 담당). freedf-theme는 freedf 전용으로
+  문서/설명 갱신. `cargo test --workspace` 통과.
+
 ### 에러 바운더리 구축 + 테스트 전면 `tests/` 이동 (freedf-core · freedf-canvas)
 - **3계층 에러 바운더리 정책** 수립 (계약 문서: `crates/freedf-core/src/error.rs` ·
   `crates/freedf-canvas/src/error.rs` 모듈 문서):

@@ -1,11 +1,13 @@
-//! # freedf-theme — FreeDF 공용 테마
+//! # freedf-theme — FreeDF 테마 (freedf 전용)
 //!
 //! 디자인 토큰(Nord 팔레트)과 그 토큰을 `egui::Style`/`Visuals`에 매핑하는
 //! 스타일 빌더를 담은 크레이트입니다.
 //!
-//! 원래 `freedf` 바이너리 안의 모듈(`crates/freedf/src/theme/`)이었지만,
-//! elm-magic으로 재작성한 셸(`freedf-gui`)이 **같은 테마**를 써야 해서
-//! 크레이트로 추출했습니다 (docs/freedf-gui-migration.md — 배경색 회귀 항목).
+//! 원래 `freedf` 바이너리 안의 모듈(`crates/freedf/src/theme/`)이었고, 한동안은
+//! elm-magic 셸(`freedf-gui`)과 "같은 테마"를 쓰려고 공유 크레이트로 추출했었습니다.
+//! freedf-gui는 이후 **elm-magic 0.6의 CSS 속성**(`css!` 규칙 + 팔레트 토큰)으로
+//! 스타일을 자체 정의하며 이 크레이트 의존을 0으로 만들었으므로, 지금은
+//! **freedf 전용**입니다 (docs/freedf-gui-migration.md — CSS 전환 항목).
 //! `freedf`는 [`freedf_theme`]를 재수출해 기존 `crate::theme::…` 경로를
 //! 그대로 유지합니다.
 //!

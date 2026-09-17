@@ -27,7 +27,9 @@ freedf-sync = { path = "../freedf-sync" }
 # settings/recent/recording/player)은 freedf-services 크레이트로 이동했고, 이
 # 크레이트는 아래 셔임 모듈로 기존 `crate::*` 경로를 유지합니다.
 freedf-services = { path = "../freedf-services" }
-# 디자인 토큰/Nord 테마 — elm-magic 셸(freedf-gui)과 공유하는 크레이트.
+# 디자인 토큰/Nord 테마 + egui Style/Visuals 설치기 — **freedf 전용**.
+# (freedf-gui는 elm-magic 0.6 CSS 속성으로 자체 스타일을 정의해 이 크레이트를
+#  더 이상 쓰지 않는다 — docs/freedf-gui-migration.md의 CSS 전환 항목 참고.)
 freedf-theme = { path = "../freedf-theme" }
 eframe.workspace = true
 egui.workspace = true

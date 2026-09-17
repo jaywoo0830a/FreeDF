@@ -28,8 +28,11 @@ use elm_magic::style::{Color, Palette, Token};
 // `.app` `.<이름>`(클래스), `:hover` `:active` `:disabled`(상태).
 elm_magic::css! {
     // ── 기본 리듬: 4px 그리드, 세로 8 / 가로 8 ──────────────────
+    // 주의: `Row`에 `align: center`를 전역으로 걸면 egui 교차축 정렬이
+    // "가용 높이 전체" 기준이 되어 각 행이 남은 세로를 다 먹는다(실측: 캔버스
+    // 높이 0). 컴팩트 행에는 `align`을 두지 않는다.
     Col { gap: 8; }
-    Row { gap: 8; align: center; }
+    Row { gap: 8; }
 
     // ── 루트/툴바/리본 ────────────────────────────────────────
     // `.app`이 창 배경 + 방어 여백(Windows 최대화 시 좌우 밀림)을 담당한다 —
