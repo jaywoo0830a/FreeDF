@@ -1815,6 +1815,7 @@ dependencies = [
  "freedf-sync",
  "hound",
  "pdfium-render",
+ "rdev",
  "rodio",
  "serde",
  "serde_json",
