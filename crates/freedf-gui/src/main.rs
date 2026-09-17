@@ -14,6 +14,22 @@
 
 mod shell;
 
+#[cfg(test)]
+mod services_smoke {
+    /// Phase 1 (docs/freedf-gui-migration.md) 연결 확인 — freedf-gui가
+    /// freedf-services 계층을 직접 쓸 수 있다 (Phase 2+에서 캔버스/저장소가 이
+    /// 경로로 붙는다).
+    #[test]
+    fn services_available() {
+        let cfg = freedf_services::server::MediaServerConfig::default();
+        let _ = cfg.normalized_base();
+        let _ = freedf_services::storage::app_data_dir();
+        assert_eq!(freedf_services::settings::MAX_FAVORITE_COLORS, 8);
+        let _ = freedf_services::pdf::MAX_RENDER_DIM;
+    }
+}
+
+
 
 use eframe::egui;
 

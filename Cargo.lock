@@ -1747,7 +1747,6 @@ dependencies = [
 name = "freedf"
 version = "0.1.0"
 dependencies = [
- "cpal",
  "eframe",
  "egui",
  "egui_phosphor_icons",
@@ -1759,15 +1758,14 @@ dependencies = [
  "enigo",
  "freedf-canvas",
  "freedf-core",
+ "freedf-services",
  "freedf-sync",
  "gilrs",
- "hound",
  "image",
  "pdfium-render",
  "raw-window-handle",
  "rdev",
  "rfd",
- "rodio",
  "serde",
  "serde_json",
  "ureq",
@@ -1799,6 +1797,24 @@ dependencies = [
  "egui",
  "elm-magic",
  "elm-magic-egui",
+ "freedf-services",
+]
+
+[[package]]
+name = "freedf-services"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "egui",
+ "freedf-canvas",
+ "freedf-core",
+ "freedf-sync",
+ "hound",
+ "pdfium-render",
+ "rodio",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

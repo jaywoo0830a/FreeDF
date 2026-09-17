@@ -9,7 +9,7 @@ use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 /// 재생 중 상태.
-pub(crate) struct PlayerState {
+pub struct PlayerState {
     #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
     name: String,
     total: Option<Duration>,
@@ -30,13 +30,13 @@ struct Inner {
 
 impl PlayerState {
     #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
-    pub(crate) fn total(&self) -> Option<Duration> {
+    pub fn total(&self) -> Option<Duration> {
         self.total
     }
-    pub(crate) fn elapsed(&self) -> Duration {
+    pub fn elapsed(&self) -> Duration {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             // rodio 0.18의 Sink에는 get_pos가 없음 — 수동 누적 추적.
@@ -51,7 +51,7 @@ impl PlayerState {
             Duration::ZERO
         }
     }
-    pub(crate) fn is_paused(&self) -> bool {
+    pub fn is_paused(&self) -> bool {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             self.inner.sink.is_paused()
@@ -61,7 +61,7 @@ impl PlayerState {
             false
         }
     }
-    pub(crate) fn toggle(&self) {
+    pub fn toggle(&self) {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             if self.inner.sink.is_paused() {
@@ -81,7 +81,7 @@ impl PlayerState {
             }
         }
     }
-    pub(crate) fn seek(&self, #[allow(unused_variables)] pos: Duration) {
+    pub fn seek(&self, #[allow(unused_variables)] pos: Duration) {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             let _ = self.inner.sink.try_seek(pos);
@@ -91,7 +91,7 @@ impl PlayerState {
             }
         }
     }
-    pub(crate) fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             self.inner.sink.empty()
@@ -102,7 +102,7 @@ impl PlayerState {
         }
     }
     /// 재생 중단 — 임시 파일 경로 반환 (호출자가 정리).
-    pub(crate) fn finish(self) -> PathBuf {
+    pub fn finish(self) -> PathBuf {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             self.inner.sink.stop();
@@ -114,14 +114,14 @@ impl PlayerState {
 }
 
 /// 스트리밍 다운로드 진행 상태.
-pub(crate) struct StreamDownload {
-    pub(crate) name: String,
-    pub(crate) path: PathBuf,
-    pub(crate) rx: Receiver<Result<(), String>>,
+pub struct StreamDownload {
+    pub name: String,
+    pub path: PathBuf,
+    pub rx: Receiver<Result<(), String>>,
 }
 
 /// 다운로드가 끝난 WAV를 디코더로 열어 재생 시작.
-pub(crate) fn open_player(path: &Path, name: &str) -> Result<PlayerState, String> {
+pub fn open_player(path: &Path, name: &str) -> Result<PlayerState, String> {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         use rodio::Source; // total_duration 트레이트 메서드.

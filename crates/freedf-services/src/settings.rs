@@ -832,8 +832,11 @@ pub struct SessionState {
 }
 
 /// 캔버스 서라운드 기본색 — Nord NORD0 (#2E3440, 다크 테마 기본).
+/// UI 테마 크레이트(freedf의 `theme::nord::semantic::PAGE_SURROUND`)와 동일 값.
+/// 서비스 계층은 egui 테마에 의존하지 않기 위해 리터럴로 둡니다 — 값을 바꿀 때는
+/// 양쪽을 함께 바꾸세요.
 fn default_canvas_color() -> [u8; 4] {
-    crate::theme::nord::semantic::PAGE_SURROUND.to_array()
+    [46, 52, 64, 255]
 }
 
 /// 자주 쓰는 색 팔레트(원형 휠/사이드 팔레트 공용) 최대 개수 — 기본 8색.

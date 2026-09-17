@@ -15,7 +15,7 @@ use std::time::Duration;
 use crate::server::MediaServerConfig;
 
 /// 앱 코드가 이 모듈에서 프로토콜 타입을 import하도록 재노출.
-pub(crate) use freedf_sync::SyncClient;
+pub use freedf_sync::SyncClient;
 
 /// UI 버튼 등 사용자 조작 경로의 타임아웃 (백그라운드 작업은 기본 30s 사용).
 /// 1Gbps 서버: 서비스 로드/재시도 시 10s 까지, 커넥트는 일반 5s 이내 실패.
@@ -24,7 +24,7 @@ const UI_TIMEOUT: Duration = Duration::from_secs(10);
 /// 설정이 활성화됐을 때만 프로토콜 클라이언트 생성.
 ///
 /// 미활성/빈 URL이면 `None` — 호출부는 서버 기능을 건너뜁니다.
-pub(crate) fn sync_client(config: &MediaServerConfig) -> Option<SyncClient> {
+pub fn sync_client(config: &MediaServerConfig) -> Option<SyncClient> {
     if !config.enabled {
         return None;
     }

@@ -92,7 +92,7 @@ pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
 pub(crate) use crate::server::{MediaClient, MediaObject, MediaServerConfig};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
 pub(crate) use egui_phosphor_icons::icons;
-pub(crate) use pdfium_render::prelude::Pdfium;
+pub(crate) use crate::pdf::Pdfium;
 // 캐시 레지스트리 — 툴바 메뉴가 이 목록을 순회합니다 (actions/cache.rs).
 pub(crate) use actions::cache::all_caches;
 use std::collections::HashSet;

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 
 /// 진행 중인 녹음 핸들 — `stop()`으로 WAV 파일을 확정합니다.
-pub(crate) struct Recorder {
+pub struct Recorder {
     started_ms: u64,
     path: PathBuf,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -25,12 +25,12 @@ struct Inner {
 }
 
 impl Recorder {
-    pub(crate) fn started_ms(&self) -> u64 {
+    pub fn started_ms(&self) -> u64 {
         self.started_ms
     }
 
     /// 녹음 중지 — WAV 확정 후 경로 반환.
-    pub(crate) fn stop(#[allow(unused_mut)] mut self) -> PathBuf {
+    pub fn stop(#[allow(unused_mut)] mut self) -> PathBuf {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         if let Some(inner) = self.inner.take() {
             inner.stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -46,7 +46,7 @@ impl Recorder {
 
 /// 녹음 시작 — `dir`에 `{name}.wav`로 저장합니다.
 /// (Windows WASAPI / macOS CoreAudio — 그 외 플랫폼은 미지원)
-pub(crate) fn start_recording(dir: &Path, name: &str) -> Result<Recorder, String> {
+pub fn start_recording(dir: &Path, name: &str) -> Result<Recorder, String> {
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         start_recording_impl(dir, name).map(|(started_ms, path, inner)| Recorder {

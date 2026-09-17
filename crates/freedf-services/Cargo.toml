@@ -1,0 +1,27 @@
+[package]
+name = "freedf-services"
+version.workspace = true
+edition.workspace = true
+description = "FreeDF 서비스 계층 — UI 없이 동작하는 런타임 서비스 (저장소·동기화·PDF·설정·오디오)"
+
+[dependencies]
+freedf-core = { path = "../freedf-core" }
+freedf-sync = { path = "../freedf-sync" }
+# settings의 refresh_hz 클램프(snap_refresh_hz)만 사용 — 순수 계산 크레이트.
+freedf-canvas = { path = "../freedf-canvas" }
+serde.workspace = true
+serde_json.workspace = true
+pdfium-render.workspace = true
+# 사전 HTTP 조회용 서비스가 아니라 미디어 서버 통신(server/sync_client)과
+# 스트림 다운로드(player)용입니다.
+ureq = { version = "2", features = ["json"] }
+# WAV 저장 (recording — 순수 Rust).
+hound = "3"
+# settings::MacroKey::from_egui만 egui::Key를 씁니다 (UI 테마/위젯 의존은 없음).
+egui.workspace = true
+
+# 마이크 캡처/재생 — Windows(WASAPI)/macOS(CoreAudio)에서만 포함됩니다.
+# Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+cpal = "0.15"
+rodio = "0.18"

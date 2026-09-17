@@ -5,6 +5,17 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 1 완료 — freedf-services 서비스 계층 추출 (docs/freedf-gui-migration.md)
+- **`crates/freedf-services` 신설** — freedf에서 `storage`·`sync_storage`·`server`·
+  `sync_client`·`pdf`·`settings`·`recent`·`recording`·`player`를 `git mv`로 이동
+  (이력 보존). `freedf`는 모듈 셔임(`pub(crate) use freedf_services::X::*;`)으로
+  기존 `crate::X::*` 호출부를 **무변화** 유지 — 이후 freedf-gui가 같은 계층을 공유.
+- 부수 정리: 교차 크레이트 가시성을 위해 `pub(crate)`→`pub` 20건, `pdf`가 `Pdfium`
+  재노출(freedf의 pdfium-render 직접 의존 제거), hound/cpal/rodio 의존성도 services로
+  이동. `theme`(egui)과 `app/dictionary.rs`(오버레이 UI)는 freedf 잔존.
+- 검증: `cargo test --workspace` 전체 통과 — freedf 92 + services 28(구 freedf 120의
+  정확한 분할) + freedf-gui 7(셸 6 + 서비스 연결 스모크 1) + core/canvas/sync.
+
 ### freedf-gui 신규 크레이트 — elm-magic으로 앱 셸을 처음부터 재작성 (v0)
 - **`crates/freedf-gui`** — 마이그레이션이 아니라 **재작성** 실험. eframe 호스트가
   `elm_magic::Ctx`를 프레임 간 유지하고, 매 프레임 `elm_magic::frame` →

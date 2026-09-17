@@ -23,6 +23,10 @@ freedf-core = { path = "../freedf-core" }
 freedf-canvas = { path = "../freedf-canvas" }
 # Sync v3 프로토콜 전용 객체 (Snapshot/Patch/SyncClient) — 서버와 공유.
 freedf-sync = { path = "../freedf-sync" }
+# Phase 1 (docs/freedf-gui-migration.md) — 서비스 계층(storage/sync/server/pdf/
+# settings/recent/recording/player)은 freedf-services 크레이트로 이동했고, 이
+# 크레이트는 아래 셔임 모듈로 기존 `crate::*` 경로를 유지합니다.
+freedf-services = { path = "../freedf-services" }
 eframe.workspace = true
 egui.workspace = true
 pdfium-render.workspace = true
@@ -32,8 +36,6 @@ serde_json.workspace = true
 ureq = { version = "2", features = ["json"] }
 # Phosphor icons for egui (only the regular style to keep the binary small)
 egui_phosphor_icons = { version = "0.5", default-features = false }
-# WAV 파일 저장 (순수 Rust — 녹음 출력)
-hound = "3"
 # 이미지 미리보기 디코딩 (PNG/JPEG/GIF/WebP/BMP — 서버에서 받은 사진 미리보기)
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 
@@ -66,12 +68,7 @@ gilrs = "0.11"
 # winit 창 → OS hwnd 추출 (winstyle 적용용).
 raw-window-handle = "0.6"
 
-# 마이크 캡처 — Windows(WASAPI)/macOS(CoreAudio)에서 자동 포함.
-# Linux는 ALSA dev 패키지(libasound2-dev)가 필요해 기본 빌드에서 제외됩니다.
-[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
-cpal = "0.15"
-# 인앱 오디오 재생 (rodio — 내부적으로 cpal 사용).
-rodio = "0.18"
+# 마이크 캡처(cpals)/재생(rodio)은 freedf-services 크레이트로 이동했습니다.
 
 # Windows 전용 빌드-시간 리소스 임베드 (.exe 자체 아이콘 — 바탕화면/탐색기/
 # 작업 관리자에서 사용). build.rs → embed-resource 가 win/app.rc 를 컴파일해

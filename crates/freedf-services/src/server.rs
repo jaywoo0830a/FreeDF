@@ -61,7 +61,7 @@ impl MediaServerConfig {
     }
 
     /// URL 경로 조합용 — 앞뒤 공백과 끝 슬래시 제거.
-    fn normalized_base(&self) -> String {
+    pub fn normalized_base(&self) -> String {
         self.base_url.trim().trim_end_matches('/').to_string()
     }
 }
@@ -313,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn normalized_base_trims_slash_and_whitespace() {
+    pub fn normalized_base_trims_slash_and_whitespace() {
         let cfg = MediaServerConfig {
             base_url: "  https://media.example.com//  ".into(),
             ..Default::default()

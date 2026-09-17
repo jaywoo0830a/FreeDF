@@ -11,6 +11,10 @@ use freedf_core::outline::OutlineNode;
 use freedf_core::search::TextRun;
 use freedf_core::text::{content_rect_to_display as core_content_rect_to_display, PageRotation, TextChar};
 
+/// PDFium 바인딩 타입 재노출 — 소비 크레이트(freedf/freedf-gui)가
+/// `pdfium-render`를 직접 의존하지 않아도 되도록 합니다.
+pub use pdfium_render::prelude::Pdfium;
+
 /// 콘텐츠 공간 `PdfRect` → 표시 공간 `[x0,y0,x1,y1]` (core 변환의 pdfium 래퍼).
 fn content_rect_to_display(r: PdfRect, w: f32, h: f32, rot: PageRotation) -> [f32; 4] {
     core_content_rect_to_display(
@@ -39,7 +43,7 @@ fn pdfium_names() -> &'static [&'static str] {
 /// ~3배로 복제해 **메모리 폭주(프리즈→크래시)** 가 납니다. 한 면이 이 값을 넘지
 /// 않는 렌더는 ~4096×4096 RGBA = 약 67MB — 복제분 포함 약 200MB로 안전합니다.
 /// 100%·fit-width·고해상도(4K)는 훨씬 아래 값이라 화질 영향이 없습니다.
-pub(crate) const MAX_RENDER_DIM: f32 = 4096.0;
+pub const MAX_RENDER_DIM: f32 = 4096.0;
 
 /// PDFium 라이브러리를 찾을 후보 디렉터리 (실행 파일 폴더, 현재 폴더, 앱 데이터 폴더).
 fn library_search_dirs() -> Vec<PathBuf> {

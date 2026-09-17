@@ -253,7 +253,7 @@ impl StorageBackend for DisconnectedStorage {
 }
 
 /// 앱 데이터 폴더 (%LOCALAPPDATA%/FreeDF 또는 ~/.local/share/freedf).
-pub(crate) fn app_data_dir() -> PathBuf {
+pub fn app_data_dir() -> PathBuf {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local).join("FreeDF");
     }

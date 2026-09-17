@@ -30,17 +30,23 @@
 
 ## 2. 단계
 
-### Phase 1 — 서비스 계층 추출 (freedf-gui v0.1)
+### Phase 1 — 서비스 계층 추출 (freedf-gui v0.1) — **✅ 완료 (2026-09-17)**
 
-- 새 크레이트 `freedf-services` (또는 `freedf-gui`의 하위 모듈 → 크레이트 분리 권장)
-  로 위 표의 "서비스" 자산을 **코드 이동 없이 모듈 재노출** 수준으로 추출한다:
-  `freedf`의 해당 모듈을 `freedf-services`로 옮기고, `freedf`는 `use freedf_services::*`
-  로 유지해 기존 호출부를 깨지 않는다.
-- PDFium 초기화/텍스처 렌더(`pdf.rs`)는 "한 프로세스 1 바인딩" 제약이 있으므로
-  서비스 크레이트에서 싱글턴으로 관리 (두 바이너리 공존 시 각각 자체 프로세스라
-  충돌 없음).
-- **종료 조건**: `freedf` 동작 무변화(스모크 통과), `freedf-gui`가 서비스 크레이트로
-  스토리지/설정/미디어 클라이언트를 쓸 수 있음.
+- **완료**: `crates/freedf-services` 신설. `storage`·`sync_storage`·`server`·
+  `sync_client`·`pdf`·`settings`·`recent`·`recording`·`player`를 `git mv`로 이동
+  (이력 보존). `freedf`는 모듈 셔임(`pub(crate) use freedf_services::X::*;`)으로
+  기존 `crate::X::*` 경로를 유지 — 호출부 무변화.
+- 이동 중 정리: `pub(crate)` 항목 → `pub`(교차 크레이트 가시성, 20건),
+  `pdf`가 `Pdfium` 타입을 재노출(freedf의 pdfium-render 직접 의존 제거),
+  `settings::default_canvas_color`의 theme 참조를 리터럴로(서비스 계층은 egui 테마
+  미의존 — 값은 NORD0 #2E3440 동일, 양쪽 동시 변경 주석), `server::normalized_base`
+  → `pub` (freedf-gui 소비).
+- 예외: `theme`(egui 스타일)과 `app/dictionary.rs`(오버레이 UI 포함)는 freedf에
+  잔존 — settings의 `MacroKey::from_egui`만 예외적으로 egui::Key를 씀(services가
+  egui에 얇게 의존).
+- **검증**: `cargo test --workspace` 전부 통과 — freedf 92 + freedf-services 28
+  (구 freedf 120을 정확히 분할) + freedf-gui 7(셸 6 + 서비스 스모크 1) + core/canvas/sync.
+  freedf-gui는 이제 `freedf-services`를 직접 의존(`services_smoke` 테스트로 연결 확인).
 
 ### Phase 2 — 캔버스 (freedf-gui v1) — 최고 리스크 구간
 
@@ -92,6 +98,6 @@
 ## 4. 지금 바로 하는 것
 
 - [ ] `freedf` 리포지토리에 feature freeze 선언 (버그 픽스만)
-- [ ] Phase 1 착수: 서비스 모듈 목록 확정 + `freedf-services` 골격
+- [x] Phase 1 완료: `freedf-services` 추출 (2026-09-17 — 위 참고)
 - [ ] `docs/elm-magic-bug-report.md` 업스트림 전달 → 수정 리비전 나오면 워크어라운드 제거
 - [ ] 패리티 원장: README Features 목록을 체크리스트로 `docs/freedf-gui-parity.md`에 옮기고 Phase마다 갱신
