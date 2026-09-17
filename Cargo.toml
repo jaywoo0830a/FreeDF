@@ -28,6 +28,10 @@ pdfium-render = "0.9.3"
 # `crates/freedf`의 `dev-automation` 기능에서만 실제로 링크됩니다.
 eguidev = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 eguidev_runtime = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
+# elm-magic — JSX 스타일 순수 함수형 UI 매크로 + egui 어댑터 (PoC: fallback_dialog 본문).
+# 아직 crates.io에 발행되지 않은 실험 단계라 리비전을 고정합니다 (eguidev와 동일 방식).
+elm-magic = { git = "https://github.com/jaywoo0830a/elm-magic", rev = "14f11eb928913acfe7438ab87aa654f27d9d63df" }
+elm-magic-egui = { git = "https://github.com/jaywoo0830a/elm-magic", rev = "14f11eb928913acfe7438ab87aa654f27d9d63df" }
 
 [profile.release]
 opt-level = 2

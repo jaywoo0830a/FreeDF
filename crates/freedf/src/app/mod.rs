@@ -1330,6 +1330,9 @@ pub struct FreeDfApp {
 
     // ---------- Fallback dialog ----------
     modal: Option<ModalState>,
+    /// elm-magic PoC — 모달 세션의 Ctx((kind 키, 상태 아레나). 모달이 닫히거나
+    /// kind가 바뀌면 폐기된다 (ui/elm_modal.rs 참고).
+    modal_elm: Option<(String, elm_magic::Ctx)>,
     // ---------- Sync server connection (first-run setup) ----------
     /// Sync v3 서버 연결 여부 — 연결 전엔 `DisconnectedStorage` 폴백 백엔드.
     db_connected: bool,
@@ -1821,6 +1824,7 @@ impl FreeDfApp {
             pending_open,
             pending_doc,
             modal: None,
+            modal_elm: None,
             db_connected,
             // 디자인 리뷰/자동화에서는 첫 실행 창이 화면을 덮어 캡처를 망칩니다
             // (실측: 설정 창과 정확히 겹쳐 가독성 0). `FREEDF_SETUP=1`로 켭니다.
@@ -3350,22 +3354,32 @@ impl FreeDfApp {
 
     fn fallback_dialog(&mut self, ctx: &egui::Context) {
         let Some(modal) = self.modal.clone() else {
+            // 모달이 닫히면 elm-magic 세션(상태 슬롯)도 폐기한다
+            self.modal_elm = None;
             return;
         };
-        let mut text = modal.text.clone();
         let mut pages = modal.pages;
-        let mut ok = false;
-        let mut cancel = false;
+        let mut out = crate::ui::elm_modal::ElmModalOut {
+            text: String::new(),
+            ok: false,
+            cancel: false,
+        };
+        // 모달 세션 키 — kind(제목/메시지/액션)가 바뀌면 슬롯 레이아웃이 달라지므로 Ctx를 재생성한다.
+        let kind_key = format!("{:?}", modal.kind);
 
         match &modal.kind {
             ModalKind::AskText { title, hint, action } => {
+                let is_new_note = matches!(action, TextAction::NewNote);
                 crate::ui::dialog::modal(ctx, title, 480.0, |ui| {
-                    ui.label(hint);
-                    let resp = crate::ui::form::text(&mut text)
-                        .hint("Type here...")
-                        .width(360.0)
-                        .show(ui);
-                    if matches!(action, TextAction::NewNote) {
+                    out = crate::ui::elm_modal::render_ask_text(
+                        ui,
+                        &mut self.modal_elm,
+                        &kind_key,
+                        hint,
+                        &modal.text,
+                    );
+                    if is_new_note {
+                        // elm-magic에 아직 ComboBox 어휘가 없어 PoC에서는 egui로 직접 그린다.
                         ui.add_space(crate::ui::tokens::space::MD);
                         ui.horizontal(|ui| {
                             ui.label("Pages:");
@@ -3382,36 +3396,36 @@ impl FreeDfApp {
                                 });
                         });
                     }
-                    crate::ui::dialog::actions(ui, |ui| {
-                        cancel = crate::ui::action(ui, "Cancel", "").clicked();
-                        ok = crate::ui::action(ui, "OK", "").clicked();
-                    });
-                    if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        ok = true;
-                    }
                 });
             }
             ModalKind::Confirm { title, message, .. } => {
                 crate::ui::dialog::modal(ctx, title, 440.0, |ui| {
-                    ui.label(message);
-                    crate::ui::dialog::actions(ui, |ui| {
-                        cancel = crate::ui::action(ui, "Cancel", "").clicked();
-                        ok = crate::ui::action(ui, "Delete", "").clicked();
-                    });
+                    out = crate::ui::elm_modal::render_confirm(
+                        ui,
+                        &mut self.modal_elm,
+                        &kind_key,
+                        message,
+                    );
                 });
             }
             ModalKind::Alert { title, message } => {
                 crate::ui::dialog::modal(ctx, title, 400.0, |ui| {
-                    ui.label(message);
-                    crate::ui::dialog::actions(ui, |ui| {
-                        ok = crate::ui::action(ui, "OK", "").clicked();
-                    });
+                    out = crate::ui::elm_modal::render_alert(
+                        ui,
+                        &mut self.modal_elm,
+                        &kind_key,
+                        message,
+                    );
                     if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        ok = true;
+                        out.ok = true;
                     }
                 });
             }
         }
+
+        let text = out.text;
+        let ok = out.ok;
+        let cancel = out.cancel;
 
         // Keep text updated while typing
         if let Some(m) = &mut self.modal {

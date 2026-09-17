@@ -1444,6 +1444,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
+name = "elm-magic"
+version = "0.1.0"
+source = "git+https://github.com/jaywoo0830a/elm-magic?rev=14f11eb928913acfe7438ab87aa654f27d9d63df#14f11eb928913acfe7438ab87aa654f27d9d63df"
+dependencies = [
+ "elm-magic-macros",
+]
+
+[[package]]
+name = "elm-magic-egui"
+version = "0.1.0"
+source = "git+https://github.com/jaywoo0830a/elm-magic?rev=14f11eb928913acfe7438ab87aa654f27d9d63df#14f11eb928913acfe7438ab87aa654f27d9d63df"
+dependencies = [
+ "egui",
+ "elm-magic",
+]
+
+[[package]]
+name = "elm-magic-macros"
+version = "0.1.0"
+source = "git+https://github.com/jaywoo0830a/elm-magic?rev=14f11eb928913acfe7438ab87aa654f27d9d63df#14f11eb928913acfe7438ab87aa654f27d9d63df"
+
+[[package]]
 name = "emath"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1731,6 +1753,8 @@ dependencies = [
  "egui_phosphor_icons",
  "eguidev",
  "eguidev_runtime",
+ "elm-magic",
+ "elm-magic-egui",
  "embed-resource",
  "enigo",
  "freedf-canvas",

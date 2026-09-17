@@ -5,6 +5,19 @@
 
 ## [Unreleased] — 2026-09-13
 
+### elm-magic PoC — fallback_dialog 본문을 `view!`로 렌더링 (ui/elm_modal.rs)
+- **파일럿**: 모달(AskText/Confirm/Alert)의 **본문만** `elm_magic::view!` 컴포넌트로
+  그린다. 윈도우 타이틀/폭/여백은 기존 `ui::dialog::modal`을 그대로 재사용하고,
+  내용물은 `elm_magic_egui::render`(egui 0.36 어댑터)가 그린다. 상태(타이핑·OK/Cancel)
+  는 아레나 슬롯 대입으로 기록되고, 슬롯을 읽어 기존 `run_text_action`/`run_confirm_action`
+  흐름에 그대로 넘긴다. 의존성은 git rev 고정(`14f11eb`) — crates.io 미발행 실험 단계.
+- 검증: 헤드리스 단위 테스트 4건(클릭→슬롯 계약) + eguidev 캡처로 실제 렌더 확인.
+- **알려진 PoC 한계**: 액션 행 우측 정렬 불가(어댑터 `Row`가 좌→우 흐름 한정),
+  NewNote 페이지 콤보박스는 egui 어휘 부재로 호출부가 직접 렌더(버튼 아래 배치),
+  입력 필드는 `ui::form::text` 스타일이 아닌 어댑터 순수 `TextEdit`.
+- 전체 마이그레이션은 **비추천** — 캔버스/잉크는 어차피 `<Raw>` 탈출구가 필요하고
+  eguidev 계측 id 계약을 다시 붙여야 한다. 이 파일럿으로 라이브러리 성숙도를 계속 관찰.
+
 ### 툴바 전면 재설계 — "도메인 3행 + 단일 설정 홈" (ribbon.rs)
 - **`app/toolbar/rows.rs` → `app/toolbar/ribbon.rs` 대체** — 툴바를 **도메인별 3행**으로 재편:
   Row1 `Workspace`(Hide UI ／ Library·Outline·Bookmarks·Palette ／ Undo·Redo·Clear ／

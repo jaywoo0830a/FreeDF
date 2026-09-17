@@ -40,6 +40,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # eguidev 계측/런타임 — `dev-automation` 기능에서만 링크됩니다 (워크스페이스 핀 고정).
 eguidev = { workspace = true, optional = true }
 eguidev_runtime = { workspace = true, optional = true }
+# elm-magic PoC — fallback_dialog 본문을 `view!`로 렌더링 (ui/elm_modal.rs 참고).
+elm-magic.workspace = true
+elm-magic-egui.workspace = true
 
 # Windows에서는 기본 OS 파일 대화상자를 사용합니다.
 [target.'cfg(target_os = "windows")'.dependencies]

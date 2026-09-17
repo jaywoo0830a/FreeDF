@@ -23,6 +23,7 @@ pub(crate) mod components;
 pub(crate) mod containers;
 pub(crate) mod dialog;
 pub(crate) mod ds;
+pub(crate) mod elm_modal;
 pub(crate) mod form;
 #[cfg(feature = "dev-automation")]
 pub(crate) mod gallery;
