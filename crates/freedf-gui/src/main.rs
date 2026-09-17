@@ -57,6 +57,14 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
+            // DPI 디버그 — `FREEDF_GUI_PPP=1.5` 처럼 지정해 Windows 배율을 흉내 낸다.
+            if let Ok(ppp) = std::env::var("FREEDF_GUI_PPP") {
+                if let Ok(v) = ppp.parse::<f32>() {
+                    if v > 0.0 {
+                        cc.egui_ctx.set_pixels_per_point(v);
+                    }
+                }
+            }
             Ok(Box::new(Host::default()))
         }),
     )
@@ -90,12 +98,21 @@ impl eframe::App for Host {
         #[cfg(feature = "dev-automation")]
         let devmcp = self.devmcp.clone();
 
+        // 루트 안쪽 여백 — 셸이 x=0에서 시작하지 않게 방어한다. Windows는
+        // 최대화 시 창을 좌우 ~8px씩 화면 밖으로 밀어내므로(DPI 배율에 따라
+        // 증가) 여백이 없으면 행 첫 글자가 잘린다 (실측: 150% 배율).
+        let body = |ui: &mut egui::Ui, elm: &mut elm_magic::Ctx| {
+            egui::Frame::default()
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| shell::render_shell(ui, elm));
+        };
+
         #[cfg(feature = "dev-automation")]
         eguidev::frame_scope(&devmcp, ui, "freedf-gui.root", |ui| {
-            shell::render_shell(ui, &mut self.elm);
+            body(ui, &mut self.elm);
         });
 
         #[cfg(not(feature = "dev-automation"))]
-        shell::render_shell(ui, &mut self.elm);
+        body(ui, &mut self.elm);
     }
 }
