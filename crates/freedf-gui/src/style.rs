@@ -57,6 +57,9 @@ elm_magic::css! {
     Text { color: text_dim; }
     .status { bg: surface; color: text_dim; padding: 4 8; radius: 4; }
     .muted { color: text_dim; }
+    // 빈 자리표시(`<Text>""</Text>`)를 **그리지 않게** 한다 — display:none은
+    // 공간도 차지하지 않는다(CSS 의미 그대로).
+    .hidden { display: none; }
 
     // ── 탭 스트립 ────────────────────────────────────────────
     .tabs { gap: 4; bg: surface; padding: 4; radius: 8; }

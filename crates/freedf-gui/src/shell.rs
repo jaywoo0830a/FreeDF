@@ -41,17 +41,17 @@ elm_magic::view! {
         // 예전 egui Frame 래퍼(shell::render_root의 ROOT_INNER_MARGIN)를 CSS가 대체한다.
         <Col class="app">
             // ── 툴바 ─────────────────────────────────────────────
+            // 그룹 구분은 CSS `gap`으로 한다. (`<Divider/>`는 수평 행 높이를 가용
+            // 높이로 부풀리는 elm-magic-egui 0.6.0 결함 때문에 제외 —
+            // docs/elm-magic-bug-report.md 참고. 0.6.1에서 복원 예정.)
             <Row class="toolbar">
                 <Strong>"FreeDF"</Strong>
-                <Divider />
                 <Button on_click={sidebar_open = !sidebar_open}>"Sidebar"</Button>
                 <Button on_click={input = String::new(), modal = ShellModal::NewTab}>"New Tab"</Button>
                 <Button on_click={modal = ShellModal::CloseConfirm}>"Close Tab"</Button>
-                <Divider />
                 <Button on_click={crate::canvas::toggle_bookmark()}>"Bookmark"</Button>
                 <Button on_click={bookmarks_open = !bookmarks_open}>"Bookmarks"</Button>
                 <Button on_click={outline_open = !outline_open}>"Outline"</Button>
-                <Divider />
                 <Button on_click={crate::canvas::zoom_in()}>"Zoom In"</Button>
                 <Button on_click={crate::canvas::zoom_out()}>"Zoom Out"</Button>
                 <Button on_click={crate::canvas::zoom_fit()}>"Fit"</Button>
@@ -59,13 +59,12 @@ elm_magic::view! {
                 <Button on_click={crate::canvas::page_next()}>"Next Page"</Button>
                 <Button on_click={input = String::new(), modal = ShellModal::OpenPdf}>"Open PDF"</Button>
                 <Button on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
-                <Divider />
                 <Button on_click={modal = ShellModal::Settings}>"Settings"</Button>
                 <Button on_click={modal = ShellModal::About}>"About"</Button>
             </Row>
-            <Divider />
             // ── 잉크 리본: 도구/색상/굵기 — 활성 항목은 Strong(비활성은 Button) ──
             // 색상 팔레트는 settings 서비스 기본 즐겨찾기(블랙/레드/블루)와 동일.
+            // (구분선은 툴바와 같은 이유로 CSS `gap`이 대신한다.)
             <Row class="ribbon">
                 <Strong>"Ink"</Strong>
                 {if tool == "Pen" {
@@ -88,7 +87,6 @@ elm_magic::view! {
                 } else {
                     <Button on_click={crate::canvas::select_tool("Eraser")}>"Eraser"</Button>
                 }}
-                <Divider />
                 {if color == "Black" {
                     <Strong>"[Black]"</Strong>
                 } else {
@@ -104,7 +102,6 @@ elm_magic::view! {
                 } else {
                     <Button on_click={crate::canvas::select_color("Blue")}>"Blue"</Button>
                 }}
-                <Divider />
                 {if width == "Thin" {
                     <Strong>"[Thin]"</Strong>
                 } else {
@@ -121,7 +118,6 @@ elm_magic::view! {
                     <Button on_click={crate::canvas::select_width("Thick")}>"Thick"</Button>
                 }}
             </Row>
-            <Divider />
             // ── 본문: 사이드바 + 북마크 패널 + 탭 스트립 ─────────
             // 참고: 캔버스 <Raw>는 이 Row **밖**(루트 Col 직접 자식)에 둔다 —
             // egui에서 수평 Row 안의 수직 Col은 컨텐츠 높이만 가용 높이로 받는다
@@ -133,7 +129,7 @@ elm_magic::view! {
                         {sections.iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s)}><Text class="panel_item">"{s}"</Text></Row>)}
                     </Col>
                 } else {
-                    <Text>""</Text>
+                    <Text class="hidden">""</Text>
                 }}
                 {if bookmarks_open {
                     <Col class="panel">
@@ -145,7 +141,7 @@ elm_magic::view! {
                         }}
                     </Col>
                 } else {
-                    <Text>""</Text>
+                    <Text class="hidden">""</Text>
                 }}
                 {if outline_open {
                     <Col class="panel">
@@ -157,9 +153,8 @@ elm_magic::view! {
                         }}
                     </Col>
                 } else {
-                    <Text>""</Text>
+                    <Text class="hidden">""</Text>
                 }}
-                <Divider />
                 // 탭 스트립 — id 기준 선택 (이름은 중복될 수 있다)
                 <Row class="tabs">
                     {tab_names.iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
@@ -183,7 +178,7 @@ elm_magic::view! {
             }</Raw>
             // ── 모달 — 하나만 열린다 ────────────────────────────
             {match modal {
-                ShellModal::None => <Text>""</Text>,
+                ShellModal::None => <Text class="hidden">""</Text>,
                 ShellModal::NewTab => <Modal title="New Tab" on_close={modal = ShellModal::None}>
                     <Text>"Tab name:"</Text>
                     <Input value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
