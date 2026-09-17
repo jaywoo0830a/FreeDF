@@ -37,6 +37,8 @@ mod services_smoke {
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    // 저장된 잉크 기본값 복원 (파일 없음/손상이면 조용히 기본값 — docs: 설정 창).
+    canvas::load_defaults();
     let options = eframe::NativeOptions {
         // 기본: OpenGL(glow) — freedf와 동일. wgpu(DX12)는 일부 Windows에서
         // 시작 시 0xc0000005 크래시 (워크스페이스 Cargo.toml 주석 참고).

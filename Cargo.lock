@@ -1802,6 +1802,8 @@ dependencies = [
  "freedf-canvas",
  "freedf-core",
  "freedf-services",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

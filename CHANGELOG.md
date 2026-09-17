@@ -5,6 +5,20 @@
 
 ## [Unreleased] — 2026-09-13
 
+### Phase 3 — 설정 창 + 잉크 기본값 저장/복원 (docs/freedf-gui-migration.md)
+- **설정 창**: Settings 버튼 → 모달 — 현재 잉크 기본값(도구·색상·굵기 표시 이름)을
+  보여주고 "Save as default"로 저장. 성공/실패는 토스트로 보고.
+- **파일 백엔드**: `<app_data_dir>/gui-ink-defaults.json` (Windows:
+  `%LOCALAPPDATA%\FreeDF`, 그 외 `~/.local/share/freedf`) — `save_defaults_to`/
+  `load_defaults_from`으로 경로 주입 가능(테스트는 임시 파일 사용).
+- **복원은 select_* 커맨드 경로 재사용** — 파일에 알 수 없는 이름이 있어도
+  기본값 폴백이 자동 적용된다 (저장 JSON은 원본 보존). 앱 시작 시 `load_defaults()`
+  한 번 호출 — `Canvas::default()`는 순수하게 유지해 테스트 오염 방지.
+- 검증: freedf-gui 테스트 **30건 전부 통과** (저장→리셋→복원 roundtrip, 손상
+  파일 폴백, 알 수 없는 이름 폴백, 설정 모달 열기/닫기 추가). `edev smoke` 통과
+  (`gui.settings` 계약 추가), Xvfb 캡처로 설정 모달 렌더 확인, 워크스페이스
+  전체 테스트 통과.
+
 ### Phase 3 — 잉크 리본 + 토스트 (docs/freedf-gui-migration.md)
 - **잉크 리본**: 툴바 아래 2단 Row — 도구(Pen/Fountain/Highlighter/Eraser)·
   색상(Black/Red/Blue — settings 서비스 기본 즐겨찾기 팔레트)·굵기(Thin/Medium/

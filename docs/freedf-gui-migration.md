@@ -79,6 +79,11 @@
   publish. 런처 `.edev-gui.toml`, 스모크 `smoketest-gui/10_launch_gui.luau` 통과.
   Phase 2 견고화도 함께 완료: 모달 뒤 잉크 차단(`sync_and_status` 동기화),
   팬 경계, PDF 렌더 재시도 루프 제거, 빈 탭 이름 가드, PDF 페이지 이동.
+- **✅ 설정 창 + 잉크 기본값 저장/복원 (완료)**: Settings 모달(현재 리본 상태
+  표시 + 저장). 파일 백엔드 `app_data_dir/gui-ink-defaults.json` — 표시 이름을
+  저장하고 복원은 select_* 커맨드 경로로 폴백 내장. 시작 시 `load_defaults()`
+  1회 호출(Canvas::default는 순수 유지). 테스트 30건(roundtrip·손상/미지 이름
+  폴백·모달) 통과.
 - **✅ 잉크 리본 + 토스트 (완료)**: 툴바 아래 2단 리본 — 도구(Pen/Fountain/
   Highlighter/Eraser)·색상(Black/Red/Blue)·굵기(Thin/Medium/Thick) 선택, 활성
   항목은 Strong 렌더. 문자열 커맨드(`select_tool`/`select_color`/`select_width`,

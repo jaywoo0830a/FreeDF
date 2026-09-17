@@ -382,6 +382,66 @@ pub fn width_name() -> String {
     })
 }
 
+// ── 설정 — 잉크 기본값 저장/복원 (파일 백엔드: app_data_dir의 JSON) ──────
+
+/// 잉크 기본값 — 리본의 **표시 이름**을 그대로 저장한다. 복원은
+/// `select_*` 커맨드를 거치므로 알 수 없는 값은 자동으로 기본값 폴백된다.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct InkDefaults {
+    pub tool: String,
+    pub color: String,
+    pub width: String,
+}
+
+/// 설정 파일 경로 — `<app_data_dir>/gui-ink-defaults.json`.
+/// (Windows: `%LOCALAPPDATA%\FreeDF`, Linux/macOS: `~/.local/share/freedf`)
+pub(crate) fn settings_path() -> std::path::PathBuf {
+    freedf_services::storage::app_data_dir().join("gui-ink-defaults.json")
+}
+
+/// 현재 리본 상태를 기본값 파일로 저장한다 (성공/실패 토스트).
+pub fn save_defaults() {
+    let path = settings_path();
+    let result = save_defaults_to(&path);
+    with(|c| {
+        c.toast_now(match result {
+            Ok(()) => String::from("잉크 기본값을 저장했습니다"),
+            Err(e) => format!("기본값 저장 실패: {e}"),
+        });
+    });
+}
+
+/// 지정한 경로에 현재 잉크 기본값을 쓴다 (테스트 가능한 순수 경로 버전).
+pub(crate) fn save_defaults_to(path: &std::path::Path) -> Result<(), String> {
+    let defaults = InkDefaults {
+        tool: tool_name(),
+        color: color_name(),
+        width: width_name(),
+    };
+    let json = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+/// 앱 시작 시 잉크 기본값을 복원한다 — 실패(파일 없음/손상)는 조용히 기본값.
+/// main에서 한 번 호출 (기본 Canvas는 순수하게 유지 — 테스트 오염 방지).
+pub fn load_defaults() {
+    let _ = load_defaults_from(&settings_path());
+}
+
+/// 지정한 경로에서 잉크 기본값을 읽어 적용한다 (테스트 가능한 순수 경로 버전).
+pub(crate) fn load_defaults_from(path: &std::path::Path) -> Result<InkDefaults, String> {
+    let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let defaults: InkDefaults = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    // 적용은 select_* 커맨드 경로 — 알 수 없는 이름은 기본값 폴백이 이미 내장.
+    select_tool(&defaults.tool);
+    select_color(&defaults.color);
+    select_width(&defaults.width);
+    Ok(defaults)
+}
+
 /// 북마크/아웃라인 클릭 → 해당 페이지로 점프.
 pub fn go_to_page(page: usize) {
     with(|c| {
@@ -1120,6 +1180,43 @@ mod tests {
         assert!(toast().unwrap().contains("북마크 제거"));
         clear_ink();
         assert!(toast().unwrap().contains("잉크"));
+    }
+
+    #[test]
+    fn ink_defaults_roundtrip_and_fallback() {
+        let path = std::env::temp_dir().join(format!("freedf-gui-test-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // 1) 현재 상태 저장 → 엔진을 다르게 바꾸고 → 복원이 되돌린다.
+        with(|c| *c = Canvas::default());
+        select_tool("Highlighter");
+        select_color("Red");
+        select_width("Thick");
+        save_defaults_to(&path).expect("save");
+        with(|c| *c = Canvas::default());
+        assert_eq!(tool_name(), "Pen");
+        let restored = load_defaults_from(&path).expect("load");
+        assert_eq!(restored.tool, "Highlighter");
+        assert_eq!(restored.color, "Red");
+        assert_eq!(restored.width, "Thick");
+        assert_eq!(tool_name(), "Highlighter");
+        assert_eq!(color_name(), "Red");
+        assert_eq!(width_name(), "Thick");
+        // 2) 손상된 파일 — 오류를 돌려주고 엔진은 그대로 (조용한 폴백은 load_defaults 몫).
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load_defaults_from(&path).is_err());
+        assert_eq!(tool_name(), "Highlighter");
+        // 3) 파일에 알 수 없는 이름 — select_* 폴백으로 기본값 적용.
+        std::fs::write(
+            &path,
+            r#"{"tool":"Warp","color":"Neon","width":"Huge"}"#,
+        )
+        .unwrap();
+        let fallback = load_defaults_from(&path).expect("parse");
+        assert_eq!(fallback.tool, "Warp"); // 저장 값은 그대로 (기록 보존)
+        assert_eq!(tool_name(), "Pen"); // 적용은 폴백
+        assert_eq!(color_name(), "Black");
+        assert_eq!(width_name(), "Medium");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

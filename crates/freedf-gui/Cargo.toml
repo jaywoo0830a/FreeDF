@@ -26,6 +26,9 @@ freedf-services = { path = "../freedf-services" }
 # Phase 2 — 캔버스: 잉크 메시(freedf-canvas) + 모델/저장소/변환(freedf-core).
 freedf-canvas = { path = "../freedf-canvas" }
 freedf-core = { path = "../freedf-core" }
+# 잉크 기본값 저장/복원 (설정 창 — app_data_dir의 JSON 파일).
+serde.workspace = true
+serde_json.workspace = true
 
 # eguidev 계측/런타임 — `dev-automation` 기능에서만 링크됩니다 (워크스페이스 핀 고정).
 eguidev = { workspace = true, optional = true }

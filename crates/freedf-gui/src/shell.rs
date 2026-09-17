@@ -14,6 +14,7 @@ pub(crate) enum ShellModal {
     OpenPdf,
     ClearInk,
     About,
+    Settings,
 }
 
 elm_magic::view! {
@@ -63,6 +64,7 @@ elm_magic::view! {
                 <Button on_click={input = String::new(), modal = ShellModal::OpenPdf}>"Open PDF"</Button>
                 <Button on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
                 <Divider />
+                <Button on_click={modal = ShellModal::Settings}>"Settings"</Button>
                 <Button on_click={modal = ShellModal::About}>"About"</Button>
             </Row>
             <Divider />
@@ -218,6 +220,15 @@ elm_magic::view! {
                     <Text>"elm-magic shell — every widget above is a view! element"</Text>
                     <Button on_click={modal = ShellModal::None}>"OK"</Button>
                 </Modal>,
+                ShellModal::Settings => <Modal title="Settings" on_close={modal = ShellModal::None}>
+                    <Strong>"잉크 기본값"</Strong>
+                    <Text>"도구 {tool} · 색상 {color} · 굵기 {width}"</Text>
+                    <Text>"현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원."</Text>
+                    <Row>
+                        <Button on_click={crate::canvas::save_defaults()}>"Save as default"</Button>
+                        <Button on_click={modal = ShellModal::None}>"Close"</Button>
+                    </Row>
+                </Modal>,
             }}
         </Col>
     }
@@ -328,6 +339,17 @@ mod tests {
             assert_eq!(c.color, [255, 71, 66, 255]);
             assert_eq!(c.width, 4.0);
         });
+    }
+
+    #[test]
+    fn settings_modal_opens_and_closes() {
+        with(|c| *c = Canvas::default());
+        let mut app = elm_magic::mount!(Shell);
+        app.click("Settings");
+        app.assert_text("잉크 기본값");
+        app.assert_text("도구 Pen · 색상 Black · 굵기 Medium");
+        app.click("Close");
+        app.assert_hidden("Save as default");
     }
 
     #[test]
