@@ -45,182 +45,184 @@ elm_magic::view! {
             // 높이로 부풀리는 elm-magic-egui 0.6.0 결함 때문에 제외 —
             // docs/elm-magic-bug-report.md 참고. 0.6.1에서 복원 예정.)
             <Row class="toolbar">
-                <Strong>"FreeDF"</Strong>
-                <Button on_click={sidebar_open = !sidebar_open}>"Sidebar"</Button>
-                <Button on_click={input = String::new(), modal = ShellModal::NewTab}>"New Tab"</Button>
-                <Button on_click={modal = ShellModal::CloseConfirm}>"Close Tab"</Button>
-                <Button on_click={crate::canvas::toggle_bookmark()}>"Bookmark"</Button>
-                <Button on_click={bookmarks_open = !bookmarks_open}>"Bookmarks"</Button>
-                <Button on_click={outline_open = !outline_open}>"Outline"</Button>
-                <Button on_click={crate::canvas::zoom_in()}>"Zoom In"</Button>
-                <Button on_click={crate::canvas::zoom_out()}>"Zoom Out"</Button>
-                <Button on_click={crate::canvas::zoom_fit()}>"Fit"</Button>
-                <Button on_click={crate::canvas::page_prev()}>"Prev Page"</Button>
-                <Button on_click={crate::canvas::page_next()}>"Next Page"</Button>
-                <Button on_click={input = String::new(), modal = ShellModal::OpenPdf}>"Open PDF"</Button>
-                <Button on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
-                <Button on_click={modal = ShellModal::Settings}>"Settings"</Button>
-                <Button on_click={modal = ShellModal::About}>"About"</Button>
+                <Strong class="toolbar__title">"FreeDF"</Strong>
+                <Button class="toolbar__button" on_click={sidebar_open = !sidebar_open}>"Sidebar"</Button>
+                <Button class="toolbar__button" on_click={input = String::new(), modal = ShellModal::NewTab}>"New Tab"</Button>
+                <Button class="toolbar__button" on_click={modal = ShellModal::CloseConfirm}>"Close Tab"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::toggle_bookmark()}>"Bookmark"</Button>
+                <Button class="toolbar__button" on_click={bookmarks_open = !bookmarks_open}>"Bookmarks"</Button>
+                <Button class="toolbar__button" on_click={outline_open = !outline_open}>"Outline"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::zoom_in()}>"Zoom In"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::zoom_out()}>"Zoom Out"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::zoom_fit()}>"Fit"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::page_prev()}>"Prev Page"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::page_next()}>"Next Page"</Button>
+                <Button class="toolbar__button" on_click={input = String::new(), modal = ShellModal::OpenPdf}>"Open PDF"</Button>
+                <Button class="toolbar__button" on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
+                <Button class="toolbar__button" on_click={modal = ShellModal::Settings}>"Settings"</Button>
+                <Button class="toolbar__button" on_click={modal = ShellModal::About}>"About"</Button>
             </Row>
             // ── 잉크 리본: 도구/색상/굵기 — 활성 항목은 Strong(비활성은 Button) ──
             // 색상 팔레트는 settings 서비스 기본 즐겨찾기(블랙/레드/블루)와 동일.
             // (구분선은 툴바와 같은 이유로 CSS `gap`이 대신한다.)
             <Row class="ribbon">
-                <Strong>"Ink"</Strong>
+                <Strong class="ribbon__title">"Ink"</Strong>
                 {if tool == "Pen" {
-                    <Strong>"[Pen]"</Strong>
+                    <Strong class="ribbon__active">"[Pen]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_tool("Pen")}>"Pen"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_tool("Pen")}>"Pen"</Button>
                 }}
                 {if tool == "Fountain" {
-                    <Strong>"[Fountain]"</Strong>
+                    <Strong class="ribbon__active">"[Fountain]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_tool("Fountain")}>"Fountain"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_tool("Fountain")}>"Fountain"</Button>
                 }}
                 {if tool == "Highlighter" {
-                    <Strong>"[Highlighter]"</Strong>
+                    <Strong class="ribbon__active">"[Highlighter]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_tool("Highlighter")}>"Highlighter"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_tool("Highlighter")}>"Highlighter"</Button>
                 }}
                 {if tool == "Eraser" {
-                    <Strong>"[Eraser]"</Strong>
+                    <Strong class="ribbon__active">"[Eraser]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_tool("Eraser")}>"Eraser"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_tool("Eraser")}>"Eraser"</Button>
                 }}
                 {if color == "Black" {
-                    <Strong>"[Black]"</Strong>
+                    <Strong class="ribbon__active">"[Black]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_color("Black")}>"Black"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Black")}>"Black"</Button>
                 }}
                 {if color == "Red" {
-                    <Strong>"[Red]"</Strong>
+                    <Strong class="ribbon__active">"[Red]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_color("Red")}>"Red"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Red")}>"Red"</Button>
                 }}
                 {if color == "Blue" {
-                    <Strong>"[Blue]"</Strong>
+                    <Strong class="ribbon__active">"[Blue]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_color("Blue")}>"Blue"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Blue")}>"Blue"</Button>
                 }}
                 {if width == "Thin" {
-                    <Strong>"[Thin]"</Strong>
+                    <Strong class="ribbon__active">"[Thin]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_width("Thin")}>"Thin"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_width("Thin")}>"Thin"</Button>
                 }}
                 {if width == "Medium" {
-                    <Strong>"[Medium]"</Strong>
+                    <Strong class="ribbon__active">"[Medium]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_width("Medium")}>"Medium"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_width("Medium")}>"Medium"</Button>
                 }}
                 {if width == "Thick" {
-                    <Strong>"[Thick]"</Strong>
+                    <Strong class="ribbon__active">"[Thick]"</Strong>
                 } else {
-                    <Button on_click={crate::canvas::select_width("Thick")}>"Thick"</Button>
+                    <Button class="ribbon__button" on_click={crate::canvas::select_width("Thick")}>"Thick"</Button>
                 }}
             </Row>
             // ── 본문: 사이드바 + 북마크 패널 + 탭 스트립 ─────────
             // 참고: 캔버스 <Raw>는 이 Row **밖**(루트 Col 직접 자식)에 둔다 —
             // egui에서 수평 Row 안의 수직 Col은 컨텐츠 높이만 가용 높이로 받는다
             // (실측: Row 안 57px → 루트 Col 직접 자식은 남은 높이 전체).
-            <Row>
+            <Row class="app__body">
                 {if sidebar_open {
                     <Col class="panel">
-                        <Strong class="panel_title">"Library"</Strong>
-                        {sections.iter().map(|s| <Row on_click={status = format!("{} panel (placeholder)", s)}><Text class="panel_item">"{s}"</Text></Row>)}
+                        <Strong class="panel__title">"Library"</Strong>
+                        {sections.iter().map(|s| <Row class="panel__row" on_click={status = format!("{} panel (placeholder)", s)}><Text class="panel__item">"{s}"</Text></Row>)}
                     </Col>
                 } else {
-                    <Text class="hidden">""</Text>
+                    <Text class="app__hidden">""</Text>
                 }}
                 {if bookmarks_open {
                     <Col class="panel">
-                        <Strong class="panel_title">"Bookmarks"</Strong>
+                        <Strong class="panel__title">"Bookmarks"</Strong>
                         {if bookmarks.is_empty() {
-                            <Text>"북마크 없음 — Bookmark 버튼으로 추가"</Text>
+                            <Text class="panel__empty">"북마크 없음 — Bookmark 버튼으로 추가"</Text>
                         } else {
-                            bookmarks.iter().map(|p| <Row on_click={crate::canvas::go_to_page(p)}><Text class="panel_item">"페이지 {p}"</Text></Row>)
+                            bookmarks.iter().map(|p| <Row class="panel__row" on_click={crate::canvas::go_to_page(p)}><Text class="panel__item">"페이지 {p}"</Text></Row>)
                         }}
                     </Col>
                 } else {
-                    <Text class="hidden">""</Text>
+                    <Text class="app__hidden">""</Text>
                 }}
                 {if outline_open {
                     <Col class="panel">
-                        <Strong class="panel_title">"Outline"</Strong>
+                        <Strong class="panel__title">"Outline"</Strong>
                         {if outline_entries.is_empty() {
-                            <Text>"PDF를 열면 목차가 표시됩니다"</Text>
+                            <Text class="panel__empty">"PDF를 열면 목차가 표시됩니다"</Text>
                         } else {
-                            outline_entries.iter().map(|e| <Row on_click={crate::canvas::go_to_page(e.page)}><Text class="panel_item">"{e.title}"</Text></Row>)
+                            outline_entries.iter().map(|e| <Row class="panel__row" on_click={crate::canvas::go_to_page(e.page)}><Text class="panel__item">"{e.title}"</Text></Row>)
                         }}
                     </Col>
                 } else {
-                    <Text class="hidden">""</Text>
+                    <Text class="app__hidden">""</Text>
                 }}
                 // 탭 스트립 — id 기준 선택 (이름은 중복될 수 있다)
+                // `class`가 상태를 안다: 활성 탭은 `.tabs__item--active`(수정자).
                 <Row class="tabs">
-                    {tab_names.iter().map(|t| <Tab active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
+                    {tab_names.iter().map(|t| <Tab class={if t.0 == active_id { "tabs__item tabs__item--active" } else { "tabs__item" }} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)}>"{t.1}"</Tab>)}
                 </Row>
             </Row>
-            // 상태바 — 캔버스 위(항상 보이는 자리). `.status`가 배경/여백을,
-            // 안쪽 `Text`가 색을 담당한다 (Text에는 bg/padding이 적용되지 않는다).
+            // 상태바 — 캔버스 위(항상 보이는 자리). `.statusbar`가 배경/여백을,
+            // 안쪽 `.statusbar__text`/`.statusbar__toast`가 색을 담당한다 (Text에는 bg/padding이 적용되지 않는다).
             // 토스트가 있으면 대신 표시하고 TOAST_SECS(3초) 뒤 자동 복귀.
-            <Row class="status">
+            <Row class="statusbar">
                 {if toast.is_empty() {
-                    <Text class="muted">"{status} · {canvas_status}"</Text>
+                    <Text class="statusbar__text">"{status} · {canvas_status}"</Text>
                 } else {
-                    <Text class="muted">"{toast}"</Text>
+                    <Text class="statusbar__toast">"{toast}"</Text>
                 }}
             </Row>
             // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs,
             // docs/freedf-gui-migration.md Phase 2). 위젯 트리 밖의 상태는
             // canvas 모듈의 UI-스레드 엔진이 소유한다.
+            // 주의: `<Raw>`는 class를 `vec![]`로 고정해 BEM 클래스를 줄 수 없다 — 캔버스 색은 `canvas.rs`의 팔레트 토큰이 담당한다.
             <Raw>|ui: &mut eframe::egui::Ui| {
                 crate::canvas::paint(ui);
             }</Raw>
             // ── 모달 — 하나만 열린다 ────────────────────────────
             {match modal {
-                ShellModal::None => <Text class="hidden">""</Text>,
-                ShellModal::NewTab => <Modal title="New Tab" on_close={modal = ShellModal::None}>
-                    <Text>"Tab name:"</Text>
-                    <Input value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
-                    <Row class="modal_actions">
-                        <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
-                        <Button on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })}>"OK"</Button>
+                ShellModal::None => <Text class="app__hidden">""</Text>,
+                ShellModal::NewTab => <Modal class="modal" title="New Tab" on_close={modal = ShellModal::None}>
+                    <Text class="modal__text">"Tab name:"</Text>
+                    <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                    <Row class="modal__actions modal__actions--end">
+                        <Button class="modal__button" on_click={modal = ShellModal::None}>"Cancel"</Button>
+                        <Button class="modal__button" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })}>"OK"</Button>
                     </Row>
                 </Modal>,
-                ShellModal::OpenPdf => <Modal title="Open PDF" on_close={modal = ShellModal::None}>
-                    <Text>"PDF file path:"</Text>
-                    <Input value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
-                    <Row class="modal_actions">
-                        <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
-                        <Button on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())}>"OK"</Button>
+                ShellModal::OpenPdf => <Modal class="modal" title="Open PDF" on_close={modal = ShellModal::None}>
+                    <Text class="modal__text">"PDF file path:"</Text>
+                    <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                    <Row class="modal__actions modal__actions--end">
+                        <Button class="modal__button" on_click={modal = ShellModal::None}>"Cancel"</Button>
+                        <Button class="modal__button" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())}>"OK"</Button>
                     </Row>
                 </Modal>,
-                ShellModal::ClearInk => <Modal title="Clear Ink" on_close={modal = ShellModal::None}>
-                    <Text>"Remove all ink on this page?"</Text>
-                    <Row class="modal_actions">
-                        <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
-                        <Button on_click={modal = ShellModal::None, crate::canvas::clear_ink()}>"Delete"</Button>
+                ShellModal::ClearInk => <Modal class="modal" title="Clear Ink" on_close={modal = ShellModal::None}>
+                    <Text class="modal__text">"Remove all ink on this page?"</Text>
+                    <Row class="modal__actions modal__actions--end">
+                        <Button class="modal__button" on_click={modal = ShellModal::None}>"Cancel"</Button>
+                        <Button class="modal__button" on_click={modal = ShellModal::None, crate::canvas::clear_ink()}>"Delete"</Button>
                     </Row>
                 </Modal>,
-                ShellModal::CloseConfirm => <Modal title="Close Tab" on_close={modal = ShellModal::None}>
-                    <Text>"Close this tab?"</Text>
-                    <Row class="modal_actions">
-                        <Button on_click={modal = ShellModal::None}>"Cancel"</Button>
-                        <Button on_click={modal = ShellModal::None, crate::canvas::close_tab()}>"Delete"</Button>
+                ShellModal::CloseConfirm => <Modal class="modal" title="Close Tab" on_close={modal = ShellModal::None}>
+                    <Text class="modal__text">"Close this tab?"</Text>
+                    <Row class="modal__actions modal__actions--end">
+                        <Button class="modal__button" on_click={modal = ShellModal::None}>"Cancel"</Button>
+                        <Button class="modal__button" on_click={modal = ShellModal::None, crate::canvas::close_tab()}>"Delete"</Button>
                     </Row>
                 </Modal>,
-                ShellModal::About => <Modal title="About" on_close={modal = ShellModal::None}>
-                    <Strong>"FreeDF GUI"</Strong>
-                    <Text>"elm-magic shell — every widget above is a view! element"</Text>
-                    <Button on_click={modal = ShellModal::None}>"OK"</Button>
+                ShellModal::About => <Modal class="modal" title="About" on_close={modal = ShellModal::None}>
+                    <Strong class="modal__title">"FreeDF GUI"</Strong>
+                    <Text class="modal__text">"elm-magic shell — every widget above is a view! element"</Text>
+                    <Button class="modal__button" on_click={modal = ShellModal::None}>"OK"</Button>
                 </Modal>,
-                ShellModal::Settings => <Modal title="Settings" on_close={modal = ShellModal::None}>
-                    <Strong>"잉크 기본값"</Strong>
-                    <Text>"도구 {tool} · 색상 {color} · 굵기 {width}"</Text>
-                    <Text>"현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원."</Text>
-                    <Row>
-                        <Button on_click={crate::canvas::save_defaults()}>"Save as default"</Button>
-                        <Button on_click={modal = ShellModal::None}>"Close"</Button>
+                ShellModal::Settings => <Modal class="modal" title="Settings" on_close={modal = ShellModal::None}>
+                    <Strong class="modal__title">"잉크 기본값"</Strong>
+                    <Text class="modal__text">"도구 {tool} · 색상 {color} · 굵기 {width}"</Text>
+                    <Text class="modal__text">"현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원."</Text>
+                    <Row class="modal__actions">
+                        <Button class="modal__button" on_click={crate::canvas::save_defaults()}>"Save as default"</Button>
+                        <Button class="modal__button" on_click={modal = ShellModal::None}>"Close"</Button>
                     </Row>
                 </Modal>,
             }}

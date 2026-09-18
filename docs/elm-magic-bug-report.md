@@ -104,3 +104,61 @@ elm-magic 0.6.0 / elm-magic-egui 0.6.0 (crates.io 발행본) · egui 0.36 ·
 freedf-gui `--features dev-automation` 빌드 · `scripts/edev-run.sh --config .edev-gui.toml
 dump`로 rect 실측 (2026-09-17).
 
+---
+
+## [0.6.0] BEM 수정자(`--`) 셀렉터가 조용히 미등록된다 — `-`가 별도 토큰으로 쪼개져 조인됨
+
+### 최소 재현
+
+```rust
+elm_magic::css! {
+    .tabs__item { color: text_dim; }
+    .tabs__item--active { color: text; }   // ← 등록되지 않는다
+}
+
+#[test]
+fn modifier_is_registered() {
+    assert!(elm_magic::style::lookup_class("tabs__item--active").is_some());
+}
+```
+
+실제 재현: freedf-gui가 BEM 네이밍으로 전환하면서 `.toolbar__button`,
+`.panel__item` 같은 요소 셀렉터는 정상 등록됐지만, **수정자**
+(`.tabs__item--active`, `.modal__actions--end`)만 `lookup_class`가 `None`을
+돌려줬습니다. 가드 테스트
+(`crates/freedf-gui/src/style.rs::shell_markup_classes_are_registered`)가 검출.
+
+### 기대
+
+`css!`의 다른 셀렉터처럼 `.tabs__item--active`도 등록되고 `lookup`/`resolve`가
+찾는다.
+
+### 실제
+
+- `css!` 매크로의 `join_selector()`는 식별자(또는 `*`) **사이에만** 공백을
+  넣는데, `word()`가 `-` 하나도 "단어"로 판정한다. 그래서
+  `.tabs__item--active`가 `.tabs__item - - active`로 조인된다.
+- 이 문자열은 코어 `Selector::parse`에서 실패한다(`-`는 클래스 이름도 태그도
+  아니다). 등록 루틴은 파싱 실패 셀렉터를 **조용히 건너뛴다** — 컴파일 에러도
+  경고도 없다. `validate_selector()`도 이 형태는 잡지 못한다.
+
+### 제안
+
+- `join_selector()`에서 `-`만으로 이루어진 조각을 단어로 보지 않게 한다
+  (`-` 뒤에 식별자가 붙어 있으면 이어 붙인다).
+- 또는 등록 시 파싱 실패를 **컴파일 에러**로 승격해 주세요 — 지금은 오타든
+  문법 한계든 결과가 같습니다("스타일이 안 먹는다").
+
+### 우회
+
+freedf-gui는 그 두 규칙만 **문자열 셀렉터** 형태로 씁니다 — 문자열은 공백까지
+그대로 쓰이므로 정상 등록됩니다.
+
+```rust
+".tabs__item--active" { color: text; }
+```
+
+### 재현 환경
+
+elm-magic 0.6.0 / elm-magic-macros 0.6.0 (crates.io 발행본) · egui 0.36 ·
+freedf-gui `src/style.rs` (2026-09-17).
