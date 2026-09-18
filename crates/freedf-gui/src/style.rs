@@ -70,6 +70,9 @@ elm_magic::css! {
     .ribbon__button:active { bg: surface; border-width: 1; border-color: border; }
     // 활성 항목은 `<Strong>`으로 그린다(비활성은 `.ribbon__button`).
     .ribbon__active { color: text; weight: bold; }
+    // 토글/스와치의 "켜짐" 수정자 — 기본 클래스와 함께 붙여 레이아웃을 유지한 채
+    // 색만 바꾼다 (활성 스와치/필압 토글이 버튼 크기를 흔들지 않게).
+    .ribbon__button--on { bg: primary; color: on_primary; weight: bold; }
 
     // ── 블록: panel — 사이드바/북마크/목차 ──────────────────────
     .panel { bg: surface; padding: 8; radius: 8; min-width: 200; gap: 8; }

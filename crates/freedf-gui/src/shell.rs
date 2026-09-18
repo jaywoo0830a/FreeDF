@@ -10,6 +10,64 @@ pub enum ShellModal {
     Settings,
 }
 
+/// 리본 스와치 한 칸 — 라벨(계약 id 근거)/활성 여부/클릭 인덱스.
+///
+/// `Copy`인 이유: `view!` 클로저가 **값을 복사**하게 하려는 것 (참조를 캡처하면
+/// 매크로가 만드는 `'static` 핸들러 계약을 못 맞춘다 — 실측 E0716).
+#[derive(Clone, Copy)]
+pub struct SwatchItem {
+    pub index: usize,
+    /// `&'static str` — `view!` 클로저가 복사만 하도록 (`palette::label_str`).
+    pub label: &'static str,
+    /// 지금 선택된 색인가 (활성 표시 — `ribbon__button--on`).
+    pub on: bool,
+}
+
+/// 셸이 매 프레임 읽는 캔버스 상태 스냅샷 — 팔레트/필압/펜 진단.
+///
+/// `view!` 본문에서 제네릭 타입 표기나 `if` 식을 쓰면 매크로 파서가 태그로
+/// 오인하므로(실측), 계산은 전부 여기서 끝내고 본문에는 `let st = …` 하나만 둔다.
+pub struct ShellState {
+    pub swatch_items: Vec<SwatchItem>,
+    /// 설정 창용 팔레트 요약 (이름/HEX — 저장 형식과 같은 문자열).
+    pub swatch_list: String,
+    pub pressure: bool,
+    pub pressure_text: &'static str,
+    pub pen_source: String,
+    pub pen_tilt: &'static str,
+}
+
+/// 현재 캔버스 상태 스냅샷 — 색 목록/이름 해석은 `canvas`+`palette`가 소유한다.
+pub fn shell_state() -> ShellState {
+    let swatches = crate::canvas::palette_colors();
+    let active = crate::canvas::color_swatch_index();
+    let pressure = crate::canvas::pressure_enabled();
+    ShellState {
+        swatch_items: swatches
+            .iter()
+            .enumerate()
+            .map(|(i, _)| SwatchItem {
+                index: i,
+                label: crate::palette::label_str(i),
+                on: active == Some(i),
+            })
+            .collect(),
+        swatch_list: swatches
+            .iter()
+            .map(|c| crate::palette::name(*c))
+            .collect::<Vec<String>>()
+            .join(", "),
+        pressure,
+        pressure_text: if pressure { "켜짐" } else { "꺼짐" },
+        pen_source: crate::canvas::pen_source(),
+        pen_tilt: if crate::canvas::pen_tilt_supported() {
+            "지원"
+        } else {
+            "미지원"
+        },
+    }
+}
+
 elm_magic::view! {
     pub fn Shell(
         sidebar_open = true,
@@ -41,6 +99,10 @@ elm_magic::view! {
         let tool = crate::canvas::tool_name();
         let color = crate::canvas::color_name();
         let width = crate::canvas::width_name();
+        // 즐겨찾기 팔레트/필압/펜 진단 스냅샷 — 계산은 [`shell_state`]가 소유한다.
+        // (view! 본문에는 **단순 문장**만 두는 게 안전하다: 제네릭 표기(`Vec<(A,B)>`)
+        //  나 `if` 식이 섞이면 매크로 파서가 태그로 오인해 파싱이 깨진다 — 실측.)
+        let st = shell_state();
         // 스무딩 프리셋 — 설정 창 표시/선택용 (코어 `InkPipeline` 강도).
         let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
@@ -104,21 +166,10 @@ elm_magic::view! {
                 } else {
                     <Button class="ribbon__button" on_click={crate::canvas::select_tool("Eraser")}>"Eraser"</Button>
                 }}
-                {if color == "Black" {
-                    <Strong class="ribbon__active">"[Black]"</Strong>
-                } else {
-                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Black")}>"Black"</Button>
-                }}
-                {if color == "Red" {
-                    <Strong class="ribbon__active">"[Red]"</Strong>
-                } else {
-                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Red")}>"Red"</Button>
-                }}
-                {if color == "Blue" {
-                    <Strong class="ribbon__active">"[Blue]"</Strong>
-                } else {
-                    <Button class="ribbon__button" on_click={crate::canvas::select_color("Blue")}>"Blue"</Button>
-                }}
+                // 즐겨찾기 색 스와치 — 목록/이름은 `canvas`+`palette`가 소유하고
+                // 여기서는 렌더만 한다. 라벨("Swatch N")이 계약 id의 근거다
+                // (`gui.swatch_1` … `gui.swatch_8` — docs/eguidev-automation.md).
+                {st.swatch_items.clone().into_iter().map(|item| <Button class={if item.on { "ribbon__button ribbon__button--on" } else { "ribbon__button" }} on_click={crate::canvas::select_swatch(item.index)}>"{item.label}"</Button>)}
                 {if width == "Thin" {
                     <Strong class="ribbon__active">"[Thin]"</Strong>
                 } else {
@@ -134,6 +185,9 @@ elm_magic::view! {
                 } else {
                     <Button class="ribbon__button" on_click={crate::canvas::select_width("Thick")}>"Thick"</Button>
                 }}
+                // 필압 반영 토글 — 펜 장치가 압력을 보고할 때만 실제로 달라진다
+                // (스트림이 없으면 명목 1.0이라 표시만 바뀐다).
+                <Button class={if st.pressure { "ribbon__button ribbon__button--on" } else { "ribbon__button" }} on_click={crate::canvas::toggle_pressure()}>"Pressure"</Button>
             </Row>
             // ── 본문: 사이드바 + 북마크 패널 + 탭 스트립 ─────────
             // 참고: 캔버스 <Raw>는 이 Row **밖**(루트 Col 직접 자식)에 둔다 —
@@ -236,6 +290,8 @@ elm_magic::view! {
                     <Strong class="modal__title">"잉크 기본값"</Strong>
                     <Text class="modal__text">"도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}"</Text>
                     <Text class="modal__text">"스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)."</Text>
+                    <Text class="modal__text">"펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}"</Text>
+                    <Text class="modal__text">"팔레트 {st.swatch_list}"</Text>
                     <Row class="modal__actions">
                         {if smoothing == "Off" {
                             <Strong class="modal__preset modal__preset--active">"Off"</Strong>

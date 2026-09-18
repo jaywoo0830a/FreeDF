@@ -14,8 +14,11 @@
 use eframe::egui;
 
 /// 자동화 런타임을 붙인 `DevMcp` 핸들 (프로세스당 한 번).
+///
+/// `pub`인 이유: 바이너리(`src/main.rs`)는 **다른 크레이트**라 `pub(crate)`가
+/// 보이지 않는다 (실측 E0603 — `dev-automation` 빌드가 통째로 깨졌다).
 #[cfg(feature = "dev-automation")]
-pub(crate) fn attach() -> eguidev::DevMcp {
+pub fn attach() -> eguidev::DevMcp {
     eguidev_runtime::attach(eguidev::DevMcp::new())
 }
 

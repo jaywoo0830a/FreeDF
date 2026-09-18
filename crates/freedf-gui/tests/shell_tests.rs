@@ -69,16 +69,44 @@ fn close_tab_confirm_flow() {
 #[test]
 fn ribbon_updates_canvas_engine() {
     // 리본 클릭 → 캔버스 엔진의 도구/색/굵기가 실제로 바뀐다 (다음 획에 반영).
+    // 색은 settings 기본 팔레트의 **스와치 라벨**로 고른다 (라벨 = 계약 id 근거).
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
     app.click("Fountain");
-    app.click("Red");
+    app.click("Swatch 2"); // 기본 팔레트 2번 = Red
     app.click("Thick");
     with(|c| {
         assert_eq!(c.tool, ToolType::Fountain);
         assert_eq!(c.color, [255, 71, 66, 255]);
         assert_eq!(c.width, 4.0);
     });
+}
+
+#[test]
+fn ribbon_swatches_follow_settings_default_palette() {
+    // 스와치는 settings 기본 즐겨찾기 3색을 그대로 노출한다.
+    with(|c| *c = Canvas::default());
+    let app = elm_magic::mount!(Shell);
+    for label in ["Swatch 1", "Swatch 2", "Swatch 3"] {
+        app.assert_text(label);
+    }
+    with(|c| assert_eq!(c.color, [26, 26, 28, 255]));
+    let mut app = elm_magic::mount!(Shell);
+    app.click("Swatch 3"); // Blue
+    with(|c| assert_eq!(c.color, [72, 166, 235, 255]));
+}
+
+#[test]
+fn ribbon_pressure_toggle_flips_engine_flag() {
+    // 필압 반영 토글은 캔버스 엔진의 플래그를 뒤집는다 (스트림이 없으면 값은 명목 1.0).
+    with(|c| *c = Canvas::default());
+    assert!(freedf_gui::canvas::pressure_enabled());
+    let mut app = elm_magic::mount!(Shell);
+    app.click("Pressure");
+    assert!(!freedf_gui::canvas::pressure_enabled());
+    let mut app = elm_magic::mount!(Shell);
+    app.click("Pressure");
+    assert!(freedf_gui::canvas::pressure_enabled());
 }
 
 #[test]

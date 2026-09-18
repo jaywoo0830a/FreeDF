@@ -45,9 +45,17 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨은 바꿔�
 `gui.sidebar` · `gui.new_tab` · `gui.close_tab` · `gui.bookmark` · `gui.bookmarks` ·
 `gui.outline` · `gui.zoom_in` · `gui.zoom_out` · `gui.fit` · `gui.prev_page` ·
 `gui.next_page` · `gui.open_pdf` · `gui.clear_ink` · `gui.about` · `gui.fountain` ·
-`gui.highlighter` · `gui.eraser` · `gui.red` · `gui.blue` · `canvas.surface`.
+`gui.highlighter` · `gui.eraser` · `gui.swatch_1` … `gui.swatch_3` · `gui.pressure` ·
+`canvas.surface`.
 
-리본의 **활성** 항목(Pen/Black/Medium 등)은 Button이 아닌 `<Strong>`으로 그려지므로
+**팔레트 스와치**: 라벨 `Swatch N`(1-기반)이 곧 id입니다(`gui.swatch_N`). 목록은
+`freedf-services::settings`의 즐겨찾기 색(`MAX_FAVORITE_COLORS` = 8 상한, 기본
+3색 Black/Red/Blue)에서 오고, 활성 스와치도 **Button**이라 id가 있습니다
+(다른 활성 항목과 달리 `<Strong>`이 아닌 `ribbon__button--on` 수정자를 씁니다).
+
+`gui.pressure`는 필압 반영 토글입니다(장치 스트림이 없으면 값은 명목 1.0).
+
+리본의 다른 **활성** 항목(Pen/Medium 등)은 Button이 아닌 `<Strong>`으로 그려지므로
 id가 없습니다 — 비활성 상태 버튼의 id만 계약입니다. 같은 이유로 설정 모달의 현재
 활성 프리셋도 id가 없습니다.
 

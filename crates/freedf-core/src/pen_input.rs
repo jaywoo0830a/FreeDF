@@ -449,61 +449,177 @@ pub fn open_best() -> Option<PenMonitor> {
     None
 }
 
-// ── OTD(OpenTabletDriver) 데몬 IPC — 틸트/필압 직접 수신 (Windows) ──────────
+// ── OTD(OpenTabletDriver) 데몬 IPC — 틸트/필압 직접 수신 (전 플랫폼) ────────
 // OTD가 태블릿을 독점하므로 장치에 직접 접근하는 대신 **데몬에 연결**합니다.
-// 데몬이 `\\.\pipe\OpenTabletDriver.Daemon`에서 StreamJsonRpc(헤더 프레이밍
-// JSON-RPC)로 `DeviceReport` 알림을 보냅니다. `SetTabletDebug(true)`를 호출하면
-// 활성화되며, 리포트의 `Data`에 Position/Pressure/PenButtons/**Tilt**가 들어
-// 있습니다 (TiltTabletReport — Tilt.X/Y는 ±도 단위).
+// 데몬은 StreamJsonRpc(헤더 프레이밍 JSON-RPC)로 `DeviceReport` 알림을 보내고,
+// `SetTabletDebug(true)`를 호출하면 스트림이 활성화됩니다. 리포트의 `Data`에
+// Position/Pressure/PenButtons/**Tilt**가 들어 있습니다 (TiltTabletReport —
+// Tilt.X/Y는 ±도 단위). **전송로만 다르고 프로토콜은 모든 OS에서 같습니다**:
+//
+//   Windows : 네임드 파이프 `\\.\pipe\OpenTabletDriver.Daemon`
+//   Linux/macOS : .NET 네임드 파이프는 유닉스 소켓으로 구현되므로
+//                 `${TMPDIR:-/tmp}/CoreFxPipe_OpenTabletDriver.Daemon`
+//
+// 그 밖의 전송로(OTD 설정에 따라 소켓/포트가 다를 때)는 `FREEDF_OTD_ENDPOINT`
+// 로 지정합니다: 파일 경로(유닉스 소켓) 또는 `tcp://호스트:포트`.
+// 연결 실패는 오류가 아니라 **None**입니다 (OTD를 안 쓰는 환경이 정상).
 
-/// Windows에서 OTD 데몬 IPC에 연결해 펜 상태 스트림을 받습니다.
-#[cfg(target_os = "windows")]
+/// OTD 데몬에 연결해 펜 상태 스트림을 받습니다 (연결 실패/미실행이면 None).
 pub fn spawn_otd_monitor() -> Option<std::sync::mpsc::Receiver<PenState>> {
     otd_ipc::spawn()
 }
 
-#[cfg(not(target_os = "windows"))]
-pub fn spawn_otd_monitor() -> Option<std::sync::mpsc::Receiver<PenState>> {
-    None
+/// OTD 데몬에 **지금** 연결할 수 있는가 — 재시도 없이 전송로를 한 번만 열어 본다.
+///
+/// 앱이 "OTD 스트림을 쓸까, evdev로 폴백할까"를 정할 때 쓰는 준비 상태 프로브다
+/// (OTD가 안 떠 있으면 `spawn_otd_monitor`는 영원히 조용한 스트림만 준다).
+pub fn otd_connectable() -> bool {
+    otd_ipc::connectable()
 }
 
-#[cfg(target_os = "windows")]
 mod otd_ipc {
     use super::{PenButtons, PenState};
     use std::io::{Read, Write};
 
+    /// Windows 기본 전송로 — OTD 데몬의 네임드 파이프.
+    #[cfg(target_os = "windows")]
     const PIPE_NAME: &str = r"\\.\pipe\OpenTabletDriver.Daemon";
+    /// 유닉스 기본 전송로 — .NET 네임드 파이프의 유닉스 소켓 표현.
+    #[cfg(not(target_os = "windows"))]
+    const PIPE_NAME: &str = "CoreFxPipe_OpenTabletDriver.Daemon";
+
+    /// 데몬 연결 실패 시 재시도 (데몬이 나중에 뜨는 경우가 흔하다).
+    const RETRIES: u32 = 10;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+    /// 전송로 종류 — 프로토콜(StreamJsonRpc)은 위에서 하나, 아래는 소켓일 뿐.
+    enum Conn {
+        Pipe(std::fs::File),
+        #[cfg(unix)]
+        Unix(std::os::unix::net::UnixStream),
+        Tcp(std::net::TcpStream),
+    }
+
+    impl Conn {
+        fn try_clone(&self) -> std::io::Result<Self> {
+            Ok(match self {
+                Conn::Pipe(f) => Conn::Pipe(f.try_clone()?),
+                #[cfg(unix)]
+                Conn::Unix(s) => Conn::Unix(s.try_clone()?),
+                Conn::Tcp(s) => Conn::Tcp(s.try_clone()?),
+            })
+        }
+    }
+
+    impl Read for Conn {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            match self {
+                Conn::Pipe(f) => f.read(buf),
+                #[cfg(unix)]
+                Conn::Unix(s) => s.read(buf),
+                Conn::Tcp(s) => s.read(buf),
+            }
+        }
+    }
+
+    impl Write for Conn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            match self {
+                Conn::Pipe(f) => f.write(buf),
+                #[cfg(unix)]
+                Conn::Unix(s) => s.write(buf),
+                Conn::Tcp(s) => s.write(buf),
+            }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            match self {
+                Conn::Pipe(f) => f.flush(),
+                #[cfg(unix)]
+                Conn::Unix(s) => s.flush(),
+                Conn::Tcp(s) => s.flush(),
+            }
+        }
+    }
+
+    /// 전송로 후보 목록 — `FREEDF_OTD_ENDPOINT`(파일 경로 또는 `tcp://h:p`)가
+    /// 최우선, 없으면 OS 기본값. 파이프 이름은 유닉스에서 `${TMPDIR}/…`로 편다.
+    fn endpoints() -> Vec<String> {
+        if let Ok(e) = std::env::var("FREEDF_OTD_ENDPOINT") {
+            if !e.trim().is_empty() {
+                return vec![e.trim().to_string()];
+            }
+        }
+        if cfg!(target_os = "windows") {
+            return vec![PIPE_NAME.to_string()];
+        }
+        let dir = std::env::var("TMPDIR").unwrap_or_else(|_| String::from("/tmp"));
+        vec![
+            format!("{}/{}", dir.trim_end_matches('/'), PIPE_NAME),
+            format!("/run/{}", PIPE_NAME),
+        ]
+    }
+
+    /// 후보를 순서대로 **한 번씩** 시도 (재시도 없음) — 준비 상태 프로브용.
+    fn connect_once() -> Option<Conn> {
+        endpoints().iter().find_map(|ep| open_endpoint(ep))
+    }
+
+    /// 후보를 순서대로 시도 (각 후보마다 `RETRIES`회 재시도).
+    fn connect() -> Option<Conn> {
+        let candidates = endpoints();
+        for _ in 0..RETRIES {
+            for ep in &candidates {
+                if let Some(c) = open_endpoint(ep) {
+                    return Some(c);
+                }
+            }
+            std::thread::sleep(RETRY_DELAY);
+        }
+        None
+    }
+
+    fn open_endpoint(ep: &str) -> Option<Conn> {
+        if let Some(rest) = ep.strip_prefix("tcp://") {
+            return std::net::TcpStream::connect(rest).ok().map(Conn::Tcp);
+        }
+        // 파일 경로 = 유닉스 소켓 (Windows에서는 네임드 파이프 경로).
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(ep)
+        {
+            return Some(Conn::Pipe(f));
+        }
+        #[cfg(unix)]
+        {
+            if let Ok(s) = std::os::unix::net::UnixStream::connect(ep) {
+                return Some(Conn::Unix(s));
+            }
+        }
+        None
+    }
 
     pub(super) fn spawn() -> Option<std::sync::mpsc::Receiver<PenState>> {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            // 데몬 시작 타이밍 여유 (최대 ~5초 재시도).
-            let mut pipe = None;
-            for _ in 0..10 {
-                match std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(PIPE_NAME)
-                {
-                    Ok(p) => {
-                        pipe = Some(p);
-                        break;
-                    }
-                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(500)),
-                }
-            }
-            let Some(pipe) = pipe else {
+            // 데몬 시작 타이밍 여유 (연결 실패는 정상 — OTD 미사용 환경).
+            let Some(conn) = connect() else {
                 return;
             };
-            let _ = run(pipe, tx);
+            let _ = run(conn, tx);
         });
         Some(rx)
     }
 
-    fn run(mut pipe: std::fs::File, tx: std::sync::mpsc::Sender<PenState>) -> std::io::Result<()> {
+    /// 연결 준비 상태 — 재시도 없이 한 번만 열어 본다.
+    pub(super) fn connectable() -> bool {
+        connect_once().is_some()
+    }
+
+    fn run(mut conn: Conn, tx: std::sync::mpsc::Sender<PenState>) -> std::io::Result<()> {
         // 태블릿 디버그(리포트 스트림) 활성화.
-        send_rpc(&mut pipe, 1, "SetTabletDebug", "true")?;
-        let mut reader = std::io::BufReader::new(pipe.try_clone()?);
+        send_rpc(&mut conn, 1, "SetTabletDebug", "true")?;
+        let mut reader = std::io::BufReader::new(conn.try_clone()?);
         let mut buf: Vec<u8> = Vec::new();
         let mut max_pressure: f32 = 4096.0;
         loop {
@@ -583,9 +699,9 @@ mod otd_ipc {
     }
 
     /// 헤더 프레이밍 메시지 하나를 읽습니다. (헤더 없는 JSON은 괄호 카운트
-    /// 폴백으로 처리)
-    fn read_message(
-        reader: &mut std::io::BufReader<std::fs::File>,
+    /// 폴백으로 처리) — 전송로는 파이프/유닉스 소켓/TCP 어느 것이든 무관하다.
+    fn read_message<R: Read>(
+        reader: &mut std::io::BufReader<R>,
         buf: &mut Vec<u8>,
     ) -> std::io::Result<Option<String>> {
         loop {
@@ -625,8 +741,8 @@ mod otd_ipc {
         }
     }
 
-    fn read_headerless(
-        reader: &mut std::io::BufReader<std::fs::File>,
+    fn read_headerless<R: Read>(
+        reader: &mut std::io::BufReader<R>,
         buf: &mut Vec<u8>,
     ) -> std::io::Result<Option<String>> {
         loop {

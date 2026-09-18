@@ -4,8 +4,10 @@ use eframe::egui;
 use freedf_canvas::{PagePoint, ViewTransform};
 use freedf_core::model::StrokePoint;
 use freedf_core::model::ToolType;
+use freedf_core::pen_input::{PenCapabilities, PenState};
 use freedf_core::transform::{MAX_ZOOM, MIN_ZOOM};
 use freedf_gui::canvas::*;
+use freedf_gui::pen::{PenInput, PenSource};
 
 /// 헤드리스 egui 프레임 하나 — `paint`를 `CentralPanel`에 직접 그린다
 /// (셸 경유 테스트는 각자 셸을 그린다).
@@ -589,6 +591,9 @@ fn ink_defaults_roundtrip_and_fallback() {
     select_tool("Highlighter");
     select_color("Red");
     select_width("Thick");
+    // 필압/팔레트도 저장 대상이다 (gui 소유 설정 — 이름/HEX로 기록).
+    set_pressure(false);
+    set_favorites(&[String::from("#010203"), String::from("Blue")]);
     save_defaults_to(&path).expect("save");
     with(|c| *c = Canvas::default());
     assert_eq!(tool_name(), "Pen");
@@ -596,6 +601,17 @@ fn ink_defaults_roundtrip_and_fallback() {
     assert_eq!(restored.tool, "Highlighter");
     assert_eq!(restored.color, "Red");
     assert_eq!(restored.width, "Thick");
+    assert!(!restored.pressure);
+    assert_eq!(
+        restored.favorites,
+        vec![String::from("#010203"), String::from("Blue")]
+    );
+    assert!(!pressure_enabled(), "필압 설정도 함께 복원된다");
+    assert_eq!(
+        palette_colors(),
+        vec![[1, 2, 3, 255], [72, 166, 235, 255]],
+        "팔레트도 함께 복원된다"
+    );
     assert_eq!(tool_name(), "Highlighter");
     assert_eq!(color_name(), "Red");
     assert_eq!(width_name(), "Thick");
@@ -830,4 +846,141 @@ fn smoothing_presets_map_and_fall_back() {
     select_smoothing("Nonsense");
     assert_eq!(smoothing_name(), "Off", "알 수 없는 이름은 기본값");
     with(|c| assert!(c.smoothing.abs() < 1e-6));
+}
+
+// ── 펜 필압/틸트 배선 (gui 소유: 장치 스트림 → 코어 파이프라인) ──────────
+
+/// 장치 리포트 하나를 주입할 수 있게 펜 입력을 테스트 채널로 갈아 끼운다
+/// (`Canvas::default()`는 실제 공급원(OTD/evdev)을 붙이므로 여기서 대체한다).
+fn inject_pen(rx: std::sync::mpsc::Receiver<PenState>) {
+    with(|c| {
+        c.pen = PenInput::from_receiver(rx, PenCapabilities::UNKNOWN, PenSource::Otd);
+    });
+}
+
+/// 장치가 보고한 **필압이 실제 획에 반영**된다 — 명목 1.0이 아니고,
+/// 설정이 꺼져 있으면 1.0으로 돌아간다 (gui 배선 검증: pen → InkPipeline).
+#[test]
+fn device_pressure_reaches_the_committed_stroke() {
+    with(|c| *c = Canvas::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    inject_pen(rx);
+    // 가벼운 필압 리포트 (0.25) — 매 프레임 같은 값이 도착한다고 가정.
+    let light = || PenState {
+        pressure: Some(0.25),
+        contact: true,
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    let at = |x: f32| egui::pos2(x, 300.0);
+    tx.send(light()).unwrap();
+    paint_frame(
+        &ctx,
+        vec![egui::Event::PointerMoved(at(300.0)), press(at(300.0), true)],
+    );
+    for x in [350.0, 400.0, 450.0] {
+        tx.send(light()).unwrap();
+        paint_frame(&ctx, vec![egui::Event::PointerMoved(at(x))]);
+    }
+    paint_frame(&ctx, vec![press(at(450.0), false)]);
+    with(|c| {
+        let pts = &c.docs[0].store.strokes_on(0)[0].points;
+        assert!(pts.len() >= 3, "여러 점: {}", pts.len());
+        assert!(
+            pts.iter().all(|p| p.pressure > 0.05 && p.pressure < 0.5),
+            "장치 필압(0.25)이 반영되어야 한다: {:?}",
+            pts.iter().map(|p| p.pressure).collect::<Vec<_>>()
+        );
+    });
+
+    // 필압 설정을 끄면 같은 입력이 명목 1.0으로 기록된다.
+    with(|c| {
+        *c = Canvas::default();
+        c.pressure_enabled = false;
+    });
+    let (tx2, rx2) = std::sync::mpsc::channel();
+    inject_pen(rx2);
+    tx2.send(light()).unwrap();
+    paint_frame(
+        &ctx,
+        vec![egui::Event::PointerMoved(at(300.0)), press(at(300.0), true)],
+    );
+    tx2.send(light()).unwrap();
+    paint_frame(&ctx, vec![egui::Event::PointerMoved(at(360.0))]);
+    paint_frame(&ctx, vec![press(at(360.0), false)]);
+    with(|c| {
+        let pts = &c.docs[0].store.strokes_on(0)[0].points;
+        assert!(
+            pts.iter().all(|p| (p.pressure - 1.0).abs() < 1e-3),
+            "필압 꺼짐 = 명목 1.0: {:?}",
+            pts.iter().map(|p| p.pressure).collect::<Vec<_>>()
+        );
+    });
+}
+
+/// 장치 틸트가 **메셔 틸트 크기**로 흘러간다 (재료 폭 변화의 입력).
+/// 조건화(노이즈 필터)는 코어 어댑터 소유라 값 자체가 아니라 "0이 아님"을 본다.
+#[test]
+fn device_tilt_feeds_the_mesher() {
+    with(|c| *c = Canvas::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    inject_pen(rx);
+    assert_eq!(with(|c| c.tilt_magnitude()), 0.0, "스트림 없음 = 틸트 0");
+    tx.send(PenState {
+        pressure: Some(1.0),
+        tilt: [30.0, 0.0],
+        contact: true,
+        ..Default::default()
+    })
+    .unwrap();
+    let ctx = egui::Context::default();
+    paint_frame(&ctx, vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))]);
+    with(|c| {
+        assert!(
+            c.tilt_magnitude() > 0.0,
+            "장치 틸트가 메셔에 반영: {}",
+            c.tilt_magnitude()
+        );
+        assert!(c.tilt_magnitude() <= 1.0, "0..1 정규화");
+    });
+}
+
+/// 팔레트/색 커맨드 — 이름/HEX/스와치 라벨을 모두 해석하고, 모르는 값은
+/// 기본 팔레트 첫 색으로 폴백한다 (설정 파일 호환).
+#[test]
+fn palette_commands_resolve_names_hex_and_labels() {
+    with(|c| *c = Canvas::default());
+    select_color("Blue");
+    assert_eq!(color_name(), "Blue");
+    select_color("#010203");
+    assert_eq!(color_name(), "#010203");
+    assert_eq!(color_swatch_index(), None, "팔레트에 없는 색");
+    select_swatch(1); // 기본 팔레트 2번 = Red
+    assert_eq!(color_name(), "Red");
+    assert_eq!(color_swatch_index(), Some(1));
+    select_color("Swatch 3"); // 라벨도 해석된다
+    assert_eq!(color_name(), "Blue");
+    select_color("Nonsense");
+    assert_eq!(color_name(), "Black", "모르는 값은 기본 팔레트 첫 색");
+    assert_eq!(palette_colors(), freedf_gui::palette::defaults());
+}
+
+/// 즐겨찾기 목록 복원 — 해석 불가한 항목은 버리고, 비면 기본 팔레트로 돌아간다.
+#[test]
+fn favorites_restore_normalizes_and_falls_back() {
+    with(|c| *c = Canvas::default());
+    set_favorites(&[
+        String::from("#010203"),
+        String::from("Nonsense"),
+        String::from("Blue"),
+    ]);
+    with(|c| {
+        assert_eq!(
+            c.favorites,
+            vec![[1, 2, 3, 255], [72, 166, 235, 255]],
+            "해석 불가 항목은 제거"
+        );
+    });
+    set_favorites(&[]);
+    assert_eq!(palette_colors(), freedf_gui::palette::defaults());
 }

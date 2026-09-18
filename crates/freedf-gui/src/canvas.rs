@@ -24,10 +24,17 @@
 //! (`AnnotationStore::apply_edit`), 저장/불러오기는
 //! `AnnotationStore::to_json`/`from_json`. 이 파일이 자체 상태기계를 만들지 않는다.
 //!
-//! v1 한계: 펜 압력은 egui 포인터 이벤트에 없어(마우스/단순 펜) 명목 1.0 —
-//! 실제 필압 어댑터는 Phase 4(freedf `app/input` 이식)에서 붙는다. 프레임마다
-//! 메시 재굽기(획 수가 커지면 freedf의 BakeService 이식).
+//! 펜 필압/틸트는 [`crate::pen::PenInput`]이 **코어 공급원**(OTD 데몬 RPC →
+//! evdev → 스트림 없음)에서 폴링해 `InkPipeline`/메셔/커서로 흘려보낸다.
+//! 도구별 커서 스프라이트는 [`crate::cursor`], 즐겨찾기 색 해석은
+//! [`crate::palette`]가 소유한다 — 이 파일은 배선만 한다.
+//!
+//! v1 한계: 마우스로도 그린다(freedf의 `mouse_draws` 정책은 아직 없다).
+//! 프레임마다 메시 재굽기(획 수가 커지면 freedf의 BakeService 이식).
 
+use crate::cursor::{self, CursorSpec, CURSOR_STABLE_FRAMES};
+use crate::palette;
+use crate::pen::PenInput;
 use eframe::egui;
 use freedf_canvas::{PagePoint, ViewTransform};
 use freedf_core::history::{Edit, History};
@@ -177,6 +184,21 @@ pub struct Canvas {
     /// 토스트 — (메시지, 표시 시작 시각). 시간 만료는 엔진이 소유 (`toast()`).
     pub toast: Option<(String, std::time::Instant)>,
     mesher: freedf_canvas::CoreRibbonMesher,
+    /// 펜 입력(필압/틸트) — 코어 공급원(OTD 데몬 RPC → evdev → 없음) 배선.
+    pub pen: PenInput,
+    /// 필압 반영 여부 (freedf `ToolState::pressure_enabled`에 대응하는 GUI 토글).
+    pub pressure_enabled: bool,
+    /// 자주 쓰는 색 팔레트 — `freedf-services::settings` 기본값에서 시작한다
+    /// (스와치 라벨은 `palette::label`, 해석은 `palette::parse`).
+    pub favorites: Vec<[u8; 4]>,
+    /// 커서 크기 배율 (freedf `global.cursor_scale`, 0.5..2.0).
+    pub cursor_scale: f32,
+    /// 왼손잡이 — 펜 커서 배럴이 왼쪽 반평면만 가리킨다.
+    pub left_handed: bool,
+    /// 커서 표시 히스테리시스 상태 — (직전 want, 연속 프레임, 표시 여부).
+    cursor_want: bool,
+    cursor_frames: u32,
+    cursor_shown: bool,
 }
 
 impl Default for Canvas {
@@ -206,6 +228,16 @@ impl Default for Canvas {
                 tilt_magnitude: 0.0,
                 feather_pt: 1.0,
             },
+            // 펜 공급원 선택/폴링은 `PenInput`이 소유한다 (OTD → evdev → 없음).
+            pen: PenInput::attach(),
+            pressure_enabled: true,
+            favorites: palette::defaults(),
+            // 커서 배율/손잡이 기본값도 settings 서비스가 소유한 값에서 가져온다.
+            cursor_scale: freedf_services::settings::GlobalState::default().cursor_scale,
+            left_handed: freedf_services::settings::GlobalState::default().left_handed,
+            cursor_want: false,
+            cursor_frames: 0,
+            cursor_shown: false,
         }
     }
 }
@@ -223,6 +255,11 @@ impl Canvas {
     /// 활성 문서 (항상 존재 — docs는 절대 비지 않는다).
     pub fn doc(&mut self) -> &mut Doc {
         &mut self.docs[self.active]
+    }
+
+    /// 메셔에 넘어간 틸트 크기 (0..1) — 펜 배선 진단/자동화용 읽기 창구.
+    pub fn tilt_magnitude(&self) -> f32 {
+        self.mesher.tilt_magnitude
     }
 
     /// 활성 문서 읽기 전용 — 렌더 경로용.
@@ -487,24 +524,84 @@ pub fn tool_name() -> String {
     })
 }
 
-/// 즐겨찾기 색상 선택 (Black/Red/Blue — settings 서비스 기본 팔레트와 동일).
+/// 즐겨찾기 색상 선택 — 이름(Black/Red/Blue) / `#RRGGBB` / 스와치 라벨("Swatch 2").
+/// 알 수 없는 값은 팔레트 첫 색(기본 Black)으로 폴백한다 (설정 파일 호환).
 pub fn select_color(name: &str) {
-    let rgba: [u8; 4] = match name {
-        "Red" => [255, 71, 66, 255],
-        "Blue" => [72, 166, 235, 255],
-        _ => [26, 26, 28, 255],
-    };
-    with(|c| c.color = rgba);
+    let color = resolve_color(name);
+    with(|c| c.color = color);
 }
 
-/// 현재 색상 이름 (팔레트에 없으면 "Custom").
+/// 문자열 → 색: 이름/HEX → 스와치 라벨 → 팔레트 첫 색.
+fn resolve_color(name: &str) -> [u8; 4] {
+    if let Some(color) = palette::parse(name) {
+        return color;
+    }
+    if let Some(i) = palette::label_index(name) {
+        if let Some(color) = with(|c| c.favorites.get(i).copied()) {
+            return color;
+        }
+    }
+    with(|c| c.favorites.first().copied()).unwrap_or([26, 26, 28, 255])
+}
+
+/// 현재 색상 이름 — 기본 3색은 이름, 그 외는 `#RRGGBB` (`palette::name`).
 pub fn color_name() -> String {
-    with(|c| match c.color {
-        [255, 71, 66, 255] => String::from("Red"),
-        [72, 166, 235, 255] => String::from("Blue"),
-        [26, 26, 28, 255] => String::from("Black"),
-        _ => String::from("Custom"),
-    })
+    with(|c| palette::name(c.color))
+}
+
+/// 스와치 색 목록 — 셸 리본이 매 프레임 읽는다 (settings 기본 팔레트에서 시작).
+pub fn palette_colors() -> Vec<[u8; 4]> {
+    with(|c| c.favorites.clone())
+}
+
+/// 스와치 라벨 = 계약 id의 근거 (`Swatch 1` → `gui.swatch_1`).
+pub fn swatch_label(index: usize) -> String {
+    palette::label(index)
+}
+
+/// 스와치 클릭 → 그 색 선택 (범위 밖 인덱스는 무시).
+pub fn select_swatch(index: usize) {
+    with(|c| {
+        if let Some(color) = c.favorites.get(index).copied() {
+            c.color = color;
+        }
+    });
+}
+
+/// 현재 색이 팔레트의 몇 번째인가 (활성 표시용, 없으면 `None`).
+pub fn color_swatch_index() -> Option<usize> {
+    with(|c| palette::index_of(&c.favorites, c.color))
+}
+
+/// 즐겨찾기 색 목록 복원 — 해석 불가한 항목은 버리고, 비면 기본 팔레트.
+pub fn set_favorites(names: &[String]) {
+    let colors: Vec<[u8; 4]> = names.iter().filter_map(|n| palette::parse(n)).collect();
+    with(|c| c.favorites = palette::normalize(colors));
+}
+
+/// 필압 반영 토글 (freedf `ToolState::pressure_enabled`에 대응).
+pub fn toggle_pressure() {
+    with(|c| c.pressure_enabled = !c.pressure_enabled);
+}
+
+/// 필압 반영을 직접 지정 (설정 복원).
+pub fn set_pressure(on: bool) {
+    with(|c| c.pressure_enabled = on);
+}
+
+/// 필압 반영 여부 (리본/설정 표시용).
+pub fn pressure_enabled() -> bool {
+    with(|c| c.pressure_enabled)
+}
+
+/// 펜 스트림 출처 라벨 ("OTD"/"evdev"/"none") — 상태/설정 표시용.
+pub fn pen_source() -> String {
+    with(|c| String::from(c.pen.source().label()))
+}
+
+/// 펜 장치가 틸트를 보고하는가 (설정 창 진단 — 스트림 존재와는 다른 질문).
+pub fn pen_tilt_supported() -> bool {
+    with(|c| c.pen.tilt_supported())
 }
 
 /// 굵기 프리셋 (pt) — Thin/Medium/Thick.
@@ -630,6 +727,17 @@ pub struct InkDefaults {
     /// 스무딩 프리셋 이름 — 이전 형식 파일에는 없다(기본값 사용).
     #[serde(default)]
     pub smoothing: String,
+    /// 필압 반영 여부 — 이전 형식 파일에는 없다(기본 켜짐).
+    #[serde(default = "default_true")]
+    pub pressure: bool,
+    /// 즐겨찾기 색 목록(이름 또는 `#RRGGBB`) — 이전 형식에는 없다(기본 팔레트).
+    #[serde(default)]
+    pub favorites: Vec<String>,
+}
+
+/// serde 기본값 — `InkDefaults::pressure`.
+fn default_true() -> bool {
+    true
 }
 
 /// 설정 파일 경로 — `<app_data_dir>/gui-ink-defaults.json`.
@@ -657,6 +765,8 @@ pub fn save_defaults_to(path: &std::path::Path) -> Result<(), String> {
         color: color_name(),
         width: width_name(),
         smoothing: smoothing_name(),
+        pressure: pressure_enabled(),
+        favorites: palette_colors().iter().map(|c| palette::name(*c)).collect(),
     };
     let json = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
@@ -675,6 +785,10 @@ pub fn load_defaults() {
 pub fn load_defaults_from(path: &std::path::Path) -> Result<InkDefaults, String> {
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let defaults: InkDefaults = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    // 팔레트를 **먼저** 복원한다 — 색 이름/스와치 라벨 해석의 기준이 팔레트라서
+    // (팔레트가 바뀐 뒤에 색을 골라야 "기본 팔레트 첫 색" 폴백이 맞는다).
+    set_favorites(&defaults.favorites);
+    set_pressure(defaults.pressure);
     // 적용은 select_* 커맨드 경로 — 알 수 없는 이름은 기본값 폴백이 이미 내장.
     select_tool(&defaults.tool);
     select_color(&defaults.color);
@@ -826,6 +940,7 @@ pub fn sync_and_status(modal_open: bool) -> String {
         c.input_enabled = !modal_open;
         // pdf_error를 먼저 소유권으로 꺼내 doc 가용 대여와 충돌하지 않게 한다.
         let err = c.pdf_error.clone();
+        let pen = String::from(c.pen.source().label());
         let doc = c.doc();
         let zoom_pct = (doc.view.zoom * 100.0).round() as i32;
         let strokes = doc.store.stroke_count_on(doc.page);
@@ -841,7 +956,7 @@ pub fn sync_and_status(modal_open: bool) -> String {
                 doc.page_size[0] as i32, doc.page_size[1] as i32
             )
         };
-        format!("{base}줌 {zoom_pct}% · 획 {strokes} · 북마크 {bookmarks}")
+        format!("{base}줌 {zoom_pct}% · 획 {strokes} · 북마크 {bookmarks} · 펜 {pen}")
     })
 }
 
@@ -866,6 +981,10 @@ impl Canvas {
         // eguidev 계약 — 캔버스 기하 공개 (docs/eguidev-automation.md).
         crate::dev::publish_rect(ui, "canvas.surface", rect);
 
+        // 펜 스트림 폴링 (프레임당 1회) → 메셔 틸트/압력의 원천.
+        self.pen.poll();
+        self.mesher.tilt_magnitude = self.pen.tilt_unit();
+
         // PDF 텍스처 (필요하면 이번 프레임에 렌더 — pdfium이 있을 때만).
         self.ensure_page_texture(ui.ctx());
 
@@ -875,7 +994,58 @@ impl Canvas {
         self.paint_committed(&painter, origin);
         self.paint_active(&painter, origin);
         self.handle_input(ui, rect, origin);
+        // 도구별 커서 — 캔버스 위에서만 시스템 커서를 숨기고 직접 그린다.
+        self.paint_cursor(ui, &painter, rect);
         self.last_pointer = ui.input(|i| i.pointer.latest_pos());
+    }
+
+    /// 도구별 커서 스프라이트 (freedf `paint_custom_cursor` 이식).
+    ///
+    /// 캔버스 안에 포인터가 있으면 시스템 커서를 숨기고(`CursorIcon::None`)
+    /// 직접 그린다. 표시 여부는 3프레임 히스테리시스 — 캔버스 경계를 드나들 때
+    /// 시스템 커서와 겹쳐 깜빡이지 않는다. 캔버스 밖으로 나가면 상태를 리셋해
+    /// 다음 진입이 즉시 반영되게 한다.
+    fn paint_cursor(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
+        let (pos, time) = ui.input(|i| (i.pointer.latest_pos(), i.time));
+        // 커서는 입력이 살아 있을 때만(모달/자동화 캡처 중에는 OS 커서를 만지지 않는다).
+        let want = self.input_enabled && pos.map(|p| rect.contains(p)).unwrap_or(false);
+        if !want {
+            // 캔버스 밖/입력 차단 — 상태 리셋 + 시스템 커서 복원.
+            self.cursor_want = false;
+            self.cursor_frames = 0;
+            self.cursor_shown = false;
+            return;
+        }
+        let (frames, shown) = cursor::hysteresis(
+            self.cursor_want,
+            want,
+            self.cursor_frames,
+            self.cursor_shown,
+            CURSOR_STABLE_FRAMES,
+        );
+        self.cursor_want = want;
+        self.cursor_frames = frames;
+        self.cursor_shown = shown;
+        if !shown {
+            return;
+        }
+        let Some(pos) = pos else { return };
+        // 도구는 CursorSpec이 나른다 — 스프라이트는 cursor.rs가 소유.
+        let spec = CursorSpec {
+            tool: self.tool,
+            color: self.color,
+            width_pt: self.width,
+            zoom: self.doc_ref().view.zoom,
+            eraser_radius_px: ERASER_RADIUS_PX,
+            // 능력 질의 — 틸트 미지원 장치는 None (손잡이 기본 방위각 폴백).
+            tilt: self.pen.cursor_azimuth(),
+            left_handed: self.left_handed,
+            scale: self.cursor_scale.clamp(0.5, 2.0),
+            proximity: self.pen.proximity(now_ms()),
+        };
+        cursor::paint(painter, pos, time as f32, &spec);
+        // 스프라이트가 커서 노릇을 하므로 OS 커서는 숨긴다.
+        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
     }
 
     fn draw_paper(&self, painter: &egui::Painter, origin: egui::Pos2) {
@@ -1038,16 +1208,19 @@ impl Canvas {
                     let page_pt = self.page_pos(p, origin);
                     let mut pipeline =
                         InkPipeline::new(self.mesher.materials, self.width, self.smoothing);
-                    // 압력은 egui 포인터에 없다(마우스/단순 펜) — 명목 1.0.
+                    // 압력/틸트는 **펜 장치가 보고한 값**(OTD RPC/evdev) — 스트림이
+                    // 없으면 압력 1.0/틸트 0 (마우스/트랙패드 환경이 정상이다).
+                    let pressure = self.pen.pressure(self.pressure_enabled);
+                    let tilt = self.pen.tilt_magnitude();
                     pipeline.down(
                         self.tool,
                         self.color,
                         page_pt.x,
                         page_pt.y,
-                        1.0,
+                        pressure,
                         time,
                         now_ms(),
-                        0.0,
+                        tilt,
                     );
                     self.ink = Some(pipeline);
                 } else if self.tool == ToolType::Eraser {
@@ -1075,8 +1248,9 @@ impl Canvas {
                         })
                         .unwrap_or(false);
                     if moved {
+                        let pressure = self.pen.pressure(self.pressure_enabled);
                         if let Some(pipe) = self.ink.as_mut() {
-                            pipe.drag(page_pt.x, page_pt.y, 1.0, time, now_ms());
+                            pipe.drag(page_pt.x, page_pt.y, pressure, time, now_ms());
                         }
                     }
                 }
