@@ -16,11 +16,13 @@
 //! - [`style`] — elm-magic CSS 규칙 + 팔레트 토큰 (유일한 스타일 출처).
 //! - [`fonts`] — 임베드 폰트 설치.
 //! - [`dev`] — eguidev 계측 헬퍼 (`dev-automation` 기능에서만 동작).
-
-// `ui`의 컴포넌트는 `elm_magic::view!` 호출이라 rustdoc이 문서를 만들지 못한다
-// ("does not generate documentation for macro invocations"). 문서 주석은
-// 사람이 읽는 컴포넌트 설명으로 남기고 경고만 끈다 (elm-magic 0.7 한계).
-#![allow(unused_doc_comments)]
+//!
+//! ## elm-magic 계약
+//!
+//! 컴포넌트는 `elm_magic::view!` 한 블록에 모아 정의하고(0.7.2부터 여러 `fn`),
+//! 문서 주석은 **블록 안**에 쓴다 — 호출부의 `///`는 rustc가 매크로 호출
+//! 속성으로 두어 `unused doc comment` 경고만 난다. 그래서 경고를 끌 필요가 없다.
+//! 남은 미수정 버그(값 prop의 재렌더 미반영)와 `key` 우회는 [`ui::atoms`] 참고.
 
 pub mod canvas;
 pub mod cursor;

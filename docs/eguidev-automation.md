@@ -99,6 +99,11 @@ scripts/edev-run.sh --config .edev-gui.toml eval scripts/design-audit.luau \
 `contrast`(WCAG 대비비 + `aa_body`/`aa_ui`). `contrast.distinct == false`면 글자
 픽셀이 안 잡힌 것이므로 수치 대신 이미지를 보고 판단합니다.
 
+읽을 때 주의: `small_targets`/`contrast`는 elm-magic 어댑터가 보고한 rect와 렌더
+픽셀에서 나옵니다 — `Button`/`Tab`은 CSS `padding`을 무시하므로(그리고 `contrast`는
+안티에일리어싱 때문에 이론값보다 낮게 나오므로) 수치는 하한으로 보고 이미지와 함께
+판단합니다 (`docs/elm-magic-bug-report.md` §3).
+
 ## 알아 둘 점
 
 - **렌더러**: glow를 쓰세요(`FREEDF_RENDERER=glow`). wgpu 백엔드는 특정 조합에서

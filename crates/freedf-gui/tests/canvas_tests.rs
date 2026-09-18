@@ -262,18 +262,22 @@ fn ink_stroke_lands_through_shell_raw() {
     };
 
     // 셸을 두 프레임 그려 캔버스 자리를 확정한 뒤, 그 안쪽에 펜 드래그를 준다.
+    //
+    // 좌표 주의: 캔버스는 크롬(navbar/toolbar/ribbon/tabs/패널/statusbar) **아래**
+    // 남은 영역이다. 크롬 높이는 `style.rs`의 간격에 달려 있으므로, 창(1100×720)
+    // 아래쪽(= 캔버스 안쪽)에서 시작한다 — 크롬이 조금 커져도 안전하다.
     frame(&mut elm, vec![]);
     frame(&mut elm, vec![]);
-    let start = egui::pos2(500.0, 400.0);
+    let start = egui::pos2(500.0, 600.0);
     frame(
         &mut elm,
         vec![egui::Event::PointerMoved(start), press(start, true)],
     );
     for i in 1..=4 {
-        let p = egui::pos2(500.0 + 20.0 * i as f32, 400.0 + 10.0 * i as f32);
+        let p = egui::pos2(500.0 + 15.0 * i as f32, 600.0 + 5.0 * i as f32);
         frame(&mut elm, vec![egui::Event::PointerMoved(p)]);
     }
-    let end = egui::pos2(600.0, 460.0);
+    let end = egui::pos2(580.0, 625.0);
     frame(&mut elm, vec![press(end, false)]);
 
     with(|c| {

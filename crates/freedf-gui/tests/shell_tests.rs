@@ -33,6 +33,11 @@ fn new_tab_via_modal() {
     app.assert_hidden("Tab name:");
 }
 
+/// 탭 클릭이 활성 탭을 바꾼다 — **elm-magic 버그 11 회귀 지점**.
+///
+/// 자식 컴포넌트(`TabItem`)의 값 prop(`active`)은 재렌더에서 갱신되지 않는다.
+/// 셸은 `key={..}`로 인스턴스를 갱신시켜 우회하므로 이 테스트가 통과한다 —
+/// elm-magic이 고쳐지면 `key=`를 지워도 통과해야 한다.
 #[test]
 fn tab_click_selects() {
     // 탭은 캔버스 엔진이 소유 — 엔진에 문서를 만들고 셸이 읽어 렌더한다.
@@ -246,6 +251,9 @@ fn edit_row_reaches_canvas_commands() {
 }
 
 /// 계약: 설정 창의 스무딩 프리셋 선택이 캔버스 상태를 바꾼다.
+///
+/// **elm-magic 버그 11 회귀 지점**: 진단 `Note`(값 prop)와 프리셋 `BtnOn`(값 prop)이
+/// 재렌더에서 갱신되지 않아, 셸의 `key={..}`가 없으면 이 테스트가 실패한다.
 #[test]
 fn settings_modal_selects_smoothing() {
     with(|c| *c = Canvas::default());
@@ -258,21 +266,20 @@ fn settings_modal_selects_smoothing() {
     app.expect_text("스무딩 Off");
 }
 
+/// 탭 id는 **이름이 아니라 id**로 찾는다 — 기본 탭("Untitled")이 먼저 오기 때문.
 #[test]
-fn zz_debug_tab_click() {
+fn tab_click_uses_id_not_first_entry() {
     with(|c| *c = Canvas::default());
     freedf_gui::canvas::add_tab("alpha".to_string());
     freedf_gui::canvas::add_tab("beta".to_string());
-    let names = freedf_gui::canvas::tab_names();
-    let beta_id = names.iter().find(|(_, n)| n == "beta").map(|(id, _)| *id).unwrap();
+    let beta_id = freedf_gui::canvas::tab_names()
+        .iter()
+        .find(|(_, n)| n == "beta")
+        .map(|(id, _)| *id)
+        .expect("beta");
     let mut app = elm_magic::mount!(Shell);
     app.click(&label("beta"));
-    println!("active after click = {:?} (beta_id={})", freedf_gui::canvas::active_tab_id(), beta_id);
+    assert_eq!(freedf_gui::canvas::active_tab_id(), beta_id);
     let tree = app.render_tree();
-    for line in tree.lines() {
-        if line.contains("Tab \"") {
-            println!("TREE {line}");
-        }
-    }
-    println!("names = {:?}", freedf_gui::canvas::tab_names());
+    assert!(tree.contains("Tab \"beta\" active") || tree.contains("beta\" active"), "tree:\n{tree}");
 }

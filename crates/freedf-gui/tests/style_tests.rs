@@ -1,7 +1,8 @@
 //! `style` 모듈 테스트 — `src/style.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 //!
-//! 하이브리드 규칙을 강제한다: **클래스 이름은 BEM**, 태그는 의미(하위 셀렉터)로만
-//! 쓴다. 태그 단독 셀렉터(`Button { … }`)는 금지 — 스타일은 항상 클래스가 소유한다.
+//! 하이브리드 규칙을 강제한다: **셀렉터는 BEM 클래스뿐**이다. 태그 셀렉터는
+//! 단독(`Button { … }`)이든 하위(`.modal Strong`)든 금지 — 스타일은 항상 클래스가
+//! 소유하고, 어떤 요소에 붙을지는 마크업의 `class="…"`가 결정한다.
 
 use elm_magic::style::{lookup_class, selectors};
 
@@ -74,25 +75,33 @@ fn literal_classes(src: &str) -> Vec<String> {
     out
 }
 
-/// 셀렉터 조각은 BEM 클래스이거나 의미 태그다 (태그 단독 셀렉터 금지).
+/// 셀렉터 조각이 **클래스 결합**인가 — `.a.b`(elm-magic은 `.a .b`를 이렇게
+/// 정규화한다)는 각 클래스가 BEM이어야 하고, 태그 이름이 섞이면 안 된다.
+fn is_bem_classes(part: &str) -> bool {
+    part.starts_with('.')
+        && part.split('.').all(|s| s.is_empty() || is_bem(&format!(".{s}")))
+        && part.split('.').any(|s| !s.is_empty())
+}
+
+/// **모든** 셀렉터 조각은 BEM 클래스다 — 태그 셀렉터는 단독이든 하위든 금지.
 #[test]
-fn selectors_use_bem_classes_with_semantic_tags() {
+fn selectors_use_bem_classes_only() {
     let all = registered_selectors();
     assert!(!all.is_empty(), "css! 규칙이 하나도 등록되지 않았다");
     for sel in &all {
         let parts = parts(sel);
         assert!(!parts.is_empty(), "빈 셀렉터: {sel}");
-        assert!(
-            parts.iter().any(|p| p.starts_with('.')),
-            "클래스가 하나도 없는 태그 셀렉터는 금지: {sel}"
-        );
         for part in &parts {
             assert!(
-                is_bem(part) || is_semantic_tag(part),
-                "BEM 클래스도 의미 태그도 아니다: {part} ({sel})"
+                !is_semantic_tag(part),
+                "태그 셀렉터는 금지다 — 클래스로 바꿔라: {part} ({sel})"
             );
+            assert!(is_bem_classes(part), "BEM 클래스가 아니다: {part} ({sel})");
         }
     }
+    // 판정기 회귀 방지 — 하위 셀렉터는 elm-magic이 `.a.b`로 정규화한다.
+    assert!(is_bem_classes(".navbar.btn"));
+    assert!(!is_bem_classes(".navbar Button") && !is_bem_classes("Button"));
     // 판정기 자체의 회귀 방지.
     assert!(is_bem(".app") && is_bem(".panel__item") && is_bem(".tabs__item--active"));
     assert!(!is_bem(".panel_title") && !is_bem("Button") && !is_bem(".a__") && !is_bem(".a--"));
@@ -117,6 +126,8 @@ fn shell_markup_classes_are_registered() {
     for name in [
         "btn",
         "btn--on",
+        "btn--danger",
+        "btn--ghost",
         "swatch",
         "swatch--on",
         "tabs__item",
