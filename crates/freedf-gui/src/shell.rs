@@ -1,6 +1,6 @@
 /// 모달 종류 — `match modal { … }`로 분기 렌더링한다 (사양서 3.4).
 #[derive(Clone, PartialEq)]
-pub(crate) enum ShellModal {
+pub enum ShellModal {
     None,
     NewTab,
     CloseConfirm,
@@ -11,7 +11,7 @@ pub(crate) enum ShellModal {
 }
 
 elm_magic::view! {
-    pub(crate) fn Shell(
+    pub fn Shell(
         sidebar_open = true,
         bookmarks_open = false,
         outline_open = false,
@@ -41,6 +41,8 @@ elm_magic::view! {
         let tool = crate::canvas::tool_name();
         let color = crate::canvas::color_name();
         let width = crate::canvas::width_name();
+        // 스무딩 프리셋 — 설정 창 표시/선택용 (코어 `InkPipeline` 강도).
+        let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
         // 루트 클래스 `.app` — 창 배경(`bg: background`) + 방어 여백(`padding: 8`,
         // Windows 최대화 시 창을 좌우로 밀어내는 문제) + 기본 간격(`gap`).
@@ -67,6 +69,15 @@ elm_magic::view! {
                 <Button class="toolbar__button" on_click={modal = ShellModal::ClearInk}>"Clear Ink"</Button>
                 <Button class="toolbar__button" on_click={modal = ShellModal::Settings}>"Settings"</Button>
                 <Button class="toolbar__button" on_click={modal = ShellModal::About}>"About"</Button>
+            </Row>
+            // ── 편집 행: 이력(실행취소/다시실행) + 문서 저장/불러오기 ──
+            // 전부 `canvas`의 커맨드가 코어 API(`History`/`AnnotationStore`)로 배선된다.
+            <Row class="toolbar">
+                <Strong class="toolbar__title">"Edit"</Strong>
+                <Button class="toolbar__button" on_click={crate::canvas::undo()}>"Undo"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::redo()}>"Redo"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::save_edits()}>"Save Edits"</Button>
+                <Button class="toolbar__button" on_click={crate::canvas::load_edits()}>"Load Edits"</Button>
             </Row>
             // ── 잉크 리본: 도구/색상/굵기 — 활성 항목은 Strong(비활성은 Button) ──
             // 색상 팔레트는 settings 서비스 기본 즐겨찾기(블랙/레드/블루)와 동일.
@@ -224,7 +235,30 @@ elm_magic::view! {
                 </Modal>,
                 ShellModal::Settings => <Modal class="modal" title="Settings" on_close={modal = ShellModal::None}>
                     <Strong class="modal__title">"잉크 기본값"</Strong>
-                    <Text class="modal__text">"도구 {tool} · 색상 {color} · 굵기 {width}"</Text>
+                    <Text class="modal__text">"도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}"</Text>
+                    <Text class="modal__text">"스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)."</Text>
+                    <Row class="modal__actions">
+                        {if smoothing == "Off" {
+                            <Strong class="modal__preset modal__preset--active">"Off"</Strong>
+                        } else {
+                            <Button class="modal__preset" on_click={crate::canvas::select_smoothing("Off")}>"Off"</Button>
+                        }}
+                        {if smoothing == "Light" {
+                            <Strong class="modal__preset modal__preset--active">"Light"</Strong>
+                        } else {
+                            <Button class="modal__preset" on_click={crate::canvas::select_smoothing("Light")}>"Light"</Button>
+                        }}
+                        {if smoothing == "Normal" {
+                            <Strong class="modal__preset modal__preset--active">"Normal"</Strong>
+                        } else {
+                            <Button class="modal__preset" on_click={crate::canvas::select_smoothing("Normal")}>"Normal"</Button>
+                        }}
+                        {if smoothing == "Strong" {
+                            <Strong class="modal__preset modal__preset--active">"Strong"</Strong>
+                        } else {
+                            <Button class="modal__preset" on_click={crate::canvas::select_smoothing("Strong")}>"Strong"</Button>
+                        }}
+                    </Row>
                     <Text class="modal__text">"현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원."</Text>
                     <Row class="modal__actions">
                         <Button class="modal__button" on_click={crate::canvas::save_defaults()}>"Save as default"</Button>
@@ -236,12 +270,12 @@ elm_magic::view! {
     }
 }
 
-/// main.rs용 진입점 — 트리를 그린 뒤 어댑터 패스에 eguidev 계약 id를 붙인다.
+/// 셸 렌더 진입점 — 트리를 그린 뒤 어댑터 패스에 eguidev 계약 id를 붙인다.
 ///
-/// 컴포넌트 자체는 `pub(crate) fn Shell`(elm-magic의 vis 보존 패치 이후)이라
-/// 타입 가시성 문제는 없다. 계측 태깅은 어댑터 `Response`가 필요해 셸 모듈이
-/// 소유하는 게 맞으므로 여기서 한 번에 처리한다 — main.rs는 `render_root`만 알면 된다.
-pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
+/// 계측 태깅은 어댑터 `Response`가 필요해 셸 모듈이 소유하는 게 맞으므로
+/// 여기서 한 번에 처리한다 — 호스트(`src/main.rs`)는 `render_root`만 알면 되고,
+/// 테스트(`tests/shell_tests.rs`)는 같은 경로를 그대로 그려 검증한다.
+pub fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     let props = ShellProps::default();
     let tree = elm_magic::frame::<Shell>(ctx, &props);
     // 팔레트를 넘겨 CSS 색 토큰(`bg: surface` …)을 실제 색으로 해석시킨다.
@@ -272,206 +306,6 @@ pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) 
 /// 루트 `Col`) — 예전 egui Frame 래퍼(테마 `window_fill` 채우기 + 하드코딩된
 /// 안쪽 여백)를 elm-magic 0.6 CSS 속성이 대체했다. 창 클리어 색은 main.rs의
 /// `clear_color`가 같은 팔레트 토큰으로 채운다 (elm-magic CSS 밖 영역).
-pub(crate) fn render_root(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
+pub fn render_root(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     render_shell(ui, ctx);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::canvas::{with, Canvas};
-    use freedf_core::model::StrokePoint;
-    use freedf_core::model::ToolType;
-
-    #[test]
-    fn shell_renders_chrome() {
-        let app = elm_magic::mount!(Shell);
-        app.assert_text("FreeDF");
-        app.assert_text("Untitled");
-        app.assert_text("Library");
-        app.assert_text("Notes");
-        app.assert_text("Ready");
-    }
-
-    #[test]
-    fn new_tab_via_modal() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("New Tab");
-        app.assert_text("Tab name:");
-        app.type_("Sketch 2");
-        app.press_enter();
-        app.assert_text("Sketch 2");
-        // 모달이 닫혔는지 — 다이얼로그 문구가 사라졌는지로 판정
-        app.assert_hidden("Tab name:");
-    }
-
-    #[test]
-    fn tab_click_selects() {
-        // 탭은 캔버스 엔진이 소유 — 엔진에 문서를 만들고 셸이 읽어 렌더한다.
-        with(|c| {
-            *c = Canvas::default();
-        });
-        crate::canvas::add_tab("alpha".to_string());
-        crate::canvas::add_tab("beta".to_string());
-        let alpha_id = crate::canvas::tab_names()
-            .first()
-            .map(|(id, _)| *id)
-            .expect("alpha");
-        crate::canvas::select_tab(alpha_id);
-        let mut app = elm_magic::mount!(Shell);
-        app.click("beta");
-        let tree = app.render_tree();
-        assert!(tree.contains("Tab \"beta\" active"), "tree:\n{tree}");
-        assert!(!tree.contains("Tab \"alpha\" active"), "tree:\n{tree}");
-    }
-
-    #[test]
-    fn close_tab_confirm_flow() {
-        with(|c| *c = Canvas::default());
-        crate::canvas::add_tab("alpha".to_string());
-        crate::canvas::add_tab("beta".to_string());
-        let alpha_id = crate::canvas::tab_names()
-            .first()
-            .map(|(id, _)| *id)
-            .expect("alpha");
-        crate::canvas::select_tab(alpha_id);
-        let mut app = elm_magic::mount!(Shell);
-        app.click("beta"); // beta 선택
-        app.click("Close Tab");
-        app.assert_text("Close this tab?");
-        app.click("Delete");
-        app.assert_hidden("beta");
-        app.assert_text("alpha");
-    }
-
-    #[test]
-    fn ribbon_updates_canvas_engine() {
-        // 리본 클릭 → 캔버스 엔진의 도구/색/굵기가 실제로 바뀐다 (다음 획에 반영).
-        with(|c| *c = Canvas::default());
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Fountain");
-        app.click("Red");
-        app.click("Thick");
-        with(|c| {
-            assert_eq!(c.tool, ToolType::Fountain);
-            assert_eq!(c.color, [255, 71, 66, 255]);
-            assert_eq!(c.width, 4.0);
-        });
-    }
-
-    #[test]
-    fn settings_modal_opens_and_closes() {
-        with(|c| *c = Canvas::default());
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Settings");
-        app.assert_text("잉크 기본값");
-        app.assert_text("도구 Pen · 색상 Black · 굵기 Medium");
-        app.click("Close");
-        app.assert_hidden("Save as default");
-    }
-
-    #[test]
-    fn bookmarks_panel_flow() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Bookmarks");
-        app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
-        app.click("Bookmark"); // 현재 페이지(0) 북마크
-        app.expect_text("페이지 0");
-        // 상태바는 3초 토스트("북마크 추가")로 대체된다 — 만료는 엔진 소유라
-        // headless 테스트에서 시간이 지나지 않으므로 토스트 문구로 검증한다.
-        app.expect_text("북마크 추가: 0페이지");
-        app.click("Bookmark"); // 다시 토글 → 해제
-        app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
-    }
-
-    #[test]
-    fn close_tab_keeps_ink_isolated() {
-        // 문서별 저장소 분리: 탭을 닫아도 다른 탭의 잉크는 남는다.
-        with(|c| {
-            *c = Canvas::default();
-            let pts = vec![
-                StrokePoint {
-                    x: 1.0,
-                    y: 1.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-                StrokePoint {
-                    x: 9.0,
-                    y: 9.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-            ];
-            c.doc()
-                .store
-                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
-        });
-        // 주의: with() 안에서 add_tab을 부르지 않는다 (RefCell 이중 대여).
-        crate::canvas::add_tab("Second".to_string());
-        let mut app = elm_magic::mount!(Shell);
-        app.assert_text("획 0"); // 새 문서는 빈 페이지
-        app.click("Close Tab");
-        app.click("Delete");
-        with(|c| {
-            assert_eq!(c.docs.len(), 1);
-            assert_eq!(c.docs[0].name, "Untitled"); // 리셋 — 잉크는 사라진다
-        });
-    }
-
-    #[test]
-    fn sidebar_toggle_and_status() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Notes");
-        app.expect_text("Notes panel (placeholder)");
-        app.click("Sidebar");
-        app.assert_hidden("Library");
-        app.click("Sidebar");
-        app.assert_text("Library");
-    }
-
-    #[test]
-    fn about_modal() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("About");
-        app.assert_text("every widget above is a view! element");
-        app.click("OK");
-        app.assert_hidden("every widget above is a view! element");
-    }
-
-    #[test]
-    fn zoom_buttons_drive_canvas_status() {
-        let mut app = elm_magic::mount!(Shell);
-        app.assert_text("줌 100%");
-        app.click("Zoom In");
-        app.expect_text("줌 125%");
-        app.click("Zoom Out");
-        app.expect_text("줌 100%");
-        app.click("Fit");
-        app.expect_text("줌 100%");
-    }
-
-    #[test]
-    fn open_pdf_modal_calls_canvas_and_closes() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Open PDF");
-        app.assert_text("PDF file path:");
-        app.type_("/nonexistent/no-such-file.pdf");
-        app.press_enter();
-        // 모달이 닫히고, 캔버스의 open_pdf가 상태바에 PDF 오류를 남긴다
-        // (pdfium 부재/파일 오류 어느 쪽이든 "PDF"를 포함).
-        app.assert_hidden("PDF file path:");
-        app.expect_text("PDF");
-    }
-
-    #[test]
-    fn clear_ink_confirm_flow() {
-        let mut app = elm_magic::mount!(Shell);
-        app.click("Clear Ink");
-        app.assert_text("Remove all ink on this page?");
-        app.click("Delete");
-        app.assert_hidden("Remove all ink on this page?");
-    }
 }

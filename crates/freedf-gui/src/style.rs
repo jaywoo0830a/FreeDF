@@ -23,8 +23,9 @@
 //! - 수정자: `블록__요소--이름` (`tabs__item--active`, `modal__actions--end`)
 //!   — 기본 클래스와 **함께** 붙여 차이만 덮는다.
 //!
-//! 아래 `mod tests`의 `no_tag_selectors_registered` / `selectors_are_bem` /
-//! `shell_markup_classes_are_registered`가 이 규칙을 회귀 방지한다.
+//! 아래 `tests/style_tests.rs`의 `no_tag_selectors_registered` /
+//! `selectors_are_bem` / `shell_markup_classes_are_registered`가 이 규칙을
+//! 회귀 방지한다 (테스트는 `tests/`에 있다 — 크레이트 관례).
 //!
 //! ## 예외 하나 — egui 네이티브 위젯
 //!
@@ -101,6 +102,10 @@ elm_magic::css! {
     .modal__button { bg: surface_alt; color: text; padding: 8 12; radius: 6; cursor: pointer; }
     .modal__button:hover { bg: primary; color: on_primary; }
     .modal__button:active { bg: surface; border-width: 1; border-color: border; }
+    // 설정 창의 프리셋(스무딩 등) — 활성 항목은 `--active` 수정자를 함께 붙인다.
+    .modal__preset { bg: surface_alt; color: text; padding: 6 10; radius: 6; cursor: pointer; }
+    .modal__preset:hover { bg: primary; color: on_primary; }
+    .modal__preset--active { bg: primary; color: on_primary; weight: bold; }
 }
 
 /// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값.
@@ -108,7 +113,7 @@ elm_magic::css! {
 /// 기본은 elm-magic의 어두운 팔레트(egui 다크와 맞춘 값). 브랜드 색을 넣으려면
 /// `.with(Token::Primary, Color::rgb(...))`를 한 줄 붙이면 된다 — 앱의 모든
 /// 파랑이 그 한 줄에서 따라온다.
-pub(crate) fn palette() -> Palette {
+pub fn palette() -> Palette {
     Palette::dark()
 }
 
@@ -118,23 +123,23 @@ fn to_color32(color: Color) -> egui::Color32 {
 }
 
 /// 토큰 하나를 egui 색으로 (캔버스 같은 egui 네이티브 코드가 쓴다).
-pub(crate) fn token_color(token: Token) -> egui::Color32 {
+pub fn token_color(token: Token) -> egui::Color32 {
     to_color32(palette().get(token))
 }
 
 /// 창 클리어 색 — `.app`의 `bg: background`와 **같은 토큰**이라 리사이즈
 /// 중에도 이음새가 없다 (eframe 기본값은 반투명 근사 검정).
-pub(crate) fn clear_color() -> [f32; 4] {
+pub fn clear_color() -> [f32; 4] {
     token_color(Token::Background).to_normalized_gamma_f32()
 }
 
 /// 캔버스 스테이지 바탕 — 페이지 뒤 영역 (`<Raw>`가 직접 칠한다).
-pub(crate) fn stage_color() -> egui::Color32 {
+pub fn stage_color() -> egui::Color32 {
     token_color(Token::SurfaceAlt)
 }
 
 /// 페이지(흰 종이) 테두리/그림자 — CSS 밖(painter)에서 쓰는 캔버스 전용 색.
-pub(crate) fn page_border_color() -> egui::Color32 {
+pub fn page_border_color() -> egui::Color32 {
     token_color(Token::Border)
 }
 
@@ -143,7 +148,7 @@ pub(crate) fn page_border_color() -> egui::Color32 {
 /// 대상: `<Raw>` 캔버스 painter, `<Input>`/`<TextArea>` 텍스트 편집, `Divider`의
 /// 구분선 색, 스크롤바, 창 크롬. 여기서 정하지 않은 것은 egui 기본값을 쓴다 —
 /// 셸의 나머지 전부는 위 `css!`가 담당한다.
-pub(crate) fn install_egui_visuals(ctx: &egui::Context) {
+pub fn install_egui_visuals(ctx: &egui::Context) {
     // PDF 리더는 장시간 읽기 — 다크 고정 (시스템 라이트 테마에서도).
     ctx.set_theme(egui::ThemePreference::Dark);
     for theme in [egui::Theme::Dark, egui::Theme::Light] {
@@ -179,95 +184,4 @@ fn visuals() -> egui::Visuals {
     v.text_cursor.stroke = egui::Stroke::new(2.0, primary);
     v.selection.bg_fill = primary.gamma_multiply(0.35);
     v
-}
-
-#[cfg(test)]
-mod tests {
-    use elm_magic::style::{lookup_class, selectors};
-
-    /// `:hover` 같은 상태 접미사를 떼고 셀렉터 본체만.
-    fn body(selector: &str) -> &str {
-        selector.trim().split(':').next().unwrap_or("").trim()
-    }
-
-    /// BEM 이름 판정 — `block`, `block__element`, `block__element--modifier`.
-    ///
-    /// 소문자/숫자/하이픈만 쓰고, `__`·`--` 구분자 조각은 비어 있으면 안 된다
-    /// (`.panel_title` 같은 밑줄 하나짜리 이름이 조용히 섞이는 걸 막는다).
-    fn is_bem(name: &str) -> bool {
-        let Some(name) = name.strip_prefix('.') else {
-            return false;
-        };
-        let word = |s: &str| {
-            !s.is_empty()
-                && !s.starts_with('-')
-                && !s.ends_with('-')
-                && s.chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        };
-        let (rest, modifier) = match name.split_once("--") {
-            Some((rest, m)) => (rest, Some(m)),
-            None => (name, None),
-        };
-        let (block, element) = match rest.split_once("__") {
-            Some((b, e)) => (b, Some(e)),
-            None => (rest, None),
-        };
-        word(block) && element.map(word).unwrap_or(true) && modifier.map(word).unwrap_or(true)
-    }
-
-    /// `shell.rs`의 리터럴 `class="…"` 값들 (표현식 class는 별도 검증).
-    fn literal_classes(src: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut rest = src;
-        while let Some(i) = rest.find("class=\"") {
-            rest = &rest[i + "class=\"".len()..];
-            let Some(end) = rest.find('"') else { break };
-            out.extend(rest[..end].split_whitespace().map(str::to_string));
-            rest = &rest[end..];
-        }
-        out
-    }
-
-    /// 태그 셀렉터 금지 — 스타일은 클래스로만 붙인다 (셸 전체가 BEM).
-    #[test]
-    fn no_tag_selectors_registered() {
-        let all = selectors();
-        assert!(!all.is_empty(), "css! 규칙이 하나도 등록되지 않았다");
-        for sel in &all {
-            assert!(
-                body(sel).starts_with('.'),
-                "태그 셀렉터는 금지 — 클래스(BEM)만 쓴다: {sel}"
-            );
-        }
-    }
-
-    /// 등록된 셀렉터는 전부 BEM 이름이다.
-    #[test]
-    fn selectors_are_bem() {
-        for sel in &selectors() {
-            let base = body(sel);
-            assert!(is_bem(base), "BEM 이름이 아니다: {sel}");
-        }
-        // 판정기 자체의 회귀 방지.
-        assert!(is_bem(".app") && is_bem(".panel__item") && is_bem(".tabs__item--active"));
-        assert!(!is_bem(".panel_title") && !is_bem("Button") && !is_bem(".a__") && !is_bem(".a--"));
-    }
-
-    /// 마크업의 모든 class가 CSS에 등록돼 있다 — 요소마다 자기 CSS 이름을 갖는다.
-    #[test]
-    fn shell_markup_classes_are_registered() {
-        let classes = literal_classes(include_str!("shell.rs"));
-        assert!(classes.len() > 30, "class 파싱이 이상하다: {classes:?}");
-        for name in &classes {
-            assert!(
-                lookup_class(name).is_some(),
-                "shell.rs가 쓰는 `{name}`이 style.rs에 등록되지 않았다"
-            );
-        }
-        // 표현식 class(`class={if …}`)는 리터럴 스캔에 안 잡히므로 명시 검증.
-        for name in ["tabs__item", "tabs__item--active"] {
-            assert!(lookup_class(name).is_some(), "동적 class `{name}` 미등록");
-        }
-    }
 }

@@ -17,14 +17,18 @@
 //! 즉 이 파일은 두 인터페이스를 **배선**할 뿐, 잉크 물리/지오메트리를 직접
 //! 계산하지 않는다 (도구별 분기도 없다 — 재료는 `Materials::for_tool`이 결정).
 //!
+//! 지우개·실행취소/다시실행·문서 저장/불러오기도 전부 **코어 API 배선**이다:
+//! 지우기는 `AnnotationStore::erase_at`, 이력은 `History` + `Edit`
+//! (`AnnotationStore::apply_edit`), 저장/불러오기는
+//! `AnnotationStore::to_json`/`from_json`. 이 파일이 자체 상태기계를 만들지 않는다.
+//!
 //! v1 한계: 펜 압력은 egui 포인터 이벤트에 없어(마우스/단순 펜) 명목 1.0 —
-//! 실제 필압 어댑터는 Phase 4(freedf `app/input` 이식)에서 붙는다. 지우개는
-//! 아직 세션이 없다(`Materials::for_tool`이 재료를 주지 않는다) — v1에서는
-//! 잉크를 남기지 않는다. 프레임마다 메시 재굽기(획 수가 커지면 freedf의
-//! BakeService 이식).
+//! 실제 필압 어댑터는 Phase 4(freedf `app/input` 이식)에서 붙는다. 프레임마다
+//! 메시 재굽기(획 수가 커지면 freedf의 BakeService 이식).
 
 use eframe::egui;
 use freedf_canvas::{PagePoint, ViewTransform};
+use freedf_core::history::{Edit, History};
 use freedf_core::model::{Stroke, ToolType};
 use freedf_core::pen::Materials;
 use freedf_core::pipeline::InkPipeline;
@@ -40,17 +44,32 @@ pub const BLANK_PAGE: [f32; 2] = [595.0, 842.0];
 const ZOOM_STEP: f32 = 1.25;
 /// PDF 페이지 텍스처 렌더 폭 (px) — v1은 단일 해상도.
 const PDF_TEX_WIDTH: f32 = 1400.0;
-/// 스무딩 강도 — freedf 설정 기본값과 같다(OFF). 켜면 1€ 필터가 점을 다듬는다.
-const SMOOTHING: f32 = 0.0;
+/// 지우개 반경 (화면 px) — 페이지 반경은 줌으로 나눠 쓴다 (freedf와 동일 규약).
+pub const ERASER_RADIUS_PX: f32 = 12.0;
+/// 스무딩 프리셋 — `(이름, 1€ 필터 강도)`. 강도는 `OneEuroFilter::from_smoothing`
+/// 입력으로, freedf 설정의 `SmoothingStrength`(0..1, 기본 0.4)와 같은 값 공간이다.
+///
+/// 이름은 리본의 굵기 프리셋(`Thin`/`Medium`/`Thick`)과 **겹치지 않게** 고른다 —
+/// elm-magic 셸의 클릭 대상은 라벨이라 같은 라벨이 둘이면 클릭이 모호해진다.
+pub const SMOOTHING_PRESETS: [(&str, f32); 4] = [
+    ("Off", 0.0),
+    ("Light", 0.25),
+    ("Normal", 0.4),
+    ("Strong", 0.7),
+];
+/// 스무딩 기본값 — freedf 설정 기본과 같다(OFF: 외부 드라이버 안정화와 충돌 방지).
+const SMOOTHING_DEFAULT: f32 = 0.0;
 /// 새 점을 받아들이는 최소 화면 이동(px). 같은 자리의 반복 샘플(정지 중 프레임)과
 /// 부화소 떨림을 걸러 리본에 길이 0 세그먼트가 쌓이지 않게 한다.
 const MIN_STEP_PX: f32 = 0.75;
 
-/// 탭 하나 = 문서 하나 — 저장소·페이지·뷰·PDF를 독립으로 가진다.
-pub(crate) struct Doc {
+/// 탭 하나 = 문서 하나 — 저장소·페이지·뷰·PDF·이력을 독립으로 가진다.
+pub struct Doc {
     pub id: u64,
     pub name: String,
     pub store: AnnotationStore,
+    /// 문서별 실행취소/다시실행 이력 — 코어 `History`가 소유한다 (`Edit` diff 스택).
+    pub history: History,
     pub page: usize,
     pub page_size: [f32; 2],
     pub view: ViewTransform,
@@ -68,6 +87,7 @@ impl Doc {
             id,
             name,
             store: AnnotationStore::new(),
+            history: History::default(),
             page: 0,
             page_size: BLANK_PAGE,
             view: ViewTransform::default(),
@@ -83,6 +103,7 @@ impl Doc {
             id,
             name,
             store: AnnotationStore::new(),
+            history: History::default(),
             page: 0,
             page_size,
             view: ViewTransform::default(),
@@ -124,19 +145,24 @@ impl Doc {
 }
 
 /// 캔버스 엔진 — 위젯 트리 바깥의 명령형 상태 (문서 목록 + 활성 문서).
-pub(crate) struct Canvas {
-    /// 탭 = 문서 (테스트에서도 읽을 수 있게 crate 공개).
-    pub(crate) docs: Vec<Doc>,
+pub struct Canvas {
+    /// 탭 = 문서 (테스트/자동화에서도 읽는다).
+    pub docs: Vec<Doc>,
     /// 활성 문서 인덱스 (docs 내) — docs는 절대 비지 않는다.
-    active: usize,
+    pub active: usize,
     next_doc_id: u64,
-    pub(crate) tool: ToolType,
-    pub(crate) color: [u8; 4],
-    pub(crate) width: f32,
+    pub tool: ToolType,
+    pub color: [u8; 4],
+    pub width: f32,
+    /// 스무딩 강도(0..1) — 새 획마다 코어 `InkPipeline`에 넘긴다.
+    pub smoothing: f32,
     /// 진행 중 획 — **코어의 `InkPipeline`** (1€ 필터 + 인과적 선폭 확정 +
     /// 동결 커밋). 점/폭/시각은 전부 이 객체가 소유하고, 여기서는 down/drag/up만
     /// 부른다 (도구별 분기 없음 — 재료는 `Materials::for_tool`).
     ink: Option<InkPipeline>,
+    /// 지우기 세션 진행 중 — 이번 프레스에서 지운 획들(코어 `erase_at` 반환값).
+    /// 펜을 떼면 **하나의 undo 단계**(`Edit::RemoveStrokes`)로 확정된다.
+    erasing: Option<Vec<Stroke>>,
     /// 오른쪽 버튼 팬 진행 중 — **캔버스 안에서 눌렀을 때만** 켜진다
     /// (캔버스 밖에서 누른 드래그가 팬으로 새는 버그 방지).
     pan_active: bool,
@@ -147,7 +173,7 @@ pub(crate) struct Canvas {
     pdfium: Option<Pdfium>,
     pub pdf_error: Option<String>,
     /// 토스트 — (메시지, 표시 시작 시각). 시간 만료는 엔진이 소유 (`toast()`).
-    toast: Option<(String, std::time::Instant)>,
+    pub toast: Option<(String, std::time::Instant)>,
     mesher: freedf_canvas::CoreRibbonMesher,
 }
 
@@ -160,7 +186,9 @@ impl Default for Canvas {
             tool: ToolType::Pen,
             color: [26, 26, 28, 255],
             width: 2.0,
+            smoothing: SMOOTHING_DEFAULT,
             ink: None,
+            erasing: None,
             pan_active: false,
             input_enabled: true,
             last_pointer: None,
@@ -185,13 +213,13 @@ thread_local! {
 }
 
 /// 엔진 접근 — UI 스레드 전용 (위 `<Raw>` 경계 참고).
-pub(crate) fn with<R>(f: impl FnOnce(&mut Canvas) -> R) -> R {
+pub fn with<R>(f: impl FnOnce(&mut Canvas) -> R) -> R {
     ENGINE.with(|c| f(&mut c.borrow_mut()))
 }
 
 impl Canvas {
     /// 활성 문서 (항상 존재 — docs는 절대 비지 않는다).
-    pub(crate) fn doc(&mut self) -> &mut Doc {
+    pub fn doc(&mut self) -> &mut Doc {
         &mut self.docs[self.active]
     }
 
@@ -201,7 +229,8 @@ impl Canvas {
     }
 
     /// 진행 중 획을 **코어에서 동결**(마지막 폭 확정 + 불변 `Stroke`)해 활성
-    /// 문서에 기록 (탭 전환/닫기 전에도 호출된다).
+    /// 문서에 기록하고, 이력에 `Edit::AddStrokes`를 쌓는다 (탭 전환/닫기 전에도
+    /// 호출된다).
     ///
     /// 점 하나짜리 탭도 점으로 남긴다 — 펜을 짧게 찍는 입력이 사라지지 않게
     /// (구 구현은 `points.len() >= 2`를 요구해 탭이 통째로 버려졌다).
@@ -216,18 +245,57 @@ impl Canvas {
             return;
         }
         let doc = self.doc();
-        doc.store.add_stroke(
-            doc.page,
-            stroke.tool,
-            stroke.color,
-            stroke.width,
-            stroke.points,
-        );
+        let page = doc.page;
+        let id = doc
+            .store
+            .add_stroke(page, stroke.tool, stroke.color, stroke.width, stroke.points);
+        // 이력에는 **저장소가 부여한 id를 가진** 스트로크가 들어가야 undo/redo의
+        // RemoveStrokes가 같은 대상을 가리킨다.
+        if let Some(committed) = doc.store.stroke(page, id).cloned() {
+            doc.history.push(Edit::AddStrokes {
+                page,
+                strokes: vec![committed],
+            });
+        }
     }
 
-    /// 진행 중 획을 버린다 (문서를 닫을 때 등 — 잘못된 문서에 기록 방지).
+    /// 진행 중인 입력(획/지우기)을 버린다 — 문서를 닫을 때 등 (잘못된 문서에
+    /// 기록 방지).
     fn drop_active(&mut self) {
         self.ink = None;
+        self.erasing = None;
+    }
+
+    /// 지우개 한 점 — 코어 `AnnotationStore::erase_at`을 그대로 쓴다.
+    /// 이번 세션에서 새로 지워진 획은 모아 두었다가 펜을 뗄 때 한 단계로 기록한다.
+    fn erase_at(&mut self, pos: egui::Pos2, origin: egui::Pos2) {
+        if self.erasing.is_none() {
+            return;
+        }
+        let p = self.page_pos(pos, origin);
+        let zoom = self.doc_ref().view.zoom.max(1e-3);
+        let radius = ERASER_RADIUS_PX / zoom; // 화면 px → 페이지 pt
+        let page = self.doc().page;
+        let removed = self.doc().store.erase_at(page, [p.x, p.y], radius);
+        if let Some(erased) = self.erasing.as_mut() {
+            erased.extend(removed);
+        }
+    }
+
+    /// 지우기 세션 종료 — 모아 둔 획들을 **하나의 undo 단계**로 기록한다.
+    fn finish_erase(&mut self) {
+        let Some(erased) = self.erasing.take() else {
+            return;
+        };
+        if erased.is_empty() {
+            return;
+        }
+        let doc = self.doc();
+        let page = doc.page;
+        doc.history.push(Edit::RemoveStrokes {
+            page,
+            strokes: erased,
+        });
     }
 }
 
@@ -255,6 +323,8 @@ pub fn zoom_fit() {
 }
 
 /// 현재 페이지의 잉크 전체 제거 (확인 모달 경유).
+///
+/// 제거된 획을 **하나의 `Edit::RemoveStrokes`**로 이력에 남긴다 (undo 가능).
 pub fn clear_ink() {
     with(|c| {
         let page = c.doc().page;
@@ -265,9 +335,53 @@ pub fn clear_ink() {
             .iter()
             .map(|s| s.id)
             .collect();
-        c.doc().store.remove_strokes(page, &ids);
+        let removed = c.doc().store.remove_strokes(page, &ids);
+        if !removed.is_empty() {
+            c.doc().history.push(Edit::RemoveStrokes {
+                page,
+                strokes: removed,
+            });
+        }
         c.toast_now(String::from("페이지 잉크를 지웠습니다"));
     });
+}
+
+// ── 실행취소/다시실행 — 코어 `History` + `AnnotationStore::apply_edit` ──
+
+/// 실행취소: 이력의 역연산을 저장소에 적용한다 (활성 문서 기준).
+pub fn undo() {
+    with(|c| {
+        let doc = c.doc();
+        let Some(edit) = doc.history.undo() else {
+            c.toast_now(String::from("되돌릴 작업이 없습니다"));
+            return;
+        };
+        doc.store.apply_edit(&edit);
+        c.toast_now(String::from("실행취소"));
+    });
+}
+
+/// 다시실행: undo로 되돌린 연산을 다시 적용한다.
+pub fn redo() {
+    with(|c| {
+        let doc = c.doc();
+        let Some(edit) = doc.history.redo() else {
+            c.toast_now(String::from("다시 실행할 작업이 없습니다"));
+            return;
+        };
+        doc.store.apply_edit(&edit);
+        c.toast_now(String::from("다시 실행"));
+    });
+}
+
+/// 되돌릴 작업이 있는지 (툴바 활성 표시용).
+pub fn can_undo() -> bool {
+    with(|c| c.doc().history.can_undo())
+}
+
+/// 다시 실행할 작업이 있는지.
+pub fn can_redo() -> bool {
+    with(|c| c.doc().history.can_redo())
 }
 
 /// 다음 PDF 페이지로 (PDF가 없으면 no-op).
@@ -322,7 +436,7 @@ pub fn bookmark_list() -> Vec<usize> {
 // ── 토스트 — 시간 기반 자동 만료 알림 (엔진 소유, 셸은 읽기만) ─────────
 
 /// 토스트 표시 시간 (초).
-const TOAST_SECS: u64 = 3;
+pub const TOAST_SECS: u64 = 3;
 
 impl Canvas {
     /// 토스트를 지금 시각으로 표시한다.
@@ -414,20 +528,111 @@ pub fn width_name() -> String {
     })
 }
 
+/// 스무딩 프리셋 강도 (알 수 없는 이름은 기본값).
+fn smoothing_value(name: &str) -> f32 {
+    SMOOTHING_PRESETS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, v)| *v)
+        .unwrap_or(SMOOTHING_DEFAULT)
+}
+
+/// 스무딩 프리셋 이름 (강도가 프리셋과 다르면 "Custom").
+pub fn smoothing_name_for(value: f32) -> String {
+    SMOOTHING_PRESETS
+        .iter()
+        .find(|(_, v)| (v - value).abs() < 1e-3)
+        .map(|(n, _)| String::from(*n))
+        .unwrap_or_else(|| String::from("Custom"))
+}
+
+/// 스무딩 선택 (Off/Light/Medium/Strong — 그 외 값은 Off).
+/// 강도는 **코어 `InkPipeline`**에 그대로 넘어간다 (1€ 필터).
+pub fn select_smoothing(name: &str) {
+    let value = smoothing_value(name);
+    with(|c| c.smoothing = value);
+}
+
+/// 현재 스무딩 프리셋 이름 (설정 창 표시용).
+pub fn smoothing_name() -> String {
+    with(|c| smoothing_name_for(c.smoothing))
+}
+
+// ── 문서 저장/불러오기 — 코어 `AnnotationStore` JSON ────────────────────
+//
+// freedf는 서버(StorageBackend)에 저장하지만, freedf-gui v1은 코어의
+// `to_json`/`from_json`을 써서 **활성 문서의 주석**을 app_data_dir의 파일로
+// 왕복한다 (저장소 계층 이식 전의 최소 경로).
+
+/// 활성 문서의 주석 파일 경로 — `<app_data_dir>/gui-doc-<id>.json`.
+pub fn doc_path(id: u64) -> std::path::PathBuf {
+    freedf_services::storage::app_data_dir().join(format!("gui-doc-{id}.json"))
+}
+
+/// 활성 문서의 주석을 지정 경로에 저장한다 (테스트 가능한 순수 경로 버전).
+pub fn save_doc_to(path: &std::path::Path) -> Result<(), String> {
+    let json = with(|c| c.doc().store.to_json());
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+/// 지정 경로의 주석을 **활성 문서에** 불러온다 (이력은 초기화 — 새 문서 기준).
+pub fn load_doc_from(path: &std::path::Path) -> Result<(), String> {
+    let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let store = AnnotationStore::from_json(&json).map_err(|e| e.to_string())?;
+    with(|c| {
+        let doc = c.doc();
+        doc.store = store;
+        doc.history.clear();
+        doc.page_tex = None;
+        doc.tex_attempted = None;
+    });
+    Ok(())
+}
+
+/// 활성 문서를 기본 경로(`doc_path(id)`)에 저장 (성공/실패 토스트).
+pub fn save_edits() {
+    let path = with(|c| doc_path(c.doc().id));
+    let result = save_doc_to(&path);
+    with(|c| {
+        c.toast_now(match result {
+            Ok(()) => String::from("문서를 저장했습니다"),
+            Err(e) => format!("저장 실패: {e}"),
+        });
+    });
+}
+
+/// 활성 문서를 기본 경로에서 불러온다 (성공/실패 토스트).
+pub fn load_edits() {
+    let path = with(|c| doc_path(c.doc().id));
+    let result = load_doc_from(&path);
+    with(|c| {
+        c.toast_now(match result {
+            Ok(()) => String::from("문서를 불러왔습니다"),
+            Err(e) => format!("불러오기 실패: {e}"),
+        });
+    });
+}
+
 // ── 설정 — 잉크 기본값 저장/복원 (파일 백엔드: app_data_dir의 JSON) ──────
 
 /// 잉크 기본값 — 리본의 **표시 이름**을 그대로 저장한다. 복원은
 /// `select_*` 커맨드를 거치므로 알 수 없는 값은 자동으로 기본값 폴백된다.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct InkDefaults {
+pub struct InkDefaults {
     pub tool: String,
     pub color: String,
     pub width: String,
+    /// 스무딩 프리셋 이름 — 이전 형식 파일에는 없다(기본값 사용).
+    #[serde(default)]
+    pub smoothing: String,
 }
 
 /// 설정 파일 경로 — `<app_data_dir>/gui-ink-defaults.json`.
 /// (Windows: `%LOCALAPPDATA%\FreeDF`, Linux/macOS: `~/.local/share/freedf`)
-pub(crate) fn settings_path() -> std::path::PathBuf {
+pub fn settings_path() -> std::path::PathBuf {
     freedf_services::storage::app_data_dir().join("gui-ink-defaults.json")
 }
 
@@ -444,11 +649,12 @@ pub fn save_defaults() {
 }
 
 /// 지정한 경로에 현재 잉크 기본값을 쓴다 (테스트 가능한 순수 경로 버전).
-pub(crate) fn save_defaults_to(path: &std::path::Path) -> Result<(), String> {
+pub fn save_defaults_to(path: &std::path::Path) -> Result<(), String> {
     let defaults = InkDefaults {
         tool: tool_name(),
         color: color_name(),
         width: width_name(),
+        smoothing: smoothing_name(),
     };
     let json = serde_json::to_string_pretty(&defaults).map_err(|e| e.to_string())?;
     if let Some(dir) = path.parent() {
@@ -464,13 +670,17 @@ pub fn load_defaults() {
 }
 
 /// 지정한 경로에서 잉크 기본값을 읽어 적용한다 (테스트 가능한 순수 경로 버전).
-pub(crate) fn load_defaults_from(path: &std::path::Path) -> Result<InkDefaults, String> {
+pub fn load_defaults_from(path: &std::path::Path) -> Result<InkDefaults, String> {
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let defaults: InkDefaults = serde_json::from_str(&json).map_err(|e| e.to_string())?;
     // 적용은 select_* 커맨드 경로 — 알 수 없는 이름은 기본값 폴백이 이미 내장.
     select_tool(&defaults.tool);
     select_color(&defaults.color);
     select_width(&defaults.width);
+    // 스무딩은 빈 문자열(이전 형식)이면 기본값 유지.
+    if !defaults.smoothing.is_empty() {
+        select_smoothing(&defaults.smoothing);
+    }
     Ok(defaults)
 }
 
@@ -539,13 +749,13 @@ pub fn active_tab_id() -> u64 {
 /// `(x).clone().into_iter().map(..)`으로 전개한다(지역 변수 재사용 보존) —
 /// 목록이 `Clone`이어야 `{if ..}` 안에서 `.iter()`를 쓸 수 있다.
 #[derive(Clone)]
-pub(crate) struct OutlineEntry {
+pub struct OutlineEntry {
     pub title: String,
     pub page: usize,
 }
 
 /// PDF 북마크 트리를 패널 렌더용으로 평탄화한다 (순수 함수 — 테스트 대상).
-fn flatten_outline(
+pub fn flatten_outline(
     nodes: &[freedf_core::outline::OutlineNode],
     depth: usize,
     out: &mut Vec<OutlineEntry>,
@@ -814,44 +1024,65 @@ impl Canvas {
             }
         }
 
-        // ── 왼쪽 버튼 = 잉크 (시작은 페이지 안에서만) ──
+        // ── 왼쪽 버튼 = 잉크/지우개 (시작은 페이지 안에서만) ──
         //
-        // 세션 수명은 **코어 `InkPipeline`**이 소유한다: down(시작) → drag(꼬리)
-        // → up(동결 커밋). 여기서는 화면→페이지 변환과 "페이지 안" 판정만 한다.
+        // 세션 수명은 **코어**가 소유한다: 잉크는 `InkPipeline`(down→drag→up),
+        // 지우개는 `AnnotationStore::erase_at`. 여기서는 화면→페이지 변환과
+        // "페이지 안" 판정만 한다 (도구 판정도 코어의 `ToolType::is_ink`).
         let in_page = pos.map(|p| page.contains(p)).unwrap_or(false);
-        if primary_pressed && enabled && in_page && is_ink_tool(self.tool) {
-            if let Some(pos) = pos {
-                let p = self.page_pos(pos, origin);
-                let mut pipeline = InkPipeline::new(self.mesher.materials, self.width, SMOOTHING);
-                // 압력은 egui 포인터에 없다(마우스/단순 펜) — 명목 1.0.
-                pipeline.down(self.tool, self.color, p.x, p.y, 1.0, time, now_ms(), 0.0);
-                self.ink = Some(pipeline);
+        if primary_pressed && enabled && in_page {
+            if let Some(p) = pos {
+                if self.tool.is_ink() {
+                    let page_pt = self.page_pos(p, origin);
+                    let mut pipeline =
+                        InkPipeline::new(self.mesher.materials, self.width, self.smoothing);
+                    // 압력은 egui 포인터에 없다(마우스/단순 펜) — 명목 1.0.
+                    pipeline.down(
+                        self.tool,
+                        self.color,
+                        page_pt.x,
+                        page_pt.y,
+                        1.0,
+                        time,
+                        now_ms(),
+                        0.0,
+                    );
+                    self.ink = Some(pipeline);
+                } else if self.tool == ToolType::Eraser {
+                    self.erasing = Some(Vec::new());
+                    self.erase_at(p, origin);
+                }
             }
-        } else if primary_down && self.ink.is_some() && in_page {
-            if let Some(pos) = pos {
-                let zoom = self.doc_ref().view.zoom;
-                let p = self.page_pos(pos, origin);
-                // 같은 자리 반복 샘플/부화소 떨림은 버린다 (길이 0 세그먼트 방지).
-                let moved = self
-                    .ink
-                    .as_ref()
-                    .and_then(|pipe| pipe.live())
-                    .and_then(|live| live.points.last())
-                    .map(|last| {
-                        let dx = p.x - last.x;
-                        let dy = p.y - last.y;
-                        (dx * dx + dy * dy).sqrt() * zoom > MIN_STEP_PX
-                    })
-                    .unwrap_or(false);
-                if moved {
-                    if let Some(pipe) = self.ink.as_mut() {
-                        pipe.drag(p.x, p.y, 1.0, time, now_ms());
+        } else if primary_down && in_page {
+            if let Some(p) = pos {
+                if self.erasing.is_some() {
+                    self.erase_at(p, origin);
+                } else if self.ink.is_some() {
+                    let zoom = self.doc_ref().view.zoom;
+                    let page_pt = self.page_pos(p, origin);
+                    // 같은 자리 반복 샘플/부화소 떨림은 버린다 (길이 0 세그먼트 방지).
+                    let moved = self
+                        .ink
+                        .as_ref()
+                        .and_then(|pipe| pipe.live())
+                        .and_then(|live| live.points.last())
+                        .map(|last| {
+                            let dx = page_pt.x - last.x;
+                            let dy = page_pt.y - last.y;
+                            (dx * dx + dy * dy).sqrt() * zoom > MIN_STEP_PX
+                        })
+                        .unwrap_or(false);
+                    if moved {
+                        if let Some(pipe) = self.ink.as_mut() {
+                            pipe.drag(page_pt.x, page_pt.y, 1.0, time, now_ms());
+                        }
                     }
                 }
             }
         }
-        if primary_released || (self.ink.is_some() && !primary_down) {
+        if primary_released || !primary_down {
             self.finish_active();
+            self.finish_erase();
         }
     }
 
@@ -898,7 +1129,7 @@ impl Canvas {
 }
 
 /// 포인터 아래 페이지 점을 고정하며 줌 (순수 함수 — 테스트 대상).
-fn zoom_at_view(view: ViewTransform, pointer_px: [f32; 2], factor: f32) -> ViewTransform {
+pub fn zoom_at_view(view: ViewTransform, pointer_px: [f32; 2], factor: f32) -> ViewTransform {
     let page = view.view_to_page(PagePoint::new(pointer_px[0], pointer_px[1]));
     let mut v = ViewTransform {
         zoom: (view.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM),
@@ -910,20 +1141,8 @@ fn zoom_at_view(view: ViewTransform, pointer_px: [f32; 2], factor: f32) -> ViewT
     v
 }
 
-/// 잉크를 남기는 도구인가 — 코어의 재료 팩토리(`Materials::for_tool`)가
-/// 스트로크 재료를 주는 도구만 해당한다 (`Eraser`/`Pan`은 `None`).
-///
-/// freedf-gui에는 아직 지우개 세션이 없으므로(Phase 4 이식) 지우개로 눌러도
-/// 잉크를 남기지 않는다 — 재료 없는 도구로 `InkPipeline::down`을 부르면
-/// 코어가 패닉한다 (`WidthLocker::new`의 재료 `expect`).
-fn is_ink_tool(tool: ToolType) -> bool {
-    matches!(
-        tool,
-        ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
-    )
-}
-
-fn now_ms() -> u64 {
+/// 현재 시각 (유닉스 epoch ms) — 점 시각/블리드 나이 계산용 (테스트에서도 쓴다).
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -977,676 +1196,4 @@ fn canvas_mesh_to_egui(
     }
     out.indices.extend_from_slice(&mesh.indices);
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use freedf_core::model::StrokePoint;
-
-    /// 헤드리스 egui 프레임 하나 — `paint`를 `CentralPanel`에 직접 그린다
-    /// (셸 경유 테스트는 각자 셸을 그린다).
-    fn paint_frame(ctx: &egui::Context, events: Vec<egui::Event>) {
-        let mut input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        input.events = events;
-        let mut out = ctx.run_ui(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, paint);
-        });
-        out.textures_delta.clear();
-    }
-
-    /// 좌클릭 한 번의 press/release 이벤트.
-    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
-        egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        }
-    }
-
-    #[test]
-    fn zoom_at_keeps_pointer_page_point_fixed() {
-        let view = ViewTransform::new(1.0, 0.0, 0.0);
-        let pointer = [300.0_f32, 400.0];
-        let page_pt = view.view_to_page(PagePoint::new(pointer[0], pointer[1]));
-        let zoomed = zoom_at_view(view, pointer, 1.5);
-        let still = zoomed.view_to_page(PagePoint::new(pointer[0], pointer[1]));
-        assert!((page_pt.x - still.x).abs() < 1e-4);
-        assert!((page_pt.y - still.y).abs() < 1e-4);
-        assert!((zoomed.zoom - 1.5).abs() < 1e-6);
-    }
-
-    #[test]
-    fn zoom_clamped_to_core_bounds() {
-        let zoomed = zoom_at_view(ViewTransform::new(MAX_ZOOM, 0.0, 0.0), [0.0, 0.0], 2.0);
-        assert!((zoomed.zoom - MAX_ZOOM).abs() < 1e-6);
-        let zoomed = zoom_at_view(ViewTransform::new(MIN_ZOOM, 0.0, 0.0), [0.0, 0.0], 0.1);
-        assert!((zoomed.zoom - MIN_ZOOM).abs() < 1e-6);
-    }
-
-    /// 헤드리스 egui에 실제 포인터 이벤트를 주입해 잉크가 저장소에 기록되는지
-    /// 검증 (freedf-canvas 어댑터 테스트와 동일한 headless 방식).
-    #[test]
-    fn ink_stroke_lands_in_store() {
-        with(|c| *c = Canvas::default());
-
-        let ctx = egui::Context::default();
-        let base = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let press = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let frame = |events: Vec<egui::Event>| {
-            let mut input = base();
-            input.events = events;
-            let mut out = ctx.run_ui(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| paint(ui));
-            });
-            // headless: 폰트 아틀라스 델타 소비 (어댑터 테스트와 동일).
-            out.textures_delta.clear();
-        };
-
-        frame(vec![
-            egui::Event::PointerMoved(egui::pos2(300.0, 300.0)),
-            press(egui::pos2(300.0, 300.0), true),
-        ]);
-        // 프레임당 최신 포인터 위치 1개가 샘플링된다 (60fps 실사용과 동일).
-        frame(vec![egui::Event::PointerMoved(egui::pos2(350.0, 340.0))]);
-        frame(vec![egui::Event::PointerMoved(egui::pos2(400.0, 380.0))]);
-        frame(vec![egui::Event::PointerMoved(egui::pos2(450.0, 420.0))]);
-        frame(vec![press(egui::pos2(450.0, 420.0), false)]);
-
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                1,
-                "획이 저장소에 기록되어야 한다"
-            );
-            let pts = &c.docs[0].store.strokes_on(0)[0].points;
-            assert!(pts.len() >= 4, "4점 이상: {}", pts.len());
-            assert!(pts[0].x < pts.last().unwrap().x);
-            assert!(pts[0].y < pts.last().unwrap().y);
-            assert!(pts[0].x > 0.0 && pts[0].x < BLANK_PAGE[0]);
-            assert!(pts[0].y > 0.0 && pts[0].y < BLANK_PAGE[1]);
-        });
-    }
-
-    /// 펜을 짧게 찍은 탭(한 프레임 안 press+release)도 **점 하나짜리 획**으로
-    /// 남는다 — 구 구현은 2점 미만을 버려 탭이 통째로 사라졌다.
-    #[test]
-    fn single_point_tap_commits_a_dot() {
-        with(|c| *c = Canvas::default());
-        let ctx = egui::Context::default();
-        let at = egui::pos2(300.0, 300.0);
-        paint_frame(
-            &ctx,
-            vec![
-                egui::Event::PointerMoved(at),
-                press(at, true),
-                press(at, false),
-            ],
-        );
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                1,
-                "탭도 점으로 남아야 한다"
-            );
-            assert_eq!(c.docs[0].store.strokes_on(0)[0].points.len(), 1);
-        });
-    }
-
-    /// 팬(오른쪽 드래그) 뒤에도 **누른 자리**에 잉크가 남는다 — 종이/히트테스트/
-    /// 메시가 같은 뷰 변환(팬 포함)을 쓴다.
-    ///
-    /// 불변식으로 검증한다: 팬 (dx, dy)는 페이지를 화면에서 (dx, dy)만큼 옮기므로,
-    /// 같은 페이지 점은 팬 전에는 P, 팬 후에는 P+(dx, dy)에서 눌린다.
-    #[test]
-    fn pan_keeps_press_position_in_sync() {
-        let ctx = egui::Context::default();
-        let tap = |at: egui::Pos2| {
-            paint_frame(
-                &ctx,
-                vec![
-                    egui::Event::PointerMoved(at),
-                    press(at, true),
-                    press(at, false),
-                ],
-            );
-        };
-        let only_point =
-            |page: usize| with(|c| c.docs[0].store.strokes_on(page)[0].points[0].clone());
-
-        // ① 팬 없이 찍은 페이지 점.
-        with(|c| *c = Canvas::default());
-        let base = egui::pos2(350.0, 330.0);
-        tap(base);
-        let before = only_point(0);
-
-        // ② 오른쪽 드래그로 팬 (+50, +30) — 같은 페이지 점을 노려 찍는다.
-        with(|c| *c = Canvas::default());
-        let right = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Secondary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let from = egui::pos2(300.0, 300.0);
-        paint_frame(
-            &ctx,
-            vec![egui::Event::PointerMoved(from), right(from, true)],
-        );
-        paint_frame(
-            &ctx,
-            vec![egui::Event::PointerMoved(egui::pos2(350.0, 330.0))],
-        );
-        paint_frame(&ctx, vec![right(egui::pos2(350.0, 330.0), false)]);
-        with(|c| {
-            assert_eq!(c.docs[0].view.pan_x, 50.0);
-            assert_eq!(c.docs[0].view.pan_y, 30.0);
-        });
-        tap(base + egui::vec2(50.0, 30.0));
-        let after = only_point(0);
-
-        assert!(
-            (before.x - after.x).abs() < 0.01,
-            "x가 어긋난다: {} vs {}",
-            before.x,
-            after.x
-        );
-        assert!(
-            (before.y - after.y).abs() < 0.01,
-            "y가 어긋난다: {} vs {}",
-            before.y,
-            after.y
-        );
-    }
-
-    /// 지우개는 아직 지우기 세션이 없다 — 눌러도 패닉하지 않고 잉크를 남기지
-    /// 않는다 (코어 `Materials::for_tool(Eraser)`가 재료를 주지 않는다).
-    #[test]
-    fn eraser_press_leaves_no_ink() {
-        with(|c| *c = Canvas::default());
-        select_tool("Eraser");
-        let ctx = egui::Context::default();
-        let start = egui::pos2(300.0, 300.0);
-        paint_frame(
-            &ctx,
-            vec![egui::Event::PointerMoved(start), press(start, true)],
-        );
-        paint_frame(
-            &ctx,
-            vec![egui::Event::PointerMoved(egui::pos2(340.0, 330.0))],
-        );
-        paint_frame(&ctx, vec![press(egui::pos2(340.0, 330.0), false)]);
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                0,
-                "지우개는 잉크를 남기지 않는다"
-            );
-        });
-    }
-
-    /// 실제 앱 경로(elm-magic 셸 안의 `<Raw>` 캔버스)로도 획이 기록되는지.
-    ///
-    /// `paint`를 직접 부르는 테스트는 셸의 배치/입력 상호작용을 우회한다 —
-    /// 여기서는 셸 전체를 그려 캔버스가 실제로 놓이는 자리에서 입력이 닿는지 본다.
-    #[test]
-    fn ink_stroke_lands_through_shell_raw() {
-        with(|c| *c = Canvas::default());
-
-        let mut elm = elm_magic::Ctx::default();
-        let ctx = egui::Context::default();
-        let base = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1100.0, 720.0),
-            )),
-            ..Default::default()
-        };
-        let press = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let frame = |elm: &mut elm_magic::Ctx, events: Vec<egui::Event>| {
-            let mut input = base();
-            input.events = events;
-            let mut out = ctx.run_ui(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    crate::shell::render_shell(ui, &mut *elm);
-                });
-            });
-            out.textures_delta.clear();
-        };
-
-        // 셸을 두 프레임 그려 캔버스 자리를 확정한 뒤, 그 안쪽에 펜 드래그를 준다.
-        frame(&mut elm, vec![]);
-        frame(&mut elm, vec![]);
-        let start = egui::pos2(500.0, 400.0);
-        frame(
-            &mut elm,
-            vec![egui::Event::PointerMoved(start), press(start, true)],
-        );
-        for i in 1..=4 {
-            let p = egui::pos2(500.0 + 20.0 * i as f32, 400.0 + 10.0 * i as f32);
-            frame(&mut elm, vec![egui::Event::PointerMoved(p)]);
-        }
-        let end = egui::pos2(600.0, 460.0);
-        frame(&mut elm, vec![press(end, false)]);
-
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                1,
-                "셸 안의 캔버스에도 획이 기록되어야 한다"
-            );
-        });
-    }
-
-    /// 커밋된 획이 실제로 **화면 도형**으로 나오는지 (잉크 렌더 회귀 방지).
-    /// 입력이 아니라 렌더 경로만 본다 — 저장소에 획을 직접 넣고 한 프레임 그린 뒤
-    /// 프레임 출력에 정점을 가진 메시가 있는지 확인한다.
-    #[test]
-    fn committed_stroke_renders_mesh() {
-        with(|c| {
-            *c = Canvas::default();
-            let pts = vec![
-                StrokePoint {
-                    x: 100.0,
-                    y: 100.0,
-                    pressure: 1.0,
-                    t_ms: now_ms(),
-                    width: 2.0,
-                },
-                StrokePoint {
-                    x: 200.0,
-                    y: 160.0,
-                    pressure: 1.0,
-                    t_ms: now_ms(),
-                    width: 2.0,
-                },
-            ];
-            c.doc()
-                .store
-                .add_stroke(0, ToolType::Pen, [26, 26, 28, 255], 2.5, pts);
-        });
-
-        let ctx = egui::Context::default();
-        let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let mut out = ctx.run_ui(input, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| paint(ui));
-        });
-        out.textures_delta.clear();
-
-        let mut mesh_vertices = 0usize;
-        for clipped in &out.shapes {
-            if let egui::Shape::Mesh(m) = &clipped.shape {
-                mesh_vertices += m.vertices.len();
-            }
-        }
-        assert!(mesh_vertices > 0, "커밋된 획이 메시로 그려져야 한다");
-    }
-
-    #[test]
-    fn clear_ink_empties_page() {
-        with(|c| {
-            *c = Canvas::default();
-            let pts = vec![
-                StrokePoint {
-                    x: 10.0,
-                    y: 10.0,
-                    pressure: 1.0,
-                    t_ms: now_ms(),
-                    width: 2.0,
-                },
-                StrokePoint {
-                    x: 40.0,
-                    y: 40.0,
-                    pressure: 1.0,
-                    t_ms: now_ms(),
-                    width: 2.0,
-                },
-            ];
-            c.doc()
-                .store
-                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
-            assert_eq!(c.doc().store.total_stroke_count(), 1);
-        });
-        clear_ink();
-        with(|c| assert_eq!(c.doc().store.total_stroke_count(), 0));
-    }
-
-    #[test]
-    fn page_nav_without_pdf_is_noop() {
-        with(|c| *c = Canvas::default());
-        page_next();
-        page_prev();
-        with(|c| {
-            assert_eq!(c.doc().page, 0);
-            assert!(c.doc().pdf.is_none());
-            assert!(c.pdf_error.is_none());
-        });
-    }
-
-    #[test]
-    fn open_pdf_without_engine_records_error_and_adds_no_doc() {
-        with(|c| *c = Canvas::default());
-        open_pdf("/nonexistent/no-such-file.pdf".to_string());
-        with(|c| {
-            assert!(c
-                .pdf_error
-                .as_deref()
-                .map(|e| e.contains("PDF"))
-                .unwrap_or(false));
-            assert_eq!(c.docs.len(), 1);
-        });
-    }
-
-    #[test]
-    fn tab_lifecycle_add_select_close() {
-        with(|c| *c = Canvas::default());
-        add_tab("Sketch 2".to_string());
-        add_tab("Sketch 3".to_string());
-        with(|c| {
-            assert_eq!(c.docs.len(), 3);
-            assert_eq!(c.docs[c.active].name, "Sketch 3", "새 탭이 활성이어야 한다");
-        });
-        // 이름이 같은 탭도 id로 구분해 선택한다 — 첫 "Untitled"의 id를 찾아 선택.
-        let untitled_id = tab_names()
-            .into_iter()
-            .find(|(_, name)| name == "Untitled")
-            .map(|(id, _)| id)
-            .expect("Untitled 탭");
-        select_tab(untitled_id);
-        with(|c| assert_eq!(c.docs[c.active].name, "Untitled"));
-        // 닫기: 활성 문서 제거, 남은 문서로 활성 이동.
-        close_tab();
-        with(|c| {
-            assert_eq!(c.docs.len(), 2);
-            assert_eq!(c.docs[c.active].name, "Sketch 2");
-        });
-        close_tab();
-        // 마지막 남은 탭(Sketch 3)에 획을 추가한다.
-        with(|c| {
-            assert_eq!(c.docs.len(), 1);
-            assert_eq!(c.docs[c.active].name, "Sketch 3");
-            let pts = vec![
-                StrokePoint {
-                    x: 1.0,
-                    y: 1.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-                StrokePoint {
-                    x: 9.0,
-                    y: 9.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-            ];
-            c.doc()
-                .store
-                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
-        });
-        // 마지막 탭을 닫으면 닫지 않고 **빈 문서로 리셋** (획도 사라진다).
-        close_tab();
-        with(|c| {
-            assert_eq!(c.docs.len(), 1);
-            assert_eq!(c.docs[0].name, "Untitled");
-            assert_eq!(c.docs[0].store.total_stroke_count(), 0, "리셋된 빈 문서");
-        });
-    }
-
-    #[test]
-    fn ink_is_isolated_per_tab() {
-        with(|c| {
-            *c = Canvas::default();
-            let pts = vec![
-                StrokePoint {
-                    x: 1.0,
-                    y: 1.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-                StrokePoint {
-                    x: 9.0,
-                    y: 9.0,
-                    pressure: 1.0,
-                    t_ms: 0,
-                    width: 2.0,
-                },
-            ];
-            c.doc()
-                .store
-                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
-        });
-        add_tab("Second".to_string()); // 새 문서로 전환됨
-        with(|c| {
-            // 문서별 저장소 분리 — 새 문서에는 획이 없고 첫 문서에만 있다.
-            assert_eq!(c.docs[0].store.total_stroke_count(), 1);
-            assert_eq!(c.docs[1].store.total_stroke_count(), 0);
-        });
-    }
-
-    #[test]
-    fn bookmarks_toggle_and_list() {
-        with(|c| *c = Canvas::default());
-        assert!(bookmark_list().is_empty());
-        toggle_bookmark();
-        assert_eq!(bookmark_list(), vec![0]);
-        go_to_page(0);
-        toggle_bookmark();
-        assert!(bookmark_list().is_empty());
-    }
-
-    #[test]
-    fn outline_flattens_tree_with_indent() {
-        // PDF 없이도 평탄화 순수 함수를 검증한다 (깊이 들여쓰기 + 순서).
-        use freedf_core::outline::OutlineNode;
-        let tree = vec![OutlineNode::new(
-            "Ch1",
-            Some(0),
-            vec![
-                OutlineNode::new("1.1", Some(1), vec![]),
-                OutlineNode::new(
-                    "1.2",
-                    Some(2),
-                    vec![OutlineNode::new("1.2.1", Some(3), vec![])],
-                ),
-            ],
-        )];
-        let mut out = Vec::new();
-        flatten_outline(&tree, 0, &mut out);
-        assert_eq!(out.len(), 4);
-        assert_eq!(out[0].title, "Ch1");
-        assert_eq!(out[0].page, 0);
-        assert_eq!(out[1].title, "  1.1");
-        assert_eq!(out[1].page, 1);
-        assert_eq!(out[3].title, "    1.2.1");
-        assert_eq!(out[3].page, 3);
-    }
-
-    #[test]
-    fn outline_list_without_pdf_is_empty() {
-        with(|c| *c = Canvas::default());
-        assert!(outline_list().is_empty());
-    }
-
-    #[test]
-    fn ribbon_selects_tool_color_width() {
-        with(|c| *c = Canvas::default());
-        assert_eq!(tool_name(), "Pen");
-        assert_eq!(color_name(), "Black");
-        assert_eq!(width_name(), "Medium");
-        select_tool("Highlighter");
-        assert_eq!(tool_name(), "Highlighter");
-        select_tool("Fountain");
-        assert_eq!(tool_name(), "Fountain");
-        select_tool("Eraser");
-        assert_eq!(tool_name(), "Eraser");
-        select_tool("Pen");
-        assert_eq!(tool_name(), "Pen");
-        select_color("Red");
-        assert_eq!(color_name(), "Red");
-        select_color("Blue");
-        assert_eq!(color_name(), "Blue");
-        select_color("Black");
-        assert_eq!(color_name(), "Black");
-        select_width("Thin");
-        assert_eq!(width_name(), "Thin");
-        select_width("Thick");
-        assert_eq!(width_name(), "Thick");
-        // 알 수 없는 값 — 프리셋 기본값으로 폴백.
-        select_tool("Nonsense");
-        assert_eq!(tool_name(), "Pen");
-        select_color("Nonsense");
-        assert_eq!(color_name(), "Black");
-        select_width("Nonsense");
-        assert_eq!(width_name(), "Medium");
-    }
-
-    #[test]
-    fn toast_expires_after_delay() {
-        with(|c| *c = Canvas::default());
-        assert!(toast().is_none());
-        show_toast("hello");
-        assert_eq!(toast().as_deref(), Some("hello"));
-        // 표시 시작 시각을 만료 시각 이전으로 되돌려 시간 경과를 시뮬레이션.
-        with(|c| {
-            if let Some((_, at)) = c.toast.as_mut() {
-                *at -= std::time::Duration::from_secs(TOAST_SECS + 1);
-            }
-        });
-        assert!(toast().is_none());
-    }
-
-    #[test]
-    fn actions_raise_toasts() {
-        with(|c| *c = Canvas::default());
-        toggle_bookmark();
-        assert!(toast().unwrap().contains("북마크 추가"));
-        toggle_bookmark();
-        assert!(toast().unwrap().contains("북마크 제거"));
-        clear_ink();
-        assert!(toast().unwrap().contains("잉크"));
-    }
-
-    #[test]
-    fn ink_defaults_roundtrip_and_fallback() {
-        let path =
-            std::env::temp_dir().join(format!("freedf-gui-test-{}.json", std::process::id()));
-        let _ = std::fs::remove_file(&path);
-        // 1) 현재 상태 저장 → 엔진을 다르게 바꾸고 → 복원이 되돌린다.
-        with(|c| *c = Canvas::default());
-        select_tool("Highlighter");
-        select_color("Red");
-        select_width("Thick");
-        save_defaults_to(&path).expect("save");
-        with(|c| *c = Canvas::default());
-        assert_eq!(tool_name(), "Pen");
-        let restored = load_defaults_from(&path).expect("load");
-        assert_eq!(restored.tool, "Highlighter");
-        assert_eq!(restored.color, "Red");
-        assert_eq!(restored.width, "Thick");
-        assert_eq!(tool_name(), "Highlighter");
-        assert_eq!(color_name(), "Red");
-        assert_eq!(width_name(), "Thick");
-        // 2) 손상된 파일 — 오류를 돌려주고 엔진은 그대로 (조용한 폴백은 load_defaults 몫).
-        std::fs::write(&path, "not json").unwrap();
-        assert!(load_defaults_from(&path).is_err());
-        assert_eq!(tool_name(), "Highlighter");
-        // 3) 파일에 알 수 없는 이름 — select_* 폴백으로 기본값 적용.
-        std::fs::write(&path, r#"{"tool":"Warp","color":"Neon","width":"Huge"}"#).unwrap();
-        let fallback = load_defaults_from(&path).expect("parse");
-        assert_eq!(fallback.tool, "Warp"); // 저장 값은 그대로 (기록 보존)
-        assert_eq!(tool_name(), "Pen"); // 적용은 폴백
-        assert_eq!(color_name(), "Black");
-        assert_eq!(width_name(), "Medium");
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn modal_blocks_canvas_input() {
-        with(|c| *c = Canvas::default());
-        sync_and_status(true); // 모달 열림 — 캔버스 입력 차단
-
-        let ctx = egui::Context::default();
-        let base = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(800.0, 600.0),
-            )),
-            ..Default::default()
-        };
-        let press = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let frame = |events: Vec<egui::Event>| {
-            let mut input = base();
-            input.events = events;
-            let mut out = ctx.run_ui(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| paint(ui));
-            });
-            out.textures_delta.clear();
-        };
-
-        frame(vec![
-            egui::Event::PointerMoved(egui::pos2(300.0, 300.0)),
-            press(egui::pos2(300.0, 300.0), true),
-        ]);
-        frame(vec![egui::Event::PointerMoved(egui::pos2(350.0, 340.0))]);
-        frame(vec![press(egui::pos2(350.0, 340.0), false)]);
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                0,
-                "모달 중에는 획이 없어야 한다"
-            )
-        });
-
-        sync_and_status(false); // 모달 닫힘 — 이제 그려진다
-        frame(vec![
-            egui::Event::PointerMoved(egui::pos2(300.0, 300.0)),
-            press(egui::pos2(300.0, 300.0), true),
-        ]);
-        frame(vec![egui::Event::PointerMoved(egui::pos2(350.0, 340.0))]);
-        frame(vec![press(egui::pos2(350.0, 340.0), false)]);
-        with(|c| {
-            assert_eq!(
-                c.docs[0].store.total_stroke_count(),
-                1,
-                "모달이 닫히면 그려진다"
-            )
-        });
-    }
 }

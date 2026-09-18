@@ -1,39 +1,21 @@
-//! FreeDF GUI — elm-magic으로 처음부터 다시 만드는 UI 셸.
+//! FreeDF GUI — eframe 호스트 (얇은 바이너리).
 //!
-//! 이 크레이트는 **마이그레이션이 아니라 재작성** 실험입니다. 기존 `freedf`
-//! 크레이트의 egui 명령형 UI와 달리, 화면은 전부 [`elm_magic::view!`] 컴포넌트
-//! (`shell::Shell`)로 선언하고, eframe 호스트는 매 프레임:
+//! 화면/엔진/스타일은 전부 라이브러리(`freedf_gui`, `src/lib.rs`)가 소유한다.
+//! 여기에는 eframe 진입점과 프레임 루프만 둔다:
 //!
 //! 1. `elm_magic::frame(&mut ctx, &ShellProps::default())` — 상태(아레나 슬롯)에서
-//!    `Element` 트리를 만들고
-//! 2. `elm_magic_egui::render(ui, &tree, &mut ctx.arena)` — 어댑터가 egui 위젯으로
-//!    그려서 클릭/입력을 아레나로 되돌린다.
+//!    `Element` 트리를 만들고 (`shell::render_root`)
+//! 2. `elm_magic_egui::render_with_palette(...)` — 어댑터가 egui 위젯으로 그려서
+//!    클릭/입력을 아레나로 되돌린다.
 //!
-//! 캔버스(PDF/잉크)는 어댑터 어휘 밖이므로 `<Raw>` 플레이스홀더로 자리만 잡아
-//! 둔다 (v0 스코프 — 앱 셸 우선).
-
-mod canvas;
-mod dev;
-mod fonts;
-mod shell;
-mod style;
-
-#[cfg(test)]
-mod services_smoke {
-    /// Phase 1 (docs/freedf-gui-migration.md) 연결 확인 — freedf-gui가
-    /// freedf-services 계층을 직접 쓸 수 있다 (Phase 2+에서 캔버스/저장소가 이
-    /// 경로로 붙는다).
-    #[test]
-    fn services_available() {
-        let cfg = freedf_services::server::MediaServerConfig::default();
-        let _ = cfg.normalized_base();
-        let _ = freedf_services::storage::app_data_dir();
-        assert_eq!(freedf_services::settings::MAX_FAVORITE_COLORS, 8);
-        let _ = freedf_services::pdf::MAX_RENDER_DIM;
-    }
-}
+//! 캔버스(PDF/잉크)는 어댑터 어휘 밖이라 셸 안의 `<Raw>`가 `canvas::paint`로
+//! 직접 그린다 (엔진은 `canvas` 모듈이 소유).
 
 use eframe::egui;
+use freedf_gui::{canvas, fonts, shell, style};
+
+#[cfg(feature = "dev-automation")]
+use freedf_gui::dev;
 
 fn main() -> eframe::Result {
     // 저장된 잉크 기본값 복원 (파일 없음/손상이면 조용히 기본값 — docs: 설정 창).
@@ -109,13 +91,10 @@ impl eframe::App for Host {
         #[cfg(feature = "dev-automation")]
         let devmcp = self.devmcp.clone();
 
-        // 루트 안쪽 여백 — 셸이 x=0에서 시작하지 않게 방어한다. Windows는
-        // 최대화 시 창을 좌우 ~8px씩 화면 밖으로 밀어내므로(DPI 배율에 따라
-        // 증가) 여백이 없으면 행 첫 글자가 잘린다 (실측: 150% 배율).
+        // 루트 프레임(배경 = CSS `background` 토큰 + 방어 여백)은
+        // `shell::render_root` — 배경을 명시적으로 칠해야 창 클리어 색이
+        // 드러나지 않는다. 테스트가 같은 경로를 검증한다.
         let body = |ui: &mut egui::Ui, elm: &mut elm_magic::Ctx| {
-            // 루트 프레임(배경 = 테마 창 색 Nord0 + 방어 여백)은 shell::render_root —
-            // 배경을 명시적으로 칠해야 창 클리어 색(근사 검정)이 드러나지 않는다.
-            // 테스트(shell::tests)가 같은 경로를 검증한다.
             shell::render_root(ui, elm);
         };
 

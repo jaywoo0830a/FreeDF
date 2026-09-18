@@ -5,6 +5,12 @@ edition.workspace = true
 description = "FreeDF GUI — elm-magic으로 처음부터 다시 만드는 UI 셸 (PoC)"
 default-run = "freedf-gui"
 
+# 화면/엔진/스타일은 라이브러리(`src/lib.rs`), eframe 진입점만 바이너리.
+# 테스트는 `tests/`에서 라이브러리의 공개 API로 검증한다 (크레이트 관례).
+[lib]
+name = "freedf_gui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "freedf-gui"
 path = "src/main.rs"
