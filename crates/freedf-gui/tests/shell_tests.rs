@@ -5,6 +5,12 @@ use freedf_core::model::ToolType;
 use freedf_gui::canvas::{with, Canvas};
 use freedf_gui::shell::*;
 
+/// 셸 버튼/탭 라벨은 **아이콘 + 텍스트**다 — 마크업과 같은 생성기(`ui::label`)로
+/// 만든다. 아이콘 표가 바뀌어도 테스트는 따라온다.
+fn label(text: &str) -> String {
+    freedf_gui::ui::label(text)
+}
+
 #[test]
 fn shell_renders_chrome() {
     let app = elm_magic::mount!(Shell);
@@ -18,7 +24,7 @@ fn shell_renders_chrome() {
 #[test]
 fn new_tab_via_modal() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("New Tab");
+    app.click(&label("New Tab"));
     app.assert_text("Tab name:");
     app.type_("Sketch 2");
     app.press_enter();
@@ -41,7 +47,7 @@ fn tab_click_selects() {
         .expect("alpha");
     freedf_gui::canvas::select_tab(alpha_id);
     let mut app = elm_magic::mount!(Shell);
-    app.click("beta");
+    app.click(&label("beta"));
     let tree = app.render_tree();
     assert!(tree.contains("Tab \"beta\" active"), "tree:\n{tree}");
     assert!(!tree.contains("Tab \"alpha\" active"), "tree:\n{tree}");
@@ -58,10 +64,10 @@ fn close_tab_confirm_flow() {
         .expect("alpha");
     freedf_gui::canvas::select_tab(alpha_id);
     let mut app = elm_magic::mount!(Shell);
-    app.click("beta"); // beta 선택
-    app.click("Close Tab");
+    app.click(&label("beta")); // beta 선택
+    app.click(&label("Close Tab"));
     app.assert_text("Close this tab?");
-    app.click("Delete");
+    app.click(&label("Delete"));
     app.assert_hidden("beta");
     app.assert_text("alpha");
 }
@@ -72,9 +78,9 @@ fn ribbon_updates_canvas_engine() {
     // 색은 settings 기본 팔레트의 **스와치 라벨**로 고른다 (라벨 = 계약 id 근거).
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Fountain");
-    app.click("Swatch 2"); // 기본 팔레트 2번 = Red
-    app.click("Thick");
+    app.click(&label("Fountain"));
+    app.click(&label("Swatch 2")); // 기본 팔레트 2번 = Red
+    app.click(&label("Thick"));
     with(|c| {
         assert_eq!(c.tool, ToolType::Fountain);
         assert_eq!(c.color, [255, 71, 66, 255]);
@@ -92,7 +98,7 @@ fn ribbon_swatches_follow_settings_default_palette() {
     }
     with(|c| assert_eq!(c.color, [26, 26, 28, 255]));
     let mut app = elm_magic::mount!(Shell);
-    app.click("Swatch 3"); // Blue
+    app.click(&label("Swatch 3")); // Blue
     with(|c| assert_eq!(c.color, [72, 166, 235, 255]));
 }
 
@@ -102,10 +108,10 @@ fn ribbon_pressure_toggle_flips_engine_flag() {
     with(|c| *c = Canvas::default());
     assert!(freedf_gui::canvas::pressure_enabled());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Pressure");
+    app.click(&label("Pressure"));
     assert!(!freedf_gui::canvas::pressure_enabled());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Pressure");
+    app.click(&label("Pressure"));
     assert!(freedf_gui::canvas::pressure_enabled());
 }
 
@@ -113,24 +119,24 @@ fn ribbon_pressure_toggle_flips_engine_flag() {
 fn settings_modal_opens_and_closes() {
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Settings");
+    app.click(&label("Settings"));
     app.assert_text("잉크 기본값");
     app.assert_text("도구 Pen · 색상 Black · 굵기 Medium");
-    app.click("Close");
+    app.click(&label("Close"));
     app.assert_hidden("Save as default");
 }
 
 #[test]
 fn bookmarks_panel_flow() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("Bookmarks");
+    app.click(&label("Bookmarks"));
     app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
-    app.click("Bookmark"); // 현재 페이지(0) 북마크
+    app.click(&label("Bookmark")); // 현재 페이지(0) 북마크
     app.expect_text("페이지 0");
     // 상태바는 3초 토스트("북마크 추가")로 대체된다 — 만료는 엔진 소유라
     // headless 테스트에서 시간이 지나지 않으므로 토스트 문구로 검증한다.
     app.expect_text("북마크 추가: 0페이지");
-    app.click("Bookmark"); // 다시 토글 → 해제
+    app.click(&label("Bookmark")); // 다시 토글 → 해제
     app.assert_text("북마크 없음 — Bookmark 버튼으로 추가");
 }
 
@@ -163,8 +169,8 @@ fn close_tab_keeps_ink_isolated() {
     freedf_gui::canvas::add_tab("Second".to_string());
     let mut app = elm_magic::mount!(Shell);
     app.assert_text("획 0"); // 새 문서는 빈 페이지
-    app.click("Close Tab");
-    app.click("Delete");
+    app.click(&label("Close Tab"));
+    app.click(&label("Delete"));
     with(|c| {
         assert_eq!(c.docs.len(), 1);
         assert_eq!(c.docs[0].name, "Untitled"); // 리셋 — 잉크는 사라진다
@@ -174,20 +180,20 @@ fn close_tab_keeps_ink_isolated() {
 #[test]
 fn sidebar_toggle_and_status() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("Notes");
+    app.click(&label("Notes"));
     app.expect_text("Notes panel (placeholder)");
-    app.click("Sidebar");
+    app.click(&label("Sidebar"));
     app.assert_hidden("Library");
-    app.click("Sidebar");
+    app.click(&label("Sidebar"));
     app.assert_text("Library");
 }
 
 #[test]
 fn about_modal() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("About");
+    app.click(&label("About"));
     app.assert_text("every widget above is a view! element");
-    app.click("OK");
+    app.click(&label("OK"));
     app.assert_hidden("every widget above is a view! element");
 }
 
@@ -195,18 +201,18 @@ fn about_modal() {
 fn zoom_buttons_drive_canvas_status() {
     let mut app = elm_magic::mount!(Shell);
     app.assert_text("줌 100%");
-    app.click("Zoom In");
+    app.click(&label("Zoom In"));
     app.expect_text("줌 125%");
-    app.click("Zoom Out");
+    app.click(&label("Zoom Out"));
     app.expect_text("줌 100%");
-    app.click("Fit");
+    app.click(&label("Fit"));
     app.expect_text("줌 100%");
 }
 
 #[test]
 fn open_pdf_modal_calls_canvas_and_closes() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("Open PDF");
+    app.click(&label("Open PDF"));
     app.assert_text("PDF file path:");
     app.type_("/nonexistent/no-such-file.pdf");
     app.press_enter();
@@ -219,9 +225,9 @@ fn open_pdf_modal_calls_canvas_and_closes() {
 #[test]
 fn clear_ink_confirm_flow() {
     let mut app = elm_magic::mount!(Shell);
-    app.click("Clear Ink");
+    app.click(&label("Clear Ink"));
     app.assert_text("Remove all ink on this page?");
-    app.click("Delete");
+    app.click(&label("Delete"));
     app.assert_hidden("Remove all ink on this page?");
 }
 
@@ -233,9 +239,9 @@ fn clear_ink_confirm_flow() {
 fn edit_row_reaches_canvas_commands() {
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Undo");
+    app.click(&label("Undo"));
     app.expect_text("되돌릴 작업이 없습니다");
-    app.click("Redo");
+    app.click(&label("Redo"));
     app.expect_text("다시 실행할 작업이 없습니다");
 }
 
@@ -244,10 +250,29 @@ fn edit_row_reaches_canvas_commands() {
 fn settings_modal_selects_smoothing() {
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
-    app.click("Settings");
+    app.click(&label("Settings"));
     app.assert_text("스무딩 Off");
-    app.click("Strong");
+    app.click(&label("Strong"));
     app.expect_text("스무딩 Strong");
-    app.click("Off");
+    app.click(&label("Off"));
     app.expect_text("스무딩 Off");
+}
+
+#[test]
+fn zz_debug_tab_click() {
+    with(|c| *c = Canvas::default());
+    freedf_gui::canvas::add_tab("alpha".to_string());
+    freedf_gui::canvas::add_tab("beta".to_string());
+    let names = freedf_gui::canvas::tab_names();
+    let beta_id = names.iter().find(|(_, n)| n == "beta").map(|(id, _)| *id).unwrap();
+    let mut app = elm_magic::mount!(Shell);
+    app.click(&label("beta"));
+    println!("active after click = {:?} (beta_id={})", freedf_gui::canvas::active_tab_id(), beta_id);
+    let tree = app.render_tree();
+    for line in tree.lines() {
+        if line.contains("Tab \"") {
+            println!("TREE {line}");
+        }
+    }
+    println!("names = {:?}", freedf_gui::canvas::tab_names());
 }

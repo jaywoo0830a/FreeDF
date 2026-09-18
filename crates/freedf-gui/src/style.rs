@@ -44,10 +44,11 @@ use elm_magic::style::{Color, Palette, Token};
 // 어느 요소에 어떤 스타일이 붙는지는 `shell.rs`의 `class="…"`가 결정하고,
 // 여기서는 그 클래스의 속성만 정의한다.
 elm_magic::css! {
-    // ── 블록: app — 창 루트 ─────────────────────────────────────
-    // `.app`이 창 배경 + 방어 여백(Windows 최대화 시 좌우 밀림)을 담당한다 —
-    // 예전 egui Frame 래퍼(ROOT_INNER_MARGIN)를 CSS `padding`이 대체한다.
-    .app { bg: background; padding: 8; gap: 8; }
+    // ── 전역: app — 창 루트 ─────────────────────────────────────
+    // 배경/글자색/기본 글자 크기가 여기서 정해지고 **상속**된다 (elm-magic 상속).
+    // `.app`의 `padding`은 창 방어 여백(Windows 최대화 시 좌우 밀림) 겸용이다 —
+    // 예전 egui Frame 래퍼(ROOT_INNER_MARGIN)를 CSS가 대체했다.
+    .app { bg: background; color: text; font-size: 14; padding: 8; gap: 8; }
     // 본문 행(패널들 + 탭 스트립) — 루트의 가로 분할.
     // 주의: 행에 `align: center`를 걸면 egui 교차축 정렬이 "가용 높이 전체"
     // 기준이 되어 각 행이 남은 세로를 다 먹는다(실측: 캔버스 높이 0).
@@ -55,69 +56,97 @@ elm_magic::css! {
     // 빈 자리표시를 **그리지 않게** 한다 — display:none은 공간도 차지하지 않는다.
     .app__hidden { display: none; }
 
-    // ── 블록: toolbar — 상단 명령 행 ────────────────────────────
-    .toolbar { bg: surface; padding: 8; radius: 8; border-width: 1; border-color: border; gap: 8; }
-    .toolbar__title { color: text; weight: bold; }
-    .toolbar__button { bg: surface_alt; color: text; padding: 8 12; radius: 6; cursor: pointer; }
-    .toolbar__button:hover { bg: primary; color: on_primary; }
-    .toolbar__button:active { bg: surface; border-width: 1; border-color: border; }
+    // ── navbar — 상단 바 (Bootstrap navbar) ─────────────────────
+    // 브랜드 + 명령 그룹. 좁은 창에서는 **줄바꿈**한다 (`wrap`) — 예전에는
+    // 넘친 오른쪽 명령(Settings/About)이 화면 밖으로 잘려 눌리지 않았다.
+    .navbar { bg: surface; border-width: 1; border-color: border; radius: 8; padding: 8 12; gap: 12; wrap: true; }
+    .navbar__brand { color: primary; font-size: 18; weight: bold; letter-spacing: 0.3; }
+    .navbar__nav { gap: 6; wrap: true; }
+    .navbar__end { gap: 6; justify: end; wrap: true; }
 
-    // ── 블록: ribbon — 잉크 도구/색/굵기 ────────────────────────
-    .ribbon { bg: surface_alt; padding: 8; radius: 8; gap: 8; }
-    .ribbon__title { color: text; weight: bold; }
-    .ribbon__button { bg: surface_alt; color: text; padding: 8 12; radius: 6; cursor: pointer; }
-    .ribbon__button:hover { bg: primary; color: on_primary; }
-    .ribbon__button:active { bg: surface; border-width: 1; border-color: border; }
-    // 활성 항목은 `<Strong>`으로 그린다(비활성은 `.ribbon__button`).
-    .ribbon__active { color: text; weight: bold; }
-    // 토글/스와치의 "켜짐" 수정자 — 기본 클래스와 함께 붙여 레이아웃을 유지한 채
-    // 색만 바꾼다 (활성 스와치/필압 토글이 버튼 크기를 흔들지 않게).
-    .ribbon__button--on { bg: primary; color: on_primary; weight: bold; }
+    // ── toolbar — 보기/이동 명령 행 ─────────────────────────────
+    .toolbar { bg: background; border-width: 1; border-color: border; radius: 8; padding: 6 8; gap: 8; wrap: true; }
+    // 명령 그룹 — 바탕을 한 단계 밝게 해서 "한 덩어리"로 읽히게 한다.
+    .toolbar__group { bg: surface; radius: 6; padding: 3; gap: 3; }
 
-    // ── 블록: panel — 사이드바/북마크/목차 ──────────────────────
-    .panel { bg: surface; padding: 8; radius: 8; min-width: 200; gap: 8; }
-    .panel__title { color: text; font-size: 16; weight: bold; }
-    .panel__row { gap: 8; }
-    .panel__item { color: text_dim; padding: 2 4; radius: 4; cursor: pointer; }
-    .panel__item:hover { bg: surface_alt; color: text; }
-    // 항목이 0개일 때의 안내 문구.
-    .panel__empty { color: text_dim; }
+    // ── ribbon — 잉크 도구/색/굵기 (Bootstrap btn-group 느낌) ───
+    .ribbon { bg: surface_alt; radius: 8; padding: 6 8; gap: 8; wrap: true; }
+    // 도구 그룹 — 리본 바탕(surface_alt)보다 어두운 판을 깔아 그룹 경계를 만든다.
+    .ribbon__group { bg: background; radius: 6; padding: 3; gap: 3; }
 
-    // ── 블록: tabs — 탭 스트립 ──────────────────────────────────
-    .tabs { bg: surface; padding: 4; radius: 8; gap: 4; }
-    .tabs__item { color: text_dim; }
-    .tabs__item--active { color: text; }
+    // ── 버튼: 기본형 하나 + 상태 ────────────────────────────────
+    // 색/호버/눌림은 `.btn` 혼자 소유한다. 문맥(블록)은 **크기만** 조정하므로
+    // 상태 규칙이 블록별로 중복되지 않는다 (하이브리드 CSS의 핵심 규칙).
+    .btn { bg: surface_alt; color: text; border-width: 1; border-color: border; radius: 6; padding: 6 12; cursor: pointer; }
+    .btn:hover { bg: primary; color: on_primary; border-color: primary; }
+    .btn:active { bg: surface; color: text; }
+    .btn--on { bg: primary; color: on_primary; border-color: primary; weight: bold; }
+    .navbar .btn { padding: 5 10; }
+    .toolbar .btn { padding: 5 10; }
+    .ribbon .btn { padding: 5 8; }
+    .modal .btn { padding: 6 14; }
 
-    // ── 블록: statusbar — 상태바/토스트 ─────────────────────────
-    .statusbar { bg: surface; padding: 4 8; radius: 4; gap: 8; }
-    .statusbar__text { color: text_dim; }
-    .statusbar__toast { color: text_dim; }
+    // ── swatch — 즐겨찾기 색 칩 ────────────────────────────────
+    .swatch { bg: surface_alt; color: text; border-width: 1; border-color: border; radius: 6; padding: 4 8; cursor: pointer; }
+    .swatch:hover { bg: primary; color: on_primary; border-color: primary; }
+    .swatch--on { bg: primary; color: on_primary; border-color: primary; }
 
-    // ── 블록: modal ─────────────────────────────────────────────
-    .modal { bg: surface; padding: 16; radius: 8; shadow: 0 4 16; }
-    .modal__title { color: text; weight: bold; }
-    .modal__text { color: text_dim; }
+    // ── 제목/본문 텍스트 ───────────────────────────────────────
+    // 섹션 제목은 작고 흐린 대문자 라벨 — Bootstrap의 form-label/card-header 결.
+    .section__title { color: text_dim; font-size: 12; weight: bold; letter-spacing: 0.6; text-transform: uppercase; }
+    .text { color: text_dim; }
+
+    // ── panel — 사이드바/북마크/목차 ────────────────────────────
+    // 주의: `height: fill` 금지 — 수평 Row 안의 Col에 가용 높이를 강제하면
+    // Row가 남은 세로를 다 먹어 캔버스 높이가 0이 된다 (실측: 캔버스에 획이
+    // 기록되지 않았다). 패널은 내용 높이만 차지한다.
+    .panel { bg: surface; border-width: 1; border-color: border; radius: 8; padding: 8; gap: 6; min-width: 180; }
+    .panel__row { radius: 6; padding: 5 8; }
+    .panel__row:hover { bg: surface_alt; }
+    .panel__item { color: text_dim; cursor: pointer; }
+    .panel__empty { color: text_dim; font-size: 13; }
+
+    // ── tabs — 문서 탭 스트립 (Bootstrap nav-tabs 결) ───────────
+    // 활성 탭은 **버튼이 아니라 탭**처럼 보여야 한다: 파란 알약 대신 바탕 +
+    // 파란 경계선 + 굵은 글자 (예전엔 활성 탭이 기본 버튼과 구별되지 않았다).
+    .tabs { bg: background; border-width: 1; border-color: border; radius: 8; padding: 4; gap: 4; wrap: true; }
+    .tabs__item { bg: surface; color: text_dim; border-width: 1; border-color: border; radius: 6; padding: 5 14; cursor: pointer; }
+    .tabs__item:hover { color: text; border-color: primary; }
+    .tabs__item--active { bg: surface_alt; color: text; border-color: primary; weight: bold; }
+
+    // ── statusbar — 상태바/토스트 ──────────────────────────────
+    .statusbar { bg: surface; border-width: 1; border-color: border; radius: 8; padding: 6 10; gap: 8; wrap: true; }
+    .statusbar__text { color: text_dim; font-size: 13; }
+    .statusbar__toast { color: warn; font-size: 13; }
+
+    // ── modal ─────────────────────────────────────────────────
+    .modal { bg: surface; border-width: 1; border-color: border; radius: 10; padding: 16; gap: 10; shadow: 0 8 24; }
+    .modal Strong { color: text; font-size: 16; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
     .modal__actions { gap: 8; }
-
     .modal__actions--end { justify: end; }
-    .modal__button { bg: surface_alt; color: text; padding: 8 12; radius: 6; cursor: pointer; }
-    .modal__button:hover { bg: primary; color: on_primary; }
-    .modal__button:active { bg: surface; border-width: 1; border-color: border; }
-    // 설정 창의 프리셋(스무딩 등) — 활성 항목은 `--active` 수정자를 함께 붙인다.
-    .modal__preset { bg: surface_alt; color: text; padding: 6 10; radius: 6; cursor: pointer; }
-    .modal__preset:hover { bg: primary; color: on_primary; }
-    .modal__preset--active { bg: primary; color: on_primary; weight: bold; }
 }
 
 /// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값.
 ///
-/// 기본은 elm-magic의 어두운 팔레트(egui 다크와 맞춘 값). 브랜드 색을 넣으려면
-/// `.with(Token::Primary, Color::rgb(...))`를 한 줄 붙이면 된다 — 앱의 모든
-/// 파랑이 그 한 줄에서 따라온다.
+/// Bootstrap 5 다크 테마의 색 계열에 맞춘 값이다 (`--bs-body-bg`/`--bs-body-color`/
+/// `--bs-border-color`). 브랜드 색을 바꾸려면 `Token::Primary` 한 줄만 고치면 된다 —
+/// 앱의 모든 파랑(버튼 호버, 활성 탭, 캔버스 커서)이 그 줄에서 따라온다.
 pub fn palette() -> Palette {
     Palette::dark()
+        .with(Token::Primary, Color::rgb(0x0d, 0x6e, 0xfd))
+        .with(Token::OnPrimary, Color::rgb(0xff, 0xff, 0xff))
+        .with(Token::Background, Color::rgb(0x21, 0x25, 0x29))
+        .with(Token::Surface, Color::rgb(0x2b, 0x30, 0x35))
+        .with(Token::SurfaceAlt, Color::rgb(0x34, 0x3a, 0x40))
+        .with(Token::Border, Color::rgb(0x49, 0x50, 0x57))
+        .with(Token::Text, Color::rgb(0xde, 0xe2, 0xe6))
+        .with(Token::TextDim, Color::rgb(0xad, 0xb5, 0xbd))
+        .with(Token::Info, Color::rgb(0x0d, 0xca, 0xf0))
+        .with(Token::Success, Color::rgb(0x19, 0x87, 0x54))
+        .with(Token::Warn, Color::rgb(0xff, 0xc1, 0x07))
+        .with(Token::Error, Color::rgb(0xdc, 0x35, 0x45))
 }
 
 /// CSS 색 토큰 → egui 색 (어댑터가 쓰는 변환과 같은 규칙).
@@ -155,7 +184,19 @@ pub fn install_egui_visuals(ctx: &egui::Context) {
     // PDF 리더는 장시간 읽기 — 다크 고정 (시스템 라이트 테마에서도).
     ctx.set_theme(egui::ThemePreference::Dark);
     for theme in [egui::Theme::Dark, egui::Theme::Light] {
-        ctx.style_mut_of(theme, |style| style.visuals = visuals());
+        ctx.style_mut_of(theme, |style| {
+            style.visuals = visuals();
+            // egui 네이티브 위젯(`<Input>`, 스크롤바, 창 크롬)의 기본 글자 크기 —
+            // CSS `.app`(14)과 같은 값이라 마크업 텍스트와 섞여도 튀지 않는다.
+            style.text_styles = [
+                (egui::TextStyle::Heading, egui::FontId::proportional(18.0)),
+                (egui::TextStyle::Body, egui::FontId::proportional(14.0)),
+                (egui::TextStyle::Button, egui::FontId::proportional(14.0)),
+                (egui::TextStyle::Small, egui::FontId::proportional(12.0)),
+                (egui::TextStyle::Monospace, egui::FontId::monospace(14.0)),
+            ]
+            .into();
+        });
     }
 }
 

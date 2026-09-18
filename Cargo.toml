@@ -24,6 +24,9 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 egui = "0.36"
+# Phosphor 아이콘 — freedf(레거시)와 **같은 라이브러리**. 아이콘은 이모지가 아니라
+# 이 폰트의 글리프(U+E000 대역)로 그린다 (freedf-gui `src/fonts.rs`가 폴백으로 설치).
+egui_phosphor_icons = { version = "0.5", default-features = false }
 # eframe 0.36 기본 렌더러는 wgpu(DX12) — 일부 Windows에서 시작 시 0xc0000005 크래시.
 # 호환성이 좋은 OpenGL(glow) 백엔드를 기본으로 사용하되, GPU 오프로드를 원하면
 # `FREEDF_RENDERER=wgpu` 환경 변수로 DirectX 12 백엔드를 선택할 수 있습니다.
@@ -37,12 +40,8 @@ pdfium-render = "0.9.3"
 eguidev = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 eguidev_runtime = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 
-# elm-magic 0.7 "Widget Protocol" — `Element`는 위젯 구조체들의 enum이고
-# `Widget` 트레이트(role/label/is_interactive/…)가 variant별로 정적 디스패치된다.
-# FreeDF는 `view!`/`css!` 매크로와 `mount!`/`TestApp`만 쓰므로 소스 변경은 없고,
-# 0.7의 role 셀렉터(`sel!` / `click_role`)를 테스트 계약에 쓸 수 있게 됐다.
-elm-magic = "0.7.0"
-elm-magic-egui = "0.7.0"
+elm-magic = "0.7.2"
+elm-magic-egui = "0.7.2"
 
 [profile.release]
 opt-level = 2

@@ -24,6 +24,8 @@ dev-automation = ["dep:eguidev", "dep:eguidev_runtime"]
 [dependencies]
 eframe.workspace = true
 egui.workspace = true
+# 아이콘 — 레거시 freedf와 같은 Phosphor 글리프 (이모지 금지).
+egui_phosphor_icons.workspace = true
 # UI는 전부 elm-magic(view!)으로 그린다 — egui 어댑터가 Element 트리를 위젯으로 렌더.
 elm-magic.workspace = true
 elm-magic-egui.workspace = true

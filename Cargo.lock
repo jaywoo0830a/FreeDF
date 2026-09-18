@@ -1451,9 +1451,9 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elm-magic"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e644d4f2644701aa4e19c67f57507d2986d42ba53c5736ae085377c166c25242"
+checksum = "a163e47b68a08a280e1ab9b281d56ed840fa7ed297c306bc6ec61ec71634ce02"
 dependencies = [
  "elm-magic-macros",
  "enum_dispatch",
@@ -1461,9 +1461,9 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-egui"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4efcd9a68ddbe9c7e4f99a00cfbdac1751c458f20ee9ff2c6f1f768bf2029fef"
+checksum = "270b8abfcbb01117b6178d624931a4c32b8019e91d9dd2ac136df734bc42a66c"
 dependencies = [
  "egui",
  "elm-magic",
@@ -1471,9 +1471,9 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-macros"
-version = "0.7.0"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0da36068c1b01c8dac5c19ab1e5d22294fb0d4226c3e8964813219129a8ebe96"
+checksum = "99c6b1faf9ee48146eb8888217604e13c49d96e292bfc37bab9c1c2a8aa74b16"
 
 [[package]]
 name = "emath"
@@ -1822,6 +1822,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "egui_phosphor_icons",
  "eguidev",
  "eguidev_runtime",
  "elm-magic",
@@ -3517,7 +3518,7 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "image",
- "itertools 0.15.0",
+ "itertools 0.13.0",
  "js-sys",
  "libloading 0.9.0",
  "log",

@@ -11,10 +11,16 @@
 //! - [`pen`] — 펜 입력(필압/틸트) 공급원 배선 (OTD 데몬 RPC → evdev → 없음).
 //! - [`cursor`] — 도구별 커서 스프라이트 (freedf `paint_custom_cursor` 이식).
 //! - [`palette`] — 즐겨찾기 색 목록/이름 해석 (`freedf-services::settings` 출처).
+//! - [`ui`] — 재사용 컴포넌트(atoms/layout) + 아이콘/라벨 규칙 (하이브리드 구조).
 //! - [`shell`] — `elm_magic::view!` 위젯 트리 (툴바/리본/패널/탭/모달).
 //! - [`style`] — elm-magic CSS 규칙 + 팔레트 토큰 (유일한 스타일 출처).
 //! - [`fonts`] — 임베드 폰트 설치.
 //! - [`dev`] — eguidev 계측 헬퍼 (`dev-automation` 기능에서만 동작).
+
+// `ui`의 컴포넌트는 `elm_magic::view!` 호출이라 rustdoc이 문서를 만들지 못한다
+// ("does not generate documentation for macro invocations"). 문서 주석은
+// 사람이 읽는 컴포넌트 설명으로 남기고 경고만 끈다 (elm-magic 0.7 한계).
+#![allow(unused_doc_comments)]
 
 pub mod canvas;
 pub mod cursor;
@@ -24,3 +30,4 @@ pub mod palette;
 pub mod pen;
 pub mod shell;
 pub mod style;
+pub mod ui;
