@@ -1,4 +1,4 @@
-//! freedf-gui 스타일 — **elm-magic 0.6 CSS 속성만**으로 정의한다.
+//! freedf-gui 스타일 — **elm-magic 0.7 CSS 속성만**으로 정의한다.
 //!
 //! 이 파일이 freedf-gui의 **유일한 스타일 출처**다. freedf-theme(egui
 //! `Style`/`Visuals` 설치기) 의존은 0 — 셸의 모든 시각적 결정은 아래 `css!`
@@ -37,7 +37,7 @@
 use eframe::egui;
 use elm_magic::style::{Color, Palette, Token};
 
-// 셸의 시각 언어 — 전부 CSS 속성이다 (elm-magic 0.6이 실제로 렌더한다).
+// 셸의 시각 언어 — 전부 CSS 속성이다 (elm-magic 0.7이 실제로 렌더한다).
 //
 // 셀렉터는 **BEM 클래스뿐**이다: `블록`(app/toolbar/…), `블록__요소`,
 // `블록__요소--수정자`, 상태는 `:hover`/`:active`. 태그 셀렉터는 쓰지 않는다 —

@@ -5,7 +5,7 @@
 //!
 //! 원래 `freedf` 바이너리 안의 모듈(`crates/freedf/src/theme/`)이었고, 한동안은
 //! elm-magic 셸(`freedf-gui`)과 "같은 테마"를 쓰려고 공유 크레이트로 추출했었습니다.
-//! freedf-gui는 이후 **elm-magic 0.6의 CSS 속성**(`css!` 규칙 + 팔레트 토큰)으로
+//! freedf-gui는 이후 **elm-magic 0.7의 CSS 속성**(`css!` 규칙 + 팔레트 토큰)으로
 //! 스타일을 자체 정의하며 이 크레이트 의존을 0으로 만들었으므로, 지금은
 //! **freedf 전용**입니다 (docs/freedf-gui-migration.md — CSS 전환 항목).
 //! `freedf`는 [`freedf_theme`]를 재수출해 기존 `crate::theme::…` 경로를

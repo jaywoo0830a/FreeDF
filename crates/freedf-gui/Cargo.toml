@@ -32,7 +32,7 @@ freedf-services = { path = "../freedf-services" }
 # Phase 2 — 캔버스: 잉크 메시(freedf-canvas) + 모델/저장소/변환(freedf-core).
 freedf-canvas = { path = "../freedf-canvas" }
 freedf-core = { path = "../freedf-core" }
-# 스타일: freedf-theme 의존 **없음** — elm-magic 0.6 CSS 속성(`src/style.rs`의
+# 스타일: freedf-theme 의존 **없음** — elm-magic 0.7 CSS 속성(`src/style.rs`의
 # `css!` 규칙 + `Palette` 토큰)만으로 표현한다 (구 테마 설치기는 freedf 전용).
 # 잉크 기본값 저장/복원 (설정 창 — app_data_dir의 JSON 파일).
 serde.workspace = true

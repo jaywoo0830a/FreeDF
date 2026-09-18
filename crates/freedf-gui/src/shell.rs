@@ -112,8 +112,8 @@ elm_magic::view! {
         <Col class="app">
             // ── 툴바 ─────────────────────────────────────────────
             // 그룹 구분은 CSS `gap`으로 한다. (`<Divider/>`는 수평 행 높이를 가용
-            // 높이로 부풀리는 elm-magic-egui 0.6.0 결함 때문에 제외 —
-            // docs/elm-magic-bug-report.md 참고. 0.6.1에서 복원 예정.)
+            // 높이로 부풀리는 elm-magic-egui 결함 때문에 제외 — 어댑터의
+            // `Element::Divider` 경로는 0.7.0에서도 `ui.separator()` 그대로다.)
             <Row class="toolbar">
                 <Strong class="toolbar__title">"FreeDF"</Strong>
                 <Button class="toolbar__button" on_click={sidebar_open = !sidebar_open}>"Sidebar"</Button>
@@ -359,7 +359,7 @@ pub fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
 ///
 /// 배경/여백은 **CSS가 담당한다** (`.app { bg: background; padding: 8 }` on the
 /// 루트 `Col`) — 예전 egui Frame 래퍼(테마 `window_fill` 채우기 + 하드코딩된
-/// 안쪽 여백)를 elm-magic 0.6 CSS 속성이 대체했다. 창 클리어 색은 main.rs의
+/// 안쪽 여백)를 elm-magic 0.7 CSS 속성이 대체했다. 창 클리어 색은 main.rs의
 /// `clear_color`가 같은 팔레트 토큰으로 채운다 (elm-magic CSS 밖 영역).
 pub fn render_root(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     render_shell(ui, ctx);

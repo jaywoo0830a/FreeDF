@@ -38,7 +38,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             fonts::install(&cc.egui_ctx);
-            // 스타일은 전부 elm-magic 0.6 CSS 속성(`src/style.rs`의 `css!` 규칙 +
+            // 스타일은 전부 elm-magic 0.7 CSS 속성(`src/style.rs`의 `css!` 규칙 +
             // 팔레트 토큰)이다. 설치할 egui Style/Visuals는 **없다** — freedf-theme
             // 의존 0. 다만 elm-magic CSS가 닿지 않는 egui 네이티브 위젯(`<Raw>`
             // 캔버스, `<Input>`, 창 크롬)의 최소 설정만 여기서 넣는다.
