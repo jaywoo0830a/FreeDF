@@ -43,6 +43,19 @@ fn main() -> eframe::Result {
             // 의존 0. 다만 elm-magic CSS가 닿지 않는 egui 네이티브 위젯(`<Raw>`
             // 캔버스, `<Input>`, 창 크롬)의 최소 설정만 여기서 넣는다.
             style::install_egui_visuals(&cc.egui_ctx);
+            // `css!` 등록 안전판 — 0.7.4는 시작 섹션을 플랫폼별로 분기하지만
+            // (MSVC `.CRT$XCU` / Apple `__mod_init_func` / ELF `.init_array`), 그
+            // 섹션이 안 도는 환경(정적 링크·특수 런처)도 있어 명시적으로 한 번 더
+            // 적용한다. 멱등이라 중복 호출은 무해하다.
+            elm_magic::style::init_styles();
+            // 등록 진단 — `FREEDF_GUI_STYLE_DIAG=1`이면 등록된 셀렉터 수를 찍는다.
+            // 0이면 CSS가 하나도 적용되지 않는다는 뜻이다 (기대값: 41).
+            if std::env::var_os("FREEDF_GUI_STYLE_DIAG").is_some() {
+                eprintln!(
+                    "[freedf-gui] elm-magic css selectors = {} (0이면 스타일 미등록)",
+                    elm_magic::style::len()
+                );
+            }
             // DPI 디버그 — `FREEDF_GUI_PPP=1.5` 처럼 지정해 Windows 배율을 흉내 낸다.
             if let Ok(ppp) = std::env::var("FREEDF_GUI_PPP") {
                 if let Ok(v) = ppp.parse::<f32>() {

@@ -40,8 +40,8 @@ pdfium-render = "0.9.3"
 eguidev = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 eguidev_runtime = { git = "https://github.com/jaywoo0830a/eguidev", rev = "84ab2da60b36fa5f4235c0792b78e5535b95700a" }
 
-elm-magic = "0.7.2"
-elm-magic-egui = "0.7.2"
+elm-magic = "0.7.4"
+elm-magic-egui = "0.7.4"
 
 [profile.release]
 opt-level = 2

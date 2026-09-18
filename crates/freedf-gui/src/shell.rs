@@ -10,14 +10,12 @@
 //! 쓰면 매크로 파서가 태그로 오인한다(실측). 그래서 계산은 [`shell_state`]에서
 //! 끝내고 본문에는 단순한 `let`만 둔다.
 //!
-//! ## `key=` — elm-magic 버그 11 우회
+//! ## elm-magic 0.7.4 — 값 prop은 살아 있는 prop
 //!
-//! 자식 컴포넌트(=`ui::atoms`/`ui::layout`)의 **값 prop은 재렌더에서 갱신되지
-//! 않는다** (파라미터가 마운트 시점의 상태 슬롯으로만 초기화된다). 그래서 동적 값
-//! (`on`/`active`/`text`)을 넘기는 자리마다 그 값을 담은 `key={..}`를 함께 준다 —
-//! 키가 바뀌면 인스턴스 슬롯이 새로 만들어져 값이 따라온다. 콜백 prop(`on_click`)과
-//! `{children}`은 정상이라 키가 필요 없다. elm-magic이 수정되면 `key=`는 지운다
-//! (`ui::atoms` 모듈 문서의 "버그 11", `tests/shell_tests.rs`의 회귀 기록 참고).
+//! 자식 컴포넌트의 값 prop(`on`/`active`/`text`)은 부모가 새 값을 넘기면 화면이
+//! 따라온다 (0.7.4에서 수정 — 그 전에는 마운트 시점 값에 고정됐다). 자식이 그
+//! 매개변수를 직접 쓰면 그때부터는 자식의 상태가 되지만(`Arena::slot_dirty`),
+//! 셸의 컴포넌트는 값을 표시만 하므로 키 같은 우회가 필요 없다.
 
 use crate::ui;
 use crate::ui::*;
@@ -118,16 +116,6 @@ elm_magic::view! {
         // 스무딩 프리셋 — 설정 창 표시/선택용 (코어 `InkPipeline` 강도).
         let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
-        // `key=`는 값 prop 갱신용(elm-magic 버그 11). 키는 **인스턴스마다 유일**해야
-        // 하고, 값이 바뀔 때마다 함께 바뀌어야 한다. 상태 슬롯은 키 식 안에서 직접
-        // 읽을 수 없어(`key={format!("…{slot}")}` → E0425) 본문 지역값으로 만든다.
-        let k_sidebar = ui::state_key("Sidebar", sidebar_open);
-        let k_bookmarks = ui::state_key("Bookmarks", bookmarks_open);
-        let k_outline = ui::state_key("Outline", outline_open);
-        // `key=`는 값 prop 갱신용(elm-magic 버그 11). 키는 **인스턴스마다 유일**해야
-        // 하고, key 식 안에서는 **상태 슬롯** 이름을 읽을 수 없다
-        // (`key={format!("…{sidebar_open}")}` → E0425). 그래서 슬롯 기반 키만 여기서
-        // 문자열로 만들어 넘긴다.
         <App>
             // ── navbar: 브랜드 + 명령 ───────────────────────────────
             <Navbar>
@@ -156,9 +144,9 @@ elm_magic::view! {
                     <Btn text="Next Page" on_click={crate::canvas::page_next()} />
                 </ToolbarGroup>
                 <ToolbarGroup>
-                    <BtnOn key={k_sidebar} text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
-                    <BtnOn key={k_bookmarks} text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
-                    <BtnOn key={k_outline} text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
+                    <BtnOn text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
+                    <BtnOn text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
+                    <BtnOn text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
                     <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
                 </ToolbarGroup>
                 <ToolbarGroup>
@@ -169,26 +157,25 @@ elm_magic::view! {
             <Ribbon>
                 <Section text="Ink" />
                 <RibbonGroup>
-                    <BtnOn key={format!("Pen-{}", tool == "Pen")} text="Pen" on={tool == "Pen"} on_click={crate::canvas::select_tool("Pen")} />
-                    <BtnOn key={format!("Fountain-{}", tool == "Fountain")} text="Fountain" on={tool == "Fountain"} on_click={crate::canvas::select_tool("Fountain")} />
-                    <BtnOn key={format!("Highlighter-{}", tool == "Highlighter")} text="Highlighter" on={tool == "Highlighter"} on_click={crate::canvas::select_tool("Highlighter")} />
-                    <BtnOn key={format!("Eraser-{}", tool == "Eraser")} text="Eraser" on={tool == "Eraser"} on_click={crate::canvas::select_tool("Eraser")} />
+                    <BtnOn text="Pen" on={tool == "Pen"} on_click={crate::canvas::select_tool("Pen")} />
+                    <BtnOn text="Fountain" on={tool == "Fountain"} on_click={crate::canvas::select_tool("Fountain")} />
+                    <BtnOn text="Highlighter" on={tool == "Highlighter"} on_click={crate::canvas::select_tool("Highlighter")} />
+                    <BtnOn text="Eraser" on={tool == "Eraser"} on_click={crate::canvas::select_tool("Eraser")} />
                 </RibbonGroup>
                 <RibbonGroup>
-                    // 스와치는 라벨(색)과 선택 여부가 **둘 다** 바뀔 수 있다 — 키에 둘을 담는다.
-                    {st.swatch_items.clone().into_iter().map(|item| <Swatch key={format!("swatch-{}-{}", item.label, item.on)} text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
+                    {st.swatch_items.clone().into_iter().map(|item| <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
                 </RibbonGroup>
                 <RibbonGroup>
-                    <BtnOn key={format!("Thin-{}", width == "Thin")} text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
-                    <BtnOn key={format!("Medium-{}", width == "Medium")} text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
-                    <BtnOn key={format!("Thick-{}", width == "Thick")} text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
-                    <BtnOn key={format!("Pressure-{}", st.pressure)} text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
+                    <BtnOn text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
+                    <BtnOn text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
+                    <BtnOn text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
+                    <BtnOn text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
                 </RibbonGroup>
             </Ribbon>
             // ── tabs: 문서 탭 스트립 (캔버스 바로 위 — 브라우저 배치) ──
             // 탭은 캔버스 엔진이 소유 — 매 프레임 읽어 렌더만 한다.
             <TabStrip>
-                {tab_names.iter().map(|t| <TabItem key={format!("tab-{}-{}", t.0, t.0 == active_id)} text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
+                {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
             </TabStrip>
             // ── 본문: 패널들 ────────────────────────────────────────
             // 참고: 캔버스 <Raw>는 이 Row **밖**(루트 Col 직접 자식)에 둔다 —
@@ -208,7 +195,7 @@ elm_magic::view! {
                         {if bookmarks.is_empty() {
                             <Empty text="북마크 없음 — Bookmark 버튼으로 추가" />
                         } else {
-                            bookmarks.iter().map(|p| <PanelRow key={format!("bookmark-{p}")} text="페이지 {p}" on_click={crate::canvas::go_to_page(p)} />)
+                            bookmarks.iter().map(|p| <PanelRow text="페이지 {p}" on_click={crate::canvas::go_to_page(p)} />)
                         }}
                     </Panel>
                 } else {
@@ -220,7 +207,7 @@ elm_magic::view! {
                         {if outline_entries.is_empty() {
                             <Empty text="PDF를 열면 목차가 표시됩니다" />
                         } else {
-                            outline_entries.iter().map(|e| <PanelRow key={format!("outline-{}-{}", e.page, e.title)} text={e.title.clone()} on_click={crate::canvas::go_to_page(e.page)} />)
+                            outline_entries.iter().map(|e| <PanelRow text={e.title.clone()} on_click={crate::canvas::go_to_page(e.page)} />)
                         }}
                     </Panel>
                 } else {
@@ -281,16 +268,15 @@ elm_magic::view! {
                 </Dialog>,
                 ShellModal::Settings => <Dialog title="Settings" on_close={modal = ShellModal::None}>
                     <Heading text="잉크 기본값" />
-                    // 진단 값은 매 프레임 바뀐다 — 키에 담아 값 prop을 갱신시킨다(버그 11).
-                    <Note key={format!("ink-{tool}-{color}-{width}-{smoothing}")} text="도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}" />
+                    <Note text="도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}" />
                     <Note text="스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)." />
-                    <Note key={format!("pen-{}-{}-{}", st.pen_source, st.pen_tilt, st.pressure_text)} text="펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}" />
-                    <Note key={format!("palette-{}", st.swatch_list)} text="팔레트 {st.swatch_list}" />
+                    <Note text="펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}" />
+                    <Note text="팔레트 {st.swatch_list}" />
                     <Presets>
-                        <BtnOn key={format!("Off-{}", smoothing == "Off")} text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
-                        <BtnOn key={format!("Light-{}", smoothing == "Light")} text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
-                        <BtnOn key={format!("Normal-{}", smoothing == "Normal")} text="Normal" on={smoothing == "Normal"} on_click={crate::canvas::select_smoothing("Normal")} />
-                        <BtnOn key={format!("Strong-{}", smoothing == "Strong")} text="Strong" on={smoothing == "Strong"} on_click={crate::canvas::select_smoothing("Strong")} />
+                        <BtnOn text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
+                        <BtnOn text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
+                        <BtnOn text="Normal" on={smoothing == "Normal"} on_click={crate::canvas::select_smoothing("Normal")} />
+                        <BtnOn text="Strong" on={smoothing == "Strong"} on_click={crate::canvas::select_smoothing("Strong")} />
                     </Presets>
                     <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
                     <Actions>

@@ -33,11 +33,10 @@ fn new_tab_via_modal() {
     app.assert_hidden("Tab name:");
 }
 
-/// 탭 클릭이 활성 탭을 바꾼다 — **elm-magic 버그 11 회귀 지점**.
+/// 탭 클릭이 활성 탭을 바꾼다 — 값 prop(`active`)이 재렌더에서 반영되는지 확인한다.
 ///
-/// 자식 컴포넌트(`TabItem`)의 값 prop(`active`)은 재렌더에서 갱신되지 않는다.
-/// 셸은 `key={..}`로 인스턴스를 갱신시켜 우회하므로 이 테스트가 통과한다 —
-/// elm-magic이 고쳐지면 `key=`를 지워도 통과해야 한다.
+/// elm-magic 0.7.4 이전에는 자식의 값 prop이 마운트 시점 값에 고정돼 셸이 `key=`로
+/// 우회해야 했다. 지금은 살아 있는 prop이라 이 테스트가 그대로 통과한다.
 #[test]
 fn tab_click_selects() {
     // 탭은 캔버스 엔진이 소유 — 엔진에 문서를 만들고 셸이 읽어 렌더한다.
@@ -252,8 +251,8 @@ fn edit_row_reaches_canvas_commands() {
 
 /// 계약: 설정 창의 스무딩 프리셋 선택이 캔버스 상태를 바꾼다.
 ///
-/// **elm-magic 버그 11 회귀 지점**: 진단 `Note`(값 prop)와 프리셋 `BtnOn`(값 prop)이
-/// 재렌더에서 갱신되지 않아, 셸의 `key={..}`가 없으면 이 테스트가 실패한다.
+/// 값 prop 회귀 지점: 진단 `Note`(값 prop)와 프리셋 `BtnOn`(값 prop)이 클릭 뒤
+/// 재렌더에서 갱신되는지 함께 확인한다 (elm-magic 0.7.4에서 `key=` 우회 삭제).
 #[test]
 fn settings_modal_selects_smoothing() {
     with(|c| *c = Canvas::default());
