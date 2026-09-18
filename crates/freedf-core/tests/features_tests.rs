@@ -14,10 +14,8 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "freedf-features-{tag}-{}-{n}",
-        std::process::id()
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("freedf-features-{tag}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -91,18 +89,17 @@ fn outline_tree_navigation() {
     assert_eq!(flat[2].node.title, "Section 1.2");
     assert_eq!(flat[2].node.page_index, Some(2));
 
-    assert_eq!(find_by_title(&tree, "chapter 2").unwrap().page_index, Some(9));
+    assert_eq!(
+        find_by_title(&tree, "chapter 2").unwrap().page_index,
+        Some(9)
+    );
 }
 
 /// 페이지 내 단어 검색 (여러 런 + 문자 좌표).
 #[test]
 fn page_word_search_with_highlights() {
     let runs = vec![
-        TextRun::new(
-            "FreeDF is a PDF viewer.",
-            [0.0, 0.0, 200.0, 20.0],
-            vec![],
-        ),
+        TextRun::new("FreeDF is a PDF viewer.", [0.0, 0.0, 200.0, 20.0], vec![]),
         TextRun::new(
             "You can search PDF words.",
             [0.0, 20.0, 200.0, 40.0],
@@ -137,9 +134,14 @@ fn log_file_structure_for_analysis() {
     let dir = temp_dir("log");
     let path = dir.join("app.log");
     let mut logger = Logger::to_file(&path).unwrap();
-    logger.log(AppEvent::AppStart { version: "0.2.0".into() });
+    logger.log(AppEvent::AppStart {
+        version: "0.2.0".into(),
+    });
     logger.log(AppEvent::PageChanged { page: 1, total: 20 });
-    logger.log(AppEvent::Search { query: "rust".into(), results: 2 });
+    logger.log(AppEvent::Search {
+        query: "rust".into(),
+        results: 2,
+    });
     logger.flush();
 
     let text = std::fs::read_to_string(&path).unwrap();

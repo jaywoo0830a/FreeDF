@@ -107,8 +107,8 @@ impl Sink for InkSink {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::session_router::{Outcome, SessionRouter};
+    use super::*;
     use freedf_core::input_events::{PointerPhase, PointerSource, NO_TILT};
 
     fn down(p: [f32; 2]) -> PointerEvent {
@@ -169,7 +169,10 @@ mod tests {
         let mut grab_ctx = ctx(1000);
         grab_ctx.focus_grab_pending = true;
         assert_eq!(sink.admit(&view(&d), &grab_ctx), Decision::Refuse);
-        assert!(sink.take_focus_request(), "앱이 Focus 커맨드를 보낼 수 있게");
+        assert!(
+            sink.take_focus_request(),
+            "앱이 Focus 커맨드를 보낼 수 있게"
+        );
         assert!(!sink.take_focus_request(), "표식은 1회다");
     }
 
@@ -216,10 +219,10 @@ mod tests {
         let pump = |adapter: &mut PenEventAdapter,
                     router: &mut SessionRouter<InkSink>,
                     ws: &mut Workspace,
-                        st: &PenState,
-                        point: [f32; 2],
-                        now: u64,
-                        evidence: bool| {
+                    st: &PenState,
+                    point: [f32; 2],
+                    now: u64,
+                    evidence: bool| {
             // 어댑터 → 허브 → 라우터 → 싱크 → 워크스페이스 (생산 배선과 동일 순서).
             let mut hub = Hub::new();
             for ev in adapter.update(st, Some(point)) {
@@ -244,23 +247,78 @@ mod tests {
         };
 
         // ① Down 이 egui보다 먼저 온 프레임 — 증거는 아직 거짓.
-        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1000, false);
+        pump(
+            &mut adapter,
+            &mut router,
+            &mut ws,
+            &pen_state(true),
+            [30.0, 40.0],
+            1000,
+            false,
+        );
         // ② egui가 따라잡기 전 프레임 몇 개 (16ms 간격 — stale 창 안).
-        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1016, false);
-        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [30.0, 40.0], 1032, false);
-        assert!(router.open_session().is_some(), "시계 지연은 획의 끝이 아니다");
+        pump(
+            &mut adapter,
+            &mut router,
+            &mut ws,
+            &pen_state(true),
+            [30.0, 40.0],
+            1016,
+            false,
+        );
+        pump(
+            &mut adapter,
+            &mut router,
+            &mut ws,
+            &pen_state(true),
+            [30.0, 40.0],
+            1032,
+            false,
+        );
+        assert!(
+            router.open_session().is_some(),
+            "시계 지연은 획의 끝이 아니다"
+        );
         // ③ 접촉 유지 Drag → ④ 진짜 Up (펜을 뗀다).
-        pump(&mut adapter, &mut router, &mut ws, &pen_state(true), [31.0, 41.0], 1040, true);
-        pump(&mut adapter, &mut router, &mut ws, &pen_state(false), [32.0, 42.0], 1050, true);
+        pump(
+            &mut adapter,
+            &mut router,
+            &mut ws,
+            &pen_state(true),
+            [31.0, 41.0],
+            1040,
+            true,
+        );
+        pump(
+            &mut adapter,
+            &mut router,
+            &mut ws,
+            &pen_state(false),
+            [32.0, 42.0],
+            1050,
+            true,
+        );
 
         let mut cmds = Vec::new();
         ws.take_commands(|c| cmds.push(c));
         assert_eq!(
             cmds.iter().map(|c| c.kind()).collect::<Vec<_>>(),
-            vec!["begin-stroke", "extend-stroke", "extend-stroke", "extend-stroke", "end-stroke"],
+            vec![
+                "begin-stroke",
+                "extend-stroke",
+                "extend-stroke",
+                "extend-stroke",
+                "end-stroke"
+            ],
             "1점 점이 아니라 온전한 획 (접촉 유지 프레임마다 extend)"
         );
-        assert!(matches!(cmds[0], Command::BeginStroke { point: [30.0, 40.0], .. }));
+        assert!(matches!(
+            cmds[0],
+            Command::BeginStroke {
+                point: [30.0, 40.0],
+                ..
+            }
+        ));
         assert!(check_well_formed(&cmds).is_ok());
         assert_eq!(router.ledger().len(), 1, "Down 1건 = 정산 1건 (유실 관측)");
     }

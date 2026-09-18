@@ -131,7 +131,11 @@ impl SettingsTab {
     pub(crate) fn tab_items() -> Vec<TabItem<'static>> {
         Self::all()
             .into_iter()
-            .map(|t| TabItem::new(t.slug(), t.label()).icon(t.icon()).hint(t.hint()))
+            .map(|t| {
+                TabItem::new(t.slug(), t.label())
+                    .icon(t.icon())
+                    .hint(t.hint())
+            })
             .collect()
     }
 }
@@ -559,12 +563,8 @@ impl FreeDfApp {
         form::label(ui, "Presets");
         ui.horizontal_wrapped(|ui| {
             for (i, preset) in CANVAS_COLOR_PRESETS.iter().enumerate() {
-                let mut color = Color32::from_rgba_unmultiplied(
-                    preset[0],
-                    preset[1],
-                    preset[2],
-                    preset[3],
-                );
+                let mut color =
+                    Color32::from_rgba_unmultiplied(preset[0], preset[1], preset[2], preset[3]);
                 let selected = self.canvas_color == *preset;
                 let (resp, changed) =
                     swatch_with_picker(ui, ("canvas_preset", i), &mut color, selected);
@@ -628,7 +628,10 @@ impl FreeDfApp {
         ui.add_space(crate::ui::tokens::space::MD);
         form::label(ui, "Insert blank pages at:");
         let insert = [
-            (InsertTarget::FromCurrent, "From current page (copies size & paper)"),
+            (
+                InsertTarget::FromCurrent,
+                "From current page (copies size & paper)",
+            ),
             (InsertTarget::AtVeryFront, "At the very front"),
             (InsertTarget::AtVeryBack, "At the very back"),
             (InsertTarget::BeforeCurrent, "Before current page"),
@@ -693,7 +696,9 @@ impl FreeDfApp {
                     let selected = self.paper_color == *paper;
                     let (resp, changed) =
                         swatch_with_picker(ui, ("paper_swatch_win", i), &mut color, selected);
-                    let resp = resp.on_hover_text("Paper color — click to apply, double-click to edit (current page)");
+                    let resp = resp.on_hover_text(
+                        "Paper color — click to apply, double-click to edit (current page)",
+                    );
                     if resp.clicked() {
                         self.paper_color = *paper;
                         self.apply_paper_to_current_page();
@@ -714,7 +719,13 @@ impl FreeDfApp {
                 self.paper_color[2],
                 self.paper_color[3],
             );
-            if form::color(ui, &mut paper_color, "Color", "Custom paper color (current page)").changed()
+            if form::color(
+                ui,
+                &mut paper_color,
+                "Color",
+                "Custom paper color (current page)",
+            )
+            .changed()
             {
                 self.paper_color = paper_color.to_array();
                 self.apply_paper_to_current_page();
@@ -914,15 +925,14 @@ impl FreeDfApp {
                     // 줄 색: 프리셋 스와치 + 커스텀 컬러.
                     for (i, preset) in LINE_COLOR_PRESETS.iter().enumerate() {
                         let mut col = Color32::from_rgba_unmultiplied(
-                            preset[0],
-                            preset[1],
-                            preset[2],
-                            preset[3],
+                            preset[0], preset[1], preset[2], preset[3],
                         );
                         let selected = ls.color == *preset;
                         let (resp, picker_changed) =
                             swatch_with_picker(ui, ("line_swatch_win", i), &mut col, selected);
-                        let resp = resp.on_hover_text("Line color preset — click to apply, double-click to edit");
+                        let resp = resp.on_hover_text(
+                            "Line color preset — click to apply, double-click to edit",
+                        );
                         if resp.clicked() {
                             ls.color = *preset;
                             changed = true;
@@ -938,8 +948,12 @@ impl FreeDfApp {
                         ls.color[3],
                     );
                     if form::color(ui, &mut line_color, "Color", "Custom line color").changed() {
-                        ls.color =
-                            [line_color.r(), line_color.g(), line_color.b(), line_color.a()];
+                        ls.color = [
+                            line_color.r(),
+                            line_color.g(),
+                            line_color.b(),
+                            line_color.a(),
+                        ];
                         changed = true;
                     }
                     if changed {
@@ -1021,8 +1035,7 @@ impl FreeDfApp {
                     self.save_session();
                     self.status = Some(format!(
                         "New pages & notes will use {:.0} × {:.0} pt",
-                        self.custom_paper_size[0],
-                        self.custom_paper_size[1]
+                        self.custom_paper_size[0], self.custom_paper_size[1]
                     ));
                 }
             }
@@ -1058,9 +1071,7 @@ impl FreeDfApp {
             }
             if ui
                 .add_enabled(page_count > 0, egui::Button::new("Apply"))
-                .on_hover_text(
-                    "Set pages in this range (inclusive) to the current style & color.",
-                )
+                .on_hover_text("Set pages in this range (inclusive) to the current style & color.")
                 .clicked()
             {
                 self.apply_paper_to_range(self.paper_range_from, self.paper_range_to);
@@ -1092,20 +1103,20 @@ impl FreeDfApp {
                     .show(ui)
                     .changed();
             });
-        form::group("API key")
-            .required()
-            .show(ui, |ui| {
-                changed |= form::password(&mut self.media_config.api_key)
-                    .hint("key")
-                    .width(232.0)
-                    .help("API key — guards snapshots, uploads, lists and deletes.")
-                    .show(ui)
-                    .changed();
-            });
+        form::group("API key").required().show(ui, |ui| {
+            changed |= form::password(&mut self.media_config.api_key)
+                .hint("key")
+                .width(232.0)
+                .help("API key — guards snapshots, uploads, lists and deletes.")
+                .show(ui)
+                .changed();
+        });
         ui.horizontal(|ui| {
-            if crate::ui::buttons::Button::primary(
-                if self.db_connected { "Reconnect" } else { "Connect" },
-            )
+            if crate::ui::buttons::Button::primary(if self.db_connected {
+                "Reconnect"
+            } else {
+                "Connect"
+            })
             .hint("Connect to the sync/media server")
             .show(ui)
             .clicked()
@@ -1134,7 +1145,11 @@ impl FreeDfApp {
                 } else {
                     crate::ui::ds::Tone::Danger
                 },
-                if *ok { "Connected" } else { "Connection failed" },
+                if *ok {
+                    "Connected"
+                } else {
+                    "Connection failed"
+                },
                 msg.clone(),
             );
         } else if self.db_connected {
@@ -1167,11 +1182,17 @@ impl FreeDfApp {
                             Some(sync) => match sync.health() {
                                 Ok(()) => (
                                     true,
-                                    format!("Connected — {} ms (Sync v3)", start.elapsed().as_millis()),
+                                    format!(
+                                        "Connected — {} ms (Sync v3)",
+                                        start.elapsed().as_millis()
+                                    ),
                                 ),
                                 Err(e) => (false, format!("Sync v3 check failed: {e}")),
                             },
-                            None => (true, format!("Connected — {} ms", start.elapsed().as_millis())),
+                            None => (
+                                true,
+                                format!("Connected — {} ms", start.elapsed().as_millis()),
+                            ),
                         }
                     }
                     Err(e) => (false, e),
@@ -1316,7 +1337,14 @@ impl FreeDfApp {
              over it for the dwell time below.",
         );
         ui.add_space(crate::ui::tokens::space::MD);
-        if form::check(ui, &mut self.window_focus_on_move, "Focus on cursor dwell", "").changed() {
+        if form::check(
+            ui,
+            &mut self.window_focus_on_move,
+            "Focus on cursor dwell",
+            "",
+        )
+        .changed()
+        {
             self.save_default_session();
         }
         ui.add_space(crate::ui::tokens::space::SM);
@@ -1355,20 +1383,15 @@ impl FreeDfApp {
             .position(|t| *t == self.settings_tab)
             .unwrap_or(0);
 
-        let outcome = TabbedWindow::new(
-            "settings",
-            "Settings",
-            &items,
-            selected,
-            self.settings_open,
-        )
-        .subtitle("Esc to close · click a section on the left")
-        .show(ui.ctx(), |ui, item| {
-            // 슬러그 → 탭 역매핑(계약 id가 곧 라우팅 키입니다).
-            if let Some(tab) = SettingsTab::from_slug(item.id) {
-                self.show_settings_tab(tab, ui);
-            }
-        });
+        let outcome =
+            TabbedWindow::new("settings", "Settings", &items, selected, self.settings_open)
+                .subtitle("Esc to close · click a section on the left")
+                .show(ui.ctx(), |ui, item| {
+                    // 슬러그 → 탭 역매핑(계약 id가 곧 라우팅 키입니다).
+                    if let Some(tab) = SettingsTab::from_slug(item.id) {
+                        self.show_settings_tab(tab, ui);
+                    }
+                });
 
         // 창 **프레임** rect — 자동화/디자인 캡처가 이 id로 창 하나만 잘라냅니다.
         if let Some(frame) = outcome.frame {

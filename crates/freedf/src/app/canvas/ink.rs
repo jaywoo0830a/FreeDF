@@ -67,8 +67,16 @@ impl FreeDfApp {
                 pmx = pmx.max(p.pressure);
                 if p.width > 0.0 {
                     let (w0, w1) = (wmn, wmx);
-                    wmn = if widths_seen { w0.min(p.width) } else { p.width };
-                    wmx = if widths_seen { w1.max(p.width) } else { p.width };
+                    wmn = if widths_seen {
+                        w0.min(p.width)
+                    } else {
+                        p.width
+                    };
+                    wmx = if widths_seen {
+                        w1.max(p.width)
+                    } else {
+                        p.width
+                    };
                     widths_seen = true;
                     // 실제 렌더에 쓰이는 절반 폭 (freedf_canvas::halves_for_stroke와 동일 규칙).
                     let h = (p.width * 0.5).max(0.05);
@@ -110,91 +118,91 @@ impl FreeDfApp {
                 self.live_pressure
             ));
         }
-            // 하이라이터 + 텍스트 인식 모드면 스와이프가 닿은 문서 텍스트 위로
-            // 깔끔한 하이라이트를 만들어 저장하고, 원본 자유선은 버립니다.
-            if active.tool == ToolType::Highlighter
-                && self.text_highlight_snap
-                && self.document.is_some()
-                && self.add_text_highlights(&active)
-            {
-                return;
+        // 하이라이터 + 텍스트 인식 모드면 스와이프가 닿은 문서 텍스트 위로
+        // 깔끔한 하이라이트를 만들어 저장하고, 원본 자유선은 버립니다.
+        if active.tool == ToolType::Highlighter
+            && self.text_highlight_snap
+            && self.document.is_some()
+            && self.add_text_highlights(&active)
+        {
+            return;
+        }
+        // 블리드 나이의 기준 = **획을 그리기 시작한 시각**(첫 점 t_ms).
+        // 펜을 뗀 시각이 아니라 시작 시각이어야, 그리는 동안 자라던
+        // 번짐이 펜을 떼는 순간에도 끊김 없이 이어집니다.
+        let created_ms = active
+            .points
+            .first()
+            .map(|p| p.t_ms)
+            .filter(|t| *t > 0)
+            .unwrap_or_else(now_ms);
+        // DB 시퀀스에서 id를 미리 할당받아 스토어/히스토리/DB 행이 같은
+        // id를 공유하게 합니다 (풀링 — 스트로크마다 왕복하지 않음).
+        let db_id = self.next_stroke_ids(1).first().copied();
+        let id = match (self.doc_id, db_id) {
+            (Some(doc_id), Some(sid)) => {
+                self.store.add_stroke_with_id(
+                    self.current_page,
+                    sid as u64,
+                    active.tool,
+                    active.color,
+                    active.width,
+                    active.points,
+                );
+                self.store
+                    .set_stroke_created_ms(self.current_page, sid as u64, created_ms);
+                let strokes: Vec<_> = self
+                    .store
+                    .strokes_on(self.current_page)
+                    .iter()
+                    .filter(|s| s.id == sid as u64)
+                    .cloned()
+                    .collect();
+                self.db
+                    .insert_strokes(doc_id, self.current_page as i32, &strokes);
+                sid as u64
             }
-            // 블리드 나이의 기준 = **획을 그리기 시작한 시각**(첫 점 t_ms).
-            // 펜을 뗀 시각이 아니라 시작 시각이어야, 그리는 동안 자라던
-            // 번짐이 펜을 떼는 순간에도 끊김 없이 이어집니다.
-            let created_ms = active
-                .points
-                .first()
-                .map(|p| p.t_ms)
-                .filter(|t| *t > 0)
-                .unwrap_or_else(now_ms);
-            // DB 시퀀스에서 id를 미리 할당받아 스토어/히스토리/DB 행이 같은
-            // id를 공유하게 합니다 (풀링 — 스트로크마다 왕복하지 않음).
-            let db_id = self.next_stroke_ids(1).first().copied();
-            let id = match (self.doc_id, db_id) {
-                (Some(doc_id), Some(sid)) => {
-                    self.store.add_stroke_with_id(
-                        self.current_page,
-                        sid as u64,
-                        active.tool,
-                        active.color,
-                        active.width,
-                        active.points,
-                    );
-                    self.store
-                        .set_stroke_created_ms(self.current_page, sid as u64, created_ms);
+            _ => {
+                let id = self.store.add_stroke(
+                    self.current_page,
+                    active.tool,
+                    active.color,
+                    active.width,
+                    active.points,
+                );
+                self.store
+                    .set_stroke_created_ms(self.current_page, id, created_ms);
+                // 풀 소진 폴백이어도 문서가 열려 있으면 write-behind 큐에
+                // 보냅니다 (메타-only 저장에서도 유실되지 않도록).
+                if let Some(doc_id) = self.doc_id {
                     let strokes: Vec<_> = self
                         .store
                         .strokes_on(self.current_page)
                         .iter()
-                        .filter(|s| s.id == sid as u64)
+                        .filter(|s| s.id == id)
                         .cloned()
                         .collect();
                     self.db
                         .insert_strokes(doc_id, self.current_page as i32, &strokes);
-                    sid as u64
                 }
-                _ => {
-                    let id = self.store.add_stroke(
-                        self.current_page,
-                        active.tool,
-                        active.color,
-                        active.width,
-                        active.points,
-                    );
-                    self.store
-                        .set_stroke_created_ms(self.current_page, id, created_ms);
-                    // 풀 소진 폴백이어도 문서가 열려 있으면 write-behind 큐에
-                    // 보냅니다 (메타-only 저장에서도 유실되지 않도록).
-                    if let Some(doc_id) = self.doc_id {
-                        let strokes: Vec<_> = self
-                            .store
-                            .strokes_on(self.current_page)
-                            .iter()
-                            .filter(|s| s.id == id)
-                            .cloned()
-                            .collect();
-                        self.db
-                            .insert_strokes(doc_id, self.current_page as i32, &strokes);
-                    }
-                    id
-                }
-            };
-            self.last_finished_id = Some(id);
-            if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
-                self.push_history(Edit::AddStrokes {
-                    page: self.current_page,
-                    strokes: vec![stroke.clone()],
-                });
-                self.logger.log(AppEvent::StrokeAdded {
-                    page: self.current_page,
-                    points: stroke.points.len(),
-                    tool: tool_label(active.tool).to_string(),
-                    width: active.width,
-                });
+                id
             }
-            // 유휴 자동 저장 타이머 시작 (pen-up 시각 기록).
-            self.last_pen_up_ms = self.now_ms();
+        };
+        self.last_finished_id = Some(id);
+        if let Some(stroke) = self.store.stroke(self.current_page, id).cloned() {
+            self.push_history(Edit::AddStrokes {
+                page: self.current_page,
+                strokes: vec![stroke.clone()],
+            });
+            self.logger.log(AppEvent::StrokeAdded {
+                page: self.current_page,
+                points: stroke.points.len(),
+                tool: tool_label(active.tool).to_string(),
+                width: active.width,
+            });
+        }
+        // 유휴 자동 저장 타이머 시작 (pen-up 시각 기록).
+        self.last_pen_up_ms = self.now_ms();
     }
 
     /// 스트로크가 닿은 **글자**들을 줄 단위로 묶어 밴드 하이라이트를 만듭니다.
@@ -206,8 +214,7 @@ impl FreeDfApp {
         let Some(doc) = &self.document else {
             return false;
         };
-        let (mut x0, mut y0, mut x1, mut y1) =
-            (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for p in &active.points {
             x0 = x0.min(p.x);
             y0 = y0.min(p.y);
@@ -221,10 +228,8 @@ impl FreeDfApp {
         let char_rects = doc.page_char_rects(self.current_page).unwrap_or_default();
         if char_rects.is_empty() {
             // 페이지에 선택 가능한 텍스트가 없음(스캔/이미지 PDF 등).
-            self.status = Some(
-                "No selectable text on this page — drew a free-form highlight."
-                    .to_string(),
-            );
+            self.status =
+                Some("No selectable text on this page — drew a free-form highlight.".to_string());
             return false;
         }
         // 닿은 글자를 줄 단위로 합쳐 연속 밴드로 만듭니다.

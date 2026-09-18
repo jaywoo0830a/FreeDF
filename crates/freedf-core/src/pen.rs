@@ -60,11 +60,7 @@ fn miter_normals(points: &[[f32; 2]]) -> Vec<[f32; 2]> {
 /// 반환 다각형은 단순 다각형(구멍 없음)이므로, `triangulate_polygon`으로
 /// **겹침 없는 삼각형들**로 나눌 수 있습니다 — 반투명 잉크도 얼룩 없이
 /// 균일하게 칠해집니다.
-pub fn stroke_outline(
-    points: &[[f32; 2]],
-    half_widths: &[f32],
-    round_caps: bool,
-) -> Vec<[f32; 2]> {
+pub fn stroke_outline(points: &[[f32; 2]], half_widths: &[f32], round_caps: bool) -> Vec<[f32; 2]> {
     let n = points.len().min(half_widths.len());
     if n == 0 {
         return Vec::new();
@@ -83,7 +79,13 @@ pub fn stroke_outline(
     }
     // 끝 캡 (반원): +n_last → −n_last, 바깥쪽(+t_end)으로.
     if round_caps {
-        push_cap(&mut poly, points[n - 1], norms[n - 1], half_widths[n - 1], t_end);
+        push_cap(
+            &mut poly,
+            points[n - 1],
+            norms[n - 1],
+            half_widths[n - 1],
+            t_end,
+        );
     }
     // 안쪽 체인 (역순).
     for i in (0..n).rev() {
@@ -91,7 +93,13 @@ pub fn stroke_outline(
     }
     // 시작 캡 (반원): −n0 → +n0, 바깥쪽(−t_start)으로 (첫 정점으로 닫힘).
     if round_caps {
-        push_cap(&mut poly, points[0], neg(norms[0]), half_widths[0], neg(t_start));
+        push_cap(
+            &mut poly,
+            points[0],
+            neg(norms[0]),
+            half_widths[0],
+            neg(t_start),
+        );
     }
     poly
 }
@@ -237,14 +245,8 @@ impl EarGrid {
         skip: [u32; 3],
         removed: &[bool],
     ) -> bool {
-        let (minx, maxx) = (
-            pa[0].min(pb[0]).min(pc[0]),
-            pa[0].max(pb[0]).max(pc[0]),
-        );
-        let (miny, maxy) = (
-            pa[1].min(pb[1]).min(pc[1]),
-            pa[1].max(pb[1]).max(pc[1]),
-        );
+        let (minx, maxx) = (pa[0].min(pb[0]).min(pc[0]), pa[0].max(pb[0]).max(pc[0]));
+        let (miny, maxy) = (pa[1].min(pb[1]).min(pc[1]), pa[1].max(pb[1]).max(pc[1]));
         let cx0 = (((minx - self.x0) / self.cell).floor().max(0.0) as usize).min(self.nx - 1);
         let cx1 = (((maxx - self.x0) / self.cell).floor().max(0.0) as usize).min(self.nx - 1);
         let cy0 = (((miny - self.y0) / self.cell).floor().max(0.0) as usize).min(self.ny - 1);
@@ -276,10 +278,7 @@ pub struct FallbackGeometry {
 }
 
 /// 폴백 지오메트리를 계산합니다. `points`/`half_widths`는 같은 공간(pt 또는 px).
-pub fn stroke_fallback_geometry(
-    points: &[[f32; 2]],
-    half_widths: &[f32],
-) -> FallbackGeometry {
+pub fn stroke_fallback_geometry(points: &[[f32; 2]], half_widths: &[f32]) -> FallbackGeometry {
     let n = points.len().min(half_widths.len());
     if n == 0 {
         return FallbackGeometry {
@@ -317,7 +316,8 @@ pub fn stroke_fallback_geometry(
     }
     // 양끝 캡 원.
     out.circles.push((points[0], half_widths[0].max(0.0)));
-    out.circles.push((points[n - 1], half_widths[n - 1].max(0.0)));
+    out.circles
+        .push((points[n - 1], half_widths[n - 1].max(0.0)));
     // 방향이 약 15° 이상 꺾이는 내부 점에 조인 원 (이웃 quad 사이 틈 메움).
     for i in 1..n - 1 {
         let (dx0, dy0) = (
@@ -369,19 +369,14 @@ pub enum StrokeFill {
 }
 
 /// 외곽선 → (확인된) 삼각분할 → 경계 가장자리/bbox까지 한 번에 계산합니다.
-pub fn stroke_geometry(
-    points: &[[f32; 2]],
-    half_widths: &[f32],
-    round_caps: bool,
-) -> StrokeFill {
+pub fn stroke_geometry(points: &[[f32; 2]], half_widths: &[f32], round_caps: bool) -> StrokeFill {
     let poly = stroke_outline(points, half_widths, round_caps);
     let (tris, complete) = triangulate_polygon_checked(&poly);
     if !complete || tris.is_empty() {
         return StrokeFill::Fallback(stroke_fallback_geometry(points, half_widths));
     }
     // 경계 가장자리: 삼각형들 사이에서 1번만 공유된 가장자리.
-    let mut counts: std::collections::HashMap<(u32, u32), u32> =
-        std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
     for t in &tris {
         for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
             *counts.entry((a.min(b), a.max(b))).or_default() += 1;
@@ -395,11 +390,7 @@ pub fn stroke_geometry(
                 continue;
             }
             let ic = 3 - ia - ib; // 남은 정점 = 안쪽.
-            let (pa, pb, pc) = (
-                poly[a as usize],
-                poly[b as usize],
-                poly[t[ic] as usize],
-            );
+            let (pa, pb, pc) = (poly[a as usize], poly[b as usize], poly[t[ic] as usize]);
             let (dx, dy) = (pb[0] - pa[0], pb[1] - pa[1]);
             let len = (dx * dx + dy * dy).sqrt();
             if len < 1e-4 {
@@ -408,7 +399,11 @@ pub fn stroke_geometry(
             let perp = [-dy / len, dx / len];
             // 안쪽 정점(pc)의 반대 방향이 바깥.
             let side = (pc[0] - pa[0]) * perp[0] + (pc[1] - pa[1]) * perp[1];
-            let dir = if side < 0.0 { perp } else { [-perp[0], -perp[1]] };
+            let dir = if side < 0.0 {
+                perp
+            } else {
+                [-perp[0], -perp[1]]
+            };
             aa_edges.push((a, b, dir));
         }
     }
@@ -490,7 +485,11 @@ fn push_ribbon_cap(
         ];
         inner.push(push_ribbon_vert(out, add_mul(center, dir, half), alpha));
         if feather > 0.0 {
-            outer.push(push_ribbon_vert(out, add_mul(center, dir, half + feather), 0.0));
+            outer.push(push_ribbon_vert(
+                out,
+                add_mul(center, dir, half + feather),
+                0.0,
+            ));
         }
     }
     for k in 0..CAP_STEPS {
@@ -560,7 +559,8 @@ fn stroke_ribbon_pairs(
     let per = if has_feather { 4 } else { 2 };
     out.verts.reserve(n * per + 32);
     out.alphas.reserve(n * per + 32);
-    out.tris.reserve((n - 1) * if has_feather { 6 } else { 2 } + 48);
+    out.tris
+        .reserve((n - 1) * if has_feather { 6 } else { 2 } + 48);
     if n == 1 {
         // 점 하나: 원판 + 페더 링.
         let h = half_widths[0].max(0.0);
@@ -676,7 +676,14 @@ pub trait WritingMaterial: Send + Sync {
     ///
     /// `dir` is a unit vector; italic nibs scale by it, other materials ignore
     /// it. Includes the material's own clamping (there is no locker-side clamp).
-    fn point_width(&self, max_width_pt: f32, pressure: f32, tilt_mag: f32, speed: f32, dir: [f32; 2]) -> f32;
+    fn point_width(
+        &self,
+        max_width_pt: f32,
+        pressure: f32,
+        tilt_mag: f32,
+        speed: f32,
+        dir: [f32; 2],
+    ) -> f32;
     /// Batch per-point widths (pt) for a whole stroke — consumed by the bake path
     /// (`halves_for_stroke`). Uses the same formulas as `point_width`.
     fn widths(&self, max_width_pt: f32, pts: &[StrokePoint], tilt_mag: f32) -> Vec<f32>;
@@ -691,7 +698,14 @@ impl WritingMaterial for ConstantMaterial {
     fn smoothing_alpha(&self) -> f32 {
         0.0
     }
-    fn point_width(&self, max_width_pt: f32, _pressure: f32, _tilt_mag: f32, _speed: f32, _dir: [f32; 2]) -> f32 {
+    fn point_width(
+        &self,
+        max_width_pt: f32,
+        _pressure: f32,
+        _tilt_mag: f32,
+        _speed: f32,
+        _dir: [f32; 2],
+    ) -> f32 {
         max_width_pt
     }
     fn widths(&self, max_width_pt: f32, pts: &[StrokePoint], _tilt_mag: f32) -> Vec<f32> {
@@ -707,7 +721,14 @@ impl WritingMaterial for BallPenProfile {
     fn smoothing_alpha(&self) -> f32 {
         self.speed_smooth
     }
-    fn point_width(&self, max_width_pt: f32, pressure: f32, tilt_mag: f32, speed: f32, _dir: [f32; 2]) -> f32 {
+    fn point_width(
+        &self,
+        max_width_pt: f32,
+        pressure: f32,
+        tilt_mag: f32,
+        speed: f32,
+        _dir: [f32; 2],
+    ) -> f32 {
         // Ball pens are rotation-invariant — direction is ignored.
         self.width_at(max_width_pt, pressure, tilt_mag, speed)
     }
@@ -724,7 +745,14 @@ impl WritingMaterial for FountainProfile {
     fn smoothing_alpha(&self) -> f32 {
         self.speed_smooth
     }
-    fn point_width(&self, max_width_pt: f32, pressure: f32, tilt_mag: f32, speed: f32, dir: [f32; 2]) -> f32 {
+    fn point_width(
+        &self,
+        max_width_pt: f32,
+        pressure: f32,
+        tilt_mag: f32,
+        speed: f32,
+        dir: [f32; 2],
+    ) -> f32 {
         let w = self.width_at(max_width_pt, pressure, tilt_mag, speed);
         let lo = self.min_width_pt.max(0.05).min(max_width_pt.max(0.05));
         let hi = max_width_pt.max(0.05);
@@ -823,7 +851,11 @@ pub struct WidthLocker {
 
 impl WidthLocker {
     /// Build a locker from any `WritingMaterial` (the open/closed extension point).
-    pub fn with_material(material: Box<dyn WritingMaterial>, max_width_pt: f32, tilt_mag: f32) -> Self {
+    pub fn with_material(
+        material: Box<dyn WritingMaterial>,
+        max_width_pt: f32,
+        tilt_mag: f32,
+    ) -> Self {
         let alpha = material.smoothing_alpha().clamp(0.0, 1.0);
         Self {
             profile: material,
@@ -840,14 +872,17 @@ impl WidthLocker {
     /// Build a locker for an ink tool, resolving its material via [`Materials::for_tool`].
     pub fn new(tool: ToolType, max_width_pt: f32, materials: &Materials, tilt_mag: f32) -> Self {
         Self::with_material(
-            materials.for_tool(tool).expect("ink tool has a writing material"),
+            materials
+                .for_tool(tool)
+                .expect("ink tool has a writing material"),
             max_width_pt,
             tilt_mag,
         )
     }
 
     fn lock_width(&self, pressure: f32, speed: f32, dir: [f32; 2]) -> f32 {
-        self.profile.point_width(self.max_width_pt, pressure, self.tilt_mag, speed, dir)
+        self.profile
+            .point_width(self.max_width_pt, pressure, self.tilt_mag, speed, dir)
     }
 
     /// 새 점을 추가합니다.
@@ -908,7 +943,11 @@ fn seg_speed_dir(a: &StrokePoint, b: &StrokePoint) -> (f32, [f32; 2]) {
     let dx = b.x - a.x;
     let dy = b.y - a.y;
     let len = (dx * dx + dy * dy).sqrt();
-    let dir = if len < 1e-6 { [1.0, 0.0] } else { [dx / len, dy / len] };
+    let dir = if len < 1e-6 {
+        [1.0, 0.0]
+    } else {
+        [dx / len, dy / len]
+    };
     let v = if a.t_ms == 0 || b.t_ms == 0 {
         0.0
     } else {
@@ -1169,7 +1208,8 @@ impl FountainProfile {
         let w_min = self.min_width_pt.max(0.05).min(max_width_pt.max(0.05));
         let w_max = max_width_pt.max(w_min);
         let p = self.effective_pressure(pressure, tilt_mag);
-        let mut w = w_min + (w_max - w_min) * p.powf(self.pressure_alpha.max(0.1)) * self.speed_factor(v);
+        let mut w =
+            w_min + (w_max - w_min) * p.powf(self.pressure_alpha.max(0.1)) * self.speed_factor(v);
         w += self.dwell_extra(v);
         w.clamp(w_min, w_max)
     }
@@ -1178,8 +1218,6 @@ impl FountainProfile {
     pub fn speeds(&self, pts: &[StrokePoint]) -> Vec<f32> {
         ema_speeds(pts, self.speed_smooth)
     }
-
-    
 }
 
 // ── 2차원 헬퍼 ───────────────────────────────────────────────────────────────
@@ -1220,13 +1258,7 @@ fn circle_polygon(center: [f32; 2], r: f32, steps: usize) -> Vec<[f32; 2]> {
 }
 
 /// 반원 캡: 법선 `n` 쪽(+n)에서 시작해 바깥쪽(`away`)을 지나 −n으로 이어지는 호.
-fn push_cap(
-    out: &mut Vec<[f32; 2]>,
-    center: [f32; 2],
-    n: [f32; 2],
-    half: f32,
-    away: [f32; 2],
-) {
+fn push_cap(out: &mut Vec<[f32; 2]>, center: [f32; 2], n: [f32; 2], half: f32, away: [f32; 2]) {
     let steps = 10usize;
     let base = n[1].atan2(n[0]);
     let mid = base + std::f32::consts::FRAC_PI_2;
@@ -1537,8 +1569,6 @@ impl BallPenProfile {
     pub fn speeds(&self, pts: &[StrokePoint]) -> Vec<f32> {
         ema_speeds(pts, self.speed_smooth)
     }
-
-    
 }
 
 /// 점별 **스무딩된 속도**(pt/초) — 공용 저역 통과(EMA) 계산.

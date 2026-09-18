@@ -123,7 +123,9 @@ pub fn check_well_formed(stream: &[Command]) -> Result<(), MalformedStream> {
         return Err(MalformedStream(format!("닫히지 않은 세션: {m:?}")));
     }
     if begins != ends {
-        return Err(MalformedStream(format!("begin/end 불일치: {begins}/{ends}")));
+        return Err(MalformedStream(format!(
+            "begin/end 불일치: {begins}/{ends}"
+        )));
     }
     if erase_opens != erase_closes {
         return Err(MalformedStream(format!(

@@ -29,10 +29,7 @@ fn case_insensitive() {
 
 #[test]
 fn multiple_occurrences_and_across_runs() {
-    let runs = vec![
-        run("the cat", vec![]),
-        run("the dog and the bird", vec![]),
-    ];
+    let runs = vec![run("the cat", vec![]), run("the dog and the bird", vec![])];
     let m = find_matches(&runs, "the");
     assert_eq!(m.len(), 3);
     assert_eq!(m.iter().map(|x| x.run).collect::<Vec<_>>(), vec![0, 1, 1]);

@@ -42,9 +42,7 @@ impl FreeDfApp {
                 }
                 self.sel_notes.clear();
                 self.sel_pdfs.clear();
-                self.status = Some(format!(
-                    "Deleted {n_notes} note(s) and {n_pdfs} PDF(s)"
-                ));
+                self.status = Some(format!("Deleted {n_notes} note(s) and {n_pdfs} PDF(s)"));
             }
         }
     }

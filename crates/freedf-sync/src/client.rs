@@ -47,7 +47,9 @@ impl SyncClient {
     pub fn new_with_timeout(base_url: &str, api_key: &str, timeout: Duration) -> Result<Self> {
         let base = base_url.trim_end_matches('/').to_string();
         if base.is_empty() || !(base.starts_with("http://") || base.starts_with("https://")) {
-            return Err(SyncError::Transport(format!("invalid base_url: {base_url}")));
+            return Err(SyncError::Transport(format!(
+                "invalid base_url: {base_url}"
+            )));
         }
         // 1Gbps 최적화:
         //  - timeout: 전체 요청/전송 예산 (대용량 스냅샷·미디어 전송 허용).
@@ -106,7 +108,8 @@ impl SyncClient {
     }
 
     fn into_string(resp: ureq::Response) -> Result<String> {
-        resp.into_string().map_err(|e| SyncError::Transport(e.to_string()))
+        resp.into_string()
+            .map_err(|e| SyncError::Transport(e.to_string()))
     }
 
     // ── 기본 ─────────────────────────────────────────────────────────────────
@@ -352,7 +355,11 @@ impl SyncClient {
     }
 
     /// ETag 조건부 PDF 다운로드 — 변경 없으면 `Ok(None)` (304).
-    pub fn download_pdf_if_changed(&self, doc_id: i64, etag: &str) -> Result<Option<DownloadedPdf>> {
+    pub fn download_pdf_if_changed(
+        &self,
+        doc_id: i64,
+        etag: &str,
+    ) -> Result<Option<DownloadedPdf>> {
         self.download_pdf_inner(doc_id, Some(etag))
     }
 
@@ -446,7 +453,9 @@ mod tests {
 
         // pull — since=rev에 새 획만
         let recs = c.changes(doc_id, rev).expect("changes");
-        assert!(recs.iter().any(|r| matches!(r, ChangeRecord::StrokeAdded { stroke } if stroke.id == new_id)));
+        assert!(recs
+            .iter()
+            .any(|r| matches!(r, ChangeRecord::StrokeAdded { stroke } if stroke.id == new_id)));
 
         // 충돌 — 낡은 base로 재전송 → 서버 계산 패치
         // (서버가 내려준 스냅샷은 revision만 있고 base_revision은 없으므로,
@@ -481,7 +490,9 @@ mod tests {
             .is_none());
 
         // CAS
-        let d = c.put_object(b"freedf-sync crate object").expect("put object");
+        let d = c
+            .put_object(b"freedf-sync crate object")
+            .expect("put object");
         assert_eq!(
             c.get_object(&d).expect("get object"),
             b"freedf-sync crate object"

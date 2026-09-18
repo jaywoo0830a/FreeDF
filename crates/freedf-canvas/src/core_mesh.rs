@@ -39,7 +39,11 @@ pub fn halves_for_stroke(
     let n = points.len();
     let locked = !points.is_empty() && points.iter().all(|p| p.width > 0.0);
     // 하이라이터는 더 두꺼운 최소 절반 두께(0.5)를, 그 외 잉크는 얇은 하한(0.05) 사용.
-    let min_half = if tool == ToolType::Highlighter { 0.5 } else { 0.05 };
+    let min_half = if tool == ToolType::Highlighter {
+        0.5
+    } else {
+        0.05
+    };
     if locked {
         let mut halves = Vec::with_capacity(n);
         for p in points {
@@ -47,7 +51,9 @@ pub fn halves_for_stroke(
         }
         return halves;
     }
-    let material = materials.for_tool(tool).expect("ink tool has a writing material");
+    let material = materials
+        .for_tool(tool)
+        .expect("ink tool has a writing material");
     let core_pts: Vec<freedf_core::model::StrokePoint> = points
         .iter()
         .map(|p| freedf_core::model::StrokePoint {
@@ -86,7 +92,11 @@ pub fn alphas_for_stroke(
     } else {
         (pen_soak, pen_grain)
     };
-    let created = if created_ms > 0 { created_ms } else { stroke_id };
+    let created = if created_ms > 0 {
+        created_ms
+    } else {
+        stroke_id
+    };
     let grain = seeded_grain(*grain, created);
     let core_pts: Vec<freedf_core::model::StrokePoint> = points
         .iter()
@@ -139,8 +149,7 @@ pub fn append_stroke_ribbon(
         .iter()
         .map(|p| [p.position.x, p.position.y])
         .collect();
-    let ribbon =
-        freedf_core::pen::stroke_ribbon_lr(&pts, halves, feather_pt, round_caps, alphas);
+    let ribbon = freedf_core::pen::stroke_ribbon_lr(&pts, halves, feather_pt, round_caps, alphas);
     let base = mesh.vertices.len() as u32;
     // 정확 용량 예약 — 리본 크기가 산출된 뒤 extend realloc을 피합니다.
     mesh.vertices.reserve(ribbon.verts.len());
@@ -149,12 +158,8 @@ pub fn append_stroke_ribbon(
     let cf = |v: u8| v as f32 / 255.0;
     for (p, a) in ribbon.verts.iter().zip(&ribbon.alphas) {
         mesh.vertices.push(*p);
-        mesh.colors.push([
-            cf(color[0]),
-            cf(color[1]),
-            cf(color[2]),
-            cf(color[3]) * a,
-        ]);
+        mesh.colors
+            .push([cf(color[0]), cf(color[1]), cf(color[2]), cf(color[3]) * a]);
     }
     for t in &ribbon.tris {
         mesh.indices

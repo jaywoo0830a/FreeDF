@@ -25,7 +25,7 @@ fn duplicate_title_rejected_case_insensitive() {
     let mut m = NotesManager::new();
     m.create_note("Lecture").unwrap(); // id 0
     m.create_note("Notes").unwrap(); // id 1
-    // 대소문자만 다른 제목으로 생성 거부
+                                     // 대소문자만 다른 제목으로 생성 거부
     assert!(matches!(
         m.create_note("lecture"),
         Err(NoteError::DuplicateTitle)
@@ -90,7 +90,7 @@ fn list_sorted_by_recent_update() {
     m.create_note("Oldest").unwrap(); // id 0
     m.create_note("Middle").unwrap(); // id 1
     m.create_note("Newest").unwrap(); // id 2
-    // Middle을 최근으로 터치
+                                      // Middle을 최근으로 터치
     m.touch(1).unwrap();
     let titles: Vec<&str> = m.list().iter().map(|n| n.title.as_str()).collect();
     assert_eq!(titles, vec!["Middle", "Newest", "Oldest"]);

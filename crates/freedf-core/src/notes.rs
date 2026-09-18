@@ -191,7 +191,11 @@ impl NotesManager {
 /// 제목 검증 (빈/개행/과다 길이 금지).
 pub fn validate_title(title: &str) -> Result<String, NoteError> {
     let title = title.trim();
-    if title.is_empty() || title.chars().count() > 128 || title.contains('\n') || title.contains('\r') {
+    if title.is_empty()
+        || title.chars().count() > 128
+        || title.contains('\n')
+        || title.contains('\r')
+    {
         return Err(NoteError::InvalidTitle);
     }
     Ok(title.to_string())

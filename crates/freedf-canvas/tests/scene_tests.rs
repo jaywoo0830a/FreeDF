@@ -1,7 +1,7 @@
 //! `scene` 모듈 단위 테스트 — `src/scene.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_canvas::scene::*;
 use freedf_canvas::geom::PagePoint;
+use freedf_canvas::scene::*;
 
 fn stroke(id: u64) -> Stroke {
     Stroke {
@@ -31,7 +31,10 @@ fn mutations_bump_revision() {
     assert_eq!(store.rev(), Revision(2));
     assert!(store.remove(StrokeId(1)).is_some());
     assert_eq!(store.rev(), Revision(3));
-    assert!(store.remove(StrokeId(99)).is_none(), "없는 획 삭제는 rev 불변");
+    assert!(
+        store.remove(StrokeId(99)).is_none(),
+        "없는 획 삭제는 rev 불변"
+    );
     assert_eq!(store.rev(), Revision(3));
 }
 

@@ -36,9 +36,8 @@ impl DictionaryProvider for WiktionaryProvider {
     fn lookup(&self, agent: &ureq::Agent, word: &str) -> Result<DictionaryEntry, String> {
         let url = format!("https://en.wiktionary.org/api/rest_v1/page/definition/{word}");
         let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
-        let value: serde_json::Value = resp
-            .into_json()
-            .map_err(|e| format!("bad response: {e}"))?;
+        let value: serde_json::Value =
+            resp.into_json().map_err(|e| format!("bad response: {e}"))?;
         let mut entry = freedf_core::dictionary::parse_wiktionary(&value);
         if entry.word.is_empty() {
             entry.word = word.to_string();
@@ -123,7 +122,11 @@ pub(crate) fn spawn_lookup(
     rx
 }
 
-fn lookup(service: &DictionaryService, db: &dyn StorageBackend, word: &str) -> Result<String, String> {
+fn lookup(
+    service: &DictionaryService,
+    db: &dyn StorageBackend,
+    word: &str,
+) -> Result<String, String> {
     // 1) DB 캐시 (공통 형식 JSONB; 이전 형식이면 무시하고 재조회).
     if let Some(v) = db.get_word_cache(word) {
         if let Some(e) = DictionaryEntry::from_value(&v) {

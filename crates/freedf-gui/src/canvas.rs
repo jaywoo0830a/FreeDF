@@ -7,19 +7,27 @@
 //! Clone 슬롯에 담을 수 없고, `<Raw>` 클로저가 호스트 상태에 접근할 방법이 없기
 //! 때문이다 (egui UI는 단일 스레드라 스레드 로컬이 안전하다).
 //!
-//! 잉크 렌더는 freedf의 검증된 파이프라인과 같은 부품을 쓴다: `freedf-canvas`의
-//! `halves_for_stroke` + `append_stroke_ribbon` + `alphas_for_stroke`
-//! (freedf `app/canvas/paint.rs`와 동일 생성기), 페이지↔화면 변환은
-//! `ViewTransform`, 스트로크/북마크 저장은 `freedf-core::store::AnnotationStore`.
+//! 잉크 렌더는 freedf의 검증된 파이프라인과 같은 부품을 쓴다: **입력**은
+//! `freedf-core`의 [`InkPipeline`](freedf_core::pipeline::InkPipeline)
+//! (`down`/`drag`/`up` — 1€ 필터 + 인과적 선폭 확정 + 동결 커밋), **출력**은
+//! `freedf-canvas`의 `halves_for_stroke` + `append_stroke_ribbon` +
+//! `alphas_for_stroke` (freedf `app/canvas/paint.rs`와 동일 생성기), 페이지↔화면
+//! 변환은 `ViewTransform`, 스트로크/북마크 저장은 `freedf-core::store::AnnotationStore`.
+//!
+//! 즉 이 파일은 두 인터페이스를 **배선**할 뿐, 잉크 물리/지오메트리를 직접
+//! 계산하지 않는다 (도구별 분기도 없다 — 재료는 `Materials::for_tool`이 결정).
 //!
 //! v1 한계: 펜 압력은 egui 포인터 이벤트에 없어(마우스/단순 펜) 명목 1.0 —
-//! 실제 필압 어댑터는 Phase 4(freedf `app/input` 이식)에서 붙는다. 프레임마다
-//! 메시 재굽기(획 수가 커지면 freedf의 BakeService 이식).
+//! 실제 필압 어댑터는 Phase 4(freedf `app/input` 이식)에서 붙는다. 지우개는
+//! 아직 세션이 없다(`Materials::for_tool`이 재료를 주지 않는다) — v1에서는
+//! 잉크를 남기지 않는다. 프레임마다 메시 재굽기(획 수가 커지면 freedf의
+//! BakeService 이식).
 
 use eframe::egui;
 use freedf_canvas::{PagePoint, ViewTransform};
-use freedf_core::model::{Stroke, StrokePoint, ToolType};
+use freedf_core::model::{Stroke, ToolType};
 use freedf_core::pen::Materials;
+use freedf_core::pipeline::InkPipeline;
 use freedf_core::store::AnnotationStore;
 use freedf_core::transform::{MAX_ZOOM, MIN_ZOOM};
 use freedf_services::pdf::{load_pdfium, DocumentView, Pdfium};
@@ -32,14 +40,11 @@ pub const BLANK_PAGE: [f32; 2] = [595.0, 842.0];
 const ZOOM_STEP: f32 = 1.25;
 /// PDF 페이지 텍스처 렌더 폭 (px) — v1은 단일 해상도.
 const PDF_TEX_WIDTH: f32 = 1400.0;
-
-/// 획 하나의 그리기/입력 상태 (진행 중).
-struct ActiveStroke {
-    tool: ToolType,
-    color: [u8; 4],
-    width: f32,
-    points: Vec<StrokePoint>,
-}
+/// 스무딩 강도 — freedf 설정 기본값과 같다(OFF). 켜면 1€ 필터가 점을 다듬는다.
+const SMOOTHING: f32 = 0.0;
+/// 새 점을 받아들이는 최소 화면 이동(px). 같은 자리의 반복 샘플(정지 중 프레임)과
+/// 부화소 떨림을 걸러 리본에 길이 0 세그먼트가 쌓이지 않게 한다.
+const MIN_STEP_PX: f32 = 0.75;
 
 /// 탭 하나 = 문서 하나 — 저장소·페이지·뷰·PDF를 독립으로 가진다.
 pub(crate) struct Doc {
@@ -87,10 +92,13 @@ impl Doc {
         }
     }
 
-    /// 페이지 화면 사각형 (origin = 페이지 (0,0)의 화면 좌표).
+    /// 페이지 화면 사각형 — origin(캔버스 원점) + **뷰 변환 전체**(팬/줌).
+    ///
+    /// 팬을 빼면 종이/PDF/히트테스트가 잉크 메시(`canvas_mesh_to_egui`)와
+    /// 어긋난다 — 팬 뒤에 "보이는 종이"에 대고 눌러도 잉크가 다른 자리에 남는다.
     fn page_rect(&self, origin: egui::Pos2) -> egui::Rect {
         egui::Rect::from_min_size(
-            origin,
+            origin + egui::vec2(self.view.pan_x, self.view.pan_y),
             egui::vec2(
                 self.page_size[0] * self.view.zoom,
                 self.page_size[1] * self.view.zoom,
@@ -105,11 +113,12 @@ impl Doc {
         egui::pos2(x, rect.top() + 12.0)
     }
 
-    /// 페이지 중심 (화면 px, origin 상대) — 줌 버튼의 고정점.
+    /// 페이지 중심 (화면 px, origin 상대) — 줌 버튼의 고정점. 팬도 반영한다
+    /// (팬한 상태에서 줌해도 화면 중앙의 페이지 점이 고정).
     fn last_page_center_px(&self) -> [f32; 2] {
         [
-            self.page_size[0] * self.view.zoom * 0.5,
-            self.page_size[1] * self.view.zoom * 0.5,
+            self.page_size[0] * self.view.zoom * 0.5 + self.view.pan_x,
+            self.page_size[1] * self.view.zoom * 0.5 + self.view.pan_y,
         ]
     }
 }
@@ -124,7 +133,10 @@ pub(crate) struct Canvas {
     pub(crate) tool: ToolType,
     pub(crate) color: [u8; 4],
     pub(crate) width: f32,
-    active_stroke: Option<ActiveStroke>,
+    /// 진행 중 획 — **코어의 `InkPipeline`** (1€ 필터 + 인과적 선폭 확정 +
+    /// 동결 커밋). 점/폭/시각은 전부 이 객체가 소유하고, 여기서는 down/drag/up만
+    /// 부른다 (도구별 분기 없음 — 재료는 `Materials::for_tool`).
+    ink: Option<InkPipeline>,
     /// 오른쪽 버튼 팬 진행 중 — **캔버스 안에서 눌렀을 때만** 켜진다
     /// (캔버스 밖에서 누른 드래그가 팬으로 새는 버그 방지).
     pan_active: bool,
@@ -148,7 +160,7 @@ impl Default for Canvas {
             tool: ToolType::Pen,
             color: [26, 26, 28, 255],
             width: 2.0,
-            active_stroke: None,
+            ink: None,
             pan_active: false,
             input_enabled: true,
             last_pointer: None,
@@ -188,20 +200,34 @@ impl Canvas {
         &self.docs[self.active]
     }
 
-    /// 진행 중 획을 마쳐서 활성 문서에 기록 (탭 전환/닫기 전 호출).
+    /// 진행 중 획을 **코어에서 동결**(마지막 폭 확정 + 불변 `Stroke`)해 활성
+    /// 문서에 기록 (탭 전환/닫기 전에도 호출된다).
+    ///
+    /// 점 하나짜리 탭도 점으로 남긴다 — 펜을 짧게 찍는 입력이 사라지지 않게
+    /// (구 구현은 `points.len() >= 2`를 요구해 탭이 통째로 버려졌다).
     fn finish_active(&mut self) {
-        if let Some(a) = self.active_stroke.take() {
-            if a.points.len() >= 2 {
-                let doc = self.doc();
-                doc.store
-                    .add_stroke(doc.page, a.tool, a.color, a.width, a.points);
-            }
+        let Some(mut pipeline) = self.ink.take() else {
+            return;
+        };
+        let Some(stroke) = pipeline.up(0) else {
+            return;
+        };
+        if stroke.points.is_empty() {
+            return;
         }
+        let doc = self.doc();
+        doc.store.add_stroke(
+            doc.page,
+            stroke.tool,
+            stroke.color,
+            stroke.width,
+            stroke.points,
+        );
     }
 
     /// 진행 중 획을 버린다 (문서를 닫을 때 등 — 잘못된 문서에 기록 방지).
     fn drop_active(&mut self) {
-        self.active_stroke = None;
+        self.ink = None;
     }
 }
 
@@ -232,7 +258,13 @@ pub fn zoom_fit() {
 pub fn clear_ink() {
     with(|c| {
         let page = c.doc().page;
-        let ids: Vec<u64> = c.doc().store.strokes_on(page).iter().map(|s| s.id).collect();
+        let ids: Vec<u64> = c
+            .doc()
+            .store
+            .strokes_on(page)
+            .iter()
+            .map(|s| s.id)
+            .collect();
         c.doc().store.remove_strokes(page, &ids);
         c.toast_now(String::from("페이지 잉크를 지웠습니다"));
     });
@@ -675,12 +707,16 @@ impl Canvas {
         }
     }
 
+    /// 진행 중 획(코어 `LiveStroke`)을 리본으로 그린다 — **커밋과 같은 생성기**를
+    /// 쓰므로 펜을 떼는 순간 그림이 바뀌지 않는다 (WYSIWYG).
     fn paint_active(&mut self, painter: &egui::Painter, origin: egui::Pos2) {
-        let Some(a) = &self.active_stroke else { return };
-        if a.points.is_empty() {
+        let Some(live) = self.ink.as_ref().and_then(|p| p.live()) else {
+            return;
+        };
+        if live.points.is_empty() {
             return;
         }
-        let created_ms = a
+        let created_ms = live
             .points
             .first()
             .map(|p| p.t_ms)
@@ -689,10 +725,10 @@ impl Canvas {
         let cs = freedf_canvas::Stroke {
             id: freedf_canvas::StrokeId(0),
             kind: freedf_canvas::LayerKind::Ink,
-            tool: a.tool,
-            color: a.color,
-            base_width: a.width,
-            points: a
+            tool: live.tool,
+            color: live.color,
+            base_width: live.width,
+            points: live
                 .points
                 .iter()
                 .map(|p| freedf_canvas::StrokePoint {
@@ -719,19 +755,29 @@ impl Canvas {
     }
 
     fn handle_input(&mut self, ui: &mut egui::Ui, rect: egui::Rect, origin: egui::Pos2) {
-        let (pos, primary_down, primary_pressed, primary_released, secondary_down, secondary_pressed, secondary_released, scroll) =
-            ui.input(|i| {
-                (
-                    i.pointer.latest_pos(),
-                    i.pointer.primary_down(),
-                    i.pointer.primary_pressed(),
-                    i.pointer.primary_released(),
-                    i.pointer.secondary_down(),
-                    i.pointer.secondary_pressed(),
-                    i.pointer.secondary_released(),
-                    i.smooth_scroll_delta,
-                )
-            });
+        let (
+            pos,
+            time,
+            primary_down,
+            primary_pressed,
+            primary_released,
+            secondary_down,
+            secondary_pressed,
+            secondary_released,
+            scroll,
+        ) = ui.input(|i| {
+            (
+                i.pointer.latest_pos(),
+                i.time,
+                i.pointer.primary_down(),
+                i.pointer.primary_pressed(),
+                i.pointer.primary_released(),
+                i.pointer.secondary_down(),
+                i.pointer.secondary_pressed(),
+                i.pointer.secondary_released(),
+                i.smooth_scroll_delta,
+            )
+        });
         let page = self.doc().page_rect(origin);
 
         // ── 가로채기 방지 ── 모달 창이 열려 있으면(셸이 `sync_and_status`로
@@ -768,49 +814,52 @@ impl Canvas {
             }
         }
 
-        // ── 왼쪽 버튼 = 잉크 (시작은 캔버스 위에서만) ──
+        // ── 왼쪽 버튼 = 잉크 (시작은 페이지 안에서만) ──
+        //
+        // 세션 수명은 **코어 `InkPipeline`**이 소유한다: down(시작) → drag(꼬리)
+        // → up(동결 커밋). 여기서는 화면→페이지 변환과 "페이지 안" 판정만 한다.
         let in_page = pos.map(|p| page.contains(p)).unwrap_or(false);
-        if primary_pressed && enabled && in_page {
+        if primary_pressed && enabled && in_page && is_ink_tool(self.tool) {
             if let Some(pos) = pos {
-                let pt = self.page_point(pos, origin);
-                self.active_stroke = Some(ActiveStroke {
-                    tool: self.tool,
-                    color: self.color,
-                    width: self.width,
-                    points: vec![pt],
-                });
+                let p = self.page_pos(pos, origin);
+                let mut pipeline = InkPipeline::new(self.mesher.materials, self.width, SMOOTHING);
+                // 압력은 egui 포인터에 없다(마우스/단순 펜) — 명목 1.0.
+                pipeline.down(self.tool, self.color, p.x, p.y, 1.0, time, now_ms(), 0.0);
+                self.ink = Some(pipeline);
             }
-        } else if primary_down && self.active_stroke.is_some() && in_page {
+        } else if primary_down && self.ink.is_some() && in_page {
             if let Some(pos) = pos {
                 let zoom = self.doc_ref().view.zoom;
-                let pt = self.page_point(pos, origin);
-                let Some(a) = self.active_stroke.as_mut() else { return };
-                let Some(last) = a.points.last() else { return };
-                let dist = ((pt.x - last.x).powi(2) + (pt.y - last.y).powi(2)).sqrt();
-                // 최소 간격 — 화면 1px에 상응하는 페이지 거리 이상일 때만 추가.
-                if dist * zoom > 0.75 {
-                    a.points.push(pt);
+                let p = self.page_pos(pos, origin);
+                // 같은 자리 반복 샘플/부화소 떨림은 버린다 (길이 0 세그먼트 방지).
+                let moved = self
+                    .ink
+                    .as_ref()
+                    .and_then(|pipe| pipe.live())
+                    .and_then(|live| live.points.last())
+                    .map(|last| {
+                        let dx = p.x - last.x;
+                        let dy = p.y - last.y;
+                        (dx * dx + dy * dy).sqrt() * zoom > MIN_STEP_PX
+                    })
+                    .unwrap_or(false);
+                if moved {
+                    if let Some(pipe) = self.ink.as_mut() {
+                        pipe.drag(p.x, p.y, 1.0, time, now_ms());
+                    }
                 }
             }
         }
-        if primary_released || (self.active_stroke.is_some() && !primary_down) {
+        if primary_released || (self.ink.is_some() && !primary_down) {
             self.finish_active();
         }
     }
 
-    /// 화면 좌표 → 활성 문서 페이지 pt `StrokePoint` (압력은 명목 1.0, 폭은
-    /// 획 기본 폭으로 잠근다 — v1; 필압은 Phase 4 어댑터 과제).
-    fn page_point(&self, pos: egui::Pos2, origin: egui::Pos2) -> StrokePoint {
+    /// 화면 좌표 → 활성 문서 페이지 pt 좌표 (뷰 변환 = 줌/팬).
+    fn page_pos(&self, pos: egui::Pos2, origin: egui::Pos2) -> PagePoint {
         let rel = pos - origin;
         let doc = self.docs.get(self.active).expect("활성 문서");
-        let p = doc.view.view_to_page(PagePoint::new(rel.x, rel.y));
-        StrokePoint {
-            x: p.x,
-            y: p.y,
-            pressure: 1.0,
-            t_ms: now_ms(),
-            width: self.width,
-        }
+        doc.view.view_to_page(PagePoint::new(rel.x, rel.y))
     }
 
     /// 현재 페이지 텍스처가 없으면(또는 페이지가 바뀌었으면) 렌더한다.
@@ -837,8 +886,7 @@ impl Canvas {
         let Some(pdf) = &doc.pdf else { return };
         match pdf.render_page(page, PDF_TEX_WIDTH, freedf_services::pdf::MAX_RENDER_DIM) {
             Ok(rp) => {
-                let img =
-                    egui::ColorImage::from_rgba_unmultiplied([rp.width, rp.height], &rp.rgba);
+                let img = egui::ColorImage::from_rgba_unmultiplied([rp.width, rp.height], &rp.rgba);
                 let tex = ctx.load_texture("pdf_page", img, egui::TextureOptions::LINEAR);
                 self.doc().page_tex = Some((tex, page));
             }
@@ -860,6 +908,19 @@ fn zoom_at_view(view: ViewTransform, pointer_px: [f32; 2], factor: f32) -> ViewT
     v.pan_x += pointer_px[0] - back.x;
     v.pan_y += pointer_px[1] - back.y;
     v
+}
+
+/// 잉크를 남기는 도구인가 — 코어의 재료 팩토리(`Materials::for_tool`)가
+/// 스트로크 재료를 주는 도구만 해당한다 (`Eraser`/`Pan`은 `None`).
+///
+/// freedf-gui에는 아직 지우개 세션이 없으므로(Phase 4 이식) 지우개로 눌러도
+/// 잉크를 남기지 않는다 — 재료 없는 도구로 `InkPipeline::down`을 부르면
+/// 코어가 패닉한다 (`WidthLocker::new`의 재료 `expect`).
+fn is_ink_tool(tool: ToolType) -> bool {
+    matches!(
+        tool,
+        ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
+    )
 }
 
 fn now_ms() -> u64 {
@@ -921,6 +982,34 @@ fn canvas_mesh_to_egui(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use freedf_core::model::StrokePoint;
+
+    /// 헤드리스 egui 프레임 하나 — `paint`를 `CentralPanel`에 직접 그린다
+    /// (셸 경유 테스트는 각자 셸을 그린다).
+    fn paint_frame(ctx: &egui::Context, events: Vec<egui::Event>) {
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        input.events = events;
+        let mut out = ctx.run_ui(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, paint);
+        });
+        out.textures_delta.clear();
+    }
+
+    /// 좌클릭 한 번의 press/release 이벤트.
+    fn press(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
 
     #[test]
     fn zoom_at_keeps_pointer_page_point_fixed() {
@@ -983,7 +1072,11 @@ mod tests {
         frame(vec![press(egui::pos2(450.0, 420.0), false)]);
 
         with(|c| {
-            assert_eq!(c.docs[0].store.total_stroke_count(), 1, "획이 저장소에 기록되어야 한다");
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                1,
+                "획이 저장소에 기록되어야 한다"
+            );
             let pts = &c.docs[0].store.strokes_on(0)[0].points;
             assert!(pts.len() >= 4, "4점 이상: {}", pts.len());
             assert!(pts[0].x < pts.last().unwrap().x);
@@ -993,15 +1086,254 @@ mod tests {
         });
     }
 
+    /// 펜을 짧게 찍은 탭(한 프레임 안 press+release)도 **점 하나짜리 획**으로
+    /// 남는다 — 구 구현은 2점 미만을 버려 탭이 통째로 사라졌다.
+    #[test]
+    fn single_point_tap_commits_a_dot() {
+        with(|c| *c = Canvas::default());
+        let ctx = egui::Context::default();
+        let at = egui::pos2(300.0, 300.0);
+        paint_frame(
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(at),
+                press(at, true),
+                press(at, false),
+            ],
+        );
+        with(|c| {
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                1,
+                "탭도 점으로 남아야 한다"
+            );
+            assert_eq!(c.docs[0].store.strokes_on(0)[0].points.len(), 1);
+        });
+    }
+
+    /// 팬(오른쪽 드래그) 뒤에도 **누른 자리**에 잉크가 남는다 — 종이/히트테스트/
+    /// 메시가 같은 뷰 변환(팬 포함)을 쓴다.
+    ///
+    /// 불변식으로 검증한다: 팬 (dx, dy)는 페이지를 화면에서 (dx, dy)만큼 옮기므로,
+    /// 같은 페이지 점은 팬 전에는 P, 팬 후에는 P+(dx, dy)에서 눌린다.
+    #[test]
+    fn pan_keeps_press_position_in_sync() {
+        let ctx = egui::Context::default();
+        let tap = |at: egui::Pos2| {
+            paint_frame(
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    press(at, true),
+                    press(at, false),
+                ],
+            );
+        };
+        let only_point =
+            |page: usize| with(|c| c.docs[0].store.strokes_on(page)[0].points[0].clone());
+
+        // ① 팬 없이 찍은 페이지 점.
+        with(|c| *c = Canvas::default());
+        let base = egui::pos2(350.0, 330.0);
+        tap(base);
+        let before = only_point(0);
+
+        // ② 오른쪽 드래그로 팬 (+50, +30) — 같은 페이지 점을 노려 찍는다.
+        with(|c| *c = Canvas::default());
+        let right = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let from = egui::pos2(300.0, 300.0);
+        paint_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(from), right(from, true)],
+        );
+        paint_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(egui::pos2(350.0, 330.0))],
+        );
+        paint_frame(&ctx, vec![right(egui::pos2(350.0, 330.0), false)]);
+        with(|c| {
+            assert_eq!(c.docs[0].view.pan_x, 50.0);
+            assert_eq!(c.docs[0].view.pan_y, 30.0);
+        });
+        tap(base + egui::vec2(50.0, 30.0));
+        let after = only_point(0);
+
+        assert!(
+            (before.x - after.x).abs() < 0.01,
+            "x가 어긋난다: {} vs {}",
+            before.x,
+            after.x
+        );
+        assert!(
+            (before.y - after.y).abs() < 0.01,
+            "y가 어긋난다: {} vs {}",
+            before.y,
+            after.y
+        );
+    }
+
+    /// 지우개는 아직 지우기 세션이 없다 — 눌러도 패닉하지 않고 잉크를 남기지
+    /// 않는다 (코어 `Materials::for_tool(Eraser)`가 재료를 주지 않는다).
+    #[test]
+    fn eraser_press_leaves_no_ink() {
+        with(|c| *c = Canvas::default());
+        select_tool("Eraser");
+        let ctx = egui::Context::default();
+        let start = egui::pos2(300.0, 300.0);
+        paint_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(start), press(start, true)],
+        );
+        paint_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(egui::pos2(340.0, 330.0))],
+        );
+        paint_frame(&ctx, vec![press(egui::pos2(340.0, 330.0), false)]);
+        with(|c| {
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                0,
+                "지우개는 잉크를 남기지 않는다"
+            );
+        });
+    }
+
+    /// 실제 앱 경로(elm-magic 셸 안의 `<Raw>` 캔버스)로도 획이 기록되는지.
+    ///
+    /// `paint`를 직접 부르는 테스트는 셸의 배치/입력 상호작용을 우회한다 —
+    /// 여기서는 셸 전체를 그려 캔버스가 실제로 놓이는 자리에서 입력이 닿는지 본다.
+    #[test]
+    fn ink_stroke_lands_through_shell_raw() {
+        with(|c| *c = Canvas::default());
+
+        let mut elm = elm_magic::Ctx::default();
+        let ctx = egui::Context::default();
+        let base = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100.0, 720.0),
+            )),
+            ..Default::default()
+        };
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let frame = |elm: &mut elm_magic::Ctx, events: Vec<egui::Event>| {
+            let mut input = base();
+            input.events = events;
+            let mut out = ctx.run_ui(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    crate::shell::render_shell(ui, &mut *elm);
+                });
+            });
+            out.textures_delta.clear();
+        };
+
+        // 셸을 두 프레임 그려 캔버스 자리를 확정한 뒤, 그 안쪽에 펜 드래그를 준다.
+        frame(&mut elm, vec![]);
+        frame(&mut elm, vec![]);
+        let start = egui::pos2(500.0, 400.0);
+        frame(
+            &mut elm,
+            vec![egui::Event::PointerMoved(start), press(start, true)],
+        );
+        for i in 1..=4 {
+            let p = egui::pos2(500.0 + 20.0 * i as f32, 400.0 + 10.0 * i as f32);
+            frame(&mut elm, vec![egui::Event::PointerMoved(p)]);
+        }
+        let end = egui::pos2(600.0, 460.0);
+        frame(&mut elm, vec![press(end, false)]);
+
+        with(|c| {
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                1,
+                "셸 안의 캔버스에도 획이 기록되어야 한다"
+            );
+        });
+    }
+
+    /// 커밋된 획이 실제로 **화면 도형**으로 나오는지 (잉크 렌더 회귀 방지).
+    /// 입력이 아니라 렌더 경로만 본다 — 저장소에 획을 직접 넣고 한 프레임 그린 뒤
+    /// 프레임 출력에 정점을 가진 메시가 있는지 확인한다.
+    #[test]
+    fn committed_stroke_renders_mesh() {
+        with(|c| {
+            *c = Canvas::default();
+            let pts = vec![
+                StrokePoint {
+                    x: 100.0,
+                    y: 100.0,
+                    pressure: 1.0,
+                    t_ms: now_ms(),
+                    width: 2.0,
+                },
+                StrokePoint {
+                    x: 200.0,
+                    y: 160.0,
+                    pressure: 1.0,
+                    t_ms: now_ms(),
+                    width: 2.0,
+                },
+            ];
+            c.doc()
+                .store
+                .add_stroke(0, ToolType::Pen, [26, 26, 28, 255], 2.5, pts);
+        });
+
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| paint(ui));
+        });
+        out.textures_delta.clear();
+
+        let mut mesh_vertices = 0usize;
+        for clipped in &out.shapes {
+            if let egui::Shape::Mesh(m) = &clipped.shape {
+                mesh_vertices += m.vertices.len();
+            }
+        }
+        assert!(mesh_vertices > 0, "커밋된 획이 메시로 그려져야 한다");
+    }
+
     #[test]
     fn clear_ink_empties_page() {
         with(|c| {
             *c = Canvas::default();
             let pts = vec![
-                StrokePoint { x: 10.0, y: 10.0, pressure: 1.0, t_ms: now_ms(), width: 2.0 },
-                StrokePoint { x: 40.0, y: 40.0, pressure: 1.0, t_ms: now_ms(), width: 2.0 },
+                StrokePoint {
+                    x: 10.0,
+                    y: 10.0,
+                    pressure: 1.0,
+                    t_ms: now_ms(),
+                    width: 2.0,
+                },
+                StrokePoint {
+                    x: 40.0,
+                    y: 40.0,
+                    pressure: 1.0,
+                    t_ms: now_ms(),
+                    width: 2.0,
+                },
             ];
-            c.doc().store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
+            c.doc()
+                .store
+                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
             assert_eq!(c.doc().store.total_stroke_count(), 1);
         });
         clear_ink();
@@ -1025,7 +1357,11 @@ mod tests {
         with(|c| *c = Canvas::default());
         open_pdf("/nonexistent/no-such-file.pdf".to_string());
         with(|c| {
-            assert!(c.pdf_error.as_deref().map(|e| e.contains("PDF")).unwrap_or(false));
+            assert!(c
+                .pdf_error
+                .as_deref()
+                .map(|e| e.contains("PDF"))
+                .unwrap_or(false));
             assert_eq!(c.docs.len(), 1);
         });
     }
@@ -1059,10 +1395,24 @@ mod tests {
             assert_eq!(c.docs.len(), 1);
             assert_eq!(c.docs[c.active].name, "Sketch 3");
             let pts = vec![
-                StrokePoint { x: 1.0, y: 1.0, pressure: 1.0, t_ms: 0, width: 2.0 },
-                StrokePoint { x: 9.0, y: 9.0, pressure: 1.0, t_ms: 0, width: 2.0 },
+                StrokePoint {
+                    x: 1.0,
+                    y: 1.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
+                StrokePoint {
+                    x: 9.0,
+                    y: 9.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
             ];
-            c.doc().store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
+            c.doc()
+                .store
+                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
         });
         // 마지막 탭을 닫으면 닫지 않고 **빈 문서로 리셋** (획도 사라진다).
         close_tab();
@@ -1078,10 +1428,24 @@ mod tests {
         with(|c| {
             *c = Canvas::default();
             let pts = vec![
-                StrokePoint { x: 1.0, y: 1.0, pressure: 1.0, t_ms: 0, width: 2.0 },
-                StrokePoint { x: 9.0, y: 9.0, pressure: 1.0, t_ms: 0, width: 2.0 },
+                StrokePoint {
+                    x: 1.0,
+                    y: 1.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
+                StrokePoint {
+                    x: 9.0,
+                    y: 9.0,
+                    pressure: 1.0,
+                    t_ms: 0,
+                    width: 2.0,
+                },
             ];
-            c.doc().store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
+            c.doc()
+                .store
+                .add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, pts);
         });
         add_tab("Second".to_string()); // 새 문서로 전환됨
         with(|c| {
@@ -1111,7 +1475,11 @@ mod tests {
             Some(0),
             vec![
                 OutlineNode::new("1.1", Some(1), vec![]),
-                OutlineNode::new("1.2", Some(2), vec![OutlineNode::new("1.2.1", Some(3), vec![])]),
+                OutlineNode::new(
+                    "1.2",
+                    Some(2),
+                    vec![OutlineNode::new("1.2.1", Some(3), vec![])],
+                ),
             ],
         )];
         let mut out = Vec::new();
@@ -1192,7 +1560,8 @@ mod tests {
 
     #[test]
     fn ink_defaults_roundtrip_and_fallback() {
-        let path = std::env::temp_dir().join(format!("freedf-gui-test-{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("freedf-gui-test-{}.json", std::process::id()));
         let _ = std::fs::remove_file(&path);
         // 1) 현재 상태 저장 → 엔진을 다르게 바꾸고 → 복원이 되돌린다.
         with(|c| *c = Canvas::default());
@@ -1214,11 +1583,7 @@ mod tests {
         assert!(load_defaults_from(&path).is_err());
         assert_eq!(tool_name(), "Highlighter");
         // 3) 파일에 알 수 없는 이름 — select_* 폴백으로 기본값 적용.
-        std::fs::write(
-            &path,
-            r#"{"tool":"Warp","color":"Neon","width":"Huge"}"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"tool":"Warp","color":"Neon","width":"Huge"}"#).unwrap();
         let fallback = load_defaults_from(&path).expect("parse");
         assert_eq!(fallback.tool, "Warp"); // 저장 값은 그대로 (기록 보존)
         assert_eq!(tool_name(), "Pen"); // 적용은 폴백
@@ -1261,7 +1626,13 @@ mod tests {
         ]);
         frame(vec![egui::Event::PointerMoved(egui::pos2(350.0, 340.0))]);
         frame(vec![press(egui::pos2(350.0, 340.0), false)]);
-        with(|c| assert_eq!(c.docs[0].store.total_stroke_count(), 0, "모달 중에는 획이 없어야 한다"));
+        with(|c| {
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                0,
+                "모달 중에는 획이 없어야 한다"
+            )
+        });
 
         sync_and_status(false); // 모달 닫힘 — 이제 그려진다
         frame(vec![
@@ -1270,6 +1641,12 @@ mod tests {
         ]);
         frame(vec![egui::Event::PointerMoved(egui::pos2(350.0, 340.0))]);
         frame(vec![press(egui::pos2(350.0, 340.0), false)]);
-        with(|c| assert_eq!(c.docs[0].store.total_stroke_count(), 1, "모달이 닫히면 그려진다"));
+        with(|c| {
+            assert_eq!(
+                c.docs[0].store.total_stroke_count(),
+                1,
+                "모달이 닫히면 그려진다"
+            )
+        });
     }
 }

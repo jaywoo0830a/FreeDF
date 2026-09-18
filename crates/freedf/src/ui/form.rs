@@ -45,10 +45,7 @@ fn label_line(ui: &mut egui::Ui, label: &str, req: Option<bool>) {
         match req {
             Some(true) => {
                 // 필수 * — 1rem, 에러 색을 살짝 흐리게.
-                let faded = ui
-                    .visuals()
-                    .error_fg_color
-                    .gamma_multiply(0.85);
+                let faded = ui.visuals().error_fg_color.gamma_multiply(0.85);
                 ui.label(egui::RichText::new("*").strong().size(REM).color(faded));
             }
             Some(false) => {
@@ -299,9 +296,8 @@ pub(crate) fn range(
     } else {
         0
     };
-    let slider = egui::Slider::new(value, r).custom_formatter(move |v, _| {
-        format!("{:.*}", decimals, v)
-    });
+    let slider =
+        egui::Slider::new(value, r).custom_formatter(move |v, _| format!("{:.*}", decimals, v));
     tip(ui.add(slider), help)
 }
 

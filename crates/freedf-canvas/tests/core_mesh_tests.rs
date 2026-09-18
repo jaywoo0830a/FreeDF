@@ -1,14 +1,14 @@
 //! `core_mesh` 모듈 단위 테스트 — `src/core_mesh.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
 use freedf_canvas::core_mesh::*;
+use freedf_canvas::geom::PagePoint;
+use freedf_canvas::ink::Mesh;
+use freedf_canvas::scene::{LayerKind, StrokeId};
+use freedf_canvas::scene::{Stroke, StrokePoint};
 use freedf_core::ink::InkGrain;
 use freedf_core::model::ToolType;
-use freedf_core::pen::{InkSoak, Materials};
-use freedf_canvas::ink::Mesh;
-use freedf_canvas::scene::{Stroke, StrokePoint};
-use freedf_canvas::geom::PagePoint;
-use freedf_canvas::scene::{LayerKind, StrokeId};
 use freedf_core::pen::{BallPenProfile, FountainProfile};
+use freedf_core::pen::{InkSoak, Materials};
 
 fn point(x: f32, y: f32, pressure: f32, t_ms: u64, width: f32) -> StrokePoint {
     StrokePoint {
@@ -47,13 +47,7 @@ fn mesher() -> CoreRibbonMesher {
 #[test]
 fn halves_prefer_locked_widths() {
     let pts = vec![point(0.0, 0.0, 0.5, 0, 3.0), point(10.0, 0.0, 0.5, 10, 3.0)];
-    let halves = halves_for_stroke(
-        ToolType::Pen,
-        2.0,
-        &pts,
-        &Materials::default(),
-        0.0,
-    );
+    let halves = halves_for_stroke(ToolType::Pen, 2.0, &pts, &Materials::default(), 0.0);
     assert!(halves.iter().all(|h| (*h - 1.5).abs() < 1e-4), "{halves:?}");
 }
 
@@ -101,7 +95,10 @@ fn append_stroke_grows_mesh_with_bounded_geometry() {
     let mut mesh = Mesh::default();
     let s1 = stroke(
         ToolType::Pen,
-        vec![point(0.0, 0.0, 0.5, 1_000, 2.0), point(10.0, 0.0, 0.5, 1_010, 2.0)],
+        vec![
+            point(0.0, 0.0, 0.5, 1_000, 2.0),
+            point(10.0, 0.0, 0.5, 1_010, 2.0),
+        ],
     );
     let s2 = stroke(
         ToolType::Pen,
@@ -129,7 +126,10 @@ fn mesher_is_deterministic() {
     let m = mesher();
     let s = stroke(
         ToolType::Pen,
-        vec![point(0.0, 0.0, 0.5, 1_000, 2.0), point(10.0, 0.0, 0.5, 1_010, 2.0)],
+        vec![
+            point(0.0, 0.0, 0.5, 1_000, 2.0),
+            point(10.0, 0.0, 0.5, 1_010, 2.0),
+        ],
     );
     assert_eq!(m.mesh(&s, 1_100), m.mesh(&s, 1_100));
 }

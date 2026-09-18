@@ -210,9 +210,11 @@ impl SyncStorage {
                 .ok()?;
         let dir = crate::storage::app_data_dir().join("v3_cache");
         let _ = std::fs::create_dir_all(&dir);
-        let app_state: BTreeMap<String, Value> = read_json(&dir.join("app_state.json")).unwrap_or_default();
+        let app_state: BTreeMap<String, Value> =
+            read_json(&dir.join("app_state.json")).unwrap_or_default();
         let recents: Vec<RecentRow> = read_json(&dir.join("recents.json")).unwrap_or_default();
-        let word_cache: BTreeMap<String, Value> = read_json(&dir.join("word_cache.json")).unwrap_or_default();
+        let word_cache: BTreeMap<String, Value> =
+            read_json(&dir.join("word_cache.json")).unwrap_or_default();
         Some(Self {
             client,
             inner: Mutex::new(Inner {
@@ -285,7 +287,9 @@ impl SyncStorage {
         let infos = self.client.list_documents().map_err(err)?;
         let mut n = 0;
         for info in infos {
-            let Some(digest) = info.pdf_digest else { continue };
+            let Some(digest) = info.pdf_digest else {
+                continue;
+            };
             let path = self.pdf_cache_path(&digest);
             if path.is_file() {
                 continue;
@@ -304,7 +308,8 @@ impl SyncStorage {
     }
 
     /// 미러 → 업로드 스냅샷.
-    fn build_snapshot(m: &DocMirror) -> Snapshot {        let mut strokes: Vec<freedf_sync::Stroke> = Vec::new();
+    fn build_snapshot(m: &DocMirror) -> Snapshot {
+        let mut strokes: Vec<freedf_sync::Stroke> = Vec::new();
         for page in m.store.pages() {
             let idx = page.page_index as i32;
             for s in &page.strokes {
@@ -352,7 +357,8 @@ impl SyncStorage {
             for page in &pages {
                 m.store.remove_stroke(*page, s.id.max(0) as u64);
             }
-            m.store.add_strokes(s.page_index.max(0) as usize, vec![wire_to_core(s)]);
+            m.store
+                .add_strokes(s.page_index.max(0) as usize, vec![wire_to_core(s)]);
         }
         for id in &patch.stroke_ids_removed {
             for page in &pages {
@@ -486,7 +492,12 @@ impl StorageBackend for SyncStorage {
 
     fn get_document(&self, id: i64) -> Option<DocRow> {
         self.refresh_docs().ok()?;
-        self.inner.lock().unwrap().docs.get(&id).map(|m| m.row.clone())
+        self.inner
+            .lock()
+            .unwrap()
+            .docs
+            .get(&id)
+            .map(|m| m.row.clone())
     }
 
     fn find_document_by_path(&self, path: &str) -> Option<i64> {
@@ -585,12 +596,10 @@ impl StorageBackend for SyncStorage {
         let max_id = strokes.iter().map(|s| s.id).max().unwrap_or(0) as i64;
         let mut cur = g.next_id.load(Ordering::Relaxed);
         while cur <= max_id {
-            match g.next_id.compare_exchange(
-                cur,
-                max_id + 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
+            match g
+                .next_id
+                .compare_exchange(cur, max_id + 1, Ordering::Relaxed, Ordering::Relaxed)
+            {
                 Ok(_) => break,
                 Err(actual) => cur = actual,
             }
@@ -620,7 +629,7 @@ impl StorageBackend for SyncStorage {
                 g.docs.get(&doc_id).map(|m| (m.dirty, m.revision))
             };
             match local {
-                None => false, // 미러 없음 → 서버에서.
+                None => false,           // 미러 없음 → 서버에서.
                 Some((true, _)) => true, // 미플러시 로컬 변경 우선 (유실 방지).
                 Some((false, rev)) => self
                     .client
@@ -735,7 +744,8 @@ impl StorageBackend for SyncStorage {
     fn rotate_page_data(&self, doc_id: i64, page: i32, clockwise: bool, w: f32, h: f32) {
         let mut g = self.inner.lock().unwrap();
         if let Some(m) = g.docs.get_mut(&doc_id) {
-            m.store.rotate_strokes_on(page.max(0) as usize, w, h, clockwise);
+            m.store
+                .rotate_strokes_on(page.max(0) as usize, w, h, clockwise);
             m.dirty = true;
         }
     }
@@ -796,7 +806,8 @@ impl StorageBackend for SyncStorage {
             let before = g.recents.len();
             // retain 클로저가 g를 또 빌리지 못하도록 서버 doc id 목록을 먼저 캡처.
             let server_ids: Vec<i64> = g.docs.iter().map(|(id, _)| *id).collect();
-            g.recents.retain(|r| server_ids.iter().any(|id| *id == r.doc_id));
+            g.recents
+                .retain(|r| server_ids.iter().any(|id| *id == r.doc_id));
             if g.recents.len() != before {
                 write_json(&g.dir.join("recents.json"), &g.recents);
             }
@@ -807,10 +818,7 @@ impl StorageBackend for SyncStorage {
 
     fn touch_recent(&self, kind: &str, doc_id: i64, title: &str) {
         let mut g = self.inner.lock().unwrap();
-        let origin_path = g
-            .docs
-            .get(&doc_id)
-            .and_then(|m| m.row.origin_path.clone());
+        let origin_path = g.docs.get(&doc_id).and_then(|m| m.row.origin_path.clone());
         g.recents
             .retain(|r| !(r.kind == kind && r.doc_id == doc_id));
         g.recents.insert(
@@ -864,12 +872,7 @@ impl StorageBackend for SyncStorage {
     }
 
     fn has_pending(&self) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .docs
-            .values()
-            .any(|m| m.dirty)
+        self.inner.lock().unwrap().docs.values().any(|m| m.dirty)
     }
 
     fn prefetch_pdfs(&self) -> Result<usize, String> {

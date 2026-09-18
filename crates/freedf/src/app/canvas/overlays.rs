@@ -105,12 +105,8 @@ impl FreeDfApp {
                 // 둘레 스와치 — 12시 방향부터 시계 방향.
                 for (i, color) in wheel.ring.iter().enumerate() {
                     let sc = wheel.swatch_pos(i);
-                    let col = Color32::from_rgba_unmultiplied(
-                        color[0],
-                        color[1],
-                        color[2],
-                        color[3],
-                    );
+                    let col =
+                        Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
                     painter.circle_filled(sc, WHEEL_SWATCH_R, col);
                     painter.circle_stroke(
                         sc,
@@ -121,10 +117,7 @@ impl FreeDfApp {
                         painter.circle_stroke(
                             sc,
                             WHEEL_SWATCH_R + 3.0,
-                            Stroke::new(
-                                2.0,
-                                crate::theme::nord::semantic::ACCENT_ACTIVE,
-                            ),
+                            Stroke::new(2.0, crate::theme::nord::semantic::ACCENT_ACTIVE),
                         );
                     }
                 }
@@ -279,17 +272,12 @@ impl FreeDfApp {
                                 icons::LOCK_SIMPLE_OPEN
                             };
                             if ui
-                                .selectable_label(
-                                    self.zoom_lock,
-                                    icon_text(ui, "", lock_icon),
-                                )
-                                .on_hover_text(
-                                    if self.zoom_lock {
-                                        "Zoom locked — click to unlock (Ctrl+L)"
-                                    } else {
-                                        "Lock zoom in/out (Ctrl+L)"
-                                    },
-                                )
+                                .selectable_label(self.zoom_lock, icon_text(ui, "", lock_icon))
+                                .on_hover_text(if self.zoom_lock {
+                                    "Zoom locked — click to unlock (Ctrl+L)"
+                                } else {
+                                    "Lock zoom in/out (Ctrl+L)"
+                                })
                                 .clicked()
                             {
                                 self.zoom_lock = !self.zoom_lock;
@@ -481,7 +469,9 @@ impl FreeDfApp {
 
         if to_add {
             let c = self.pen_color;
-            if !self.favorite_colors.contains(&c) && self.favorite_colors.len() < MAX_FAVORITE_COLORS {
+            if !self.favorite_colors.contains(&c)
+                && self.favorite_colors.len() < MAX_FAVORITE_COLORS
+            {
                 self.favorite_colors.push(c);
                 self.save_default_session();
             }

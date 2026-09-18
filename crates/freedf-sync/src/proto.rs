@@ -132,7 +132,10 @@ pub enum UploadState {
 
 impl UploadState {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, UploadState::Applied | UploadState::Conflict | UploadState::Failed)
+        matches!(
+            self,
+            UploadState::Applied | UploadState::Conflict | UploadState::Failed
+        )
     }
 }
 
@@ -305,9 +308,10 @@ mod tests {
                 .unwrap();
         assert_eq!(st.state, UploadState::Failed);
         // 미지 상태
-        let st: UploadStatus =
-            serde_json::from_str(r#"{"upload_id":"f82a6e13-0ab2-42c7-bddb-95f2a9ee0cb4","state":"weird"}"#)
-                .unwrap();
+        let st: UploadStatus = serde_json::from_str(
+            r#"{"upload_id":"f82a6e13-0ab2-42c7-bddb-95f2a9ee0cb4","state":"weird"}"#,
+        )
+        .unwrap();
         assert_eq!(st.state, UploadState::Unknown);
         assert!(!st.state.is_terminal());
     }
@@ -329,7 +333,9 @@ mod tests {
 
     #[test]
     fn change_record_jsonl_roundtrip() {
-        let rec = ChangeRecord::StrokeAdded { stroke: sample_stroke(42) };
+        let rec = ChangeRecord::StrokeAdded {
+            stroke: sample_stroke(42),
+        };
         let line = serde_json::to_string(&rec).unwrap();
         assert!(line.starts_with(r#"{"op":"add""#));
         let back: ChangeRecord = serde_json::from_str(&line).unwrap();

@@ -28,9 +28,7 @@ pub(crate) fn macro_key_pressed(ctx: &egui::Context, mk: MacroKey) -> bool {
     ctx.input(|i| {
         i.events.iter().any(|e| match e {
             egui::Event::Key {
-                key,
-                pressed: true,
-                ..
+                key, pressed: true, ..
             } => MacroKey::from_egui(*key) == Some(mk),
             _ => false,
         })
@@ -69,14 +67,7 @@ impl FreeDfApp {
         ui.separator();
 
         // ── 페이지 이동 (왼손 키보드 + 오른손 펜) ──
-        if check(
-            ui,
-            &mut self.macro_cfg.page_enabled,
-            "Enable page keys",
-            "",
-        )
-        .changed()
-        {
+        if check(ui, &mut self.macro_cfg.page_enabled, "Enable page keys", "").changed() {
             self.macro_changed();
         }
         ui.add_enabled_ui(self.macro_cfg.page_enabled, |ui| {
@@ -195,9 +186,7 @@ impl FreeDfApp {
         let pressed = ctx.input(|i| {
             i.events.iter().rev().find_map(|e| match e {
                 egui::Event::Key {
-                    key,
-                    pressed: true,
-                    ..
+                    key, pressed: true, ..
                 } => Some(*key),
                 _ => None,
             })

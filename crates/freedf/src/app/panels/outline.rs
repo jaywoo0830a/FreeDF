@@ -19,11 +19,7 @@ impl FreeDfApp {
             self.load_outline_if_needed();
         }
         if self.outline.is_empty() {
-            panels::empty_state(
-                ui,
-                icons::LIST_BULLETS,
-                "No outline in this PDF.",
-            );
+            panels::empty_state(ui, icons::LIST_BULLETS, "No outline in this PDF.");
             return;
         }
         let mut jump: Option<(String, usize)> = None;

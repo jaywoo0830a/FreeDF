@@ -1,9 +1,7 @@
 //! `input_controlmap` 모듈 단위 테스트 — `src/input_controlmap.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
 use freedf_core::input_controlmap::*;
-use freedf_core::input_events::{
-    ActionMode, ControlEvent, ControlKind, ControlPhase, InputEvent,
-};
+use freedf_core::input_events::{ActionMode, ControlEvent, ControlKind, ControlPhase, InputEvent};
 
 fn ev(control: ControlKind, index: u8, phase: ControlPhase) -> ControlEvent {
     ControlEvent {

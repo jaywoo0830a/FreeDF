@@ -33,8 +33,6 @@ mod services_smoke {
     }
 }
 
-
-
 use eframe::egui;
 
 fn main() -> eframe::Result {

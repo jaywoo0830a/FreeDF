@@ -72,8 +72,12 @@ impl FreeDfApp {
         if self.document.is_none() {
             return;
         }
-        self.view
-            .align_page(self.page_size_pts, self.last_canvas, TOP_MARGIN, self.page_align);
+        self.view.align_page(
+            self.page_size_pts,
+            self.last_canvas,
+            TOP_MARGIN,
+            self.page_align,
+        );
         self.save_session();
     }
 

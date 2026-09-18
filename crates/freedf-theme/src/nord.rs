@@ -142,8 +142,8 @@ pub fn nord_style() -> egui::Style {
     // 평소에는 2pt 두께의 얇은 바, 호버하면 8pt로 부드럽게 확장됩니다.
     style.spacing.scroll = egui::style::ScrollStyle {
         floating: true,
-        bar_width: 8.0,               // 호버 시 최대 두께
-        floating_width: 4.0,          // 평소(비호버) 얇은 두께 (0.25rem)
+        bar_width: 8.0,                // 호버 시 최대 두께
+        floating_width: 4.0,           // 평소(비호버) 얇은 두께 (0.25rem)
         floating_allocated_width: 4.0, // 항상 얇은 바가 보이도록 4pt 할당
         handle_min_length: 20.0,
         foreground_color: false,

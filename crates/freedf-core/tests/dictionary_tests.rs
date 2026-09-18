@@ -29,7 +29,10 @@ fn parse_dictionaryapi_dev_extracts_entries() {
     assert_eq!(e.phonetic, "/həˈləʊ/");
     assert_eq!(e.definitions.len(), 3);
     assert_eq!(e.definitions[0], Definition::new("noun", "A greeting."));
-    assert_eq!(e.definitions[2], Definition::new("interjection", "Said in greeting."));
+    assert_eq!(
+        e.definitions[2],
+        Definition::new("interjection", "Said in greeting.")
+    );
 }
 
 #[test]

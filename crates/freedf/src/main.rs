@@ -125,9 +125,7 @@ fn main() -> eframe::Result<()> {
                 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
                 if let Some(hwnd) = cc.winit_window().and_then(|w| match w.window_handle() {
                     Ok(h) => match h.as_raw() {
-                        RawWindowHandle::Win32(wh) => {
-                            Some(wh.hwnd.get() as *mut std::ffi::c_void)
-                        }
+                        RawWindowHandle::Win32(wh) => Some(wh.hwnd.get() as *mut std::ffi::c_void),
                         _ => None,
                     },
                     Err(_) => None,

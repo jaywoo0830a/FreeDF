@@ -75,7 +75,9 @@ impl AnnotationStore {
 
     /// 스트로크 ID 조회.
     pub fn stroke(&self, page_index: PageIndex, stroke_id: u64) -> Option<&Stroke> {
-        self.strokes_on(page_index).iter().find(|s| s.id == stroke_id)
+        self.strokes_on(page_index)
+            .iter()
+            .find(|s| s.id == stroke_id)
     }
 
     /// 페이지의 용지 설정 (없으면 None).
@@ -146,7 +148,12 @@ impl AnnotationStore {
 
     /// 이미 ID가 부여된 스트로크들을 추가 (undo/redo 재적용용).
     pub fn add_strokes(&mut self, page_index: PageIndex, strokes: Vec<Stroke>) {
-        let max_id = strokes.iter().map(|s| s.id).max().map(|v| v + 1).unwrap_or(0);
+        let max_id = strokes
+            .iter()
+            .map(|s| s.id)
+            .max()
+            .map(|v| v + 1)
+            .unwrap_or(0);
         self.next_stroke_id = self.next_stroke_id.max(max_id);
         let page = self.ensure_page(page_index);
         page.strokes.extend(strokes);

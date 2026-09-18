@@ -94,8 +94,7 @@ impl Mesh {
         let base = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&other.vertices);
         self.colors.extend_from_slice(&other.colors);
-        self.indices
-            .extend(other.indices.iter().map(|i| *i + base));
+        self.indices.extend(other.indices.iter().map(|i| *i + base));
     }
 
     /// 정점 수와 색 수가 일치하고 인덱스가 범위 안인지 (굽기 결과 검증용).
@@ -168,10 +167,17 @@ impl<W: WidthModel, A: AlphaModel> Mesher for RibbonMesher<W, A> {
                 [b.position.x - nx * half, b.position.y - ny * half],
             ]);
             for _ in 0..4 {
-                mesh.colors.push([color[0], color[1], color[2], color[3] * alpha]);
+                mesh.colors
+                    .push([color[0], color[1], color[2], color[3] * alpha]);
             }
-            mesh.indices
-                .extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+            mesh.indices.extend_from_slice(&[
+                base,
+                base + 1,
+                base + 2,
+                base + 1,
+                base + 3,
+                base + 2,
+            ]);
         }
         mesh
     }

@@ -26,22 +26,20 @@
 //!    수동 완료 워커로 타이밍·IO 의존을 제거합니다.
 
 pub mod bake;
+pub mod canvas_port;
 pub mod clock;
 pub mod core_mesh;
 pub mod error;
 pub mod geom;
 pub mod ink;
-pub mod canvas_port;
 pub mod scene;
 pub mod soak;
 pub mod surface;
 
 pub use bake::{BakeError, BakeParams, BakeService, BakeWorker, BakedPage, SimpleWorker};
 pub use clock::{Clock, FakeClock, SystemClock};
+pub use core_mesh::{alphas_for_stroke, append_stroke_ribbon, halves_for_stroke, CoreRibbonMesher};
 pub use error::{Error, Result};
-pub use core_mesh::{
-    alphas_for_stroke, append_stroke_ribbon, halves_for_stroke, CoreRibbonMesher,
-};
 pub use geom::{PagePoint, PageSize, ViewTransform};
 pub use ink::{
     bake_strokes, AlphaModel, BallWidth, GrainSeed, Mesh, Mesher, RibbonMesher, SoakAlpha,
@@ -50,7 +48,5 @@ pub use ink::{
 pub use scene::{
     Changes, LayerKind, Revision, SceneSnapshot, SceneStore, Stroke, StrokeId, StrokePoint,
 };
-pub use soak::{
-    ink_pacing_for, snap_refresh_hz, InkPacing, InkSettling, REFRESH_PRESETS,
-};
+pub use soak::{ink_pacing_for, snap_refresh_hz, InkPacing, InkSettling, REFRESH_PRESETS};
 pub use surface::{DrawCommand, FrameAssembler, RecordingSurface, Surface, Transform};

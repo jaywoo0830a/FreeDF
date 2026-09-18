@@ -42,7 +42,9 @@ pub fn badge(ui: &mut egui::Ui, text: &str, tone: Tone) -> egui::Response {
         .fill(fill)
         .corner_radius(8.0)
         .inner_margin(crate::ui::tokens::margin::BADGE)
-        .show(ui, |ui| ui.label(egui::RichText::new(text).color(fg).small()))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(fg).small())
+        })
         .inner
 }
 
@@ -59,12 +61,7 @@ pub fn status_dot(ui: &mut egui::Ui, tone: Tone, label: &str) {
 }
 
 /// Alert / callout box (<div class="alert alert-*">).
-pub fn alert(
-    ui: &mut egui::Ui,
-    tone: Tone,
-    title: impl Into<String>,
-    message: impl Into<String>,
-) {
+pub fn alert(ui: &mut egui::Ui, tone: Tone, title: impl Into<String>, message: impl Into<String>) {
     let title = title.into();
     let message = message.into();
     let (fg, fill) = tone.pair(ui);
@@ -89,7 +86,9 @@ pub fn kbd(ui: &mut egui::Ui, text: &str) -> egui::Response {
         .fill(ui.visuals().faint_bg_color)
         .corner_radius(4.0)
         .inner_margin(crate::ui::tokens::margin::KBD)
-        .show(ui, |ui| ui.label(egui::RichText::new(text).monospace().small().strong()))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).monospace().small().strong())
+        })
         .inner
 }
 

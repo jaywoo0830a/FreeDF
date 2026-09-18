@@ -245,13 +245,7 @@ mod linux {
             let mut buf = [0u8; 512];
             let mut changed = false;
             loop {
-                let n = unsafe {
-                    libc::read(
-                        fd,
-                        buf.as_mut_ptr() as *mut libc::c_void,
-                        buf.len(),
-                    )
-                };
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                 if n <= 0 {
                     break; // EAGAIN 또는 오류
                 }
@@ -508,12 +502,7 @@ mod otd_ipc {
 
     fn run(mut pipe: std::fs::File, tx: std::sync::mpsc::Sender<PenState>) -> std::io::Result<()> {
         // 태블릿 디버그(리포트 스트림) 활성화.
-        send_rpc(
-            &mut pipe,
-            1,
-            "SetTabletDebug",
-            "true",
-        )?;
+        send_rpc(&mut pipe, 1, "SetTabletDebug", "true")?;
         let mut reader = std::io::BufReader::new(pipe.try_clone()?);
         let mut buf: Vec<u8> = Vec::new();
         let mut max_pressure: f32 = 4096.0;
@@ -614,7 +603,8 @@ mod otd_ipc {
                     .unwrap_or(0);
                 let body_start = hdr_end + 4;
                 if len > 0 && buf.len() >= body_start + len {
-                    let body = String::from_utf8_lossy(&buf[body_start..body_start + len]).into_owned();
+                    let body =
+                        String::from_utf8_lossy(&buf[body_start..body_start + len]).into_owned();
                     buf.drain(..body_start + len);
                     return Ok(Some(body));
                 }
@@ -684,8 +674,6 @@ mod otd_ipc {
     }
 
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-        haystack
-            .windows(needle.len())
-            .position(|w| w == needle)
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 }

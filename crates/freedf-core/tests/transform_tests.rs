@@ -238,7 +238,10 @@ fn pgdn_scrolls_down_one_viewport_before_advancing() {
     let step = browser_page_step(1400.0, 1.0, 600.0, 16.0, 16.0, true);
     assert!(matches!(step, PageStep::ScrollTo { .. }));
     if let PageStep::ScrollTo { pan_y } = step {
-        assert!((pan_y - (16.0 - 600.0)).abs() < 1e-3, "한 뷰포트만 이동: {pan_y}");
+        assert!(
+            (pan_y - (16.0 - 600.0)).abs() < 1e-3,
+            "한 뷰포트만 이동: {pan_y}"
+        );
     }
 }
 
@@ -275,7 +278,10 @@ fn pgdn_sequence_clamps_at_bottom_then_advances() {
         _ => panic!("둘째 PgDn은 스크롤이어야 함: {s2:?}"),
     };
     assert!((pan2 + 816.0).abs() < 1e-3, "바닥으로 클램프");
-    assert_eq!(browser_page_step(1400.0, 1.0, 600.0, m, pan2, true), PageStep::NextPage);
+    assert_eq!(
+        browser_page_step(1400.0, 1.0, 600.0, m, pan2, true),
+        PageStep::NextPage
+    );
 }
 
 #[test]
@@ -294,7 +300,10 @@ fn pgup_from_bottom_scrolls_back_to_top_then_prev() {
         _ => panic!("둘째 PgUp은 스크롤이어야 함: {s2:?}"),
     };
     assert!((pan2 - 16.0).abs() < 1e-3, "상단으로 클램프");
-    assert_eq!(browser_page_step(1400.0, 1.0, 600.0, m, pan2, false), PageStep::PrevPage);
+    assert_eq!(
+        browser_page_step(1400.0, 1.0, 600.0, m, pan2, false),
+        PageStep::PrevPage
+    );
 }
 
 #[test]

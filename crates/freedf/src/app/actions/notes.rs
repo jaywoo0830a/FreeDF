@@ -25,7 +25,9 @@ impl FreeDfApp {
         // 2) 빈 PDF(페이지 N장)를 메모리에 생성 → 바이트.
         let bytes = match self
             .pdfium()
-            .and_then(|p| DocumentView::create_blank_view(p, self.new_page_size_pts(), &title, pages))
+            .and_then(|p| {
+                DocumentView::create_blank_view(p, self.new_page_size_pts(), &title, pages)
+            })
             .and_then(|view| view.save_to_bytes())
         {
             Ok(b) => b,

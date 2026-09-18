@@ -197,7 +197,9 @@ mod tests {
     use crate::app::input::ink_sink::InkSink;
     use crate::app::input::session_router::{Outcome, SessionRouter};
     use crate::app::input::CanvasSinks;
-    use freedf_core::input_events::{ControlKind, ControlPhase, EventKind, InputEvent, PointerSource, NO_TILT};
+    use freedf_core::input_events::{
+        ControlKind, ControlPhase, EventKind, InputEvent, PointerSource, NO_TILT,
+    };
 
     fn geom(center: [f32; 2], ring_len: usize) -> WheelGeom {
         WheelGeom {
@@ -270,7 +272,10 @@ mod tests {
         assert_eq!(rep.outcome, Outcome::Admitted);
         router.dispatch(&pen(PointerPhase::Up, p), &ctx(1010));
         let intents = router.sinks_mut()[0].wheel.drain_intents();
-        assert_eq!(intents, vec![WheelIntent::PickSwatch(0), WheelIntent::Close]);
+        assert_eq!(
+            intents,
+            vec![WheelIntent::PickSwatch(0), WheelIntent::Close]
+        );
         assert!(
             router.sinks_mut()[0].ink.drain().is_empty(),
             "휠 소유 프레스는 잉크 세션을 열지 않는다 (다른 시계 판정의 대체)"

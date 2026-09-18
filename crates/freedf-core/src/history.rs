@@ -17,9 +17,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Edit {
     /// 스트로크 추가 (지우개/전체 지우기의 undo 복원에도 사용).
-    AddStrokes { page: PageIndex, strokes: Vec<Stroke> },
+    AddStrokes {
+        page: PageIndex,
+        strokes: Vec<Stroke>,
+    },
     /// 스트로크 제거 (지우개 한 번 = 하나의 undo 단계, 페이지 전체 지우기도 동일).
-    RemoveStrokes { page: PageIndex, strokes: Vec<Stroke> },
+    RemoveStrokes {
+        page: PageIndex,
+        strokes: Vec<Stroke>,
+    },
 }
 
 impl Edit {

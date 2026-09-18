@@ -18,10 +18,14 @@ impl Digest {
     pub fn parse(s: impl AsRef<str>) -> Result<Self> {
         let s = s.as_ref().trim();
         let Some(hex) = s.strip_prefix("sha256:") else {
-            return Err(SyncError::Digest(format!("digest must be `sha256:<hex64>`: {s}")));
+            return Err(SyncError::Digest(format!(
+                "digest must be `sha256:<hex64>`: {s}"
+            )));
         };
         if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(SyncError::Digest(format!("digest must be `sha256:<hex64>`: {s}")));
+            return Err(SyncError::Digest(format!(
+                "digest must be `sha256:<hex64>`: {s}"
+            )));
         }
         Ok(Self(format!("sha256:{}", hex.to_ascii_lowercase())))
     }

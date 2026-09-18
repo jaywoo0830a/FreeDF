@@ -64,10 +64,6 @@ impl FreeDfApp {
             }
         }
         self.save_session();
-        self.status = Some(format!(
-            "Applied paper to pages {}–{}",
-            lo + 1,
-            hi + 1
-        ));
+        self.status = Some(format!("Applied paper to pages {}–{}", lo + 1, hi + 1));
     }
 }

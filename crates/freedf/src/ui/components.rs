@@ -17,8 +17,8 @@
 
 #![allow(dead_code)]
 
-use eframe::egui;
 use crate::ui::layout::SP_2;
+use eframe::egui;
 
 /// A small status pill / tag.
 pub fn pill(ui: &mut egui::Ui, text: &str, selected: bool) -> egui::Response {

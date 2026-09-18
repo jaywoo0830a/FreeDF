@@ -7,8 +7,8 @@
 //! 이 모듈은 상태 구조체와 기본값만 정의하고, JSONB 변환은 `serde_json`으로 앱이 처리합니다.
 
 use freedf_core::ink::InkGrain;
-use freedf_core::paper::PaperSurfaceSettings;
 use freedf_core::model::ToolType;
+use freedf_core::paper::PaperSurfaceSettings;
 use freedf_core::paper::{PaperSize, PaperStyle, PaperStyleSettings};
 use freedf_core::pen::{BallPenProfile, ColorFamily, FountainProfile, InkSoak};
 use freedf_core::transform::{PageAlign, MAX_ZOOM, MIN_ZOOM};
@@ -59,18 +59,54 @@ macro_rules! bounded_f32 {
     };
 }
 
-bounded_f32!(InkWidth, 0.5, 12.0, 2.0, "필기 두께 (볼펜/만년필 공용, 0.5..12).");
-bounded_f32!(HighlighterWidth, 4.0, 40.0, 16.0, "하이라이터 두께 (4..40).");
+bounded_f32!(
+    InkWidth,
+    0.5,
+    12.0,
+    2.0,
+    "필기 두께 (볼펜/만년필 공용, 0.5..12)."
+);
+bounded_f32!(
+    HighlighterWidth,
+    4.0,
+    40.0,
+    16.0,
+    "하이라이터 두께 (4..40)."
+);
 bounded_f32!(EraserRadius, 4.0, 60.0, 16.0, "지우개 반경 (4..60).");
-bounded_f32!(Zoom, MIN_ZOOM, MAX_ZOOM, 1.0, "줌 배율 (MIN_ZOOM..MAX_ZOOM).");
+bounded_f32!(
+    Zoom,
+    MIN_ZOOM,
+    MAX_ZOOM,
+    1.0,
+    "줌 배율 (MIN_ZOOM..MAX_ZOOM)."
+);
 bounded_f32!(TextureStrength, 0.0, 1.0, 0.25, "종이 질감 강도 (0..1).");
 bounded_f32!(SmoothingStrength, 0.0, 1.0, 0.4, "스무딩 강도 (0..1).");
 bounded_f32!(EdgeZone, 8.0, 300.0, 72.0, "엣지 반응 영역 폭 (8..300 px).");
-bounded_f32!(EdgeSpeed, 20.0, 4000.0, 480.0, "엣지 스크롤 최대 속도 (20..4000 px/s).");
-bounded_f32!(EdgeOverscroll, 0.0, 2000.0, 64.0, "페이지 바깥 패닝 여유 (0..2000 px).");
+bounded_f32!(
+    EdgeSpeed,
+    20.0,
+    4000.0,
+    480.0,
+    "엣지 스크롤 최대 속도 (20..4000 px/s)."
+);
+bounded_f32!(
+    EdgeOverscroll,
+    0.0,
+    2000.0,
+    64.0,
+    "페이지 바깥 패닝 여유 (0..2000 px)."
+);
 bounded_f32!(EdgeDelay, 0.0, 3.0, 0.5, "엣지 반응 지연 (0..3초).");
 bounded_f32!(FocusDwell, 0.0, 5.0, 0.5, "창 포커스 지연 (0..5초).");
-bounded_f32!(CustomPaperDim, 100.0, 2400.0, 595.276, "사용자 용지 한 변 (100..2400 pt).");
+bounded_f32!(
+    CustomPaperDim,
+    100.0,
+    2400.0,
+    595.276,
+    "사용자 용지 한 변 (100..2400 pt)."
+);
 
 /// 종이 질감 프리셋 단계 (0..=4).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -977,8 +1013,7 @@ mod tests {
         s.texture.custom = false;
         s.texture.level = TextureLevel::new(4);
         s.texture.strength = TextureStrength::new(0.9); // 무시되어야 함.
-        let (preset_strength, preset_surface) =
-            freedf_core::paper::paper_texture_preset(4);
+        let (preset_strength, preset_surface) = freedf_core::paper::paper_texture_preset(4);
         let s = s.sanitized();
         assert_eq!(s.texture.strength, TextureStrength::new(preset_strength));
         assert_eq!(s.texture.surface, preset_surface);

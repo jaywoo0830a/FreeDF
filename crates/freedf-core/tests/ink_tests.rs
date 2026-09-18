@@ -8,17 +8,30 @@ fn density_lr_matches_two_density_calls() {
     // 성능 최적화 가드: density_lr(공유 x-파트)의 결과는 density를 좌/우로
     // 각각 호출한 것과 완전히 동일해야 합니다 (행동 보존). 정확 2옥타브와
     // fast_noise(고주파 생략) 두 모드 모두 검증합니다.
-    let g_base = InkGrain { seed: 11, ..InkGrain::default() };
+    let g_base = InkGrain {
+        seed: 11,
+        ..InkGrain::default()
+    };
     for &fast in &[false, true] {
         for &seed in &[11u64, 99, 55555] {
-            let g = InkGrain { seed, fast_noise: fast, ..g_base };
+            let g = InkGrain {
+                seed,
+                fast_noise: fast,
+                ..g_base
+            };
             for &(u, s) in &[(0.0f32, 0.0f32), (0.12, 0.5), (0.5, 1.0), (1.0, 0.9)] {
                 for tool in [ToolType::Pen, ToolType::Fountain] {
                     let lr = g.density_lr(tool, u, s);
                     let l = g.density(tool, u, -1.0, s);
                     let r = g.density(tool, u, 1.0, s);
-                    assert!((lr[0] - l).abs() < 1e-6, "L mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {l}");
-                    assert!((lr[1] - r).abs() < 1e-6, "R mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {r}");
+                    assert!(
+                        (lr[0] - l).abs() < 1e-6,
+                        "L mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {l}"
+                    );
+                    assert!(
+                        (lr[1] - r).abs() < 1e-6,
+                        "R mismatch fast={fast} tool={tool:?} u={u} s={s}: {lr:?} vs {r}"
+                    );
                 }
             }
         }
@@ -27,7 +40,10 @@ fn density_lr_matches_two_density_calls() {
 
 #[test]
 fn fast_noise_is_deterministic_bounded_and_non_popping() {
-    let g = InkGrain { fast_noise: true, ..InkGrain::default() };
+    let g = InkGrain {
+        fast_noise: true,
+        ..InkGrain::default()
+    };
     // 결정성 — 같은 (u,v)는 항상 같은 값.
     for &(u, v) in &[(0.3f32, -1.0), (0.5, 1.0), (0.12, 0.0)] {
         assert_eq!(
@@ -207,7 +223,10 @@ fn edges_are_denser_than_center_railroad_effect() {
     }
     center /= 200.0;
     edges /= 200.0;
-    assert!(edges > center + 0.02, "레일로드 효과 없음: {edges} vs {center}");
+    assert!(
+        edges > center + 0.02,
+        "레일로드 효과 없음: {edges} vs {center}"
+    );
 }
 
 #[test]
@@ -217,7 +236,10 @@ fn stroke_ink_factors_follow_path_and_are_stable() {
     let pts: Vec<StrokePoint> = (0..200)
         .map(|i| StrokePoint::with_time(i as f32 * 4.0, 100.0, 0.5, i as u64 * 5))
         .collect();
-    let g = InkGrain { seed: 1234, ..InkGrain::default() };
+    let g = InkGrain {
+        seed: 1234,
+        ..InkGrain::default()
+    };
     let f = stroke_ink_factors(ToolType::Pen, &pts, g);
     assert_eq!(f.len(), 200);
     assert!(
@@ -234,7 +256,14 @@ fn stroke_ink_factors_follow_path_and_are_stable() {
     let f2 = stroke_ink_factors(ToolType::Pen, &pts, g);
     assert_eq!(f, f2);
     // 비활성화 시 균일 1.0.
-    let off = stroke_ink_factors(ToolType::Pen, &pts, InkGrain { enabled: false, ..g });
+    let off = stroke_ink_factors(
+        ToolType::Pen,
+        &pts,
+        InkGrain {
+            enabled: false,
+            ..g
+        },
+    );
     assert!(off.iter().all(|v| (*v - 1.0).abs() < 1e-6));
 }
 
@@ -245,20 +274,32 @@ fn stroke_ink_lr_edges_denser_than_center_and_bounded() {
     let pts: Vec<StrokePoint> = (0..300)
         .map(|i| StrokePoint::with_time(i as f32 * 4.0, 100.0, 0.5, i as u64 * 5))
         .collect();
-    let g = InkGrain { seed: 77, ..InkGrain::default() };
+    let g = InkGrain {
+        seed: 77,
+        ..InkGrain::default()
+    };
     let lr = stroke_ink_lr(ToolType::Pen, &pts, g);
     assert_eq!(lr.len(), 300);
     let center = stroke_ink_factors(ToolType::Pen, &pts, g);
     let mid_avg: f32 = center[60..240].iter().sum::<f32>() / 180.0;
-    let edge_avg: f32 =
-        lr[60..240].iter().map(|p| (p[0] + p[1]) * 0.5).sum::<f32>() / 180.0;
-    assert!(edge_avg > mid_avg + 0.02, "가장자리가 중심보다 진해야 함: {edge_avg} vs {mid_avg}");
+    let edge_avg: f32 = lr[60..240].iter().map(|p| (p[0] + p[1]) * 0.5).sum::<f32>() / 180.0;
+    assert!(
+        edge_avg > mid_avg + 0.02,
+        "가장자리가 중심보다 진해야 함: {edge_avg} vs {mid_avg}"
+    );
     assert!(lr
         .iter()
         .flatten()
         .all(|v| v.is_finite() && (0.30..=1.60).contains(v)));
     // 비활성 → 전부 [1,1].
-    let off = stroke_ink_lr(ToolType::Pen, &pts, InkGrain { enabled: false, ..g });
+    let off = stroke_ink_lr(
+        ToolType::Pen,
+        &pts,
+        InkGrain {
+            enabled: false,
+            ..g
+        },
+    );
     assert!(off.iter().all(|p| p[0] == 1.0 && p[1] == 1.0));
     // 결정성.
     assert_eq!(lr, stroke_ink_lr(ToolType::Pen, &pts, g));

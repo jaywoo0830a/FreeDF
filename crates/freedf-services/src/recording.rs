@@ -149,8 +149,10 @@ fn start_recording_impl(dir: &Path, name: &str) -> Result<(u64, PathBuf, Inner),
                         if stop_cb.load(Ordering::Relaxed) {
                             return;
                         }
-                        let chunk: Vec<f32> =
-                            data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0).collect();
+                        let chunk: Vec<f32> = data
+                            .iter()
+                            .map(|s| (*s as f32 - 32768.0) / 32768.0)
+                            .collect();
                         let _ = tx.send(chunk);
                     },
                     err_fn,

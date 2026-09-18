@@ -1,14 +1,14 @@
 //! `bake` 모듈 단위 테스트 — `src/bake.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
 use freedf_canvas::bake::*;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use freedf_canvas::ink::Mesh;
-use freedf_canvas::scene::SceneSnapshot;
 use freedf_canvas::geom::PagePoint;
 use freedf_canvas::ink::BallWidth;
-use freedf_canvas::scene::{LayerKind, SceneStore, StrokeId, StrokePoint, Stroke};
+use freedf_canvas::ink::Mesh;
 use freedf_canvas::ink::SoakAlpha;
+use freedf_canvas::scene::SceneSnapshot;
+use freedf_canvas::scene::{LayerKind, SceneStore, Stroke, StrokeId, StrokePoint};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 fn stroke(id: u64) -> Stroke {
     Stroke {
@@ -72,8 +72,9 @@ fn service_is_non_blocking_and_delivers() {
         }
     }
     let gate = Arc::new(AtomicBool::new(false));
-    let service =
-        BakeService::start(Box::new(ManualWorker { gate: Arc::clone(&gate) }));
+    let service = BakeService::start(Box::new(ManualWorker {
+        gate: Arc::clone(&gate),
+    }));
 
     let mut store = SceneStore::new();
     store.add(stroke(1));

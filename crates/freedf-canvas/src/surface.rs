@@ -30,8 +30,13 @@ impl Transform {
 /// UI 스레드가 서피스에 넘기는 경량 그리기 커맨드.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
-    Clear { color: [f32; 4] },
-    Mesh { mesh: Arc<Mesh>, transform: Transform },
+    Clear {
+        color: [f32; 4],
+    },
+    Mesh {
+        mesh: Arc<Mesh>,
+        transform: Transform,
+    },
 }
 
 /// 그리기 대상 — 앱이 GPU/래스터로 구현. 커맨드 제출만 있고 반환 없음.

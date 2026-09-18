@@ -15,7 +15,11 @@ pub struct OutlineNode {
 }
 
 impl OutlineNode {
-    pub fn new(title: impl Into<String>, page_index: Option<usize>, children: Vec<OutlineNode>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        page_index: Option<usize>,
+        children: Vec<OutlineNode>,
+    ) -> Self {
         Self {
             title: title.into(),
             page_index,

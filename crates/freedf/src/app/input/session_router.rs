@@ -406,7 +406,12 @@ impl<S: Sink> SessionRouter<S> {
                 let open = self.open.as_mut().unwrap();
                 open.drags.push(*ev);
                 open.last_event_ms = now; // 워치독 재료 — 이벤트가 왔으니 살아 있다
-                (open.id, open.sink, open.source, open.state == SessionState::Held)
+                (
+                    open.id,
+                    open.sink,
+                    open.source,
+                    open.state == SessionState::Held,
+                )
             };
             if held {
                 return Report {
@@ -1033,7 +1038,10 @@ mod tests {
         let (id, age_ms, evidence, drags) = ink.calls[0];
         assert_eq!(id, 1);
         assert_eq!(age_ms, 0);
-        assert!(evidence, "Down 프레임의 evidence 는 참이다 — Down 자체가 증거");
+        assert!(
+            evidence,
+            "Down 프레임의 evidence 는 참이다 — Down 자체가 증거"
+        );
         assert_eq!(drags, 0);
     }
 
@@ -1078,7 +1086,12 @@ mod tests {
         let ink = ink.borrow();
         assert_eq!(
             kinds(&ink.commands),
-            vec!["begin-stroke", "extend-stroke", "extend-stroke", "end-stroke"]
+            vec![
+                "begin-stroke",
+                "extend-stroke",
+                "extend-stroke",
+                "end-stroke"
+            ]
         );
         assert!(check_well_formed(&ink.commands).is_ok());
     }
@@ -1100,7 +1113,10 @@ mod tests {
         // 우선순위 배열의 앞선 싱크(toolbar)가 즉답 — 잉크는 묻지도 않는다.
         assert_eq!(rep.outcome, Outcome::Admitted);
         assert_eq!(rep.sink, Some("toolbar"));
-        assert!(ink.borrow().calls.is_empty(), "앞선 싱크가 승인하면 뒤는 묻지 않는다");
+        assert!(
+            ink.borrow().calls.is_empty(),
+            "앞선 싱크가 승인하면 뒤는 묻지 않는다"
+        );
         assert_eq!(router.ledger()[0].sink, Some("toolbar"));
     }
 
@@ -1111,17 +1127,23 @@ mod tests {
         let mut router = SessionRouter::new(vec![shared(ink.clone())]);
 
         router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, true)); // pen live
-        // 펜 세션이 살아 있는 동안 패드가 프레스 — 라우터는 끊지 않고 드러낸다.
+                                                                           // 펜 세션이 살아 있는 동안 패드가 프레스 — 라우터는 끊지 않고 드러낸다.
         assert_eq!(
-            router.dispatch(&pad(PointerPhase::Down, 5.0), &ctx(1010, true)).outcome,
+            router
+                .dispatch(&pad(PointerPhase::Down, 5.0), &ctx(1010, true))
+                .outcome,
             Outcome::Foreign
         );
         assert_eq!(
-            router.dispatch(&pad(PointerPhase::Drag, 6.0), &ctx(1020, true)).outcome,
+            router
+                .dispatch(&pad(PointerPhase::Drag, 6.0), &ctx(1020, true))
+                .outcome,
             Outcome::Foreign
         );
         assert_eq!(
-            router.dispatch(&pad(PointerPhase::Up, 6.0), &ctx(1030, true)).outcome,
+            router
+                .dispatch(&pad(PointerPhase::Up, 6.0), &ctx(1030, true))
+                .outcome,
             Outcome::Foreign
         );
         assert_eq!(router.open_session().unwrap().source, PointerSource::Pen); // 세션 무사
@@ -1135,11 +1157,10 @@ mod tests {
             vec!["begin-stroke", "extend-stroke", "end-stroke"]
         );
         // 패드 샘플(6)이 획에 섞이지 않았다.
-        assert_eq!(ink.received.iter().map(|e| e.point).collect::<Vec<_>>(), vec![
-            [10.0, 0.0],
-            [12.0, 0.0],
-            [14.0, 0.0]
-        ]);
+        assert_eq!(
+            ink.received.iter().map(|e| e.point).collect::<Vec<_>>(),
+            vec![[10.0, 0.0], [12.0, 0.0], [14.0, 0.0]]
+        );
         assert_eq!(router.ledger().len(), 1); // foreign Down 은 상류(허브 drop)가 정산하는 영역
     }
 
@@ -1227,7 +1248,8 @@ mod tests {
 
         router.dispatch(&pen(PointerPhase::Down, -5.0), &ctx(1000, true));
         for i in 0..14 {
-            router.dispatch(&pen(PointerPhase::Drag, i as f32), &ctx(1000 + i, true)); // 꼬리 hover
+            router.dispatch(&pen(PointerPhase::Drag, i as f32), &ctx(1000 + i, true));
+            // 꼬리 hover
         }
         router.dispatch(&pen(PointerPhase::Up, -5.0), &ctx(1020, true));
 
@@ -1262,7 +1284,11 @@ mod tests {
             vec!["begin-stroke", "extend-stroke", "extend-stroke"]
         );
         assert_eq!(point_of(&ink.commands[0]), [10.0, 0.0], "원래 접촉점");
-        assert_eq!(point_of(&ink.commands[1]), [12.0, 0.0], "버퍼된 첫 샘플 — 유실 없음");
+        assert_eq!(
+            point_of(&ink.commands[1]),
+            [12.0, 0.0],
+            "버퍼된 첫 샘플 — 유실 없음"
+        );
         assert_eq!(point_of(&ink.commands[2]), [14.0, 0.0]);
     }
 
@@ -1300,7 +1326,10 @@ mod tests {
 
         // 펜 Down 이 egui보다 먼저 도착한 프레임 — evidence=false.
         router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, false));
-        assert!(!router.open_session().unwrap().held, "기하 즉답 — 즉시 라이브");
+        assert!(
+            !router.open_session().unwrap().held,
+            "기하 즉답 — 즉시 라이브"
+        );
 
         // egui가 따라잡기 전 프레임들 — 세션은 그대로 살아 있어야 한다.
         assert!(router.frame(&ctx(1016, false)).is_none());
@@ -1336,7 +1365,9 @@ mod tests {
         assert!(router.open_session().is_some());
 
         // 창 밖 + 증거 없음 → 워치독 정산.
-        let rep = router.frame(&ctx(1010 + SESSION_STALE_MS + 1, false)).expect("워치독 정산");
+        let rep = router
+            .frame(&ctx(1010 + SESSION_STALE_MS + 1, false))
+            .expect("워치독 정산");
         assert_eq!(rep.outcome, Outcome::Stale);
         assert!(router.open_session().is_none());
 
@@ -1368,7 +1399,10 @@ mod tests {
         router.dispatch(&pen(PointerPhase::Down, 10.0), &ctx(1000, true));
         // 이벤트는 끊겼지만 egui가 프레스를 계속 알고 있다.
         assert!(router.frame(&ctx(5000, true)).is_none());
-        assert!(router.open_session().is_some(), "멈춰 있는 펜은 획의 끝이 아니다");
+        assert!(
+            router.open_session().is_some(),
+            "멈춰 있는 펜은 획의 끝이 아니다"
+        );
         assert_eq!(router.ledger().len(), 1);
     }
 
@@ -1435,4 +1469,3 @@ mod tests {
         assert!(router.ledger()[0].expired);
     }
 }
-

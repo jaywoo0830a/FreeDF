@@ -149,12 +149,7 @@ pub fn ink_field(u: f32, v: f32, seed: u64) -> f32 {
 fn ink_field_pair(u: f32, seed: u64) -> [f32; 2] {
     let wick_seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let flow = value_noise_pair(u * 3.0, -1.2, 1.2, seed);
-    let wick = value_noise_pair(
-        u * 13.0 + 5.3,
-        -1.0 * 4.0 + 2.9,
-        1.0 * 4.0 + 2.9,
-        wick_seed,
-    );
+    let wick = value_noise_pair(u * 13.0 + 5.3, -1.0 * 4.0 + 2.9, 1.0 * 4.0 + 2.9, wick_seed);
     [
         0.72 * flow[0] + 0.28 * wick[0],
         0.72 * flow[1] + 0.28 * wick[1],
@@ -177,8 +172,7 @@ fn ballpoint_shape(u: f32, speed: f32, g: InkGrain) -> f32 {
 /// 만년필의 진행 방향 밀도 형태: 양 끝 고임(풀링) + 속도 결핍.
 fn fountain_shape(u: f32, speed: f32, g: InkGrain) -> f32 {
     // 닙이 종이에 닿는 순간과 떨어지는 순간 잉크가 고입니다.
-    let pool = g.pooling
-        * (0.5 * (-u / 0.035).exp() + 0.5 * (-(1.0 - u) / 0.035).exp());
+    let pool = g.pooling * (0.5 * (-u / 0.035).exp() + 0.5 * (-(1.0 - u) / 0.035).exp());
     // 빨리 쓰면 공급이 따라가지 못해 옅어집니다 (폭과 별개로 색도).
     let starve = 1.0 - g.starvation * speed;
     (1.0 + pool) * starve
@@ -260,11 +254,7 @@ impl InkGrain {
 /// 호 길이 누적으로 `u`를, 직전 세그먼트 속도(pt/s)로 `speed_norm`을
 /// 만들고 중심선 밀도를 반환합니다 — 캔버스/내보내기 양쪽에서
 /// **같은 입력이면 항상 같은 결과**입니다 (결정적, 시간 불변).
-pub fn stroke_ink_factors(
-    tool: ToolType,
-    points: &[StrokePoint],
-    grain: InkGrain,
-) -> Vec<f32> {
+pub fn stroke_ink_factors(tool: ToolType, points: &[StrokePoint], grain: InkGrain) -> Vec<f32> {
     if points.is_empty() {
         return Vec::new();
     }
@@ -282,11 +272,7 @@ pub fn stroke_ink_factors(
 /// 스트로크 전체의 점별 **[왼쪽, 오른쪽] 단면 밀도** — 레일로드(가장자리가
 /// 중심보다 진함) 효과를 리본 좌우 정점에 따로 적용하기 위한 API.
 /// 비활성 상태면 전부 [1.0, 1.0]을 반환합니다.
-pub fn stroke_ink_lr(
-    tool: ToolType,
-    points: &[StrokePoint],
-    grain: InkGrain,
-) -> Vec<[f32; 2]> {
+pub fn stroke_ink_lr(tool: ToolType, points: &[StrokePoint], grain: InkGrain) -> Vec<[f32; 2]> {
     let n = points.len();
     if n == 0 {
         return Vec::new();

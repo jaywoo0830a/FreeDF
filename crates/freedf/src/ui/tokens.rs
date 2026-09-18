@@ -60,15 +60,13 @@ pub mod margin {
     use super::space;
 
     /// 배지(badge) — 꽉 찬 소형 프레임.
-    pub const BADGE: egui::Margin =
-        egui::Margin::symmetric(space::SM as i8, space::XS as i8);
+    pub const BADGE: egui::Margin = egui::Margin::symmetric(space::SM as i8, space::XS as i8);
     /// 키보드 키(<kbd>).
     pub const KBD: egui::Margin = egui::Margin::symmetric(space::SM as i8, space::XS as i8);
     /// 카드/알럿/토스트 — 콘텐츠 프레임 표준.
     pub const CARD: egui::Margin = egui::Margin::symmetric(space::LG as i8, space::MD as i8);
     /// 다이얼로그/모달 본문.
-    pub const DIALOG: egui::Margin =
-        egui::Margin::symmetric(space::XL as i8, space::LG as i8);
+    pub const DIALOG: egui::Margin = egui::Margin::symmetric(space::XL as i8, space::LG as i8);
     /// 기본 카드 컨테이너 (사방 동일).
     pub const CONTAINER: egui::Margin = egui::Margin::same(space::MD as i8);
     /// 탭/칩 — 가로 넉넉·세로 타이트.

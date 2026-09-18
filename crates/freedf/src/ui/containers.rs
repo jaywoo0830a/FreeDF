@@ -148,7 +148,9 @@ pub fn row<R>(
 ) -> R {
     let prev = ui.spacing_mut().item_spacing.x;
     ui.spacing_mut().item_spacing.x = gap;
-    let r = ui.with_layout(egui::Layout::left_to_right(align), content).inner;
+    let r = ui
+        .with_layout(egui::Layout::left_to_right(align), content)
+        .inner;
     ui.spacing_mut().item_spacing.x = prev;
     r
 }

@@ -115,7 +115,6 @@ impl Gallery {
                 .show(ui);
         });
 
-
         // ── IconButton: 이름이 필수인 아이콘 전용 ───────────────────
         kit::section_label(ui, "IconButton — 아이콘 전용 (이름 필수)");
         ui.horizontal(|ui| {
@@ -210,4 +209,3 @@ impl Gallery {
         }
     }
 }
-

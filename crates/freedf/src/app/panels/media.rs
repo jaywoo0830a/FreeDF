@@ -25,7 +25,9 @@ impl FreeDfApp {
             }
             if crate::ui::buttons::Button::primary("Upload")
                 .icon(icons::UPLOAD_SIMPLE)
-                .hint(format!("Upload an audio / image / video file to page {page_no}"))
+                .hint(format!(
+                    "Upload an audio / image / video file to page {page_no}"
+                ))
                 .show(ui)
                 .clicked()
             {
@@ -80,7 +82,11 @@ impl FreeDfApp {
                     .small_button(icon_text(
                         ui,
                         "",
-                        if p.is_paused() { icons::PLAY } else { icons::PAUSE },
+                        if p.is_paused() {
+                            icons::PLAY
+                        } else {
+                            icons::PAUSE
+                        },
                     ))
                     .on_hover_text("Play / Pause")
                     .clicked()
@@ -153,7 +159,10 @@ impl FreeDfApp {
                         egui::TextureOptions::LINEAR,
                     ));
                 }
-                Some((pv.texture.as_ref().expect("texture").clone(), pv.name.clone()))
+                Some((
+                    pv.texture.as_ref().expect("texture").clone(),
+                    pv.name.clone(),
+                ))
             }
             None => None,
         };
@@ -189,7 +198,11 @@ impl FreeDfApp {
             if !self.media_all_pages && item.page_index != Some(current) {
                 continue;
             }
-            let key = if self.media_all_pages { item.page_index } else { Some(current) };
+            let key = if self.media_all_pages {
+                item.page_index
+            } else {
+                Some(current)
+            };
             if let Some((_, list)) = sections.iter_mut().find(|(k, _)| *k == key) {
                 list.push(item.clone());
             } else {
@@ -273,11 +286,7 @@ impl FreeDfApp {
                 )
                 .on_hover_text(&item.name);
             ui.label(egui::RichText::new(&item.kind).weak().small());
-            ui.label(
-                egui::RichText::new(format_bytes(item.size))
-                    .weak()
-                    .small(),
-            );
+            ui.label(egui::RichText::new(format_bytes(item.size)).weak().small());
             if ui
                 .small_button(icon_text(ui, "", icons::TRASH))
                 .on_hover_text("Delete this media item")

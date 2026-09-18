@@ -1,8 +1,8 @@
 //! `pipeline` 모듈 단위 테스트 — `src/pipeline.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::pipeline::*;
 use freedf_core::model::{StrokePoint, ToolType};
 use freedf_core::pen::Materials;
+use freedf_core::pipeline::*;
 
 fn pipeline() -> InkPipeline {
     InkPipeline::new(Materials::default(), 3.0, 0.4)
@@ -54,7 +54,11 @@ fn live_stroke_fix_last_blocked_at_frontier() {
     l.mark_meshed(); // frontier == len == 2
     let w0 = l.points.last().expect("last").width;
     l.fix_last(StrokePoint::new(1.0, 0.0, 0.9)); // at/before frontier — ignored (immutable prefix)
-    assert_eq!(l.points.last().expect("last").width, w0, "immutable prefix must not change");
+    assert_eq!(
+        l.points.last().expect("last").width,
+        w0,
+        "immutable prefix must not change"
+    );
     l.append(StrokePoint::new(2.0, 0.0, 0.5)); // len 3 > frontier 2
     l.fix_last(StrokePoint {
         x: 2.0,
@@ -88,7 +92,16 @@ fn live_stroke_freeze_detaches_from_live() {
 #[test]
 fn pipeline_down_starts_with_locked_first_point() {
     let mut p = pipeline();
-    let tip = p.down(ToolType::Pen, [10, 20, 30, 255], 100.0, 200.0, 0.7, 0.0, 0, 0.0);
+    let tip = p.down(
+        ToolType::Pen,
+        [10, 20, 30, 255],
+        100.0,
+        200.0,
+        0.7,
+        0.0,
+        0,
+        0.0,
+    );
     assert!(p.is_drawing());
     let l = p.live().expect("live");
     assert_eq!(l.points.len(), 1);
@@ -142,7 +155,11 @@ fn pipeline_second_stroke_starts_fresh() {
     assert!(!p.is_drawing());
     p.down(ToolType::Pen, [0, 0, 0, 255], 50.0, 50.0, 0.5, 0.0, 0, 0.0);
     let l = p.live().expect("live");
-    assert_eq!(l.points.len(), 1, "new stroke does not inherit previous points");
+    assert_eq!(
+        l.points.len(),
+        1,
+        "new stroke does not inherit previous points"
+    );
 }
 
 /// 계약: `down`에 준 `tilt_mag`가 WidthLocker까지 전달돼 폭에 반영됩니다.
@@ -175,7 +192,19 @@ fn pipeline_smoothing_zero_passes_raw_coords() {
     p.drag(15.0, 22.0, 0.6, 0.016, 16);
     p.drag(20.0, 21.0, 0.7, 0.032, 32);
     let pts = &p.live().expect("live").points;
-    assert!((pts[1].x - 15.0).abs() < 1e-4, "raw x passthrough: {}", pts[1].x);
-    assert!((pts[1].y - 22.0).abs() < 1e-4, "raw y passthrough: {}", pts[1].y);
-    assert!((pts[2].x - 20.0).abs() < 1e-4, "raw x passthrough: {}", pts[2].x);
+    assert!(
+        (pts[1].x - 15.0).abs() < 1e-4,
+        "raw x passthrough: {}",
+        pts[1].x
+    );
+    assert!(
+        (pts[1].y - 22.0).abs() < 1e-4,
+        "raw y passthrough: {}",
+        pts[1].y
+    );
+    assert!(
+        (pts[2].x - 20.0).abs() < 1e-4,
+        "raw x passthrough: {}",
+        pts[2].x
+    );
 }

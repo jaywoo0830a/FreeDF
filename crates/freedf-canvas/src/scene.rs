@@ -104,8 +104,7 @@ impl SceneStore {
     /// 스트로크 추가 — rev가 1 증가하고 새 rev를 반환.
     pub fn add(&mut self, stroke: Stroke) -> Revision {
         self.rev = Revision(self.rev.0 + 1);
-        self.ops
-            .push((self.rev, SceneOp::Add(stroke.clone())));
+        self.ops.push((self.rev, SceneOp::Add(stroke.clone())));
         self.strokes.push(stroke);
         self.rev
     }

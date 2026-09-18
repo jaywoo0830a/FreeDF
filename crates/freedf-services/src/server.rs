@@ -140,7 +140,10 @@ impl MediaClient {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<MediaObject>, String> {
-        let mut query = vec![format!("limit={}", limit.clamp(1, 500)), format!("offset={offset}")];
+        let mut query = vec![
+            format!("limit={}", limit.clamp(1, 500)),
+            format!("offset={offset}"),
+        ];
         if let Some(d) = doc_id {
             query.push(format!("doc_id={d}"));
         }
@@ -151,7 +154,8 @@ impl MediaClient {
             query.push(format!("page_index={p}"));
         }
         let resp = self.get(&format!("/api/media?{}", query.join("&")))?;
-        resp.into_json::<Vec<MediaObject>>().map_err(|e| e.to_string())
+        resp.into_json::<Vec<MediaObject>>()
+            .map_err(|e| e.to_string())
     }
 
     /// 파일 업로드 (multipart/form-data 직접 구성 — ureq 2.x에는
@@ -178,7 +182,10 @@ impl MediaClient {
             .agent
             .post(&format!("{}/api/media?{query}", self.base))
             .set("X-Api-Key", &self.api_key)
-            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .set(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
             .send_bytes(&body)
             .map_err(http_err)?;
         resp.into_json::<MediaObject>().map_err(|e| e.to_string())
@@ -263,10 +270,8 @@ fn multipart_body(boundary: &str, file_name: &str, mime: &str, data: &[u8]) -> V
     let mut out = Vec::with_capacity(data.len() + 256);
     out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     out.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n"
-        )
-        .as_bytes(),
+        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\n")
+            .as_bytes(),
     );
     out.extend_from_slice(format!("Content-Type: {mime}\r\n\r\n").as_bytes());
     out.extend_from_slice(data);
@@ -390,11 +395,18 @@ mod tests {
         assert_eq!(obj.doc_id, Some(43));
         assert_eq!(obj.page_index, Some(2));
 
-        let items = client.list(Some(43), Some("audio"), Some(2), 10, 0).expect("list");
-        assert!(items.iter().any(|m| m.id == obj.id), "uploaded item missing");
+        let items = client
+            .list(Some(43), Some("audio"), Some(2), 10, 0)
+            .expect("list");
+        assert!(
+            items.iter().any(|m| m.id == obj.id),
+            "uploaded item missing"
+        );
 
         client.delete(obj.id).expect("delete");
-        let after = client.list(Some(43), Some("audio"), Some(2), 10, 0).expect("list after delete");
+        let after = client
+            .list(Some(43), Some("audio"), Some(2), 10, 0)
+            .expect("list after delete");
         assert!(!after.iter().any(|m| m.id == obj.id));
     }
 }

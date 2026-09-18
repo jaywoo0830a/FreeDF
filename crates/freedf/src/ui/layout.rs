@@ -24,11 +24,7 @@ pub const SP_3: f32 = space::LG; // .75rem  — generous
 pub const SP_4: f32 = space::XL; // 1rem    — section gap
 
 /// Horizontal stack (flex-row) with an explicit gap.
-pub fn hstack<R>(
-    ui: &mut egui::Ui,
-    gap: f32,
-    children: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+pub fn hstack<R>(ui: &mut egui::Ui, gap: f32, children: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let prev = ui.spacing_mut().item_spacing.x;
     ui.spacing_mut().item_spacing.x = gap;
     let r = children(ui);
@@ -37,11 +33,7 @@ pub fn hstack<R>(
 }
 
 /// Vertical stack (flex-column) with an explicit gap.
-pub fn vstack<R>(
-    ui: &mut egui::Ui,
-    gap: f32,
-    children: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+pub fn vstack<R>(ui: &mut egui::Ui, gap: f32, children: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let prev = ui.spacing_mut().item_spacing.y;
     ui.spacing_mut().item_spacing.y = gap;
     let r = children(ui);
@@ -64,11 +56,7 @@ pub fn hseparator(ui: &mut egui::Ui) {
 
 /// A scrolling toolbar row (ribbon). Excess items scroll horizontally instead
 /// of overflowing off-screen (matches the previous app-level `toolbar_row`).
-pub fn toolbar_row<R>(
-    ui: &mut egui::Ui,
-    salt: &str,
-    add: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+pub fn toolbar_row<R>(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::ScrollArea::horizontal()
         .id_salt(("toolbar_row", salt))
         .auto_shrink([false, true]) // X: 폭 전체, Y: 내용물 높이로 수축(전체 영역 차지 방지)
@@ -78,10 +66,6 @@ pub fn toolbar_row<R>(
 
 /// Left-aligned inline group of controls (children on one horizontal line).
 /// This is the basic building block of a toolbar row.
-pub fn group<R>(
-    ui: &mut egui::Ui,
-    gap: f32,
-    children: impl FnOnce(&mut egui::Ui) -> R,
-) -> R {
+pub fn group<R>(ui: &mut egui::Ui, gap: f32, children: impl FnOnce(&mut egui::Ui) -> R) -> R {
     hstack(ui, gap, children)
 }

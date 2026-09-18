@@ -1,7 +1,7 @@
 //! `text` 모듈 단위 테스트 — `src/text.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::text::*;
 use freedf_core::search::TextRun;
+use freedf_core::text::*;
 
 // ── content_rect_to_display: 2026-09 pypdfium2 픽셀 실측값으로 검증 ──
 // W=200, H=100 미디어박스, charbox (23.44, 80.0, 43.32, 108.72), scale 2 렌더에서
@@ -12,27 +12,38 @@ use freedf_core::search::TextRun;
 fn display_mapping_matches_pixel_ground_truth() {
     let cb: [f32; 4] = [23.44, 80.0, 43.32, 108.72];
     let (w, h) = (200.0, 100.0);
-    let approx = |a: [f32; 4], b: [f32; 4]| {
-        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-3)
-    };
+    let approx =
+        |a: [f32; 4], b: [f32; 4]| a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-3);
     // None: (x, H−y)
     assert!(
-        approx(content_rect_to_display(cb, w, h, PageRotation::None), [23.44, -8.72, 43.32, 20.0]),
+        approx(
+            content_rect_to_display(cb, w, h, PageRotation::None),
+            [23.44, -8.72, 43.32, 20.0]
+        ),
         "None 매핑"
     );
     // 90°: (y, x) → [b, l, t, r]
     assert!(
-        approx(content_rect_to_display(cb, w, h, PageRotation::Degrees90), [80.0, 23.44, 108.72, 43.32]),
+        approx(
+            content_rect_to_display(cb, w, h, PageRotation::Degrees90),
+            [80.0, 23.44, 108.72, 43.32]
+        ),
         "90° 매핑"
     );
     // 180°: (W−x, y) → [W−r, b, W−l, t]
     assert!(
-        approx(content_rect_to_display(cb, w, h, PageRotation::Degrees180), [156.68, 80.0, 176.56, 108.72]),
+        approx(
+            content_rect_to_display(cb, w, h, PageRotation::Degrees180),
+            [156.68, 80.0, 176.56, 108.72]
+        ),
         "180° 매핑"
     );
     // 270°: (H−y, W−x) → [H−t, W−r, H−b, W−l]
     assert!(
-        approx(content_rect_to_display(cb, w, h, PageRotation::Degrees270), [-8.72, 156.68, 20.0, 176.56]),
+        approx(
+            content_rect_to_display(cb, w, h, PageRotation::Degrees270),
+            [-8.72, 156.68, 20.0, 176.56]
+        ),
         "270° 매핑"
     );
 }
@@ -116,20 +127,16 @@ fn word_at_picks_correct_line_between_lines() {
     // 두 줄: 1행 y 10..26, 2행 y 60..76. 줄 박스 근처 탭 → 가까운 줄 선택.
     let mut chars = Vec::new();
     for (i, ch) in "cat".chars().enumerate() {
-        chars.push(TextChar::new(ch.to_string(), [
-            100.0 + i as f32 * 10.0,
-            10.0,
-            108.0 + i as f32 * 10.0,
-            26.0,
-        ]));
+        chars.push(TextChar::new(
+            ch.to_string(),
+            [100.0 + i as f32 * 10.0, 10.0, 108.0 + i as f32 * 10.0, 26.0],
+        ));
     }
     for (i, ch) in "dog".chars().enumerate() {
-        chars.push(TextChar::new(ch.to_string(), [
-            100.0 + i as f32 * 10.0,
-            60.0,
-            108.0 + i as f32 * 10.0,
-            76.0,
-        ]));
+        chars.push(TextChar::new(
+            ch.to_string(),
+            [100.0 + i as f32 * 10.0, 60.0, 108.0 + i as f32 * 10.0, 76.0],
+        ));
     }
     // 1행 바로 아래(y 29) → "cat", 2행 바로 위(y 57) → "dog".
     assert_eq!(word_at(&chars, [110.0, 29.0], 4.0).unwrap().0, "cat");
@@ -187,7 +194,10 @@ fn char_highlights_merge_same_line_into_one_band() {
     assert_eq!(rects.len(), 1, "1행만 닿음 → 밴드 1개");
     let r = rects[0];
     assert!((r[0] - 20.0).abs() < 1e-3, "시작은 첫 글자 왼쪽");
-    assert!((r[2] - 300.0).abs() < 1e-3, "끝은 마지막 글자 오른쪽(공백 포함)");
+    assert!(
+        (r[2] - 300.0).abs() < 1e-3,
+        "끝은 마지막 글자 오른쪽(공백 포함)"
+    );
     assert!((r[1] - 10.0).abs() < 1e-3 && (r[3] - 26.0).abs() < 1e-3);
 }
 
@@ -219,9 +229,7 @@ fn char_highlights_margin_touches_adjacent() {
 #[test]
 fn char_highlights_empty_area_is_empty() {
     let chars = two_line_chars();
-    assert!(
-        char_line_highlights(&chars, [400.0, 300.0, 450.0, 330.0], 3.0).is_empty()
-    );
+    assert!(char_line_highlights(&chars, [400.0, 300.0, 450.0, 330.0], 3.0).is_empty());
 }
 
 // ── text_line_highlights (런 단위, 기존 동작 유지) ─────────────────
@@ -244,7 +252,5 @@ fn text_highlights_union_same_line_and_filter_far() {
 #[test]
 fn text_highlights_no_touch_returns_empty() {
     let runs = vec![TextRun::new("Hello", [10.0, 10.0, 60.0, 26.0], vec![])];
-    assert!(
-        text_line_highlights(&runs, [200.0, 200.0, 300.0, 260.0], 2.0).is_empty()
-    );
+    assert!(text_line_highlights(&runs, [200.0, 200.0, 300.0, 260.0], 2.0).is_empty());
 }

@@ -33,30 +33,30 @@ mod dictionary;
 mod gamepad;
 mod input;
 pub(crate) mod key_hook;
-pub(crate) mod winstyle;
 mod panels;
 mod tabs;
 mod toolbar;
+pub(crate) mod winstyle;
 
 pub(crate) use std::path::{Path, PathBuf};
 
 pub(crate) use eframe::egui;
 pub(crate) use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
+use freedf_canvas::clock::Clock;
 pub(crate) use freedf_core::history::{Edit, History};
+pub(crate) use freedf_core::ink::InkGrain;
 pub(crate) use freedf_core::logging::{AppEvent, Logger};
 pub(crate) use freedf_core::model::{PageIndex, StrokePoint, ToolType};
-use freedf_canvas::clock::Clock;
 pub(crate) use freedf_core::notes::NotesManager;
 pub(crate) use freedf_core::outline::{flatten, OutlineNode};
 pub(crate) use freedf_core::paper::{
-    clamp_line_width, clamp_spacing, paper_dots, paper_lines_rotated, PagePaper, PaperSize, PaperStyle,
-    PaperStyleSettings, PAPER_COLORS,
+    clamp_line_width, clamp_spacing, paper_dots, paper_lines_rotated, PagePaper, PaperSize,
+    PaperStyle, PaperStyleSettings, PAPER_COLORS,
 };
 pub(crate) use freedf_core::pen::{
     BallPenProfile, ColorFamily, FountainProfile, InkSoak, Materials, Palette, WritingMaterial,
 };
-pub(crate) use freedf_core::ink::InkGrain;
 pub(crate) use freedf_core::search::{find_matches, TextMatch, TextRun};
 pub(crate) use freedf_core::text::char_line_highlights;
 
@@ -70,9 +70,7 @@ pub(crate) fn now_ms() -> u64 {
 
 /// 자동 저장 발사 조건 — pen-up 기록 + 대기 경과 + 포인터가 올라간 상태.
 fn auto_flush_due(last_pen_up_ms: u64, now: u64, any_down: bool) -> bool {
-    last_pen_up_ms != 0
-        && now.saturating_sub(last_pen_up_ms) >= AUTO_FLUSH_IDLE_MS
-        && !any_down
+    last_pen_up_ms != 0 && now.saturating_sub(last_pen_up_ms) >= AUTO_FLUSH_IDLE_MS && !any_down
 }
 
 /// 현재 시각 (초, f64) — 로딩 경과 시간 표시용.
@@ -83,16 +81,18 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 pub(crate) use freedf_core::store::AnnotationStore;
-pub(crate) use freedf_core::transform::{PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT};
+pub(crate) use freedf_core::transform::{
+    PageAlign, ViewTransform, MAX_ZOOM, MIN_ZOOM, ZOOM_100_PERCENT,
+};
 
-pub(crate) use crate::storage::{DocRow, SharedStorage, StorageBackend};
-pub(crate) use dictionary::Dictionary;
 pub(crate) use crate::pdf::DocumentView;
+pub(crate) use crate::pdf::Pdfium;
 pub(crate) use crate::recent::{RecentItem, RecentKind, RecentList};
 pub(crate) use crate::server::{MediaClient, MediaObject, MediaServerConfig};
 pub(crate) use crate::settings::MAX_FAVORITE_COLORS;
+pub(crate) use crate::storage::{DocRow, SharedStorage, StorageBackend};
+pub(crate) use dictionary::Dictionary;
 pub(crate) use egui_phosphor_icons::icons;
-pub(crate) use crate::pdf::Pdfium;
 // 캐시 레지스트리 — 툴바 메뉴가 이 목록을 순회합니다 (actions/cache.rs).
 pub(crate) use actions::cache::all_caches;
 use std::collections::HashSet;
@@ -188,7 +188,11 @@ fn tool_icon(tool: ToolType) -> egui_phosphor_icons::Icon {
 /// current theme's text color. The icon uses the Phosphor font family so the
 /// glyph renders correctly; the label uses the UI font. This gives each button
 /// a recognizable icon *and* a text label (WCAG: text alternative + contrast).
-pub(crate) fn icon_text(ui: &egui::Ui, label: &str, ic: egui_phosphor_icons::Icon) -> egui::WidgetText {
+pub(crate) fn icon_text(
+    ui: &egui::Ui,
+    label: &str,
+    ic: egui_phosphor_icons::Icon,
+) -> egui::WidgetText {
     let color = ui.visuals().text_color();
     let mut job = egui::text::LayoutJob::default();
     job.append(
@@ -259,8 +263,7 @@ fn overlay_header(
 ) -> bool {
     let mut close = false;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing =
-            egui::vec2(crate::ui::tokens::space::SM, 0.0);
+        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
         ui.label(overlay_title(ui, icon, title));
         ui.label(egui::RichText::new(count).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -334,8 +337,7 @@ fn library_row(
 ) -> egui::Response {
     let height = crate::ui::scale::S_36; // 36px (2.25rem) 표준 행 높이 — 모듈러 스케일 토큰
     let width = ui.available_width();
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
     let visuals = ui.visuals();
     let bg = if selected {
         visuals.selection.bg_fill
@@ -445,7 +447,11 @@ fn color_circle_swatch(
     } else {
         Color32::from_gray(110)
     };
-    painter.circle_stroke(center, r, egui::Stroke::new(if selected { 2.0 } else { 1.0 }, ring));
+    painter.circle_stroke(
+        center,
+        r,
+        egui::Stroke::new(if selected { 2.0 } else { 1.0 }, ring),
+    );
     ui.interact(rect, ui.id().with(id_salt), egui::Sense::click())
 }
 
@@ -559,7 +565,11 @@ pub(crate) fn cursor_hysteresis(
     } else {
         1
     };
-    let shown = if counter >= stable_frames { want } else { shown };
+    let shown = if counter >= stable_frames {
+        want
+    } else {
+        shown
+    };
     (counter, shown)
 }
 
@@ -594,17 +604,26 @@ pub(crate) enum TextAction {
     UploadMedia,
     /// 서버의 문서 PDF 다운로드 — 비 Windows에서 저장 경로 입력 폴백.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
-    DownloadPdf { doc_id: i64, title: String },
+    DownloadPdf {
+        doc_id: i64,
+        title: String,
+    },
     /// 녹음(미디어) 다운로드 — 비 Windows에서 저장 경로 입력 폴백.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
-    DownloadMedia { url: String, name: String },
+    DownloadMedia {
+        url: String,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ConfirmAction {
     DeleteNote,
     /// Library 다중 삭제 (documents.id 기준).
-    DeleteLibrary { notes: Vec<i64>, pdfs: Vec<i64> },
+    DeleteLibrary {
+        notes: Vec<i64>,
+        pdfs: Vec<i64>,
+    },
 }
 
 /// 새 빈 페이지를 삽입하는 위치/방식.
@@ -635,10 +654,7 @@ pub(crate) enum ModalKind {
         action: ConfirmAction,
     },
     /// Non-blocking error popup.
-    Alert {
-        title: String,
-        message: String,
-    },
+    Alert { title: String, message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -736,7 +752,9 @@ pub(crate) enum MediaOutcome {
         image: egui::ColorImage,
     },
     /// 시스템 기본 앱으로 열기 완료 (다운로드 + 실행).
-    OpenedExternally { name: String },
+    OpenedExternally {
+        name: String,
+    },
 }
 
 /// 서버 CAS의 "고아 PDF" 작업 결과 (라이브러리 미등록 PDF 섹션).
@@ -1434,7 +1452,8 @@ impl FreeDfApp {
         // zoom by exp(speed * scroll), which jumps ~28% per wheel notch. We do
         // discrete 5% zoom ourselves (see handle_canvas_input), so keep egui's
         // fold a no-op while still allowing real pinch (Event::Zoom).
-        cc.egui_ctx.options_mut(|o| o.input_options.scroll_zoom_speed = 0.0);
+        cc.egui_ctx
+            .options_mut(|o| o.input_options.scroll_zoom_speed = 0.0);
 
         // 기본 펜/만년필 색은 항상 진한 검정 (다크 테마에서도 흰색이 아님).
         let theme_pen = Palette::default_pen();
@@ -1469,8 +1488,8 @@ impl FreeDfApp {
         let cursor_scale = s.global.cursor_scale;
         // 펜 입력 공급원 — Windows는 OTD 데몬 IPC(틸트·필압), Linux는 evdev.
         #[cfg(target_os = "windows")]
-        let pen_monitor = freedf_core::pen_input::spawn_otd_monitor()
-            .map(freedf_core::pen_input::from_receiver);
+        let pen_monitor =
+            freedf_core::pen_input::spawn_otd_monitor().map(freedf_core::pen_input::from_receiver);
         #[cfg(not(target_os = "windows"))]
         let pen_monitor = freedf_core::pen_input::open_best();
         // 장치 능력 (능력 협상 입력) — 어댑터가 "틸트를 보고하는 장치인가"에
@@ -1544,8 +1563,8 @@ impl FreeDfApp {
         let library_filter = String::new();
 
         // 전체 재굽기 워커용 메셔 공유 스냅샷 (설정 변경 시 UI가 갱신).
-        let ink_baker_mesher = std::sync::Arc::new(std::sync::RwLock::new(
-            freedf_canvas::CoreRibbonMesher {
+        let ink_baker_mesher =
+            std::sync::Arc::new(std::sync::RwLock::new(freedf_canvas::CoreRibbonMesher {
                 materials: Materials::new(pen_profile, fountain_profile),
                 pen_soak,
                 fountain_soak,
@@ -1553,8 +1572,7 @@ impl FreeDfApp {
                 fountain_grain,
                 tilt_magnitude: 0.0,
                 feather_pt: 1.0,
-            },
-        ));
+            }));
 
         // 미디어 서버 연결 설정 — 빌드타임이 아니라 `server.json`에서 런타임 로드.
         let media_config = MediaServerConfig::load(&MediaServerConfig::config_path());
@@ -1577,9 +1595,17 @@ impl FreeDfApp {
                 .load_recents()
                 .into_iter()
                 .map(|r| RecentItem {
-                    kind: if r.kind == "note" { RecentKind::Note } else { RecentKind::File },
+                    kind: if r.kind == "note" {
+                        RecentKind::Note
+                    } else {
+                        RecentKind::File
+                    },
                     doc_id: Some(r.doc_id),
-                    note_id: if r.kind == "note" { Some(r.doc_id as u64) } else { None },
+                    note_id: if r.kind == "note" {
+                        Some(r.doc_id as u64)
+                    } else {
+                        None
+                    },
                     path: r.origin_path.map(PathBuf::from),
                     title: r.title,
                     opened_at_ms: r.opened_at.max(0) as u128,
@@ -1910,7 +1936,11 @@ impl FreeDfApp {
     /// 데스크탑 설정을 반영합니다 (키 입력은 egui가 직접 처리).
     pub(crate) fn push_macro_config(&self) {
         let n = |m: crate::settings::MacroKey, on: bool| {
-            if on { m.label().to_string() } else { "off".into() }
+            if on {
+                m.label().to_string()
+            } else {
+                "off".into()
+            }
         };
         key_hook::hook_log(format!(
             "macro config → page {}/{} · tab {}/{} · desktop {}/{} (focus_only={})",
@@ -1961,8 +1991,7 @@ impl FreeDfApp {
                     let last = ids[ids.len() - 1] as u64;
                     self.stroke_id_pool = (first, last + 1);
                 }
-                if self.stroke_id_pool.1 - self.stroke_id_pool.0
-                    < (STROKE_ID_POOL_BATCH as u64) / 2
+                if self.stroke_id_pool.1 - self.stroke_id_pool.0 < (STROKE_ID_POOL_BATCH as u64) / 2
                 {
                     self.request_stroke_pool_refill();
                 }
@@ -2011,8 +2040,8 @@ impl FreeDfApp {
                 // 그려도 충돌이 불가능합니다.
                 break;
             }
-            let take = (n - out.len())
-                .min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
+            let take =
+                (n - out.len()).min((self.stroke_id_pool.1 - self.stroke_id_pool.0) as usize);
             for _ in 0..take {
                 out.push(self.stroke_id_pool.0 as i64);
                 self.stroke_id_pool.0 += 1;
@@ -2029,7 +2058,12 @@ impl FreeDfApp {
     /// 서버 설정(server.json)을 저장하고 백엔드를 `SyncStorage`로 교체합니다.
     /// 도중에 다른 서버로 전환하면 열린 문서(이전 서버 소속)를 닫습니다.
     fn try_connect_server(&mut self, auto: bool) {
-        let base = self.media_config.base_url.trim().trim_end_matches('/').to_string();
+        let base = self
+            .media_config
+            .base_url
+            .trim()
+            .trim_end_matches('/')
+            .to_string();
         if base.is_empty() {
             self.connect_status = Some((false, "Enter the server URL first.".into()));
             return;
@@ -2088,8 +2122,7 @@ impl FreeDfApp {
                 self.pending_connect = Some((rx, auto)); // 아직 — 다음 프레임에 다시.
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.connect_status =
-                    Some((false, "Connection attempt was interrupted.".into()));
+                self.connect_status = Some((false, "Connection attempt was interrupted.".into()));
             }
         }
     }
@@ -2182,17 +2215,17 @@ impl FreeDfApp {
                             .width(332.0)
                             .show(ui);
                     });
-                crate::ui::form::group("API key")
-                    .required()
-                    .show(ui, |ui| {
-                        crate::ui::form::password(&mut self.media_config.api_key)
-                            .width(332.0)
-                            .show(ui);
-                    });
+                crate::ui::form::group("API key").required().show(ui, |ui| {
+                    crate::ui::form::password(&mut self.media_config.api_key)
+                        .width(332.0)
+                        .show(ui);
+                });
                 ui.horizontal(|ui| {
-                    if crate::ui::buttons::Button::primary(
-                        if self.db_connected { "Reconnect" } else { "Connect" },
-                    )
+                    if crate::ui::buttons::Button::primary(if self.db_connected {
+                        "Reconnect"
+                    } else {
+                        "Connect"
+                    })
                     .show(ui)
                     .clicked()
                     {
@@ -2212,7 +2245,11 @@ impl FreeDfApp {
                         } else {
                             crate::ui::ds::Tone::Danger
                         },
-                        if *ok { "Connected" } else { "Connection failed" },
+                        if *ok {
+                            "Connected"
+                        } else {
+                            "Connection failed"
+                        },
                         msg.clone(),
                     );
                 }
@@ -2680,9 +2717,8 @@ impl FreeDfApp {
         std::thread::spawn(move || {
             for job in jobs {
                 let doc_id = match &job {
-                    LibraryJob::DeleteNote { doc_id, .. } | LibraryJob::DeletePdf { doc_id, .. } => {
-                        *doc_id
-                    }
+                    LibraryJob::DeleteNote { doc_id, .. }
+                    | LibraryJob::DeletePdf { doc_id, .. } => *doc_id,
                 };
                 let result = db.delete_document(doc_id).map_err(|e| e.to_string());
                 if tx.send(LibraryOutcome::Done(job, result)).is_err() {
@@ -2757,7 +2793,10 @@ impl FreeDfApp {
         };
         let t = ctx.input(|i| i.time);
         let frac = ((t * 0.7) % 1.0) as f32;
-        let elapsed = self.loading_started.map(|s| (now_secs() - s).max(0.0)).unwrap_or(0.0);
+        let elapsed = self
+            .loading_started
+            .map(|s| (now_secs() - s).max(0.0))
+            .unwrap_or(0.0);
         egui::Area::new(egui::Id::new("loading_overlay"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
@@ -2768,7 +2807,11 @@ impl FreeDfApp {
                         ui.label(&msg);
                     });
                     ui.horizontal(|ui| {
-                        ui.add(egui::ProgressBar::new(frac).desired_width(220.0).show_percentage());
+                        ui.add(
+                            egui::ProgressBar::new(frac)
+                                .desired_width(220.0)
+                                .show_percentage(),
+                        );
                         ui.label(egui::RichText::new(format!("{elapsed:.1}s")).weak());
                     });
                 });
@@ -2866,7 +2909,11 @@ impl FreeDfApp {
             title: title.clone(),
             opened_at_ms,
         });
-        let kind_str = if kind == RecentKind::Note { "note" } else { "pdf" };
+        let kind_str = if kind == RecentKind::Note {
+            "note"
+        } else {
+            "pdf"
+        };
         self.db.touch_recent(kind_str, doc_id, &title);
     }
 
@@ -2910,7 +2957,11 @@ impl FreeDfApp {
                                 crate::ui::ds::status_dot(
                                     ui,
                                     tone,
-                                    if self.db_connected { "online" } else { "offline" },
+                                    if self.db_connected {
+                                        "online"
+                                    } else {
+                                        "offline"
+                                    },
                                 );
                                 ui.label(egui::RichText::new(msg));
                             });
@@ -3227,11 +3278,7 @@ impl FreeDfApp {
                     .max_width(crate::ui::scale::rem(24))
                     .show(ui, |ui| {
                         if pages.is_empty() {
-                            panels::empty_state(
-                                ui,
-                                icons::BOOKMARKS_SIMPLE,
-                                "No bookmarks yet.",
-                            );
+                            panels::empty_state(ui, icons::BOOKMARKS_SIMPLE, "No bookmarks yet.");
                         } else {
                             // 계층 2: 행 — 호버 강조 + 클릭으로 이동.
                             for p in pages {
@@ -3368,7 +3415,11 @@ impl FreeDfApp {
         let kind_key = format!("{:?}", modal.kind);
 
         match &modal.kind {
-            ModalKind::AskText { title, hint, action } => {
+            ModalKind::AskText {
+                title,
+                hint,
+                action,
+            } => {
                 let is_new_note = matches!(action, TextAction::NewNote);
                 crate::ui::dialog::modal(ctx, title, 480.0, |ui| {
                     out = crate::ui::elm_modal::render_ask_text(
@@ -3387,11 +3438,7 @@ impl FreeDfApp {
                                 .selected_text(format!("{pages}"))
                                 .show_ui(ui, |ui| {
                                     for p in NOTE_PAGE_PRESETS {
-                                        ui.selectable_value(
-                                            &mut pages,
-                                            *p,
-                                            format!("{p} pages"),
-                                        );
+                                        ui.selectable_value(&mut pages, *p, format!("{p} pages"));
                                     }
                                 });
                         });
@@ -3535,8 +3582,8 @@ impl FreeDfApp {
         //    이 창에 포커스 — 0초면 즉시, 그 이상이면 머문 시간 기준.
         //    펜으로 쓰는 중(contact)에는 포커스 이동을 멈추고, 짧은 쿨다운으로
         //    두 창이 포커스를 주고받는 경쟁(제목줄 깜빡임)을 막습니다.
-        let focus_cooled_down = self.now_ms().saturating_sub(self.last_focus_request_ms)
-            >= FOCUS_REQUEST_COOLDOWN_MS;
+        let focus_cooled_down =
+            self.now_ms().saturating_sub(self.last_focus_request_ms) >= FOCUS_REQUEST_COOLDOWN_MS;
         if self.window_focus_on_move
             && ctx.input(|i| i.pointer.hover_pos().is_some())
             && ctx.input(|i| i.viewport().focused == Some(false))
@@ -3755,8 +3802,14 @@ mod window_isolation_tests {
     #[test]
     fn no_request_does_nothing() {
         // --doc 없이 시작한 창은 아무것도 하지 않습니다.
-        assert_eq!(startup_open_step(None, true, false), StartupOpenAction::Wait);
-        assert_eq!(startup_open_step(None, false, false), StartupOpenAction::Wait);
+        assert_eq!(
+            startup_open_step(None, true, false),
+            StartupOpenAction::Wait
+        );
+        assert_eq!(
+            startup_open_step(None, false, false),
+            StartupOpenAction::Wait
+        );
     }
 
     #[test]
@@ -3817,14 +3870,8 @@ mod window_isolation_tests {
     #[test]
     fn panels_are_mutually_exclusive() {
         // 어디서든 Library/Outline/Bookmarks 중 하나만 켜집니다.
-        assert_eq!(
-            exclusive_panel_on(PanelKind::Library),
-            [true, false, false]
-        );
-        assert_eq!(
-            exclusive_panel_on(PanelKind::Outline),
-            [false, true, false]
-        );
+        assert_eq!(exclusive_panel_on(PanelKind::Library), [true, false, false]);
+        assert_eq!(exclusive_panel_on(PanelKind::Outline), [false, true, false]);
         assert_eq!(
             exclusive_panel_on(PanelKind::Bookmarks),
             [false, false, true]
@@ -3850,11 +3897,19 @@ mod auto_flush_tests {
     #[test]
     fn idle_auto_flush_never_fires_while_pointer_down() {
         // 펜/마우스가 내려간 동안엔 대기 시간과 무관하게 금지.
-        assert!(!auto_flush_due(1_000, 1_000 + AUTO_FLUSH_IDLE_MS * 10, true));
+        assert!(!auto_flush_due(
+            1_000,
+            1_000 + AUTO_FLUSH_IDLE_MS * 10,
+            true
+        ));
     }
 
     #[test]
     fn idle_auto_flush_needs_enough_idle_time() {
-        assert!(!auto_flush_due(9_000, 9_000 + AUTO_FLUSH_IDLE_MS - 1, false));
+        assert!(!auto_flush_due(
+            9_000,
+            9_000 + AUTO_FLUSH_IDLE_MS - 1,
+            false
+        ));
     }
 }

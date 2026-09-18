@@ -9,19 +9,19 @@
 //!
 //! 서버(`server/backend`)도 이 크레이트의 타입을 공유합니다 — 단일 진실 공급원.
 
+#[cfg(feature = "client")]
+pub mod client;
 pub mod digest;
 pub mod error;
 pub mod proto;
 pub mod snapshot;
-#[cfg(feature = "client")]
-pub mod client;
 
+#[cfg(feature = "client")]
+pub use client::SyncClient;
 pub use digest::Digest;
 pub use error::{Result, SyncError};
 pub use proto::*;
 pub use snapshot::Snapshot;
-#[cfg(feature = "client")]
-pub use client::SyncClient;
 
 /// 스냅샷 ZIP 미디어 타입.
 pub const SNAPSHOT_MIME: &str = "application/vnd.freedf.snapshot+zip";

@@ -8,7 +8,9 @@ fn ruled_lines_follow_page_rotation() {
     // 0/180°: 가로줄 (y 고정), 90/270°: 세로줄 (x 고정).
     let horiz = paper_lines_rotated(100.0, 200.0, PaperStyle::Ruled, 50.0, PageRotation::None);
     assert_eq!(horiz.len(), 3, "h=200/50 → 3줄");
-    assert!(horiz.iter().all(|l| l[1] == l[3] && l[0] == 0.0 && l[2] == 100.0));
+    assert!(horiz
+        .iter()
+        .all(|l| l[1] == l[3] && l[0] == 0.0 && l[2] == 100.0));
     let vert = paper_lines_rotated(
         100.0,
         200.0,
@@ -17,7 +19,9 @@ fn ruled_lines_follow_page_rotation() {
         PageRotation::Degrees90,
     );
     assert_eq!(vert.len(), 1, "w=100/50 → 1줄");
-    assert!(vert.iter().all(|l| l[0] == l[2] && l[1] == 0.0 && l[3] == 200.0));
+    assert!(vert
+        .iter()
+        .all(|l| l[0] == l[2] && l[1] == 0.0 && l[3] == 200.0));
     let vert2 = paper_lines_rotated(
         100.0,
         200.0,
@@ -37,7 +41,13 @@ fn ruled_lines_follow_page_rotation() {
     assert_eq!(horiz180, horiz);
     // Grid/Blank는 회전에 불변 (기존 함수와 동일).
     assert_eq!(
-        paper_lines_rotated(100.0, 200.0, PaperStyle::Grid, 50.0, PageRotation::Degrees90),
+        paper_lines_rotated(
+            100.0,
+            200.0,
+            PaperStyle::Grid,
+            50.0,
+            PageRotation::Degrees90
+        ),
         paper_lines(100.0, 200.0, PaperStyle::Grid, 50.0)
     );
 }
@@ -59,7 +69,10 @@ fn style_settings_are_independent_per_style() {
     assert_eq!(s.of(PaperStyle::Blank), None);
     // 직렬화 왕복.
     let json = serde_json::to_string(&s).unwrap();
-    assert_eq!(serde_json::from_str::<PaperStyleSettings>(&json).unwrap(), s);
+    assert_eq!(
+        serde_json::from_str::<PaperStyleSettings>(&json).unwrap(),
+        s
+    );
     // 빈 객체 → 기본값 (이전 세션 호환).
     let d: PaperStyleSettings = serde_json::from_str("{}").unwrap();
     assert_eq!(d, PaperStyleSettings::default());
@@ -215,7 +228,10 @@ fn light_rotation_changes_shading() {
 fn texture_depends_on_base_color() {
     let white = bake(32, [255, 255, 255], 0.35, PaperSurfaceSettings::default());
     let cream = bake(32, [251, 243, 220], 0.35, PaperSurfaceSettings::default());
-    assert_ne!(white, cream, "종이 배경색에 따라 텍스처가 달라야 함 (요구 ①)");
+    assert_ne!(
+        white, cream,
+        "종이 배경색에 따라 텍스처가 달라야 함 (요구 ①)"
+    );
 }
 
 #[test]
@@ -227,10 +243,7 @@ fn presets_are_monotonic_and_medium_is_default() {
     for level in 1..5u8 {
         let cur = paper_texture_preset(level);
         assert!(cur.0 > prev.0, "강도 단조 증가: {level}");
-        assert!(
-            cur.1.bump > prev.1.bump,
-            "요철 단조 증가: {level}"
-        );
+        assert!(cur.1.bump > prev.1.bump, "요철 단조 증가: {level}");
         prev = cur;
     }
     // Medium(2)는 은은한 기본값과 정확히 일치해야 합니다.

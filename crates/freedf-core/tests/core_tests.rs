@@ -6,7 +6,7 @@
 use freedf_core::history::{Edit, History};
 use freedf_core::model::{StrokePoint, ToolType};
 use freedf_core::store::AnnotationStore;
-use freedf_core::transform::{ViewTransform, MIN_ZOOM, MAX_ZOOM};
+use freedf_core::transform::{ViewTransform, MAX_ZOOM, MIN_ZOOM};
 
 /// 시나리오: 펜으로 필기 → 형광펜 강조 → 지우개로 일부 삭제 → undo.
 #[test]
@@ -37,7 +37,10 @@ fn full_annotation_scenario() {
         ToolType::Highlighter,
         [255, 235, 59, 90],
         16.0,
-        vec![StrokePoint::new(50.0, 55.0, 0.5), StrokePoint::new(150.0, 55.0, 0.5)],
+        vec![
+            StrokePoint::new(50.0, 55.0, 0.5),
+            StrokePoint::new(150.0, 55.0, 0.5),
+        ],
     );
     history.push(Edit::AddStrokes {
         page: 0,
@@ -124,12 +127,12 @@ fn multi_page_and_clear_page() {
 fn save_and_load_annotations() {
     let mut store = AnnotationStore::new();
     store.add_stroke(
-            2,
-            ToolType::Highlighter,
-            [255, 0, 0, 80],
-            10.0,
-            vec![StrokePoint::new(300.0, 400.0, 0.6)],
-        );
+        2,
+        ToolType::Highlighter,
+        [255, 0, 0, 80],
+        10.0,
+        vec![StrokePoint::new(300.0, 400.0, 0.6)],
+    );
 
     let json = store.to_json();
 

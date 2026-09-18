@@ -7,8 +7,8 @@
 //! 명시 전달하고, 싱크의 아웃박스를 워크스페이스로 흘려보내는 배선만 남는다.
 
 use super::*;
-use freedf_core::input_events::PointerPhase;
 use crate::app::input::session_router::{Ctx, Outcome};
+use freedf_core::input_events::PointerPhase;
 
 impl FreeDfApp {
     pub(crate) fn handle_canvas_input(
@@ -95,7 +95,8 @@ impl FreeDfApp {
                 let anchor_ui = pointer_abs
                     .map(|abs| [abs.x - origin.x, abs.y - origin.y])
                     .unwrap_or([canvas_size[0] * 0.5, canvas_size[1] * 0.5]);
-                self.view.zoom_at(anchor_ui, ZOOM_STEP.powf(steps), MIN_ZOOM, MAX_ZOOM);
+                self.view
+                    .zoom_at(anchor_ui, ZOOM_STEP.powf(steps), MIN_ZOOM, MAX_ZOOM);
                 self.mark_zoom_dirty();
                 ctx.request_repaint();
             }
@@ -129,8 +130,16 @@ impl FreeDfApp {
             let k = (1.0 - (-SCROLL_SMOOTH_RATE * dt).exp()).min(1.0);
             let step = self.scroll_vel * k;
             self.scroll_vel -= step;
-            let dx = if page_w_px <= canvas_size[0] { 0.0 } else { step.x };
-            let dy = if page_h_px <= canvas_size[1] { 0.0 } else { step.y };
+            let dx = if page_w_px <= canvas_size[0] {
+                0.0
+            } else {
+                step.x
+            };
+            let dy = if page_h_px <= canvas_size[1] {
+                0.0
+            } else {
+                step.y
+            };
             if dx != 0.0 || dy != 0.0 {
                 self.view.pan_by(dx, dy);
                 ctx.request_repaint();
@@ -292,7 +301,8 @@ impl FreeDfApp {
                 }
             }
             freedf_core::input_events::InputEvent::Action(a) => {
-                self.workspace.handle(&freedf_core::input_events::InputEvent::Action(a));
+                self.workspace
+                    .handle(&freedf_core::input_events::InputEvent::Action(a));
             }
             freedf_core::input_events::InputEvent::Pointer(p) => {
                 // 마지막으로 라우팅한 소스 — 장치 판정은 이벤트가 안고 온다.
@@ -350,7 +360,7 @@ impl FreeDfApp {
                     .handle(&freedf_core::input_events::InputEvent::Pointer(p));
             }
         } // 팬 프레임의 포인터는 팬 경로가 가져간다 — 툴 세션이 열려 있지
-        //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
+          //   않다는 것이 팬 정책의 전제다 (팬 중에는 Down이 툴에 안 간다).
 
         // 워크스페이스가 생산한 문서 커맨드를 앱 상태에 적용한다.
         // (take 중 워크스페이스를 밖에 꺼내 소유권 충돌을 피한다.)
@@ -366,7 +376,9 @@ impl FreeDfApp {
     pub(crate) fn wheel_ring(&self) -> Vec<[u8; 4]> {
         let mut ring = self.favorite_colors.clone();
         if ring.is_empty() {
-            ring = crate::settings::SessionState::default().panels.favorite_colors;
+            ring = crate::settings::SessionState::default()
+                .panels
+                .favorite_colors;
         }
         ring.truncate(MAX_FAVORITE_COLORS);
         ring
@@ -416,10 +428,7 @@ impl FreeDfApp {
     /// 라우터 정산 보고 → 진단 로그. 형식은 땜질(PendingDown) 시절과 유지해
     /// 기존 장비 로그(`freedf_pendebug.log`)와 비교 가능하게 한다 — 구
     /// STROKE-RECOVER/STROKE-DROP 행이 이제 라우터 장부 행으로 발행된다.
-    fn log_router_report(
-        rep: crate::app::input::session_router::Report,
-        panning: bool,
-    ) {
+    fn log_router_report(rep: crate::app::input::session_router::Report, panning: bool) {
         match rep.outcome {
             Outcome::Promoted => pen_trace(&format!(
                 "STROKE-RECOVER: 보류 세션 승격 — source={:?} (온전한 세션 [down, …drags] 재생)",

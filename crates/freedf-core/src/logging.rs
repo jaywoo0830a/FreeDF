@@ -9,22 +9,71 @@ use std::path::Path;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum AppEvent {
-    AppStart { version: String },
-    NoteOpened { note_id: u64, title: String, page_count: usize },
-    NoteCreated { note_id: u64, title: String },
-    NoteRenamed { note_id: u64, from: String, to: String },
-    NoteDeleted { note_id: u64, title: String },
-    PdfDeleted { path: String },
-    PageChanged { page: usize, total: usize },
-    PageAdded { page: usize, total: usize },
-    PageDeleted { page: usize, total: usize },
-    PageRotated { page: usize, total: usize, clockwise: bool },
-    StrokeAdded { page: usize, points: usize, tool: String, width: f32 },
-    StrokeErased { page: usize, strokes: usize },
-    UndoRedo { kind: String },
-    Search { query: String, results: usize },
-    OutlineJump { title: String, page: usize },
-    Error { message: String },
+    AppStart {
+        version: String,
+    },
+    NoteOpened {
+        note_id: u64,
+        title: String,
+        page_count: usize,
+    },
+    NoteCreated {
+        note_id: u64,
+        title: String,
+    },
+    NoteRenamed {
+        note_id: u64,
+        from: String,
+        to: String,
+    },
+    NoteDeleted {
+        note_id: u64,
+        title: String,
+    },
+    PdfDeleted {
+        path: String,
+    },
+    PageChanged {
+        page: usize,
+        total: usize,
+    },
+    PageAdded {
+        page: usize,
+        total: usize,
+    },
+    PageDeleted {
+        page: usize,
+        total: usize,
+    },
+    PageRotated {
+        page: usize,
+        total: usize,
+        clockwise: bool,
+    },
+    StrokeAdded {
+        page: usize,
+        points: usize,
+        tool: String,
+        width: f32,
+    },
+    StrokeErased {
+        page: usize,
+        strokes: usize,
+    },
+    UndoRedo {
+        kind: String,
+    },
+    Search {
+        query: String,
+        results: usize,
+    },
+    OutlineJump {
+        title: String,
+        page: usize,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// 로그 한 줄. 시각과 순번을 붙여 기록합니다.

@@ -6,7 +6,8 @@ pub(crate) use super::*;
 
 impl FreeDfApp {
     pub(crate) fn library_panel(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
+        ui.spacing_mut().item_spacing =
+            egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
         // 제목/개수 헤더는 오버레이 컨테이너가 담당 — 여기서는 검색부터.
         ui.add_space(crate::ui::tokens::space::SM);
         crate::ui::form::text(&mut self.library_filter)
@@ -29,7 +30,8 @@ impl FreeDfApp {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
+                ui.spacing_mut().item_spacing =
+                    egui::vec2(crate::ui::tokens::space::SM, crate::ui::tokens::space::SM);
                 // ── Notes (계층 2: 섹션 헤더 + 행) ──
                 let all_notes: Vec<(u64, String, usize)> = self
                     .notes
@@ -46,7 +48,8 @@ impl FreeDfApp {
                 ui.horizontal(|ui| {
                     section_header(ui, icons::NOTE_PENCIL, "Notes", all_notes.len());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
+                        ui.spacing_mut().item_spacing =
+                            egui::vec2(crate::ui::tokens::space::SM, 0.0);
                         // 섹션 헤더의 액션도 표준 아이콘 버튼(S_36 · 계약 id)으로 —
                         // 오버레이 헤더의 닫기와 같은 어휘를 공유합니다.
                         if crate::ui::kit::IconButton::new(
@@ -76,12 +79,17 @@ impl FreeDfApp {
                     });
                 });
                 if notes.is_empty() {
-                    empty_state(ui, icons::NOTE_PENCIL, "No notes yet — use ＋ New to create one.");
+                    empty_state(
+                        ui,
+                        icons::NOTE_PENCIL,
+                        "No notes yet — use ＋ New to create one.",
+                    );
                 } else {
                     for (id, title, page_count) in &notes {
                         let mut sel = self.sel_notes.contains(&(*id as i64));
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
+                            ui.spacing_mut().item_spacing =
+                                egui::vec2(crate::ui::tokens::space::SM, 0.0);
                             if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
@@ -110,9 +118,7 @@ impl FreeDfApp {
                             ui.add_space(crate::ui::scale::hrem(3));
                             if ui
                                 .button(format!("Delete selected ({n_sel})"))
-                                .on_hover_text(
-                                    "Delete all checked notes (and their annotations).",
-                                )
+                                .on_hover_text("Delete all checked notes (and their annotations).")
                                 .clicked()
                             {
                                 let ids: Vec<i64> = self.sel_notes.iter().copied().collect();
@@ -147,7 +153,8 @@ impl FreeDfApp {
                     for f in &visible {
                         let mut sel = f.doc_id.is_some_and(|d| self.sel_pdfs.contains(&d));
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
+                            ui.spacing_mut().item_spacing =
+                                egui::vec2(crate::ui::tokens::space::SM, 0.0);
                             if crate::ui::check(ui, &mut sel, "", "Select for multi-delete")
                                 .changed()
                             {
@@ -250,27 +257,25 @@ impl FreeDfApp {
                         } else {
                             ds.to_string()
                         };
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::SM, 0.0);
-                                if ui
-                                    .add(egui::Button::new("Register").small())
-                                    .on_hover_text("Create a document from this PDF")
-                                    .clicked()
-                                {
-                                    register = Some(o.digest.clone());
-                                }
-                                ui.label(egui::RichText::new(meta).weak().small());
-                                // 다이제스트 — 전체는 툴팁으로, 화면엔 잘려서.
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(&title))
-                                        .truncate()
-                                        .sense(egui::Sense::hover()),
-                                )
-                                .on_hover_text(o.digest.as_str());
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing =
+                                egui::vec2(crate::ui::tokens::space::SM, 0.0);
+                            if ui
+                                .add(egui::Button::new("Register").small())
+                                .on_hover_text("Create a document from this PDF")
+                                .clicked()
+                            {
+                                register = Some(o.digest.clone());
+                            }
+                            ui.label(egui::RichText::new(meta).weak().small());
+                            // 다이제스트 — 전체는 툴팁으로, 화면엔 잘려서.
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&title))
+                                    .truncate()
+                                    .sense(egui::Sense::hover()),
+                            )
+                            .on_hover_text(o.digest.as_str());
+                        });
                     }
                     if let Some(d) = register {
                         self.register_orphan_pdf(d);
@@ -305,9 +310,15 @@ impl FreeDfApp {
                             RecentKind::Note => "note".to_string(),
                             RecentKind::File => "pdf".to_string(),
                         };
-                        if library_row(ui, Some(icons::CLOCK_COUNTER_CLOCKWISE), false, &item.title, &meta)
-                                .clicked()
-                            {
+                        if library_row(
+                            ui,
+                            Some(icons::CLOCK_COUNTER_CLOCKWISE),
+                            false,
+                            &item.title,
+                            &meta,
+                        )
+                        .clicked()
+                        {
                             if let Some(doc_id) = item.doc_id {
                                 self.open_document(doc_id);
                             }
@@ -325,10 +336,7 @@ impl FreeDfApp {
             if !ppaths.is_empty() {
                 parts.push(format!("{} PDF document(s) from the library", ppaths.len()));
             }
-            let msg = format!(
-                "Delete {}?\nThis cannot be undone.",
-                parts.join(" and ")
-            );
+            let msg = format!("Delete {}?\nThis cannot be undone.", parts.join(" and "));
             self.modal = Some(ModalState {
                 kind: ModalKind::Confirm {
                     title: "Delete from Library".to_string(),

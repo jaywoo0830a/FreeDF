@@ -9,7 +9,6 @@
  *  2. **Commit-time immutability (freeze)** — `freeze()` copies the live stroke
  *     into a read-only `Stroke`; later appends never change the committed copy.
  */
-
 use crate::model::{Stroke, StrokePoint, ToolType};
 use crate::pen::{Materials, OneEuroFilter, WidthLocker};
 
@@ -77,12 +76,7 @@ impl LiveStroke {
         self.points.push(p);
         match self.bbox {
             Some([x0, y0, x1, y1]) => {
-                self.bbox = Some([
-                    x0.min(p.x),
-                    y0.min(p.y),
-                    x1.max(p.x),
-                    y1.max(p.y),
-                ]);
+                self.bbox = Some([x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y)]);
             }
             None => self.bbox = Some([p.x, p.y, p.x, p.y]),
         }
@@ -231,7 +225,12 @@ impl InkPipeline {
         self.filter_x = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_y = Some(OneEuroFilter::from_smoothing(self.smoothing));
         self.filter_p = Some(OneEuroFilter::from_smoothing(self.smoothing));
-        self.locker = Some(WidthLocker::new(tool, self.max_width_pt, &self.materials, tilt_mag));
+        self.locker = Some(WidthLocker::new(
+            tool,
+            self.max_width_pt,
+            &self.materials,
+            tilt_mag,
+        ));
         self.live = Some(LiveStroke::begin(tool, color, self.max_width_pt));
         let tip = self.filter_lock(x, y, pressure, t, t_ms);
         self.live.as_mut().expect("drawing after down").append(tip);
@@ -287,14 +286,7 @@ impl InkPipeline {
      *
      * @return  the filtered, width-locked tip point.
      */
-    fn filter_lock(
-        &mut self,
-        x: f32,
-        y: f32,
-        pressure: f32,
-        t: f64,
-        t_ms: u64,
-    ) -> StrokePoint {
+    fn filter_lock(&mut self, x: f32, y: f32, pressure: f32, t: f64, t_ms: u64) -> StrokePoint {
         // 스무딩 0이면 1€ 필터를 **건너뜁니다** — 앱의 \"스무딩 꺼짐 → raw 좌표\"
         // 경로와 정확히 일치시켜 행동 변경이 없게 합니다.
         let use_filter = self.smoothing > 0.001;

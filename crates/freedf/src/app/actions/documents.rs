@@ -161,7 +161,11 @@ impl FreeDfApp {
                 };
                 self.add_current_as_tab(kind);
                 self.note_recent(
-                    if is_note { RecentKind::Note } else { RecentKind::File },
+                    if is_note {
+                        RecentKind::Note
+                    } else {
+                        RecentKind::File
+                    },
                     row.title.clone(),
                     doc_id,
                     row.origin_path.map(PathBuf::from),
@@ -263,8 +267,8 @@ impl FreeDfApp {
                 if let Some(doc_id) = db.find_document_by_path(&key) {
                     return Ok(doc_id);
                 }
-                let bytes = std::fs::read(&path)
-                    .map_err(|e| format!("Could not read PDF file: {e}"))?;
+                let bytes =
+                    std::fs::read(&path).map_err(|e| format!("Could not read PDF file: {e}"))?;
                 let name = path
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())

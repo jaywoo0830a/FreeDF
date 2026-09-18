@@ -11,8 +11,8 @@
 //!   이 파일(컨테이너)이 담당합니다.
 
 use super::*;
-use crate::ui::{kit, tokens};
 use crate::ui::{icon_button, icon_label, icon_toggle, IconButton};
+use crate::ui::{kit, tokens};
 
 /// 도구 선택 버튼의 자동화용 안정 id — 표시 라벨(`ToolType::label`)과 분리된 계약입니다.
 /// (라벨을 바꿔도 스크립트가 깨지지 않도록 명시적으로 고정합니다.)
@@ -312,14 +312,11 @@ impl FreeDfApp {
 
             // ── View: 미디어 패널 ───────────────────────────────────
             kit::section_label(ui, "View");
-            let (media, _) = kit::Row::toggle(
-                "menu.view.media_panel",
-                "Media panel",
-                &mut self.show_media,
-            )
-            .icon(icons::MICROPHONE)
-            .hint("Show the audio recordings panel.")
-            .show(ui, |_| ());
+            let (media, _) =
+                kit::Row::toggle("menu.view.media_panel", "Media panel", &mut self.show_media)
+                    .icon(icons::MICROPHONE)
+                    .hint("Show the audio recordings panel.")
+                    .show(ui, |_| ());
             if media.changed() {
                 self.media_refresh();
             }
@@ -424,10 +421,11 @@ impl FreeDfApp {
 
             // ── Diagnostics: 디버그 HUD (단일 홈) ───────────────────
             kit::section_label(ui, "Diagnostics");
-            let (hud, _) = kit::Row::toggle("menu.diag.debug_hud", "Debug HUD", &mut self.debug_hud)
-                .icon(icons::BUG)
-                .hint("Live input overlay & diagnostics (pressure, tilt, speed, system).")
-                .show(ui, |_| ());
+            let (hud, _) =
+                kit::Row::toggle("menu.diag.debug_hud", "Debug HUD", &mut self.debug_hud)
+                    .icon(icons::BUG)
+                    .hint("Live input overlay & diagnostics (pressure, tilt, speed, system).")
+                    .show(ui, |_| ());
             if hud.changed() {
                 self.save_default_session();
             }
@@ -834,7 +832,6 @@ impl FreeDfApp {
         }
     }
 
-
     /// 만년필 옵션 — 색 스와치/커스텀 색/닙 굵기.
     fn ink_fountain_options(&mut self, ui: &mut egui::Ui) {
         let swatches = Palette::swatches(self.color_family);
@@ -845,8 +842,7 @@ impl FreeDfApp {
                 let selected = *swatch == self.fountain_color;
                 let (resp, changed) =
                     swatch_with_picker(ui, ("fountain_swatch", i), &mut color, selected);
-                let resp =
-                    resp.on_hover_text("Ink color — click to apply, double-click to edit");
+                let resp = resp.on_hover_text("Ink color — click to apply, double-click to edit");
                 if resp.clicked() {
                     self.fountain_color = *swatch;
                     self.save_default_session();
@@ -897,8 +893,8 @@ impl FreeDfApp {
                 let selected = *swatch == self.hi_color;
                 let (resp, changed) =
                     swatch_with_picker(ui, ("hi_swatch", i), &mut color, selected);
-                let resp = resp
-                    .on_hover_text("Highlighter color — click to apply, double-click to edit");
+                let resp =
+                    resp.on_hover_text("Highlighter color — click to apply, double-click to edit");
                 if resp.clicked() {
                     self.hi_color = *swatch;
                     self.save_default_session();
@@ -964,7 +960,6 @@ impl FreeDfApp {
         }
     }
 
-
     /// 그룹(3-3) Pacing: 모니터 주사율 프리셋 — 필기 페이싱을 한 번에 조정.
     fn ink_pacing_group(&mut self, ui: &mut egui::Ui) {
         crate::ui::layout::group(ui, crate::ui::layout::SP_2, |ui| {
@@ -1011,13 +1006,16 @@ impl FreeDfApp {
                         .hint_text("Search in this page...")
                         .desired_width(200.0),
                 );
-                let submitted =
-                    resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let submitted = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if self.focus_search {
                     resp.request_focus();
                     self.focus_search = false;
                 }
-                if crate::ui::buttons::Button::primary("Find").show(ui).clicked() || submitted {
+                if crate::ui::buttons::Button::primary("Find")
+                    .show(ui)
+                    .clicked()
+                    || submitted
+                {
                     self.search_update();
                 }
                 let can = !self.search_matches.is_empty();
@@ -1061,5 +1059,4 @@ impl FreeDfApp {
         ui.add_space(crate::ui::tokens::space::SM);
         ui.add_space(crate::ui::tokens::space::SM);
     }
-
 }

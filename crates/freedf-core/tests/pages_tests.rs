@@ -1,8 +1,8 @@
 //! `pages` 모듈 단위 테스트 — `src/pages.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
 use freedf_core::model::PageIndex;
-use freedf_core::store::AnnotationStore;
 use freedf_core::model::{StrokePoint, ToolType};
+use freedf_core::store::AnnotationStore;
 
 fn add_on_page(store: &mut AnnotationStore, page: PageIndex, label: u64) {
     store.add_stroke(
@@ -73,7 +73,10 @@ fn page_index_metadata_stays_consistent() {
     let mut store = AnnotationStore::new();
     add_on_page(&mut store, 2, 99);
     store.insert_page(1);
-    let p = store.pages().find(|p| p.page_index == 3).expect("이동된 페이지");
+    let p = store
+        .pages()
+        .find(|p| p.page_index == 3)
+        .expect("이동된 페이지");
     assert_eq!(p.strokes.len(), 1);
     assert_eq!(p.strokes[0].points[0].x, 99.0);
 }

@@ -93,8 +93,7 @@ pub(crate) fn icon_button(ui: &mut egui::Ui, props: IconButton<'_>) -> egui::Res
     if !props.frame {
         b = b.frame(false);
     }
-    ui.add_enabled(props.enabled, b)
-        .on_hover_text(props.hint)
+    ui.add_enabled(props.enabled, b).on_hover_text(props.hint)
 }
 
 /// 상태값에 바인딩된 토글 버튼 — `resp.changed()`로 판정.

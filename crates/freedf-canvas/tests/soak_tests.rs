@@ -1,9 +1,9 @@
 //! `soak` 모듈 단위 테스트 — `src/soak.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_canvas::soak::*;
+use freedf_canvas::geom::PagePoint;
 use freedf_canvas::scene::Stroke;
 use freedf_canvas::scene::{LayerKind, StrokeId, StrokePoint};
-use freedf_canvas::geom::PagePoint;
+use freedf_canvas::soak::*;
 
 fn stroke(id: u64, tool: freedf_core::model::ToolType) -> Stroke {
     Stroke {

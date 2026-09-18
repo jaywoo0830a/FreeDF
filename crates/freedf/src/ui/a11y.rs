@@ -187,7 +187,6 @@ pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
     TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-
 /// 지금까지 수집된 위반 목록(복사본).
 pub fn issues() -> Vec<Issue> {
     ISSUES.lock().map(|v| v.clone()).unwrap_or_default()
@@ -304,7 +303,6 @@ pub fn finish(ui: &mut egui::Ui, spec: Spec<'_>, resp: egui::Response) -> egui::
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,10 +323,7 @@ mod tests {
         assert!(r.selected);
 
         assert_eq!(Spec::text("제목").min_target, 0.0);
-        assert_eq!(
-            Spec::button("a.b", "Save").hint("설명").hint,
-            "설명"
-        );
+        assert_eq!(Spec::button("a.b", "Save").hint("설명").hint, "설명");
     }
 
     #[test]
@@ -363,4 +358,3 @@ mod tests {
         reset_issues();
     }
 }
-

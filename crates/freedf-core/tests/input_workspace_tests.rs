@@ -1,13 +1,13 @@
 //! `input_workspace` 모듈 단위 테스트 — `src/input_workspace.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::input_workspace::*;
 use freedf_core::input_commands::Command;
+use freedf_core::input_commands::{check_well_formed, command_kinds};
 use freedf_core::input_events::{
-    ActionMode, ActionSource, ControlKind, InputEvent, PointerEvent, PointerPhase,
-    PointerSource, NO_TILT,
+    ActionMode, ActionSource, ControlKind, InputEvent, PointerEvent, PointerPhase, PointerSource,
+    NO_TILT,
 };
 use freedf_core::input_tools::Tool;
-use freedf_core::input_commands::{check_well_formed, command_kinds};
+use freedf_core::input_workspace::*;
 
 fn pointer(phase: PointerPhase, point: [f32; 2]) -> InputEvent {
     InputEvent::Pointer(PointerEvent {
@@ -120,7 +120,6 @@ fn hover_drags_do_not_trick_session_tracking() {
 /// 프레임워크(워크스페이스/허브/툴 뼈대) 수정 0이 이 테스트로 증명된다.
 #[test]
 fn new_tool_joins_registry_without_framework_changes() {
-    
     use freedf_core::input_tools::Emit;
 
     struct LassoTool {

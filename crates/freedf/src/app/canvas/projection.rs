@@ -17,9 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use super::*;
-use freedf_canvas::canvas_port::{
-    CanvasSurface, Committed, LivePoint, Region, StrokeHead,
-};
+use freedf_canvas::canvas_port::{CanvasSurface, Committed, LivePoint, Region, StrokeHead};
 use freedf_core::input_commands::Command;
 
 /// 라이브 세션 상태 — begin에서 기억한 것을 end에서 쓴다 (end-stroke 커맨드에는
@@ -230,7 +228,9 @@ impl CanvasSurface for FreeDfApp {
 mod tests {
     use super::*;
     use freedf_canvas::canvas_port::{CanvasOp, CanvasRecorder};
-    use freedf_core::input_events::{InputEvent, PointerEvent, PointerPhase, PointerSource, NO_TILT};
+    use freedf_core::input_events::{
+        InputEvent, PointerEvent, PointerPhase, PointerSource, NO_TILT,
+    };
     use freedf_core::input_workspace::Workspace;
 
     fn pointer(phase: PointerPhase, point: [f32; 2]) -> InputEvent {
@@ -280,9 +280,7 @@ mod tests {
         let mut p = Projection::with_core();
         let mut s = CanvasRecorder::new();
         let cmds = vec![
-            Command::EraseAt {
-                point: [4.0, 4.0],
-            },
+            Command::EraseAt { point: [4.0, 4.0] },
             Command::EndErase,
             Command::Undo,
         ];
@@ -299,7 +297,9 @@ mod tests {
         ));
         assert!(matches!(
             &s.ops[1],
-            CanvasOp::Invalidate { region: Region::Page }
+            CanvasOp::Invalidate {
+                region: Region::Page
+            }
         ));
     }
 

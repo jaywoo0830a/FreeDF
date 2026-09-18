@@ -66,8 +66,7 @@ pub(crate) struct DesktopCfg {
     pub focus_only: bool,
 }
 
-static DESKTOP_CFG: std::sync::OnceLock<std::sync::RwLock<DesktopCfg>> =
-    std::sync::OnceLock::new();
+static DESKTOP_CFG: std::sync::OnceLock<std::sync::RwLock<DesktopCfg>> = std::sync::OnceLock::new();
 
 /// 전역 리스너에 데스크탑 설정을 반영합니다.
 pub(crate) fn update_desktop_cfg(cfg: DesktopCfg) {
@@ -119,7 +118,11 @@ pub(crate) fn send_desktop(prev: bool) {
 #[cfg(target_os = "windows")]
 fn send_desktop_seq(prev: bool, enigo: &mut enigo::Enigo) -> String {
     use enigo::{Direction, Key, Keyboard};
-    let arrow = if prev { Key::LeftArrow } else { Key::RightArrow };
+    let arrow = if prev {
+        Key::LeftArrow
+    } else {
+        Key::RightArrow
+    };
     let steps: [(&str, Key, Direction); 5] = [
         ("win↓", Key::Meta, Direction::Press),
         ("ctrl↓", Key::Control, Direction::Press),

@@ -9,9 +9,7 @@
 //! 곳은 이 모듈로 한정한다. 기존 `canvas/input.rs` 등의 직접 소비 경로는
 //! PR2(툴/워크스페이스)에서 허브 경로로 걷어 낸다.
 
-use freedf_core::input_events::{
-    InputEvent, PointerPhase, PointerSource, NO_TILT,
-};
+use freedf_core::input_events::{InputEvent, PointerPhase, PointerSource, NO_TILT};
 
 /// egui 프레임 이벤트 목록 → 통합 입력 이벤트들 (순서 보존).
 pub(crate) fn translate(events: &[egui::Event]) -> Vec<InputEvent> {
@@ -49,7 +47,9 @@ pub(crate) fn translate(events: &[egui::Event]) -> Vec<InputEvent> {
                     NO_TILT,
                 ));
             }
-            egui::Event::Touch { phase, pos, force, .. } => {
+            egui::Event::Touch {
+                phase, pos, force, ..
+            } => {
                 let p = match phase {
                     egui::TouchPhase::Start => PointerPhase::Down,
                     egui::TouchPhase::Move => PointerPhase::Drag,

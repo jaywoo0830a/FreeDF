@@ -29,9 +29,9 @@ fn load_document_bundle(
         .ok_or_else(|| format!("Document {doc_id} not found in the database."))?;
     let is_note = row.is_note();
     let _ = tx.send(LoaderMsg::Stage("Loading: PDF bytes…".into()));
-    let pdf_bytes = db.load_pdf(doc_id).ok_or_else(|| {
-        format!("{} has no PDF content in the database.", row.title)
-    })?;
+    let pdf_bytes = db
+        .load_pdf(doc_id)
+        .ok_or_else(|| format!("{} has no PDF content in the database.", row.title))?;
     // 주석(획 전체)·페이지·편집 저널·세션을 한 번의 왕복으로 로드
     // (Sync v3 서버가 스냅샷 ZIP으로 집계).
     let _ = tx.send(LoaderMsg::Stage(format!(
@@ -81,9 +81,11 @@ impl FreeDfApp {
     /// pdfium-render only allows one initialization per process, so everything
     /// must reuse this single instance (never call `load_pdfium` again).
     pub(crate) fn pdfium(&self) -> Result<&Pdfium, String> {
-        self.pdfium.as_ref().map(|b| b.as_ref()).map_err(|e| e.clone())
+        self.pdfium
+            .as_ref()
+            .map(|b| b.as_ref())
+            .map_err(|e| e.clone())
     }
-
 }
 
 mod bookmarks;

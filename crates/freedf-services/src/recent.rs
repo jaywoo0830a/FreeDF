@@ -61,9 +61,8 @@ impl RecentList {
 
     /// 특정 문서에 대한 최근 항목 제거.
     pub fn remove(&mut self, kind: RecentKind, doc_id: i64) {
-        self.items.retain(|r| {
-            !(r.kind == kind && r.doc_id == Some(doc_id))
-        });
+        self.items
+            .retain(|r| !(r.kind == kind && r.doc_id == Some(doc_id)));
     }
 }
 

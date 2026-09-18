@@ -30,7 +30,13 @@ elm_magic::view! {
         let bookmarks = crate::canvas::bookmark_list();
         let outline_entries = crate::canvas::outline_list();
         // 모달 열림 여부를 캔버스에 동기화(모달 뒤 잉크 방지) + 상태바 문자열.
-        let canvas_status = crate::canvas::sync_and_status(matches!(modal, ShellModal::None));
+        //
+        // 주의: `sync_and_status`의 인자는 **모달이 열렸는지**다. 여기서
+        // `matches!(modal, ShellModal::None)`(= 모달 없음)을 그대로 넘기면
+        // 캔버스 입력이 **항상 꺼진다** — 실제로 그 반전 때문에 펜이 전혀
+        // 그려지지 않았다 (`ink_stroke_lands_through_shell_raw` 회귀 테스트).
+        let modal_open = !matches!(modal, ShellModal::None);
+        let canvas_status = crate::canvas::sync_and_status(modal_open);
         // 리본/토스트 — 캔버스 엔진이 소유한 상태를 매 프레임 읽어 렌더만 한다.
         let tool = crate::canvas::tool_name();
         let color = crate::canvas::color_name();
@@ -240,7 +246,8 @@ pub(crate) fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) 
     let tree = elm_magic::frame::<Shell>(ctx, &props);
     // 팔레트를 넘겨 CSS 색 토큰(`bg: surface` …)을 실제 색으로 해석시킨다.
     // 스타일 해석 자체는 elm-magic 코어의 몫이라 freedf-gui는 값을 옮기기만 한다.
-    let pass = elm_magic_egui::render_with_palette(ui, &tree, &mut ctx.arena, &crate::style::palette());
+    let pass =
+        elm_magic_egui::render_with_palette(ui, &tree, &mut ctx.arena, &crate::style::palette());
     // ── eguidev 계약 등록 (Phase 3 — docs/freedf-gui-migration.md) ──
     // 어댑터가 그린 버튼/탭을 계약 id로 등록. id 규칙: `gui.<라벨 슬러그>`,
     // 같은 라벨이 한 프레임에 두 번 이상 나오면 `.<n>` 접미사 (이름 없는 탭 둘 →

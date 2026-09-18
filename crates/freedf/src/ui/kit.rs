@@ -23,7 +23,7 @@ use egui_phosphor_icons::Icon;
 use crate::ui::a11y::{self, Spec};
 // `target`은 테스트(계약 단언)에서만 직접 참조합니다.
 #[cfg_attr(not(test), allow(unused_imports))]
-use crate::ui::tokens::{self, target, radius, space};
+use crate::ui::tokens::{self, radius, space, target};
 
 /// 시각 변형 — 의미가 다르면 모양도 달라야 합니다.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,9 +53,9 @@ impl Size {
     pub fn target(self) -> f32 {
         use crate::ui::scale::{S_24, S_36, S_52};
         match self {
-            Self::Small => S_24, // 24px (1.5rem) ≥ target::MIN
+            Self::Small => S_24,  // 24px (1.5rem) ≥ target::MIN
             Self::Medium => S_36, // 36px (2.25rem) ≥ target::COMFORT
-            Self::Touch => S_52, // 52px (3.25rem) ≥ target::TOUCH
+            Self::Touch => S_52,  // 52px (3.25rem) ≥ target::TOUCH
         }
     }
 
@@ -347,7 +347,11 @@ impl<'a> Row<'a> {
             icon: None,
             label,
             hint: String::new(),
-            test_id: if test_id.is_empty() { None } else { Some(test_id) },
+            test_id: if test_id.is_empty() {
+                None
+            } else {
+                Some(test_id)
+            },
             role,
             enabled: true,
             selected: false,
@@ -445,8 +449,12 @@ impl<'a> Row<'a> {
         // 상태 표시기 자리 — 토글/라디오는 오른쪽에 상태가 **보여야** 합니다.
         // 트레일링 컨트롤이 있으면 그 왼쪽에 나란히 놓습니다(호출부 변경 불필요).
         let indicator = matches!(self.role, a11y::Role::Toggle | a11y::Role::Radio);
-        let reserve =
-            trailing_reserve + if indicator { tokens::switch::W + space::SM } else { 0.0 };
+        let reserve = trailing_reserve
+            + if indicator {
+                tokens::switch::W + space::SM
+            } else {
+                0.0
+            };
         let inset_y = 0.0;
         let trect = egui::Rect::from_min_max(
             egui::pos2(rect.right() - reserve, rect.top() + inset_y),
@@ -536,16 +544,21 @@ impl<'a> Row<'a> {
         }
 
         let spec = match (self.test_id, self.role) {
-            (Some(id), a11y::Role::Toggle) => Spec::toggle(id, self.label, value_now.unwrap_or(false)),
+            (Some(id), a11y::Role::Toggle) => {
+                Spec::toggle(id, self.label, value_now.unwrap_or(false))
+            }
             (Some(id), a11y::Role::Radio) => Spec::radio(id, self.label, self.selected),
             (Some(id), _) => Spec::button(id, self.label),
             (None, _) => Spec::text(self.label),
         };
-        let resp = a11y::finish(ui, spec.hint(&self.hint).min_target(tokens::target::ROW), resp);
+        let resp = a11y::finish(
+            ui,
+            spec.hint(&self.hint).min_target(tokens::target::ROW),
+            resp,
+        );
         (resp, trailing)
     }
 }
-
 
 /// 탭 창의 탭 한 개 — 좌측 레일 항목 + 콘텐츠 라우팅 키.
 pub struct TabItem<'a> {
@@ -636,7 +649,10 @@ impl<'a> TabbedWindow<'a> {
             // 창 자동 크기 상한 — 콘텐츠(ScrollArea fill)와 창 크기의 피드백 루프가
             // 있으면 창이 화면 끝까지 자랍니다(실측: edge_scroll 탭, 820px 전체).
             // 대화상자 상한 960×640 — 그리드 콘텐츠 최소 폭(~865)도 수용합니다.
-            max_size: Some(egui::vec2(crate::ui::scale::rem(60), crate::ui::scale::rem(40))),
+            max_size: Some(egui::vec2(
+                crate::ui::scale::rem(60),
+                crate::ui::scale::rem(40),
+            )),
             rail_width: crate::ui::scale::rem(13),
         }
     }
@@ -736,8 +752,8 @@ impl<'a> TabbedWindow<'a> {
                 // `available_size().y`에 기대면 내용이 창을 다시 줄이는 되먹임이
                 // 생겨 창이 389pt로 줄고 마지막 탭이 화면 밖으로 나갑니다(실측).
                 let header_sep = ui.spacing().item_spacing.y;
-                let body_h = (ui.max_rect().height() - header_h - header_sep)
-                    .max(crate::ui::scale::rem(8));
+                let body_h =
+                    (ui.max_rect().height() - header_h - header_sep).max(crate::ui::scale::rem(8));
                 let rail_h = body_h;
                 let content_h = (body_h - crate::ui::scale::rem(2)).max(crate::ui::scale::rem(8));
 
@@ -785,8 +801,7 @@ impl<'a> TabbedWindow<'a> {
                             );
                             let _ = a11y::finish(
                                 ui,
-                                Spec::label(heading_id.as_str(), &heading)
-                                    .hint(tab.hint.as_str()),
+                                Spec::label(heading_id.as_str(), &heading).hint(tab.hint.as_str()),
                                 resp,
                             );
                             egui::ScrollArea::vertical()
@@ -798,8 +813,7 @@ impl<'a> TabbedWindow<'a> {
                                     // (슬라이더·체크박스·DragValue·텍스트·접기 헤더)이
                                     // 최소 타깃(28pt = COMFORT)을 갖습니다. 예전에는
                                     // egui 기본값(~18pt)이라 11개 탭 전부 하한 미달이었습니다.
-                                    ui.spacing_mut().interact_size.y =
-                                        tokens::target::COMFORT;
+                                    ui.spacing_mut().interact_size.y = tokens::target::COMFORT;
                                     // 스크롤바 자리 확보 — 슬라이더 값(0.300 등)이
                                     // 스크롤바에 가리는 실측 회귀를 막습니다.
                                     let inner_w = (ui.available_width() - space::MD)
@@ -816,11 +830,7 @@ impl<'a> TabbedWindow<'a> {
                     // 내용이 짧은 탭에서 창 전체로 넓어져 레일과 겹친 것처럼
                     // 보입니다(실측: gamepad 탭) — 그래서 할당 rect를 씁니다.
                     let content_id = format!("{prefix}.content.{}", tabs[selected].id);
-                    crate::app::dev::publish_rect(
-                        ui,
-                        content_id,
-                        content_alloc.response.rect,
-                    );
+                    crate::app::dev::publish_rect(ui, content_id, content_alloc.response.rect);
                 });
             });
 
@@ -900,10 +910,7 @@ impl<'a> Toggle<'a> {
         };
         let mut resp = ui
             .add_enabled_ui(self.enabled, |ui| {
-                ui.add(
-                    egui::Button::selectable(*self.on, text)
-                        .min_size(egui::vec2(min, min)),
-                )
+                ui.add(egui::Button::selectable(*self.on, text).min_size(egui::vec2(min, min)))
             })
             .inner;
         if resp.clicked() {
@@ -1000,9 +1007,8 @@ impl<'a> Segmented<'a> {
                     (None, _) => egui::WidgetText::from(item.label),
                 };
                 let selected = i == self.selected;
-                let resp = ui.add(
-                    egui::Button::selectable(selected, text).min_size(egui::vec2(min, min)),
-                );
+                let resp =
+                    ui.add(egui::Button::selectable(selected, text).min_size(egui::vec2(min, min)));
                 // 툴팁: 명시 힌트 → 없으면 접근성 이름(아이콘 전용일 때 의미 노출).
                 let hint = if item.hint.is_empty() {
                     if item.show_label {
@@ -1154,7 +1160,6 @@ mod tests {
         a11y::reset_issues();
     }
 
-
     #[test]
     fn row_spans_full_width_with_target_height() {
         let _g = a11y::test_guard();
@@ -1274,12 +1279,9 @@ mod tests {
                                 .rect,
                         );
                         controls.push(
-                            IconButton::new(
-                                egui_phosphor_icons::icons::MAGNIFYING_GLASS,
-                                "Slot 2",
-                            )
-                            .show(ui)
-                            .rect,
+                            IconButton::new(egui_phosphor_icons::icons::MAGNIFYING_GLASS, "Slot 2")
+                                .show(ui)
+                                .rect,
                         );
                         ui.min_rect()
                     });
@@ -1327,21 +1329,28 @@ mod tests {
         };
         frame(&ctx, vec![], |ui| {
             returned = TabbedWindow::new("settings", "Settings", &items, 1, true)
-            .subtitle("Esc to close")
-            .show(ui.ctx(), |ui, item| {
-                drawn.push(item.id.to_string());
-                // 콘텐츠 패널의 입력은 최소 타깃(COMFORT)을 갖습니다.
-                assert!(
-                    ui.spacing().interact_size.y >= tokens::target::MIN,
-                    "콘텐츠 패널 입력 타깃이 {}pt 입니다",
-                    ui.spacing().interact_size.y
-                );
-            });
-    });
-    assert_eq!(drawn, vec!["cursor".to_string()], "선택된 탭만 그려야 합니다");
-    assert!(returned.open && returned.selected == 1);
-    assert!(returned.frame.is_some(), "열린 창은 프레임 rect를 공개합니다");
-    a11y::assert_clean();
+                .subtitle("Esc to close")
+                .show(ui.ctx(), |ui, item| {
+                    drawn.push(item.id.to_string());
+                    // 콘텐츠 패널의 입력은 최소 타깃(COMFORT)을 갖습니다.
+                    assert!(
+                        ui.spacing().interact_size.y >= tokens::target::MIN,
+                        "콘텐츠 패널 입력 타깃이 {}pt 입니다",
+                        ui.spacing().interact_size.y
+                    );
+                });
+        });
+        assert_eq!(
+            drawn,
+            vec!["cursor".to_string()],
+            "선택된 탭만 그려야 합니다"
+        );
+        assert!(returned.open && returned.selected == 1);
+        assert!(
+            returned.frame.is_some(),
+            "열린 창은 프레임 rect를 공개합니다"
+        );
+        a11y::assert_clean();
     }
 
     /// 닫혀 있으면 내용을 그리지 않고, 열려 있으면 **선택된 탭만** 그립니다.
@@ -1362,7 +1371,11 @@ mod tests {
             opened = (b.open, b.selected);
         });
         assert_eq!(closed, (false, 0), "닫힌 창은 상태를 유지해야 합니다");
-        assert_eq!(opened, (true, 1), "범위를 벗어난 선택은 마지막 탭으로 클램프");
+        assert_eq!(
+            opened,
+            (true, 1),
+            "범위를 벗어난 선택은 마지막 탭으로 클램프"
+        );
         assert_eq!(drawn, vec!["b".to_string()], "선택된 탭만 그려야 합니다");
     }
 
@@ -1417,4 +1430,3 @@ mod gallery_tests {
         a11y::assert_clean();
     }
 }
-

@@ -118,10 +118,7 @@ pub fn parse_dictionaryapi_dev(v: &Value) -> DictionaryEntry {
         let meanings = e.get("meanings").and_then(|m| m.as_array());
         if let Some(meanings) = meanings {
             for m in meanings {
-                let pos = m
-                    .get("partOfSpeech")
-                    .and_then(|p| p.as_str())
-                    .unwrap_or("");
+                let pos = m.get("partOfSpeech").and_then(|p| p.as_str()).unwrap_or("");
                 if let Some(defs) = m.get("definitions").and_then(|d| d.as_array()) {
                     for d in defs {
                         if let Some(def) = d.get("definition").and_then(|d| d.as_str()) {

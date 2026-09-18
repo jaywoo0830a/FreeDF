@@ -138,7 +138,13 @@ impl ViewTransform {
 
     /// 페이지를 캔버스에 세로 위쪽 정렬 + 가로 정렬(왼쪽/가운데/오른쪽)로 배치합니다.
     /// `top_margin`은 캔버스 위쪽에서 페이지까지의 여백.
-    pub fn align_page(&mut self, page: [f32; 2], canvas: [f32; 2], top_margin: f32, align: PageAlign) {
+    pub fn align_page(
+        &mut self,
+        page: [f32; 2],
+        canvas: [f32; 2],
+        top_margin: f32,
+        align: PageAlign,
+    ) {
         let view_size = self.page_size_to_view(page[0], page[1]);
         let m = top_margin;
         self.pan_x = match align {

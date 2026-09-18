@@ -38,16 +38,17 @@ impl ToolType {
             "highlighter" => ToolType::Highlighter,
             "eraser" => ToolType::Eraser,
             "pan" => ToolType::Pan,
-            "fountain" | "fountain pen" | "fountainpen" | "fountain_pen" => {
-                ToolType::Fountain
-            }
+            "fountain" | "fountain pen" | "fountainpen" | "fountain_pen" => ToolType::Fountain,
             _ => ToolType::Pen,
         }
     }
 
     /// 잉크를 남기는 필기 도구인지 (지우개/팬 아님).
     pub fn is_ink(self) -> bool {
-        matches!(self, ToolType::Pen | ToolType::Fountain | ToolType::Highlighter)
+        matches!(
+            self,
+            ToolType::Pen | ToolType::Fountain | ToolType::Highlighter
+        )
     }
 
     /// 도구 선택기에 표시되는 기본 순서 (사용자가 드래그로 재정렬 가능).

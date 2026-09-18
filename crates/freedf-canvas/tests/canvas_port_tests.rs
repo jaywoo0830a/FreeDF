@@ -23,12 +23,7 @@ fn live_session_records_in_contract_order() {
             pressure: 0.6,
         }],
     );
-    s.end_live(
-        1,
-        &Committed {
-            tool: "pen".into(),
-        },
-    );
+    s.end_live(1, &Committed { tool: "pen".into() });
     assert_eq!(s.op_kinds(), vec!["beginLive", "drawLiveTail", "endLive"]);
     // tail은 새 점만 — O(Δ) 계약.
     assert_eq!(s.ops[1], CanvasOp::DrawLiveTail { id: 1, points: 1 });
@@ -52,7 +47,9 @@ fn invalidate_carries_region_data() {
                     radius: 8.0
                 }
             },
-            CanvasOp::Invalidate { region: Region::Page },
+            CanvasOp::Invalidate {
+                region: Region::Page
+            },
         ]
     );
 }

@@ -1,10 +1,8 @@
 //! `input_hub` 모듈 단위 테스트 — `src/input_hub.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::input_hub::*;
-use freedf_core::input_events::{
-    InputEvent, PointerPhase, PointerSource,
-};
 use freedf_core::input_events::{ActionSource, ControlKind, ControlPhase, NO_TILT};
+use freedf_core::input_events::{InputEvent, PointerPhase, PointerSource};
+use freedf_core::input_hub::*;
 
 fn pointer(source: PointerSource, phase: PointerPhase) -> InputEvent {
     InputEvent::pointer(source, phase, [1.0, 2.0], 0.5, NO_TILT)
@@ -42,11 +40,7 @@ fn same_source_drag_flows_and_up_releases() {
 fn order_is_preserved_and_actions_controls_pass_through() {
     let mut hub = Hub::new();
     hub.emit(pointer(PointerSource::Pen, PointerPhase::Down));
-    hub.emit(InputEvent::action(
-        ActionSource::Keyboard,
-        "tool:pen",
-        None,
-    ));
+    hub.emit(InputEvent::action(ActionSource::Keyboard, "tool:pen", None));
     hub.emit(InputEvent::control(
         ControlKind::StylusButton,
         1,

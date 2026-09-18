@@ -82,15 +82,19 @@ impl Tool for PointerTool {
 pub fn pen_tool() -> PointerTool {
     PointerTool::new(
         "pen",
-        |e, emit| emit(Command::BeginStroke {
-            tool: "pen".into(),
-            point: e.point,
-            pressure: e.pressure,
-        }),
-        |e, emit| emit(Command::ExtendStroke {
-            point: e.point,
-            pressure: e.pressure,
-        }),
+        |e, emit| {
+            emit(Command::BeginStroke {
+                tool: "pen".into(),
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
+        |e, emit| {
+            emit(Command::ExtendStroke {
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
         |_e, emit| emit(Command::EndStroke),
     )
 }
@@ -99,15 +103,19 @@ pub fn pen_tool() -> PointerTool {
 pub fn fountain_tool() -> PointerTool {
     PointerTool::new(
         "fountain",
-        |e, emit| emit(Command::BeginStroke {
-            tool: "fountain".into(),
-            point: e.point,
-            pressure: e.pressure,
-        }),
-        |e, emit| emit(Command::ExtendStroke {
-            point: e.point,
-            pressure: e.pressure,
-        }),
+        |e, emit| {
+            emit(Command::BeginStroke {
+                tool: "fountain".into(),
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
+        |e, emit| {
+            emit(Command::ExtendStroke {
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
         |_e, emit| emit(Command::EndStroke),
     )
 }
@@ -118,15 +126,19 @@ pub fn fountain_tool() -> PointerTool {
 pub fn highlighter_tool() -> PointerTool {
     PointerTool::new(
         "highlighter",
-        |e, emit| emit(Command::BeginStroke {
-            tool: "highlighter".into(),
-            point: e.point,
-            pressure: e.pressure,
-        }),
-        |e, emit| emit(Command::ExtendStroke {
-            point: e.point,
-            pressure: e.pressure,
-        }),
+        |e, emit| {
+            emit(Command::BeginStroke {
+                tool: "highlighter".into(),
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
+        |e, emit| {
+            emit(Command::ExtendStroke {
+                point: e.point,
+                pressure: e.pressure,
+            })
+        },
         |_e, emit| emit(Command::EndStroke),
     )
 }
@@ -144,12 +156,7 @@ pub fn eraser_tool() -> PointerTool {
 /// 팬(탐색) — 문서 커맨드를 생산하지 않는 툴. 레지스트리에 있어야 "활성 툴"
 /// 상태가 하나로 유지된다 (실제 팬 이동은 앱의 뷰 정책이 담당한다).
 pub fn pan_tool() -> PointerTool {
-    PointerTool::new(
-        "pan",
-        |_e, _emit| {},
-        |_e, _emit| {},
-        |_e, _emit| {},
-    )
+    PointerTool::new("pan", |_e, _emit| {}, |_e, _emit| {}, |_e, _emit| {})
 }
 
 /// 기본 툴 레지스트리 — 워크스페이스가 action 키(`"tool:NAME"`)로 조회한다.

@@ -1,9 +1,9 @@
 //! `store` 모듈 단위 테스트 — `src/store.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::store::*;
 use freedf_core::history::Edit;
 use freedf_core::model::{StrokePoint, ToolType};
 use freedf_core::paper::PagePaper;
+use freedf_core::store::*;
 
 fn sample_points() -> Vec<StrokePoint> {
     vec![
@@ -16,7 +16,13 @@ fn sample_points() -> Vec<StrokePoint> {
 fn add_stroke_gives_unique_increasing_ids() {
     let mut store = AnnotationStore::new();
     let a = store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, sample_points());
-    let b = store.add_stroke(0, ToolType::Highlighter, [255, 255, 0, 90], 14.0, sample_points());
+    let b = store.add_stroke(
+        0,
+        ToolType::Highlighter,
+        [255, 255, 0, 90],
+        14.0,
+        sample_points(),
+    );
     assert_eq!(a, 0);
     assert_eq!(b, 1);
     assert_eq!(store.stroke_count_on(0), 2);
@@ -119,12 +125,7 @@ fn rotate_strokes_maps_to_new_display_space() {
         .collect();
     assert_eq!(
         pts,
-        vec![
-            [50.0, 0.0],
-            [50.0, 100.0],
-            [0.0, 100.0],
-            [0.0, 0.0],
-        ]
+        vec![[50.0, 0.0], [50.0, 100.0], [0.0, 100.0], [0.0, 0.0],]
     );
     // 반시계 90° 복원: 새 공간 50×100 → (x, y) → (y, W - x).
     store.rotate_strokes_on(0, 50.0, 100.0, false);
@@ -139,12 +140,7 @@ fn rotate_strokes_maps_to_new_display_space() {
         .collect();
     assert_eq!(
         pts,
-        vec![
-            [0.0, 0.0],
-            [100.0, 0.0],
-            [100.0, 50.0],
-            [0.0, 50.0],
-        ]
+        vec![[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [0.0, 50.0],]
     );
 }
 
@@ -198,7 +194,13 @@ fn clear_page_removes_all() {
 fn json_round_trip_preserves_data() {
     let mut store = AnnotationStore::new();
     store.add_stroke(0, ToolType::Pen, [10, 20, 30, 255], 2.0, sample_points());
-    store.add_stroke(1, ToolType::Highlighter, [200, 100, 0, 90], 12.0, sample_points());
+    store.add_stroke(
+        1,
+        ToolType::Highlighter,
+        [200, 100, 0, 90],
+        12.0,
+        sample_points(),
+    );
     let json = store.to_json();
     let restored = AnnotationStore::from_json(&json).expect("JSON 파싱 실패");
     assert_eq!(restored, store);
@@ -234,10 +236,13 @@ fn paper_settings_are_per_page() {
 fn paper_settings_survive_json_round_trip() {
     let mut store = AnnotationStore::new();
     store.add_stroke(0, ToolType::Pen, [0, 0, 0, 255], 2.0, sample_points());
-    store.set_paper(0, PagePaper {
-        style: freedf_core::paper::PaperStyle::Ruled,
-        color: [253, 247, 231, 255],
-    });
+    store.set_paper(
+        0,
+        PagePaper {
+            style: freedf_core::paper::PaperStyle::Ruled,
+            color: [253, 247, 231, 255],
+        },
+    );
     let json = store.to_json();
     let restored = AnnotationStore::from_json(&json).expect("JSON 파싱 실패");
     assert_eq!(restored, store);

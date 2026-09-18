@@ -1,11 +1,11 @@
 //! `surface` 모듈 단위 테스트 — `src/surface.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_canvas::surface::*;
+use freedf_canvas::bake::BakeParams;
 use freedf_canvas::bake::BakedPage;
 use freedf_canvas::geom::ViewTransform;
 use freedf_canvas::ink::Mesh;
-use freedf_canvas::bake::BakeParams;
 use freedf_canvas::scene::Revision;
+use freedf_canvas::surface::*;
 
 fn empty_page(zoom: f32) -> BakedPage {
     BakedPage {

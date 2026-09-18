@@ -97,14 +97,7 @@ impl FreeDfApp {
             smooth,
         );
         let tip = pipeline.down(
-            self.tool,
-            color,
-            page[0],
-            page[1],
-            pressure,
-            drag_t,
-            drag_t_ms,
-            tilt,
+            self.tool, color, page[0], page[1], pressure, drag_t, drag_t_ms, tilt,
         );
         self.ink = Some(pipeline);
         self.active_stroke = Some(ActiveStroke {

@@ -256,7 +256,11 @@ mod tests {
         };
         let v = stroke_verdict("Pen", &f, &dev, &LedgerFacts::default());
         assert_eq!(v.level, Level::Note);
-        assert!(v.text.contains("설정"), "설정 사실이 판정에 들어간다: {}", v.text);
+        assert!(
+            v.text.contains("설정"),
+            "설정 사실이 판정에 들어간다: {}",
+            v.text
+        );
         assert!(!v.text.contains("OTD"), "오진 금지");
         // 라이브 경고도 설정을 존중한다.
         assert!(live_flat(20, (1.0, 1.0), (1.0, 1.0), &dev).is_none());
@@ -277,8 +281,16 @@ mod tests {
         };
         let v = stroke_verdict("Pen", &f, &device(), &ledger);
         assert_eq!(v.level, Level::Warn);
-        assert!(v.text.contains("stale"), "장부 사실이 판정에 들어간다: {}", v.text);
-        assert!(v.line.contains("stale=1"), "로그 한 줄에 장부 요약: {}", v.line);
+        assert!(
+            v.text.contains("stale"),
+            "장부 사실이 판정에 들어간다: {}",
+            v.text
+        );
+        assert!(
+            v.line.contains("stale=1"),
+            "로그 한 줄에 장부 요약: {}",
+            v.line
+        );
     }
 
     /// 꼬리 변화는 별도 로그가 아니라 **같은 한 줄**에 접혀 들어간다 (grep 토큰 유지).
@@ -290,7 +302,11 @@ mod tests {
         };
         let v = stroke_verdict("Pen", &f, &device(), &LedgerFacts::default());
         assert_eq!(v.level, Level::Warn);
-        assert!(v.line.starts_with("PENUP-CHANGED: "), "grep 토큰 유지: {}", v.line);
+        assert!(
+            v.line.starts_with("PENUP-CHANGED: "),
+            "grep 토큰 유지: {}",
+            v.line
+        );
         assert_eq!(v.line.matches("PENUP-CHANGED").count(), 1, "한 줄에 한 번");
     }
 
@@ -300,7 +316,10 @@ mod tests {
         let v = stroke_verdict("Pen", &facts(), &device(), &LedgerFacts::default());
         assert_eq!(v.level, Level::Ok);
         assert!(v.text.contains("OK"));
-        assert!(v.line.contains("tilt_src=device"), "능력 사실도 함께 남는다");
+        assert!(
+            v.line.contains("tilt_src=device"),
+            "능력 사실도 함께 남는다"
+        );
     }
 
     /// 장부 요약 → 판정 재료 변환은 라우터 사실을 보존한다.

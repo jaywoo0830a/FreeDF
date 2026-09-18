@@ -72,7 +72,13 @@ impl ToastQueue {
         }
     }
 
-    pub fn push(&mut self, kind: ToastKind, title: impl Into<String>, message: impl Into<String>, now_ms: f64) {
+    pub fn push(
+        &mut self,
+        kind: ToastKind,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        now_ms: f64,
+    ) {
         if self.next_id.checked_add(1).is_none() {
             self.next_id = 0;
         }
@@ -105,7 +111,8 @@ impl ToastQueue {
     /// 히트테스트에서 제외하므로 클릭이 아래(툴바·캔버스)로 그대로 통과합니다.
     pub fn show(&mut self, ctx: &egui::Context) {
         let now_ms = ctx.input(|i| i.time) * 1000.0;
-        self.toasts.retain(|t| now_ms - t.created_ms < self.duration_ms);
+        self.toasts
+            .retain(|t| now_ms - t.created_ms < self.duration_ms);
         if self.toasts.is_empty() {
             self.card_rects.clear();
             return;
@@ -123,7 +130,8 @@ impl ToastQueue {
             .order(egui::Order::Foreground)
             .interactable(over_card)
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
+                ui.spacing_mut().item_spacing =
+                    egui::vec2(crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
                 for (i, t) in self.toasts.iter().enumerate() {
                     let (fill, border) = t.visuals(ui);
                     let card = egui::Frame::new()
@@ -137,9 +145,7 @@ impl ToastQueue {
                                 ui.vertical(|ui| {
                                     ui.label(egui::RichText::new(&t.title).strong());
                                     if !t.message.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(&t.message).weak().small(),
-                                        );
+                                        ui.label(egui::RichText::new(&t.message).weak().small());
                                     }
                                 });
                                 // 최소 타깃(24pt) 강제 — `small_button`은 21pt로

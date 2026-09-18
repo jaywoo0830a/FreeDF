@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use freedf_core::outline::OutlineNode;
 use freedf_core::search::TextRun;
-use freedf_core::text::{content_rect_to_display as core_content_rect_to_display, PageRotation, TextChar};
+use freedf_core::text::{
+    content_rect_to_display as core_content_rect_to_display, PageRotation, TextChar,
+};
 
 /// PDFium 바인딩 타입 재노출 — 소비 크레이트(freedf/freedf-gui)가
 /// `pdfium-render`를 직접 의존하지 않아도 되도록 합니다.
@@ -18,7 +20,12 @@ pub use pdfium_render::prelude::Pdfium;
 /// 콘텐츠 공간 `PdfRect` → 표시 공간 `[x0,y0,x1,y1]` (core 변환의 pdfium 래퍼).
 fn content_rect_to_display(r: PdfRect, w: f32, h: f32, rot: PageRotation) -> [f32; 4] {
     core_content_rect_to_display(
-        [r.left().value, r.bottom().value, r.right().value, r.top().value],
+        [
+            r.left().value,
+            r.bottom().value,
+            r.right().value,
+            r.top().value,
+        ],
         w,
         h,
         rot,
@@ -70,7 +77,10 @@ fn app_data_dir() -> PathBuf {
         return PathBuf::from(local).join("FreeDF");
     }
     if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local").join("share").join("freedf");
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("freedf");
     }
     PathBuf::new()
 }
@@ -284,7 +294,9 @@ impl DocumentView {
         let w = (target_width.round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
         // 표시 종횡비(너비/높이)에 맞는 높이를 명시해야 합니다. target_width만
         // 주면 pdfium-render가 어긋난 비트맵을 만들어 회전 페이지가 찌그러집니다.
-        let h = ((w as f32 * h_pts / w_pts).round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
+        let h = ((w as f32 * h_pts / w_pts)
+            .round()
+            .clamp(1.0, MAX_RENDER_DIM)) as Pixels;
         let m = (max_dimension.round().clamp(1.0, MAX_RENDER_DIM)) as Pixels;
         // ── 회전 렌더링 (중요) ── pdfium은 페이지의 내장 /Rotate를 **렌더 시
         // 자동 적용**합니다 (CPDF_Page::UpdateDimensions가 page_matrix_에 회전을
@@ -388,7 +400,9 @@ impl DocumentView {
         let w = page.width().value;
         let h = page.height().value;
         let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
-        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
+        let text = page
+            .text()
+            .map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut runs = Vec::new();
         for seg in text.segments().iter() {
             let txt = seg.text();
@@ -412,7 +426,9 @@ impl DocumentView {
         let w = page.width().value;
         let h = page.height().value;
         let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
-        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
+        let text = page
+            .text()
+            .map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut out = Vec::with_capacity(text.len().max(0) as usize);
         for ch in text.chars().iter() {
             // 오류가 나는 글자는 건너뜁니다.
@@ -434,7 +450,9 @@ impl DocumentView {
         let w = page.width().value;
         let h = page.height().value;
         let rot = core_rotation(page.rotation().unwrap_or(PdfPageRenderRotation::None));
-        let text = page.text().map_err(|e| format!("Text extraction failed: {e}"))?;
+        let text = page
+            .text()
+            .map_err(|e| format!("Text extraction failed: {e}"))?;
         let mut out = Vec::new();
         for ch in text.chars().iter() {
             if let Ok(b) = ch.tight_bounds() {

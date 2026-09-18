@@ -45,12 +45,7 @@ impl PageRotation {
 /// - 270°:   `(x, y) → (H−y, W−x)`  — 비트맵 H×W
 ///
 /// (`W, H`는 미디어박스 크기)
-pub fn content_rect_to_display(
-    r: [f32; 4],
-    w: f32,
-    h: f32,
-    rot: PageRotation,
-) -> [f32; 4] {
+pub fn content_rect_to_display(r: [f32; 4], w: f32, h: f32, rot: PageRotation) -> [f32; 4] {
     let (x0, y0, x1, y1) = (r[0], r[1], r[2], r[3]);
     match rot {
         PageRotation::None => [x0, h - y1, x1, h - y0],
@@ -89,16 +84,9 @@ impl TextChar {
 ///    이웃으로 좌우 확장해 단어를 조립합니다 (공백은 갭으로 경계 판정).
 ///
 /// 빈 영역(어느 줄 박스에도 안 닿음)은 `None`입니다.
-pub fn word_at(
-    chars: &[TextChar],
-    point: [f32; 2],
-    margin: f32,
-) -> Option<(String, [f32; 4])> {
+pub fn word_at(chars: &[TextChar], point: [f32; 2], margin: f32) -> Option<(String, [f32; 4])> {
     // 공백/빈 글자는 제외 (경계는 간격으로 판정).
-    let glyphs: Vec<&TextChar> = chars
-        .iter()
-        .filter(|c| !c.text.trim().is_empty())
-        .collect();
+    let glyphs: Vec<&TextChar> = chars.iter().filter(|c| !c.text.trim().is_empty()).collect();
     if glyphs.is_empty() {
         return None;
     }
@@ -200,7 +188,8 @@ pub fn word_at(
         start -= 1;
     }
     let mut end = si;
-    while end + 1 < line.chars.len() && line.chars[end + 1].rect[0] - line.chars[end].rect[2] <= gap_max
+    while end + 1 < line.chars.len()
+        && line.chars[end + 1].rect[0] - line.chars[end].rect[2] <= gap_max
     {
         end += 1;
     }
@@ -296,11 +285,7 @@ pub fn text_line_highlights(runs: &[TextRun], bbox: [f32; 4], margin: f32) -> Ve
 ///   (표시 공간 — `content_rect_to_display`로 변환된 것).
 /// - 같은 줄(세로로 겹침)에 닿은 글자는 x 범위를 합쳐 한 밴드로 만듭니다
 ///   (글자 사이 공백 포함). 서로 다른 줄은 절대 합치지 않습니다.
-pub fn char_line_highlights(
-    char_rects: &[[f32; 4]],
-    bbox: [f32; 4],
-    margin: f32,
-) -> Vec<[f32; 4]> {
+pub fn char_line_highlights(char_rects: &[[f32; 4]], bbox: [f32; 4], margin: f32) -> Vec<[f32; 4]> {
     let (bx0, by0, bx1, by1) = (
         bbox[0] - margin,
         bbox[1] - margin,

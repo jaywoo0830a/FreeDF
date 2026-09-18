@@ -5,8 +5,7 @@ use eframe::egui;
 use std::sync::Arc;
 
 /// Asta Sans Regular — freedf 크레이트의 에셋을 상대 경로로 공유.
-const ASTA_SANS_REGULAR: &[u8] =
-    include_bytes!("../../freedf/assets/fonts/AstaSans-Regular.ttf");
+const ASTA_SANS_REGULAR: &[u8] = include_bytes!("../../freedf/assets/fonts/AstaSans-Regular.ttf");
 const INTER_REGULAR: &[u8] = include_bytes!("../../freedf/assets/fonts/Inter-Regular.ttf");
 const NANUM_GOTHIC_REGULAR: &[u8] =
     include_bytes!("../../freedf/assets/fonts/NanumGothic-Regular.ttf");

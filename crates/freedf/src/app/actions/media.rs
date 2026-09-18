@@ -41,8 +41,8 @@ impl FreeDfApp {
                 .add_filter(
                     "All media",
                     &[
-                        "m4a", "m4b", "mp3", "wav", "webm", "ogg", "aac", "flac", "opus",
-                        "mp4", "mov", "mkv", "avi", "png", "jpg", "jpeg", "gif", "bmp",
+                        "m4a", "m4b", "mp3", "wav", "webm", "ogg", "aac", "flac", "opus", "mp4",
+                        "mov", "mkv", "avi", "png", "jpg", "jpeg", "gif", "bmp",
                     ],
                 )
                 .add_filter(
@@ -131,7 +131,11 @@ impl FreeDfApp {
         }
         let dir = std::env::temp_dir().join("freedf-stream");
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join(format!("stream-{}-{}.wav", std::process::id(), self.now_ms()));
+        let path = dir.join(format!(
+            "stream-{}-{}.wav",
+            std::process::id(),
+            self.now_ms()
+        ));
         let state_path = path.clone();
         let url = item.url.clone();
         let name = item.name.clone();
@@ -204,7 +208,10 @@ impl FreeDfApp {
             let (filter_name, exts): (&str, &[&str]) = match item.kind.as_str() {
                 "photo" => ("Images", &["png", "jpg", "jpeg", "gif", "webp", "bmp"]),
                 "video" => ("Video", &["mp4", "webm", "mov", "mkv", "avi"]),
-                _ => ("Audio", &["wav", "m4a", "mp3", "ogg", "webm", "aac", "flac", "opus"]),
+                _ => (
+                    "Audio",
+                    &["wav", "m4a", "mp3", "ogg", "webm", "aac", "flac", "opus"],
+                ),
             };
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name(&item.name)

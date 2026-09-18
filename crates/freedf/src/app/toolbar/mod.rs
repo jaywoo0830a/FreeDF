@@ -8,12 +8,7 @@ pub(crate) use super::*;
 use crate::ui::{check, slider};
 
 /// 일반 펜(볼펜) 물리 모델의 실제 결과를 보여주는 미니 스트로크 미리보기.
-fn pen_profile_preview(
-    ui: &mut egui::Ui,
-    color: Color32,
-    width: f32,
-    profile: &BallPenProfile,
-) {
+fn pen_profile_preview(ui: &mut egui::Ui, color: Color32, width: f32, profile: &BallPenProfile) {
     // 콘텐츠 폭 전체를 채우는 미리보기 카드 — 작은 상자(152×36)가 좌상단에
     // 붕 떠 있던 이전 배치는 폼 리듬과 어긋났습니다(스크린샷 리뷰에서 발견).
     let (rect, resp) =
@@ -207,8 +202,7 @@ impl FreeDfApp {
                     egui::vec2(crate::ui::scale::qrem(2), crate::ui::scale::qrem(1)); // 8×4
                 ui.spacing_mut().item_spacing =
                     egui::vec2(crate::ui::scale::qrem(2), crate::ui::scale::qrem(2)); // 8×8
-                ui.spacing_mut().interact_size =
-                    egui::vec2(0.0, crate::ui::scale::S_36); // 표준 버튼 높이 (2.25rem)
+                ui.spacing_mut().interact_size = egui::vec2(0.0, crate::ui::scale::S_36); // 표준 버튼 높이 (2.25rem)
 
                 self.row_workspace(ui);
                 crate::ui::layout::hseparator(ui);

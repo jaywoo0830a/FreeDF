@@ -70,8 +70,12 @@ impl FreeDfApp {
         self.render_dirty = true;
         // Keep the current zoom across page changes; just re-align the new page
         // (instead of resetting the zoom to fit-width).
-        self.view
-            .align_page(self.page_size_pts, self.last_canvas, TOP_MARGIN, self.page_align);
+        self.view.align_page(
+            self.page_size_pts,
+            self.last_canvas,
+            TOP_MARGIN,
+            self.page_align,
+        );
         self.search_update();
         if let Some(doc) = &self.document {
             self.logger.log(AppEvent::PageChanged {
@@ -98,12 +102,9 @@ impl FreeDfApp {
         // 프리페치된 새 페이지 텍스처가 있으면 즉시 사용 → 렌더 대기 없는 전환.
         // 프리페치 이후 질감 설정이 바뀌었으면(키 불일치) 무효 — 아래 경로로
         // 재렌더해 새 설정을 적용합니다.
-        let hit = self
-            .prefetch
-            .as_ref()
-            .is_some_and(|(p, z, _, k)| {
-                *p == to && (*z - self.view.zoom).abs() < 1e-3 && *k == self.paper_tex_key_for(to)
-            });
+        let hit = self.prefetch.as_ref().is_some_and(|(p, z, _, k)| {
+            *p == to && (*z - self.view.zoom).abs() < 1e-3 && *k == self.paper_tex_key_for(to)
+        });
         if hit {
             let (_, _, tex, _) = self.prefetch.take().expect("hit");
             self.prev_texture = self.texture.take();
@@ -146,9 +147,7 @@ impl FreeDfApp {
             // 현재 페이지의 크기/용지를 그대로 써서 바로 다음에 삽입.
             InsertTarget::FromCurrent => {
                 let size = doc.page_size_pts(self.current_page);
-                let paper = self
-                    .store
-                    .paper_on_or(self.current_page, default_paper);
+                let paper = self.store.paper_on_or(self.current_page, default_paper);
                 (self.current_page + 1, size, paper)
             }
             InsertTarget::AtVeryFront => (0, default_size, default_paper),
@@ -202,12 +201,19 @@ impl FreeDfApp {
         }
         self.page_size_pts = doc.page_size_pts(idx);
         let total = doc.page_count();
-        self.logger
-            .log(AppEvent::PageRotated { page: idx, total, clockwise });
+        self.logger.log(AppEvent::PageRotated {
+            page: idx,
+            total,
+            clockwise,
+        });
         self.status = Some(format!(
             "Rotated page {} 90° {}",
             idx + 1,
-            if clockwise { "clockwise" } else { "counter-clockwise" }
+            if clockwise {
+                "clockwise"
+            } else {
+                "counter-clockwise"
+            }
         ));
         self.on_page_changed();
         self.flush_current_document_with(Some(StructureOp::RotatePage {
@@ -234,7 +240,8 @@ impl FreeDfApp {
             return;
         }
         for i in 0..count {
-            self.store.rotate_strokes_on(i, sizes[i][0], sizes[i][1], clockwise);
+            self.store
+                .rotate_strokes_on(i, sizes[i][0], sizes[i][1], clockwise);
         }
         // 좌표계가 바뀌었으므로 undo 히스토리/저널 초기화.
         self.history.clear();
@@ -249,13 +256,14 @@ impl FreeDfApp {
         });
         self.status = Some(format!(
             "Rotated all {count} pages 90° {}",
-            if clockwise { "clockwise" } else { "counter-clockwise" }
+            if clockwise {
+                "clockwise"
+            } else {
+                "counter-clockwise"
+            }
         ));
         self.on_page_changed();
-        self.flush_current_document_with(Some(StructureOp::RotateAll {
-            clockwise,
-            sizes,
-        }));
+        self.flush_current_document_with(Some(StructureOp::RotateAll { clockwise, sizes }));
     }
 
     pub(crate) fn delete_page_action(&mut self) {
@@ -276,14 +284,9 @@ impl FreeDfApp {
         if self.current_page >= total {
             self.current_page = total.saturating_sub(1);
         }
-        self.logger.log(AppEvent::PageDeleted {
-            page: idx,
-            total,
-        });
+        self.logger.log(AppEvent::PageDeleted { page: idx, total });
         self.on_page_changed();
-        self.flush_current_document_with(Some(StructureOp::DeletePage {
-            page: idx as i32,
-        }));
+        self.flush_current_document_with(Some(StructureOp::DeletePage { page: idx as i32 }));
     }
 
     // ---------- Zoom / fit ----------

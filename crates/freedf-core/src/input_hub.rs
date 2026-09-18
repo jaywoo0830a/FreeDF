@@ -15,9 +15,7 @@
 
 use std::collections::VecDeque;
 
-use crate::input_events::{
-    InputEvent, PointerPhase, PointerSource, POINTER_SOURCES,
-};
+use crate::input_events::{InputEvent, PointerPhase, PointerSource, POINTER_SOURCES};
 
 /// 통합 입력 허브 — 충돌 규칙 적용 후 순서대로 적재하고, 소비자가 당겨 간다.
 #[derive(Debug, Default)]

@@ -70,8 +70,7 @@ impl Snapshot {
         {
             let cur = Cursor::new(&mut buf);
             let mut w = ZipWriter::new(cur);
-            let opts =
-                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+            let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
             w.start_file("meta.json", opts)?;
             serde_json::to_writer(&mut w, &self.meta)?;
@@ -109,17 +108,16 @@ impl Snapshot {
         let mut zip = ZipArchive::new(Cursor::new(bytes))
             .map_err(|e| SyncError::Decode(format!("invalid zip: {e}")))?;
 
-        let read_entry = |zip: &mut ZipArchive<Cursor<&[u8]>>,
-                          name: &str|
-         -> Result<Option<String>> {
-            let Ok(mut f) = zip.by_name(name) else {
-                return Ok(None);
+        let read_entry =
+            |zip: &mut ZipArchive<Cursor<&[u8]>>, name: &str| -> Result<Option<String>> {
+                let Ok(mut f) = zip.by_name(name) else {
+                    return Ok(None);
+                };
+                let mut s = String::new();
+                f.read_to_string(&mut s)
+                    .map_err(|e| SyncError::Decode(format!("cannot read {name}: {e}")))?;
+                Ok(Some(s))
             };
-            let mut s = String::new();
-            f.read_to_string(&mut s)
-                .map_err(|e| SyncError::Decode(format!("cannot read {name}: {e}")))?;
-            Ok(Some(s))
-        };
 
         let meta_str = read_entry(&mut zip, "meta.json")?
             .ok_or_else(|| SyncError::Decode("meta.json missing".into()))?;
@@ -144,9 +142,8 @@ impl Snapshot {
         };
 
         let pages = match read_entry(&mut zip, "pages.json")? {
-            Some(text) => {
-                serde_json::from_str(&text).map_err(|e| SyncError::Decode(format!("pages.json: {e}")))?
-            }
+            Some(text) => serde_json::from_str(&text)
+                .map_err(|e| SyncError::Decode(format!("pages.json: {e}")))?,
             None => Vec::new(),
         };
 
@@ -191,7 +188,11 @@ impl Snapshot {
             self.meta.page_count = patch.pages.len() as i32;
             self.pages = patch.pages.clone();
         }
-        if let Some(pc) = patch.meta.get("page_count").and_then(serde_json::Value::as_i64) {
+        if let Some(pc) = patch
+            .meta
+            .get("page_count")
+            .and_then(serde_json::Value::as_i64)
+        {
             self.meta.page_count = pc as i32;
         }
         if let Some(d) = &patch.pdf {
@@ -371,9 +372,15 @@ mod tests {
         let records = vec![
             ChangeRecord::StrokeAdded { stroke: stroke(2) },
             ChangeRecord::StrokeRemoved { id: 1 },
-            ChangeRecord::PagesChanged { pages: vec![page(0), page(1)] },
-            ChangeRecord::MetaChanged { meta: serde_json::json!({"page_count": 2}) },
-            ChangeRecord::PdfChanged { pdf: Digest::from_bytes(b"p") },
+            ChangeRecord::PagesChanged {
+                pages: vec![page(0), page(1)],
+            },
+            ChangeRecord::MetaChanged {
+                meta: serde_json::json!({"page_count": 2}),
+            },
+            ChangeRecord::PdfChanged {
+                pdf: Digest::from_bytes(b"p"),
+            },
         ];
         snap.apply_changes(&records);
         assert_eq!(snap.strokes.len(), 1);

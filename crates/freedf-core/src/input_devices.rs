@@ -9,9 +9,7 @@
 //! 소비자(툴)가 당겨 간다. 에지(상태 변화) 감지도 어댑터 소유다: 하드웨어는
 //! "지금 눌려 있는가"를 말할 뿐, "눌렸다/뗐다"는 이 경계의 해석이다.
 
-use crate::input_events::{
-    ControlKind, ControlPhase, InputEvent, PointerPhase, PointerSource,
-};
+use crate::input_events::{ControlKind, ControlPhase, InputEvent, PointerPhase, PointerSource};
 use crate::pen_input::PenState;
 
 /// 펜 스트림(evdev/OTD) → 통합 어휘 어댑터.

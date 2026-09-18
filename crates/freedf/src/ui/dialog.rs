@@ -11,7 +11,8 @@
 use eframe::egui;
 
 /// 위젯 간격 — 다이얼로그 안에서 항상 동일.
-pub(crate) const ITEM_SPACING: (f32, f32) = (crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
+pub(crate) const ITEM_SPACING: (f32, f32) =
+    (crate::ui::tokens::space::MD, crate::ui::tokens::space::MD);
 /// 모든 다이얼로그/모달의 최소 폭 (0.5rem 그리드, 400px).
 pub(crate) const MIN_WIDTH: f32 = crate::ui::scale::hrem(50);
 

@@ -125,11 +125,7 @@ impl InkSettling {
 
     /// 정착된 젊은 획을 꺼냅니다 — 반환된 획을 병합 메시에 append하고
     /// `settled`는 내부에서 증가합니다. (`settle`은 `u64::MAX` = 정착 완료)
-    pub fn sweep(
-        &mut self,
-        settle: impl Fn(&Stroke) -> u64,
-        _now: u64,
-    ) -> Vec<Stroke> {
+    pub fn sweep(&mut self, settle: impl Fn(&Stroke) -> u64, _now: u64) -> Vec<Stroke> {
         let mut out = Vec::new();
         let mut i = 0;
         while i < self.young.len() {

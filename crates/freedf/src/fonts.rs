@@ -17,8 +17,7 @@ pub const ASTA_SANS_REGULAR: &[u8] = include_bytes!("../assets/fonts/AstaSans-Re
 pub const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 
 /// NanumGothic Regular (TrueType) — Hangul / Korean fallback.
-pub const NANUM_GOTHIC_REGULAR: &[u8] =
-    include_bytes!("../assets/fonts/NanumGothic-Regular.ttf");
+pub const NANUM_GOTHIC_REGULAR: &[u8] = include_bytes!("../assets/fonts/NanumGothic-Regular.ttf");
 
 /// Replaces egui's default proportional font with **Asta Sans** first (so it
 /// becomes the default UI/Hangul font), then falls back to Inter (Latin) and
@@ -53,9 +52,7 @@ pub fn install_inter(ctx: &egui::Context) {
             }
         }
     }
-    fonts
-        .families
-        .insert(egui::FontFamily::Proportional, prop);
+    fonts.families.insert(egui::FontFamily::Proportional, prop);
 
     // Monospace: Inter-ish Latin first (keeps alignment), Asta + Nanum for Hangul.
     let mut mono = vec![

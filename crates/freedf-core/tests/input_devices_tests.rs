@@ -11,7 +11,10 @@ fn st(contact: bool, b1: bool, b2: bool) -> PenState {
         tilt: [3.0, 4.0],
         pressure: Some(0.7),
         contact,
-        buttons: PenButtons { button1: b1, button2: b2 },
+        buttons: PenButtons {
+            button1: b1,
+            button2: b2,
+        },
     }
 }
 
@@ -34,7 +37,10 @@ fn contact_edges_become_down_and_up() {
     assert_eq!(p.pressure, 0.7);
     // 틸트는 **조건화된 벡터**다 (raw [3,4] → EMA 0.3 → [0.9,1.2]) —
     // 장치 노이즈 필터가 경계 안에 있으므로 첫 리포트는 raw보다 작다.
-    assert!((p.tilt[0] - 3.0 * 0.3).abs() < 1e-6, "이벤트가 조건화된 틸트 벡터를 나른다");
+    assert!(
+        (p.tilt[0] - 3.0 * 0.3).abs() < 1e-6,
+        "이벤트가 조건화된 틸트 벡터를 나른다"
+    );
     assert!((p.tilt[1] - 1.2).abs() < 1e-6);
     let expect = (0.9f32 * 0.9 + 1.2 * 1.2).sqrt();
     assert!((p.tilt_magnitude() - expect).abs() < 1e-5, "크기는 파생값");
@@ -98,7 +104,7 @@ fn positionless_contact_edge_is_deferred_not_destroyed() {
 fn positionless_up_edge_is_deferred_too() {
     let mut a = PenEventAdapter::default();
     let _ = a.update(&st(true, false, false), Some([1.0, 1.0])); // down
-    // Up 에지에 위치가 없다 — 다음 패킷으로 미뤄진다.
+                                                                 // Up 에지에 위치가 없다 — 다음 패킷으로 미뤄진다.
     let evs = a.update(&st(false, false, false), None);
     assert!(evs.is_empty());
     let evs = a.update(&st(false, false, false), Some([1.0, 1.0]));
@@ -165,7 +171,10 @@ fn capability_negotiation_reports_tilt_support() {
         has_tilt: false,
         has_pressure: true,
     });
-    assert!(!a.tilt_supported(), "능력 질의는 스트림 존재와 다른 질문이다");
+    assert!(
+        !a.tilt_supported(),
+        "능력 질의는 스트림 존재와 다른 질문이다"
+    );
     // 외부 훅(HID/WM_POINTER)의 틸트 주입도 장치 상태의 소유자를 거친다.
     let mut b = PenEventAdapter::default();
     b.set_tilt([200.0, -200.0]);

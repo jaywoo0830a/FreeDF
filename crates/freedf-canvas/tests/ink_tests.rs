@@ -1,8 +1,8 @@
 //! `ink` 모듈 단위 테스트 — `src/ink.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
+use freedf_canvas::geom::PagePoint;
 use freedf_canvas::ink::*;
 use freedf_canvas::scene::{LayerKind, Stroke, StrokeId, StrokePoint};
-use freedf_canvas::geom::PagePoint;
 use freedf_core::model::ToolType;
 
 fn stroke_at(id: u64, x0: f32, x1: f32) -> Stroke {
@@ -35,8 +35,24 @@ fn stroke_at(id: u64, x0: f32, x1: f32) -> Stroke {
 fn ball_width_reacts_to_pressure() {
     let model = BallWidth;
     let base = 2.0;
-    assert!((model.width(&StrokeCtx { pressure: 0.0, speed_pt_per_s: 0.0, base_width: base }) - 1.0).abs() < 1e-6);
-    assert!((model.width(&StrokeCtx { pressure: 1.0, speed_pt_per_s: 0.0, base_width: base }) - 2.0).abs() < 1e-6);
+    assert!(
+        (model.width(&StrokeCtx {
+            pressure: 0.0,
+            speed_pt_per_s: 0.0,
+            base_width: base
+        }) - 1.0)
+            .abs()
+            < 1e-6
+    );
+    assert!(
+        (model.width(&StrokeCtx {
+            pressure: 1.0,
+            speed_pt_per_s: 0.0,
+            base_width: base
+        }) - 2.0)
+            .abs()
+            < 1e-6
+    );
 }
 
 /// 계약: 번짐 모델은 0 → 0, 포화 시간 이후 → 1.
@@ -94,6 +110,9 @@ fn mesh_append_offsets_indices() {
     let mut merged = Mesh::default();
     merged.append(&part1);
     merged.append(&part2);
-    assert_eq!(merged.vertices.len(), part1.vertices.len() + part2.vertices.len());
+    assert_eq!(
+        merged.vertices.len(),
+        part1.vertices.len() + part2.vertices.len()
+    );
     assert!(merged.is_well_formed());
 }

@@ -222,7 +222,8 @@ impl FreeDfApp {
     /// 툴바/휠/단축키/세션 복원 모두 이 메서드로만 전환한다 — 홀드·획 경계
     /// 정책(그리는 중 전환 시 합성 up/down)이 자동으로 적용된다.
     pub(crate) fn select_tool_type(&mut self, tool: ToolType) {
-        self.workspace.select(&format!("tool:{}", tool_type_name(tool)));
+        self.workspace
+            .select(&format!("tool:{}", tool_type_name(tool)));
         self.tool = tool;
     }
 
@@ -297,7 +298,8 @@ impl FreeDfApp {
         let needs_render = zoom_settled
             && (self.render_dirty
                 || self.texture.is_none()
-                || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) > 0.15
+                || (self.last_render_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3)
+                    > 0.15
                 || (self.last_render_ppp - ppp).abs() > 0.01
                 || self.last_render_tex_key != tex_key);
 
@@ -403,7 +405,12 @@ impl FreeDfApp {
             if self.last_pen_state_ms.is_none() {
                 pen_trace(&format!(
                     "pen stream 연결됨: tilt=[{:+.0}, {:+.0}] pressure={:?} contact={} b1={} b2={}",
-                    st.tilt[0], st.tilt[1], st.pressure, st.contact, st.buttons.button1, st.buttons.button2
+                    st.tilt[0],
+                    st.tilt[1],
+                    st.pressure,
+                    st.contact,
+                    st.buttons.button1,
+                    st.buttons.button2
                 ));
             }
             self.last_pen_state_ms = Some(self.now_ms());
@@ -435,11 +442,8 @@ impl FreeDfApp {
         // ③ 소비는 input.rs의 handle_canvas_input에서 — 컨트롤 맵(사용자 매핑) →
         //    워크스페이스(툴 전환·획 경계) → 커맨드 실행기로 이어진다 (PR2).
         // 입력 소스(펜/마우스/트랙패드) 추정 갱신 — 판정 규칙은 hooks.rs.
-        self.input_sources.update(
-            pen_state.as_ref(),
-            self.last_pen_state_ms,
-            self.now_ms(),
-        );
+        self.input_sources
+            .update(pen_state.as_ref(), self.last_pen_state_ms, self.now_ms());
 
         // ── 스플릿 뷰 포커스 제스처 ──────────────────────────────────────
         // 펜(OTD/evdev)이 우리 창 위를 호버 중인데 포커스가 없으면 한 번만
@@ -571,7 +575,9 @@ impl FreeDfApp {
         }
 
         // ---------- Draw ----------
-        let page_view = self.view.page_size_to_view(self.page_size_pts[0], self.page_size_pts[1]);
+        let page_view = self
+            .view
+            .page_size_to_view(self.page_size_pts[0], self.page_size_pts[1]);
         let page_rect = Rect::from_min_size(
             origin + Vec2::new(self.view.pan_x, self.view.pan_y),
             Vec2::new(page_view[0], page_view[1]),
@@ -583,12 +589,7 @@ impl FreeDfApp {
         // 틴트를 항상 적용해도 이중 적용되지 않습니다.
         let paper = self.current_page_paper();
         let paper_tint = if self.current_note.is_some() {
-            Color32::from_rgba_unmultiplied(
-                paper.color[0],
-                paper.color[1],
-                paper.color[2],
-                255,
-            )
+            Color32::from_rgba_unmultiplied(paper.color[0], paper.color[1], paper.color[2], 255)
         } else {
             Color32::WHITE
         };
@@ -628,12 +629,7 @@ impl FreeDfApp {
                 egui::CornerRadius::same(4),
                 Color32::from_black_alpha(70),
             );
-            painter.image(
-                prev.id(),
-                page_rect.translate(old_vec),
-                uv,
-                paper_tint,
-            );
+            painter.image(prev.id(), page_rect.translate(old_vec), uv, paper_tint);
             // Incoming page (new texture)
             painter.rect_filled(
                 page_rect.translate(new_vec).expand(6.0),
@@ -641,12 +637,7 @@ impl FreeDfApp {
                 Color32::from_black_alpha(70),
             );
             if let Some(tex) = &self.texture {
-                painter.image(
-                    tex.id(),
-                    page_rect.translate(new_vec),
-                    uv,
-                    paper_tint,
-                );
+                painter.image(tex.id(), page_rect.translate(new_vec), uv, paper_tint);
             }
         }
 
@@ -693,18 +684,15 @@ impl FreeDfApp {
         // 획은 오버레이가 매 프레임 현재 나이로 재굽기합니다 (O(젊은 획) —
         // 전체 재굽기 불필요, 펜업 순간에도 끊김 없음). 북킹 규칙은
         // freedf-canvas의 순수 계약 `soak::InkSettling`이 담당합니다.
-        if let Some(from) = self
-            .ink_settling
-            .new_from(self.current_page, count, rev)
-        {
+        if let Some(from) = self.ink_settling.new_from(self.current_page, count, rev) {
             // 방금 끝난 획 → 젊은 목록 (오버레이가 즉시 그려줘 깜빡임 없음).
             let new_strokes = self.store.strokes_on(self.current_page)[from..].to_vec();
             self.add_ink_young(&new_strokes, now);
         }
         // 정착된 젊은 획을 병합 메시로 이동 (최종 알파, 획당 1회).
         self.sweep_ink_young(now);
-        let full_needed = self.ink_needs_rebuild()
-            || self.ink_settling.deleted(self.current_page, count, rev);
+        let full_needed =
+            self.ink_needs_rebuild() || self.ink_settling.deleted(self.current_page, count, rev);
         if full_needed && self.ink_bake_pending.is_none() {
             *self.ink_baker_mesher.write().expect("bake mesher lock") = self.core_mesher();
             let mesher = self.core_mesher();
@@ -732,8 +720,13 @@ impl FreeDfApp {
                 )
                 .is_ok()
             {
-                self.ink_bake_pending =
-                    Some((self.current_page, self.store_generation, rev, count, self.view.zoom));
+                self.ink_bake_pending = Some((
+                    self.current_page,
+                    self.store_generation,
+                    rev,
+                    count,
+                    self.view.zoom,
+                ));
             }
         }
         // ── 백그라운드 전체 굽기 결과 수신 (매 프레임 try_recv) ──
@@ -741,13 +734,12 @@ impl FreeDfApp {
             let pending = self.ink_bake_pending.take();
             match result {
                 Ok(page) => {
-                    let (req_page, req_gen, _req_rev, req_count, req_zoom) = pending
-                        .unwrap_or((usize::MAX, u64::MAX, 0, 0, self.view.zoom));
+                    let (req_page, req_gen, _req_rev, req_count, req_zoom) =
+                        pending.unwrap_or((usize::MAX, u64::MAX, 0, 0, self.view.zoom));
                     let cur_rev = self.store.rev();
                     let cur_count = self.store.stroke_count_on(self.current_page);
-                    let zoom_ok = (req_zoom - self.view.zoom).abs()
-                        / self.view.zoom.max(1e-3)
-                        <= 0.15;
+                    let zoom_ok =
+                        (req_zoom - self.view.zoom).abs() / self.view.zoom.max(1e-3) <= 0.15;
                     if req_page != self.current_page
                         || req_gen != self.store_generation
                         || !zoom_ok
@@ -827,8 +819,7 @@ impl FreeDfApp {
         // 젊은(스밈 진행 중) 획 오버레이 — 매 프레임 현재 나이로 재굽어
         // 부드러운 진해짐 애니메이션. O(젊은 획)라 펜업 직후에도 끊김이
         // 없고, 정착분 병합 메시는 건드리지 않아 egui 변환 캐시도 유지됩니다.
-        if !self.ink_settling.young.is_empty()
-            && self.ink_settling.page == Some(self.current_page)
+        if !self.ink_settling.young.is_empty() && self.ink_settling.page == Some(self.current_page)
         {
             let mesher = self.core_mesher();
             let mut cm = freedf_canvas::Mesh::default();
@@ -862,8 +853,8 @@ impl FreeDfApp {
         // `draw_rect` could extend past the canvas / under overlays and then
         // `CursorIcon::None` hid the pointer with no custom sprite drawn).
         let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
-        let over_page = pointer_pos
-            .is_some_and(|pos| canvas.contains(pos) && draw_rect.contains(pos));
+        let over_page =
+            pointer_pos.is_some_and(|pos| canvas.contains(pos) && draw_rect.contains(pos));
         // 히스테리시스: 커서 상태가 무한히 바뀌어도 커스텀 커서가 시스템 커서
         // 위에 겹쳐 깜빡이지 않도록, 같은 want가 3프레임 연속일 때만 전환
         // (순수 판정: cursor_hysteresis — 테스트로 검증).

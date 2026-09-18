@@ -106,7 +106,10 @@ pub(crate) fn gamepad_log_snapshot() -> Vec<String> {
 }
 
 pub(crate) fn gamepad_log_clear() {
-    if let Ok(mut b) = GAMEPAD_LOG.get_or_init(|| Mutex::new(VecDeque::new())).lock() {
+    if let Ok(mut b) = GAMEPAD_LOG
+        .get_or_init(|| Mutex::new(VecDeque::new()))
+        .lock()
+    {
         b.clear();
     }
 }
@@ -153,7 +156,10 @@ impl FreeDfApp {
                 stick_axis_y(pad.value(Axis::LeftStickY)),
             ),
             lb: pad.is_pressed(Button::LeftTrigger),
-            lt: pad.button_data(Button::LeftTrigger2).map(|d| d.value()).unwrap_or(0.0),
+            lt: pad
+                .button_data(Button::LeftTrigger2)
+                .map(|d| d.value())
+                .unwrap_or(0.0),
             d_up: pad.is_pressed(Button::DPadUp),
             d_down: pad.is_pressed(Button::DPadDown),
             d_left: pad.is_pressed(Button::DPadLeft),
@@ -203,7 +209,11 @@ impl FreeDfApp {
             (gp.d_up, egui::Key::PageUp, "D-pad up — PageUp"),
             (gp.d_down, egui::Key::PageDown, "D-pad down — PageDown"),
             (gp.d_left, egui::Key::ArrowLeft, "D-pad left — ArrowLeft"),
-            (gp.d_right, egui::Key::ArrowRight, "D-pad right — ArrowRight"),
+            (
+                gp.d_right,
+                egui::Key::ArrowRight,
+                "D-pad right — ArrowRight",
+            ),
         ];
         for (i, (down, key, msg)) in dpad_keys.iter().enumerate() {
             let was = self.gamepad_dpad_prev[i];
@@ -252,12 +262,28 @@ impl FreeDfApp {
         // 컨트롤러마다 축 규약이 달라 설정 창에서 뒤집을 수 있습니다.
         let cfg = self.gamepad_cfg;
         let (sx, sy) = if gp.lb {
-            let x = if cfg.invert_x_ctrl { -gp.stick.x } else { gp.stick.x };
-            let y = if cfg.invert_y_ctrl { -gp.stick.y } else { gp.stick.y };
+            let x = if cfg.invert_x_ctrl {
+                -gp.stick.x
+            } else {
+                gp.stick.x
+            };
+            let y = if cfg.invert_y_ctrl {
+                -gp.stick.y
+            } else {
+                gp.stick.y
+            };
             (x, y)
         } else {
-            let x = if cfg.invert_x { -gp.stick.x } else { gp.stick.x };
-            let y = if cfg.invert_y { -gp.stick.y } else { gp.stick.y };
+            let x = if cfg.invert_x {
+                -gp.stick.x
+            } else {
+                gp.stick.x
+            };
+            let y = if cfg.invert_y {
+                -gp.stick.y
+            } else {
+                gp.stick.y
+            };
             (x, y)
         };
 
@@ -441,10 +467,7 @@ impl FreeDfApp {
                 ));
             }
             None => {
-                ui.label(
-                    egui::RichText::new("No gamepad connected")
-                        .weak(),
-                );
+                ui.label(egui::RichText::new("No gamepad connected").weak());
             }
         }
         ui.label(
@@ -464,8 +487,7 @@ impl FreeDfApp {
                 }
                 if ui.button("Copy").clicked() {
                     let lines = gamepad_log_snapshot();
-                    ui.ctx()
-                        .copy_text(lines.join("\n"));
+                    ui.ctx().copy_text(lines.join("\n"));
                 }
             });
         });
@@ -501,18 +523,18 @@ impl FreeDfApp {
         let cpus = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(0);
-        let db = if self.db_connected { "connected" } else { "offline" };
-        let renderer =
-            if std::env::var("FREEDF_RENDERER").as_deref() == Ok("wgpu") {
-                "wgpu"
-            } else {
-                "glow"
-            };
+        let db = if self.db_connected {
+            "connected"
+        } else {
+            "offline"
+        };
+        let renderer = if std::env::var("FREEDF_RENDERER").as_deref() == Ok("wgpu") {
+            "wgpu"
+        } else {
+            "glow"
+        };
 
-        ui.label(
-            egui::RichText::new(format!("{name} v{version}"))
-                .strong(),
-        );
+        ui.label(egui::RichText::new(format!("{name} v{version}")).strong());
         ui.monospace(format!("OS      : {os} ({arch})"));
         ui.monospace(format!("build   : {profile}"));
         ui.monospace(format!("renderer: {renderer}"));
@@ -520,7 +542,11 @@ impl FreeDfApp {
         // Connection status as a colored badge (design-system kit).
         crate::ui::ds::badge(
             ui,
-            if self.db_connected { "DB connected" } else { "DB offline" },
+            if self.db_connected {
+                "DB connected"
+            } else {
+                "DB offline"
+            },
             if self.db_connected {
                 crate::ui::ds::Tone::Success
             } else {
@@ -535,7 +561,10 @@ impl FreeDfApp {
              renderer: {renderer}\npid     : {pid}\ncpus    : {cpus}\n\
              db      : {db}"
         );
-        if crate::ui::buttons::Button::primary("Copy diagnostics").show(ui).clicked() {
+        if crate::ui::buttons::Button::primary("Copy diagnostics")
+            .show(ui)
+            .clicked()
+        {
             ui.ctx().copy_text(block);
         }
     }

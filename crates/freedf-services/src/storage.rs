@@ -258,7 +258,10 @@ pub fn app_data_dir() -> PathBuf {
         return PathBuf::from(local).join("FreeDF");
     }
     if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local").join("share").join("freedf");
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("freedf");
     }
     PathBuf::new()
 }

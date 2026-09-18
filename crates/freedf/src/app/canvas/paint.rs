@@ -129,7 +129,10 @@ impl FreeDfApp {
         ui.label(format!(
             "model: p_k={p_k:.2}  speed_ref/max={s_ref:.0}  tilt_k={t_k:.2}"
         ));
-        ui.label(format!("tool: {}", if is_fountain { "Fountain" } else { "Pen" }));
+        ui.label(format!(
+            "tool: {}",
+            if is_fountain { "Fountain" } else { "Pen" }
+        ));
     }
 
     /// 종이 질감은 이제 **페이지 래스터에 곱셈 합성**됩니다
@@ -179,7 +182,8 @@ impl FreeDfApp {
             return; // Blank — 그릴 줄 없음.
         };
         let spacing = ls.spacing;
-        let line = Color32::from_rgba_unmultiplied(ls.color[0], ls.color[1], ls.color[2], ls.color[3]);
+        let line =
+            Color32::from_rgba_unmultiplied(ls.color[0], ls.color[1], ls.color[2], ls.color[3]);
         let zoom = self.view.zoom;
         let stroke_w = (ls.width * zoom).clamp(0.5, 24.0);
         let dot_r = (ls.width * zoom * 0.4).clamp(0.6, 8.0);
@@ -193,7 +197,10 @@ impl FreeDfApp {
             let a = self.view.page_to_view([x0, y0]);
             let b = self.view.page_to_view([x1, y1]);
             painter.line_segment(
-                [origin + Vec2::new(a[0], a[1]), origin + Vec2::new(b[0], b[1])],
+                [
+                    origin + Vec2::new(a[0], a[1]),
+                    origin + Vec2::new(b[0], b[1]),
+                ],
                 Stroke::new(stroke_w, line),
             );
         }
@@ -277,8 +284,7 @@ impl FreeDfApp {
         let halves_pt = freedf_canvas::halves_for_stroke(
             tool,
             width,
-            &pts
-                .iter()
+            &pts.iter()
                 .map(|p| freedf_canvas::StrokePoint {
                     position: freedf_canvas::PagePoint::new(p.x, p.y),
                     pressure: p.pressure,
@@ -309,9 +315,7 @@ impl FreeDfApp {
                 tilt: self.pen_adapter.tilt(),
                 live_pressure: self.live_pressure,
             };
-            if let Some(reason) =
-                diagnostics::live_flat(n, (pmn, pmx), (wmn, wmx), &dev)
-            {
+            if let Some(reason) = diagnostics::live_flat(n, (pmn, pmx), (wmn, wmx), &dev) {
                 self.pen_flat_log_ms = self.now_ms();
                 pen_trace(&reason);
             }
@@ -332,8 +336,32 @@ impl FreeDfApp {
             self.pen_grain,
             self.fountain_grain,
         );
-        let key_eq = |a: &(f32, f32, f32, f32, f32, InkSoak, InkSoak, BallPenProfile, FountainProfile, InkGrain, InkGrain),
-                      b: &(f32, f32, f32, f32, f32, InkSoak, InkSoak, BallPenProfile, FountainProfile, InkGrain, InkGrain)| {
+        let key_eq = |a: &(
+            f32,
+            f32,
+            f32,
+            f32,
+            f32,
+            InkSoak,
+            InkSoak,
+            BallPenProfile,
+            FountainProfile,
+            InkGrain,
+            InkGrain,
+        ),
+                      b: &(
+            f32,
+            f32,
+            f32,
+            f32,
+            f32,
+            InkSoak,
+            InkSoak,
+            BallPenProfile,
+            FountainProfile,
+            InkGrain,
+            InkGrain,
+        )| {
             a.0 == b.0
                 && a.1 == b.1
                 && a.2 == b.2
@@ -358,9 +386,7 @@ impl FreeDfApp {
                 || k0.3 != view_key.3
                 || k0.4 != view_key.4;
             // 스로틀은 주사율 프리셋을 따릅니다 (고주사율 → 더 자주 재구성).
-            if !view_changed
-                && now.saturating_sub(*built_ms) < self.ink_pacing().active_geom_ms
-            {
+            if !view_changed && now.saturating_sub(*built_ms) < self.ink_pacing().active_geom_ms {
                 // 새 점이 왔지만 스로틀 안 — 이번 프레임은 기존 메시 그대로.
                 painter.add(egui::Shape::mesh(mesh.clone()));
                 return;
@@ -381,8 +407,8 @@ impl FreeDfApp {
             ));
         }
         let feather_pt = 1.0 / self.view.zoom.max(1e-3); // 화면 1px에 해당하는 pt
-        // 잉크 스밈(도구별) + 질감 불균일 합성은 freedf-canvas의
-        // alphas_for_stroke로 — 완성 획과 같은 모델을 씁니다.
+                                                         // 잉크 스밈(도구별) + 질감 불균일 합성은 freedf-canvas의
+                                                         // alphas_for_stroke로 — 완성 획과 같은 모델을 씁니다.
         let cpts: Vec<freedf_canvas::StrokePoint> = pts
             .iter()
             .map(|p| freedf_canvas::StrokePoint {
@@ -682,7 +708,8 @@ impl FreeDfApp {
                     1.0
                 } else {
                     let base = if hover_age < 400 { 0.65 } else { 0.0 };
-                    let fade = 1.0 - ((hover_age.saturating_sub(400)) as f32 / 900.0).clamp(0.0, 1.0);
+                    let fade =
+                        1.0 - ((hover_age.saturating_sub(400)) as f32 / 900.0).clamp(0.0, 1.0);
                     (base + 0.65 * fade).clamp(0.0, 1.0)
                 };
                 let sh_scale = 1.3 - 0.55 * prox; // 멀수록 그림자가 더 떨어짐.
@@ -751,11 +778,7 @@ impl FreeDfApp {
                         Stroke::new(1.0, dark),
                     ));
                     // 닙 숨구멍(원형 홀) — 만년필 특유의 디테일.
-                    painter.circle_stroke(
-                        pos + dir * (5.0 * cs),
-                        1.1 * cs,
-                        Stroke::new(1.0, dark),
-                    );
+                    painter.circle_stroke(pos + dir * (5.0 * cs), 1.1 * cs, Stroke::new(1.0, dark));
                     let gx = (time * 3.0).sin() * (1.2 * cs);
                     painter.circle_filled(
                         pos + dir * (2.5 * cs) + perp * gx,
@@ -785,14 +808,16 @@ impl FreeDfApp {
                             let a1 = (ri * 12 + k2) as u32;
                             let b0 = ((ri + 1) * 12 + k) as u32;
                             let b1 = ((ri + 1) * 12 + k2) as u32;
-                            bm.indices
-                                .extend_from_slice(&[a0, a1, b0, a1, b1, b0]);
+                            bm.indices.extend_from_slice(&[a0, a1, b0, a1, b1, b0]);
                         }
                     }
                     for k in 0..12 {
                         let k2 = (k + 1) % 12;
-                        bm.indices
-                            .extend_from_slice(&[(2 * 12 + k) as u32, center, (2 * 12 + k2) as u32]);
+                        bm.indices.extend_from_slice(&[
+                            (2 * 12 + k) as u32,
+                            center,
+                            (2 * 12 + k2) as u32,
+                        ]);
                     }
                     painter.add(egui::Shape::mesh(bm));
                     painter.circle_stroke(pos, ball_r, Stroke::new(1.2, dark));
@@ -833,7 +858,7 @@ impl FreeDfApp {
                 // 지우개는 링(테두리)로만 그려지고, 가운데는 비어 있습니다.
                 let r = self.eraser_radius.max(8.0);
                 let hole = r * 0.45; // 도넛 구멍 반지름.
-                // 링 (도넛) — 구멍이 뚫린 메시 (삼각형 스트립으로 빈틈 없이).
+                                     // 링 (도넛) — 구멍이 뚫린 메시 (삼각형 스트립으로 빈틈 없이).
                 painter.add(egui::Shape::mesh(donut_ring_mesh(
                     pos,
                     r,
@@ -842,11 +867,7 @@ impl FreeDfApp {
                     Color32::from_white_alpha(70),
                 )));
                 painter.circle_stroke(pos, r, Stroke::new(2.0, Color32::from_white_alpha(220)));
-                painter.circle_stroke(
-                    pos,
-                    hole,
-                    Stroke::new(1.5, Color32::from_white_alpha(200)),
-                );
+                painter.circle_stroke(pos, hole, Stroke::new(1.5, Color32::from_white_alpha(200)));
                 // 구멍 중심의 작은 점 — 정렬 기준점.
                 painter.circle_filled(pos, 2.0, Color32::from_gray(160));
             }

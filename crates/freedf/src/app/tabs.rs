@@ -430,152 +430,169 @@ impl FreeDfApp {
             crate::ui::containers::container()
                 .pad_symmetric(8, 4)
                 .show(ui, |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-            ui.horizontal_wrapped(|ui| {
-                let new_note =
-                    crate::app::dev::tag_button_with(ui, "tabs.new_note", "New Note", |ui| {
-                        ui.button(icon_text(ui, "New Note", icons::PLUS))
-                            .on_hover_text("New note (Ctrl+N)")
-                    });
-                if new_note.clicked() {
-                    self.modal = Some(ModalState::ask_new_note());
-                }
-                let open_pdf =
-                    crate::app::dev::tag_button_with(ui, "tabs.open_pdf", "Open PDF", |ui| {
-                        ui.button(icon_text(ui, "Open PDF", icons::FOLDER_OPEN))
-                            .on_hover_text("Open PDF (Ctrl+O)")
-                    });
-                if open_pdf.clicked() {
-                    self.open_file_dialog();
-                }
-                ui.separator();
+                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        let new_note = crate::app::dev::tag_button_with(
+                            ui,
+                            "tabs.new_note",
+                            "New Note",
+                            |ui| {
+                                ui.button(icon_text(ui, "New Note", icons::PLUS))
+                                    .on_hover_text("New note (Ctrl+N)")
+                            },
+                        );
+                        if new_note.clicked() {
+                            self.modal = Some(ModalState::ask_new_note());
+                        }
+                        let open_pdf = crate::app::dev::tag_button_with(
+                            ui,
+                            "tabs.open_pdf",
+                            "Open PDF",
+                            |ui| {
+                                ui.button(icon_text(ui, "Open PDF", icons::FOLDER_OPEN))
+                                    .on_hover_text("Open PDF (Ctrl+O)")
+                            },
+                        );
+                        if open_pdf.clicked() {
+                            self.open_file_dialog();
+                        }
+                        ui.separator();
 
-                if self.tabs.is_empty() {
-                    ui.label(egui::RichText::new("No documents open").weak());
-                    return;
-                }
-                let mut to_switch: Option<usize> = None;
-                let mut to_close: Option<usize> = None;
-                let mut to_detach: Option<usize> = None;
-                let active_fill = crate::theme::nord::semantic::BG_SURFACE;
-                let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
-                let weak_border = crate::theme::nord::semantic::OVERLAY_BORDER;
-                // Scrollable tab strip: many tabs or long titles scroll
-                // instead of wrapping to a new line ("folding").
-                egui::ScrollArea::horizontal()
-                    .id_salt("tabs_scroll")
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-                            for (i, tab) in self.tabs.iter().enumerate() {
-                                let selected = i == self.active;
-                                // The active tab's title lives in `self.file_name`
-                                // (its `tab.label` is emptied by restore_from);
-                                // inactive tabs keep their own label.
-                                let title: &str = if selected {
-                                    &self.file_name
-                                } else {
-                                    &tab.label
-                                };
-                                // 제목 폭을 내용에 맞춰(최소 110px, 최대 190px) — 너무
-                                // 좁아져 제목이 깨지지 않으면서, 짧은 제목이 큰
-                                // 빈 여백을 만들지도 않습니다.
-                                let title_w = ui
-                                    .painter()
-                                    .layout_no_wrap(
-                                        title.to_string(),
-                                        egui::FontId::proportional(16.0),
-                                        egui::Color32::WHITE,
-                                    )
-                                    .rect
-                                    .width()
-                                    .clamp(112.0, 192.0);
-                                egui::Frame::new()
-                                    .fill(if selected {
-                                        active_fill
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    })
-                                    .stroke(if selected {
-                                        Stroke::new(1.0, accent)
-                                    } else {
-                                        Stroke::new(1.0, weak_border)
-                                    })
-                                    .corner_radius(4)
-                                    .inner_margin(crate::ui::tokens::margin::CHIP)
-                                    .show(ui, |ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
-                                            let tr = crate::app::dev::tag(
-                                                ui,
-                                                format!("tabs.tab.{i}"),
-                                                |ui| {
-                                                    ui.add_sized(
-                                                        egui::vec2(title_w, 24.0),
-                                                        egui::Label::new(egui::RichText::new(
-                                                            title,
+                        if self.tabs.is_empty() {
+                            ui.label(egui::RichText::new("No documents open").weak());
+                            return;
+                        }
+                        let mut to_switch: Option<usize> = None;
+                        let mut to_close: Option<usize> = None;
+                        let mut to_detach: Option<usize> = None;
+                        let active_fill = crate::theme::nord::semantic::BG_SURFACE;
+                        let accent = crate::theme::nord::semantic::ACCENT_ACTIVE;
+                        let weak_border = crate::theme::nord::semantic::OVERLAY_BORDER;
+                        // Scrollable tab strip: many tabs or long titles scroll
+                        // instead of wrapping to a new line ("folding").
+                        egui::ScrollArea::horizontal()
+                            .id_salt("tabs_scroll")
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                                    for (i, tab) in self.tabs.iter().enumerate() {
+                                        let selected = i == self.active;
+                                        // The active tab's title lives in `self.file_name`
+                                        // (its `tab.label` is emptied by restore_from);
+                                        // inactive tabs keep their own label.
+                                        let title: &str = if selected {
+                                            &self.file_name
+                                        } else {
+                                            &tab.label
+                                        };
+                                        // 제목 폭을 내용에 맞춰(최소 110px, 최대 190px) — 너무
+                                        // 좁아져 제목이 깨지지 않으면서, 짧은 제목이 큰
+                                        // 빈 여백을 만들지도 않습니다.
+                                        let title_w = ui
+                                            .painter()
+                                            .layout_no_wrap(
+                                                title.to_string(),
+                                                egui::FontId::proportional(16.0),
+                                                egui::Color32::WHITE,
+                                            )
+                                            .rect
+                                            .width()
+                                            .clamp(112.0, 192.0);
+                                        egui::Frame::new()
+                                            .fill(if selected {
+                                                active_fill
+                                            } else {
+                                                egui::Color32::TRANSPARENT
+                                            })
+                                            .stroke(if selected {
+                                                Stroke::new(1.0, accent)
+                                            } else {
+                                                Stroke::new(1.0, weak_border)
+                                            })
+                                            .corner_radius(4)
+                                            .inner_margin(crate::ui::tokens::margin::CHIP)
+                                            .show(ui, |ui| {
+                                                ui.horizontal(|ui| {
+                                                    ui.spacing_mut().item_spacing =
+                                                        egui::vec2(4.0, 0.0);
+                                                    let tr = crate::app::dev::tag(
+                                                        ui,
+                                                        format!("tabs.tab.{i}"),
+                                                        |ui| {
+                                                            ui.add_sized(
+                                                                egui::vec2(title_w, 24.0),
+                                                                egui::Label::new(
+                                                                    egui::RichText::new(title),
+                                                                )
+                                                                .truncate()
+                                                                .sense(egui::Sense::click()),
+                                                            )
+                                                        },
+                                                    );
+                                                    let tr = tr.on_hover_text(title);
+                                                    if tr.clicked() {
+                                                        to_switch = Some(i);
+                                                    }
+                                                    // Right-click a tab: open this document in
+                                                    // a separate OS window (eframe = 1 window
+                                                    // per process). DB를 공유하므로 노트/PDF
+                                                    // 모두 분리 가능합니다.
+                                                    tr.context_menu(|ui| {
+                                                        ui.set_min_width(190.0);
+                                                        ui.label(
+                                                            egui::RichText::new("Tab")
+                                                                .weak()
+                                                                .small(),
+                                                        );
+                                                        ui.separator();
+                                                        if ui.button("Open in new window").clicked()
+                                                        {
+                                                            to_detach = Some(i);
+                                                            ui.close();
+                                                        }
+                                                    });
+                                                    let close = ui.add(
+                                                        egui::Button::new(icon_text(
+                                                            ui,
+                                                            "",
+                                                            icons::X,
                                                         ))
-                                                        .truncate()
-                                                        .sense(egui::Sense::click()),
-                                                    )
-                                                },
-                                            );
-                                            let tr = tr.on_hover_text(title);
-                                            if tr.clicked() {
-                                                to_switch = Some(i);
-                                            }
-                                            // Right-click a tab: open this document in
-                                            // a separate OS window (eframe = 1 window
-                                            // per process). DB를 공유하므로 노트/PDF
-                                            // 모두 분리 가능합니다.
-                                            tr.context_menu(|ui| {
-                                                ui.set_min_width(190.0);
-                                                ui.label(
-                                                    egui::RichText::new("Tab")
-                                                        .weak()
+                                                        .frame(false)
                                                         .small(),
-                                                );
-                                                ui.separator();
-                                                if ui.button("Open in new window").clicked() {
-                                                    to_detach = Some(i);
-                                                    ui.close();
-                                                }
+                                                    );
+                                                    if close
+                                                        .on_hover_text("Close document")
+                                                        .clicked()
+                                                    {
+                                                        to_close = Some(i);
+                                                    }
+                                                });
                                             });
-                                            let close = ui.add(
-                                                egui::Button::new(icon_text(ui, "", icons::X))
-                                                    .frame(false)
-                                                    .small(),
-                                            );
-                                            if close.on_hover_text("Close document").clicked() {
-                                                to_close = Some(i);
-                                            }
-                                        });
-                                    });
-                            }
-                        });
-                    });
-                if let Some(i) = to_close {
-                    self.close_tab(i);
-                }
-                if let Some(i) = to_switch {
-                    self.switch_tab(i);
-                }
-                if let Some(i) = to_detach {
-                    if let Some(doc_id) = self.tab_launch(i) {
-                        // 새 창이 뜨면 이 탭은 "이동(detach)"합니다: 공유 DB에
-                        // 최신 상태를 플러시하고 이 창에서는 탭을 닫아 같은
-                        // 문서가 두 창에 겹쳐 보이지 않게 합니다.
-                        if self.open_in_new_window(doc_id) {
-                            self.flush_tab_to_db(i);
+                                    }
+                                });
+                            });
+                        if let Some(i) = to_close {
                             self.close_tab(i);
-                            if self.tabs.is_empty() {
-                                self.close_document();
+                        }
+                        if let Some(i) = to_switch {
+                            self.switch_tab(i);
+                        }
+                        if let Some(i) = to_detach {
+                            if let Some(doc_id) = self.tab_launch(i) {
+                                // 새 창이 뜨면 이 탭은 "이동(detach)"합니다: 공유 DB에
+                                // 최신 상태를 플러시하고 이 창에서는 탭을 닫아 같은
+                                // 문서가 두 창에 겹쳐 보이지 않게 합니다.
+                                if self.open_in_new_window(doc_id) {
+                                    self.flush_tab_to_db(i);
+                                    self.close_tab(i);
+                                    if self.tabs.is_empty() {
+                                        self.close_document();
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-            });
+                    });
                 });
         });
     }

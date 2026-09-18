@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 
 use crate::ink::{bake_strokes, Mesh, Mesher};
-use crate::scene::{SceneSnapshot, Revision};
+use crate::scene::{Revision, SceneSnapshot};
 
 /// 굽기 파라미터 — 바뀌면 재굽기가 필요한 설정 스냅샷 (지금은 줌만).
 #[derive(Debug, Clone, Copy, PartialEq)]

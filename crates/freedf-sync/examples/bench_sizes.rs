@@ -177,7 +177,12 @@ fn main() {
         let raw: usize = snap
             .strokes
             .iter()
-            .map(|s| serde_json::to_string(&s.points).map(|v| v.len()).unwrap_or(0) + 90)
+            .map(|s| {
+                serde_json::to_string(&s.points)
+                    .map(|v| v.len())
+                    .unwrap_or(0)
+                    + 90
+            })
             .sum();
         let (z1, t1) = zip_with_level(&snap, Some(1));
         let (z6, t6) = zip_with_level(&snap, Some(6));

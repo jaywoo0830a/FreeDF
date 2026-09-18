@@ -148,12 +148,10 @@ impl<'a> Button<'a> {
         let text = match self.icon {
             Some(ic) => crate::app::icon_text(ui, self.label, ic),
             None => match custom_text {
-                Some(c) => egui::WidgetText::from(
-                    egui::RichText::new(self.label).color(c).font(font),
-                ),
-                None => egui::WidgetText::from(
-                    egui::RichText::new(self.label).font(font),
-                ),
+                Some(c) => {
+                    egui::WidgetText::from(egui::RichText::new(self.label).color(c).font(font))
+                }
+                None => egui::WidgetText::from(egui::RichText::new(self.label).font(font)),
             },
         };
 
@@ -167,8 +165,7 @@ impl<'a> Button<'a> {
         if !self.frame {
             b = b.frame(false);
         }
-        ui.add_enabled(self.enabled, b)
-            .on_hover_text(self.hint)
+        ui.add_enabled(self.enabled, b).on_hover_text(self.hint)
     }
 }
 

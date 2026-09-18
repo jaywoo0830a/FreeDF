@@ -63,5 +63,4 @@ impl InputSources {
     pub(crate) fn pen_contact(&self) -> bool {
         self.pen_contact
     }
-
 }

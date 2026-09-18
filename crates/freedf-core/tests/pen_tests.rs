@@ -1,17 +1,17 @@
 //! `pen` 모듈 단위 테스트 — `src/pen.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 
-use freedf_core::pen::*;
 use freedf_core::model::{StrokePoint, ToolType};
+use freedf_core::pen::*;
 
 #[test]
 fn required_families_have_swatches() {
-    for family in [
-        ColorFamily::Red,
-        ColorFamily::Blue,
-        ColorFamily::Black,
-    ] {
+    for family in [ColorFamily::Red, ColorFamily::Blue, ColorFamily::Black] {
         let s = Palette::swatches(family);
-        assert!(s.len() >= 3, "{} 계열은 3개 이상 스와치 필요", family.label());
+        assert!(
+            s.len() >= 3,
+            "{} 계열은 3개 이상 스와치 필요",
+            family.label()
+        );
         for c in &s {
             assert_eq!(c.len(), 4);
             assert!(c[3] > 0, "알파는 0이 아니어야 함");
@@ -25,7 +25,10 @@ fn red_is_reddish_and_black_is_dark() {
         assert!(c[0] > c[1] && c[0] > c[2], "빨강 계열: R이 지배적이어야 함");
     }
     for c in Palette::swatches(ColorFamily::Black) {
-        assert!(c[0] < 130 && c[1] < 130 && c[2] < 130, "검정 계열은 어두워야 함");
+        assert!(
+            c[0] < 130 && c[1] < 130 && c[2] < 130,
+            "검정 계열은 어두워야 함"
+        );
     }
 }
 
@@ -104,7 +107,10 @@ fn ballpen_pressure_curve_is_strong_and_bounded() {
     let feather = p.width_at(1.0, 0.1, 0.0, 0.0);
     let mid = p.width_at(1.0, 0.5, 0.0, 0.0);
     let full = p.width_at(1.0, 1.0, 0.0, 0.0);
-    assert!(light >= 0.2 - 1e-4 && full <= 1.35 + 1e-4, "범위: {light}..{full}");
+    assert!(
+        light >= 0.2 - 1e-4 && full <= 1.35 + 1e-4,
+        "범위: {light}..{full}"
+    );
     assert!(feather < 0.4, "살짝 닿으면 가늘어야: {feather}");
     assert!(
         feather < mid && mid < full,
@@ -140,7 +146,10 @@ fn ballpen_tilt_widens_continuously() {
     let flat = p.width_at(2.0, 0.5, 1.0, 0.0);
     let mid = p.width_at(2.0, 0.5, 0.5, 0.0);
     let vert = p.width_at(2.0, 0.5, 0.0, 0.0);
-    assert!(flat > mid && mid > vert, "틸트가 클수록 굵어짐 (연속, 임계값 없음)");
+    assert!(
+        flat > mid && mid > vert,
+        "틸트가 클수록 굵어짐 (연속, 임계값 없음)"
+    );
     assert!((flat / vert - 1.35).abs() < 1e-3, "tilt_k=0.35 → 1.35배");
 }
 
@@ -200,7 +209,10 @@ fn triangulate_straight_lens_is_complete() {
     // 완전 커버를 검증합니다 (직사각형 184×3 + 반원 캡 2개).
     let area: f32 = tris.iter().map(|t| triangle_area(t, &poly)).sum();
     let expected = 184.0 * 3.0 + std::f32::consts::PI * 1.5 * 1.5;
-    assert!((area - expected).abs() < 1.0, "면적 일치: {area} vs {expected}");
+    assert!(
+        (area - expected).abs() < 1.0,
+        "면적 일치: {area} vs {expected}"
+    );
     assert!(area > 500.0, "본체가 채워져야 함: {area}");
 }
 
@@ -228,7 +240,10 @@ fn triangulate_concave_polygon_no_overlap() {
     let tris = triangulate_polygon(&l);
     assert_eq!(tris.len(), 4, "6각형 → 삼각형 4개");
     let area: f32 = tris.iter().map(|t| triangle_area(t, &l)).sum();
-    assert!((area - poly_area).abs() < 1e-3, "겹침 없이 정확히 한 번 덮음");
+    assert!(
+        (area - poly_area).abs() < 1e-3,
+        "겹침 없이 정확히 한 번 덮음"
+    );
     assert!(poly_area > 60.0, "L자 면적 확인");
 }
 
@@ -366,9 +381,18 @@ fn bleed_phase_rates_follow_stroke_position() {
         ..InkBleed::default()
     };
     let len = 100.0;
-    assert!((b.phase_rate(0.0, len, len) - 3.0).abs() < 1e-4, "시작 = start_rate");
-    assert!((b.phase_rate(50.0, 50.0, len) - 1.0).abs() < 1e-4, "중간 = mid_rate");
-    assert!((b.phase_rate(len, 0.0, len) - 2.0).abs() < 1e-4, "끝 = end_rate");
+    assert!(
+        (b.phase_rate(0.0, len, len) - 3.0).abs() < 1e-4,
+        "시작 = start_rate"
+    );
+    assert!(
+        (b.phase_rate(50.0, 50.0, len) - 1.0).abs() < 1e-4,
+        "중간 = mid_rate"
+    );
+    assert!(
+        (b.phase_rate(len, 0.0, len) - 2.0).abs() < 1e-4,
+        "끝 = end_rate"
+    );
     // 구간 경계는 단조 보간 (start 3 → mid 1로 감소).
     let r1 = b.phase_rate(10.0, 90.0, len);
     let r2 = b.phase_rate(20.0, 80.0, len);
@@ -425,7 +449,10 @@ fn ink_soak_deserializes_with_defaults() {
         saturate_sec: 2.0,
         initial: 1.5,
     };
-    assert!((weird.sat_at(0.0) - 1.0).abs() < 1e-6, "initial > 1 → 항상 원색");
+    assert!(
+        (weird.sat_at(0.0) - 1.0).abs() < 1e-6,
+        "initial > 1 → 항상 원색"
+    );
     assert!((weird.sat_at(0.0) - weird.sat_at(3.0)).abs() < 1e-6);
 }
 
@@ -514,7 +541,7 @@ fn fountain_italic_direction_contrast() {
 #[test]
 fn fountain_speeds_smoothed_and_missing_time_is_zero() {
     let f = FountainProfile::default(); // smooth α = 0.3
-    // 일정 속도 100pt/s (매 10ms에 1pt 이동).
+                                        // 일정 속도 100pt/s (매 10ms에 1pt 이동).
     let pts: Vec<StrokePoint> = (0..20)
         .map(|i| StrokePoint::with_time(i as f32, 0.0, 0.5, i * 10))
         .collect();
@@ -554,7 +581,11 @@ fn min_dist_to_polyline(p: [f32; 2], poly: &[[f32; 2]]) -> f32 {
 }
 
 fn triangle_area(t: &[u32; 3], poly: &[[f32; 2]]) -> f32 {
-    let (a, b, c) = (poly[t[0] as usize], poly[t[1] as usize], poly[t[2] as usize]);
+    let (a, b, c) = (
+        poly[t[0] as usize],
+        poly[t[1] as usize],
+        poly[t[2] as usize],
+    );
     ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() * 0.5
 }
 
@@ -575,17 +606,16 @@ fn locker_matches_batch_fountain_widths_with_italic() {
     f.nib_angle_deg = 45.0;
     let t0 = 1_700_000_000_000u64;
     let mut pts: Vec<StrokePoint> = Vec::new();
-    let mut locker =
-        WidthLocker::new(ToolType::Fountain, 2.5, &Materials::new(BallPenProfile::default(), f), 0.0);
+    let mut locker = WidthLocker::new(
+        ToolType::Fountain,
+        2.5,
+        &Materials::new(BallPenProfile::default(), f),
+        0.0,
+    );
     for i in 0..40 {
         let x = i as f32 * 6.0 + (i as f32 * 0.7).sin() * 8.0;
         let y = 100.0 + (i as f32 * 0.35).cos() * 30.0 + i as f32 * 1.5;
-        let p = StrokePoint::with_time(
-            x,
-            y,
-            0.4 + 0.5 * (i % 7) as f32 / 7.0,
-            t0 + i as u64 * 8,
-        );
+        let p = StrokePoint::with_time(x, y, 0.4 + 0.5 * (i % 7) as f32 / 7.0, t0 + i as u64 * 8);
         let (locked_prev, tip) = locker.push(p);
         if let Some(prev) = locked_prev {
             if let Some(last) = pts.last_mut() {
@@ -616,8 +646,12 @@ fn locker_matches_batch_ballpen_widths() {
     let b = BallPenProfile::default();
     let t0 = 1_700_000_000_000u64;
     let mut pts: Vec<StrokePoint> = Vec::new();
-    let mut locker =
-        WidthLocker::new(ToolType::Pen, 2.0, &Materials::new(b, FountainProfile::default()), 0.0);
+    let mut locker = WidthLocker::new(
+        ToolType::Pen,
+        2.0,
+        &Materials::new(b, FountainProfile::default()),
+        0.0,
+    );
     for i in 0..25 {
         let p = StrokePoint::with_time(
             i as f32 * 5.0,
@@ -654,8 +688,12 @@ fn locker_matches_batch_ballpen_widths() {
 fn locker_single_point_matches_batch() {
     let f = FountainProfile::default();
     let p = StrokePoint::with_time(10.0, 20.0, 0.8, 0);
-    let mut locker =
-        WidthLocker::new(ToolType::Fountain, 2.5, &Materials::new(BallPenProfile::default(), f), 0.0);
+    let mut locker = WidthLocker::new(
+        ToolType::Fountain,
+        2.5,
+        &Materials::new(BallPenProfile::default(), f),
+        0.0,
+    );
     let (_, tip) = locker.push(p);
     let done = locker.finish().unwrap();
     let batch = f.widths(2.5, &[p], 0.0);
@@ -667,13 +705,22 @@ fn locker_single_point_matches_batch() {
 
 /// A tiny custom material used to prove `WidthLocker` accepts **any**
 /// `WritingMaterial` (previously it branched on a private `LockerProfile`).
-struct NudgeMaterial { pub k: f32 }
+struct NudgeMaterial {
+    pub k: f32,
+}
 
 impl WritingMaterial for NudgeMaterial {
     fn smoothing_alpha(&self) -> f32 {
         0.0
     }
-    fn point_width(&self, max_width_pt: f32, _pressure: f32, _tilt_mag: f32, _speed: f32, _dir: [f32; 2]) -> f32 {
+    fn point_width(
+        &self,
+        max_width_pt: f32,
+        _pressure: f32,
+        _tilt_mag: f32,
+        _speed: f32,
+        _dir: [f32; 2],
+    ) -> f32 {
         max_width_pt * self.k
     }
     fn widths(&self, max_width_pt: f32, pts: &[StrokePoint], _tilt_mag: f32) -> Vec<f32> {
@@ -689,27 +736,43 @@ impl WritingMaterial for NudgeMaterial {
 fn locker_accepts_any_custom_writing_material() {
     let mut locker = WidthLocker::with_material(Box::new(NudgeMaterial { k: 0.5 }), 4.0, 0.0);
     let (_, tip) = locker.push(StrokePoint::with_time(0.0, 0.0, 0.6, 1));
-    assert!((tip.width - 2.0).abs() < 1e-5, "uses the custom material's width");
+    assert!(
+        (tip.width - 2.0).abs() < 1e-5,
+        "uses the custom material's width"
+    );
 }
 
 #[test]
 fn for_tool_highlighter_is_constant_uniform_width() {
-    let mat = Materials::default().for_tool(ToolType::Highlighter).expect("highlighter has a material");
-    assert!((mat.smoothing_alpha() - 0.0).abs() < 1e-9, "constant has no EMA smoothing");
+    let mat = Materials::default()
+        .for_tool(ToolType::Highlighter)
+        .expect("highlighter has a material");
+    assert!(
+        (mat.smoothing_alpha() - 0.0).abs() < 1e-9,
+        "constant has no EMA smoothing"
+    );
     for i in 0..5 {
         let w = mat.point_width(3.0, 0.1 + i as f32 * 0.2, 0.4, 123.0, [1.0, 0.0]);
-        assert!((w - 3.0).abs() < 1e-5, "constant width is exactly max for any input");
+        assert!(
+            (w - 3.0).abs() < 1e-5,
+            "constant width is exactly max for any input"
+        );
     }
 }
 
 #[test]
 fn for_tool_ballpen_ignores_direction() {
     let b = BallPenProfile::default();
-    let mat = Materials::new(b, FountainProfile::default()).for_tool(ToolType::Pen).expect("pen material");
+    let mat = Materials::new(b, FountainProfile::default())
+        .for_tool(ToolType::Pen)
+        .expect("pen material");
     let straight = mat.point_width(2.0, 0.5, 0.2, 30.0, [1.0, 0.0]);
     let sideways = mat.point_width(2.0, 0.5, 0.2, 30.0, [0.0, 1.0]);
     assert!((straight - b.width_at(2.0, 0.5, 0.2, 30.0)).abs() < 1e-6);
-    assert!((straight - sideways).abs() < 1e-6, "ball pen ignores stroke direction");
+    assert!(
+        (straight - sideways).abs() < 1e-6,
+        "ball pen ignores stroke direction"
+    );
     assert!((mat.smoothing_alpha() - b.speed_smooth).abs() < 1e-9);
 }
 
@@ -717,19 +780,33 @@ fn for_tool_ballpen_ignores_direction() {
 fn for_tool_fountain_applies_italic_and_clamp() {
     let mut f = FountainProfile::default();
     f.italic = true; // exercise the italic-nib direction contrast
-    let mat = Materials::new(BallPenProfile::default(), f).for_tool(ToolType::Fountain).expect("fountain material");
+    let mat = Materials::new(BallPenProfile::default(), f)
+        .for_tool(ToolType::Fountain)
+        .expect("fountain material");
     // Nib axis is nib_angle_deg=45°: aligned vs perpendicular must differ.
-    let along = [std::f32::consts::FRAC_PI_4.cos(), std::f32::consts::FRAC_PI_4.sin()]; // 45°
-    let perp = [std::f32::consts::FRAC_PI_4.cos(), -std::f32::consts::FRAC_PI_4.sin()]; // -45°
+    let along = [
+        std::f32::consts::FRAC_PI_4.cos(),
+        std::f32::consts::FRAC_PI_4.sin(),
+    ]; // 45°
+    let perp = [
+        std::f32::consts::FRAC_PI_4.cos(),
+        -std::f32::consts::FRAC_PI_4.sin(),
+    ]; // -45°
     let w_along = mat.point_width(2.5, 0.8, 0.0, 10.0, along);
     let w_perp = mat.point_width(2.5, 0.8, 0.0, 10.0, perp);
-    assert!((w_along - w_perp).abs() > 1e-3, "italic nib must vary with direction");
+    assert!(
+        (w_along - w_perp).abs() > 1e-3,
+        "italic nib must vary with direction"
+    );
     // Exactly the (former) locker Fountain arm: (w * italic).clamp(lo, hi).
     let w = f.width_at(2.5, 0.8, 0.0, 10.0);
     let lo = f.min_width_pt.max(0.05).min(2.5);
     let hi = 2.5;
     let exp = (w * f.italic_factor(along[0], along[1])).clamp(lo, hi);
-    assert!((w_along - exp).abs() < 1e-6, "matches the previous Fountain locker math");
+    assert!(
+        (w_along - exp).abs() < 1e-6,
+        "matches the previous Fountain locker math"
+    );
     assert!((mat.smoothing_alpha() - f.speed_smooth).abs() < 1e-9);
 }
 
@@ -746,7 +823,9 @@ fn for_tool_non_ink_tools_is_none() {
 #[test]
 fn writing_material_widths_survive_via_factory_box() {
     let f = FountainProfile::default();
-    let m = Materials::new(BallPenProfile::default(), f).for_tool(ToolType::Fountain).expect("fountain material");
+    let m = Materials::new(BallPenProfile::default(), f)
+        .for_tool(ToolType::Fountain)
+        .expect("fountain material");
     let t0 = 1_000_000u64;
     let mut pts: Vec<StrokePoint> = Vec::with_capacity(20);
     for i in 0..20 {
@@ -766,7 +845,8 @@ fn writing_material_widths_survive_via_factory_box() {
 
 #[test]
 fn constant_material_widths_are_all_max() {
-    let m = Materials::default().for_tool(ToolType::Highlighter)
+    let m = Materials::default()
+        .for_tool(ToolType::Highlighter)
         .expect("highlighter material");
     let mut pts: Vec<StrokePoint> = Vec::new();
     pts.push(StrokePoint::new(0.0, 0.0, 0.5));
@@ -775,7 +855,10 @@ fn constant_material_widths_are_all_max() {
     let ws = m.widths(4.0, &pts, 0.3);
     assert_eq!(ws.len(), 3);
     for w in ws {
-        assert!((w - 4.0).abs() < 1e-6, "constant material fills exactly max width");
+        assert!(
+            (w - 4.0).abs() < 1e-6,
+            "constant material fills exactly max width"
+        );
     }
 }
 
@@ -964,13 +1047,7 @@ fn ribbon_lr_applies_per_side_alphas() {
     // 단면(레일로드) 효과: 왼쪽/오른쪽 정점에 서로 다른 알파.
     let pts = [[0.0f32, 0.0], [10.0, 0.0]];
     let halves = [1.0f32, 1.0];
-    let rb = stroke_ribbon_lr(
-        &pts,
-        &halves,
-        0.0,
-        false,
-        Some(&[[0.4, 0.8], [1.0, 0.5]]),
-    );
+    let rb = stroke_ribbon_lr(&pts, &halves, 0.0, false, Some(&[[0.4, 0.8], [1.0, 0.5]]));
     // feather=0 → per=2, 정점 순서 [L0, R0, L1, R1].
     assert!((rb.alphas[0] - 0.4).abs() < 1e-4, "L0");
     assert!((rb.alphas[1] - 0.8).abs() < 1e-4, "R0");

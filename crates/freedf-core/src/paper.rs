@@ -29,7 +29,12 @@ impl PaperStyle {
     }
 
     pub fn all() -> [PaperStyle; 4] {
-        [PaperStyle::Blank, PaperStyle::Ruled, PaperStyle::Grid, PaperStyle::Dotted]
+        [
+            PaperStyle::Blank,
+            PaperStyle::Ruled,
+            PaperStyle::Grid,
+            PaperStyle::Dotted,
+        ]
     }
 }
 
@@ -458,10 +463,8 @@ impl Default for PaperSurfaceSettings {
 /// 높이장의 중앙 차분 기울기 ∇h (문서 §3).
 /// `step`은 한 텍셀에 해당하는 타일 좌표 간격(1/size).
 pub fn paper_gradient(u: f32, v: f32, seed: u64, step: f32) -> (f32, f32) {
-    let dx =
-        (paper_field(u + step, v, seed) - paper_field(u - step, v, seed)) / (2.0 * step);
-    let dy =
-        (paper_field(u, v + step, seed) - paper_field(u, v - step, seed)) / (2.0 * step);
+    let dx = (paper_field(u + step, v, seed) - paper_field(u - step, v, seed)) / (2.0 * step);
+    let dy = (paper_field(u, v + step, seed) - paper_field(u, v - step, seed)) / (2.0 * step);
     (dx, dy)
 }
 
@@ -487,14 +490,7 @@ pub fn ambient_occlusion(h: f32, ao_strength: f32) -> f32 {
 
 /// 채널 반사율 ρ_c(x) = ρ0_c·[1 + a_L·ξ_L + a_C·ξ_c] — 문서 §4.
 /// `channel` ∈ {0,1,2} — ξ_c는 채널마다 다른 노이즈(씨앗·위상)를 씁니다.
-pub fn albedo(
-    rho0: f32,
-    u: f32,
-    v: f32,
-    channel: u32,
-    seed: u64,
-    s: &PaperSurfaceSettings,
-) -> f32 {
+pub fn albedo(rho0: f32, u: f32, v: f32, channel: u32, seed: u64, s: &PaperSurfaceSettings) -> f32 {
     // ξ_L: 채널 공통 휘도 노이즈 (섬유 밀도 → 광흡수).
     let lum = (tile_noise(u + 0.13, v + 0.27, seed ^ 0x5EED_00A1, 7, 7) - 0.5) * 2.0;
     // ξ_c: 채널 독립 색도 노이즈 (충전재 스펙트럼 편차).
@@ -504,7 +500,8 @@ pub fn albedo(
         seed ^ 0x00C1_C0DEu64.wrapping_mul(channel as u64 + 1),
         13,
         13,
-    ) - 0.5) * 2.0;
+    ) - 0.5)
+        * 2.0;
     (rho0 * (1.0 + s.albedo_l * lum + s.albedo_c * chr)).clamp(0.0, 1.0)
 }
 

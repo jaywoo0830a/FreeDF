@@ -58,10 +58,7 @@ impl ViewTransform {
 
     /// 페이지 pt → 화면 px.
     pub fn page_to_view(&self, p: PagePoint) -> PagePoint {
-        PagePoint::new(
-            p.x * self.zoom + self.pan_x,
-            p.y * self.zoom + self.pan_y,
-        )
+        PagePoint::new(p.x * self.zoom + self.pan_x, p.y * self.zoom + self.pan_y)
     }
 
     /// 화면 px → 페이지 pt.
