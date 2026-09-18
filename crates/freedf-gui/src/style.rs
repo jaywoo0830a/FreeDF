@@ -82,10 +82,7 @@ elm_magic::css! {
     // ── 블록: tabs — 탭 스트립 ──────────────────────────────────
     .tabs { bg: surface; padding: 4; radius: 8; gap: 4; }
     .tabs__item { color: text_dim; }
-    // BEM 수정자(`--`)는 **문자열 셀렉터**로 써야 한다 — 매크로가 `-`를
-    // 별도 토큰으로 쪼개 `.tabs__item - - active`로 조인해 조용히
-    // 미등록되기 때문이다 (elm-magic 0.6 한계, docs/elm-magic-bug-report.md 참고).
-    ".tabs__item--active" { color: text; }
+    .tabs__item--active { color: text; }
 
     // ── 블록: statusbar — 상태바/토스트 ─────────────────────────
     .statusbar { bg: surface; padding: 4 8; radius: 4; gap: 8; }
@@ -99,8 +96,8 @@ elm_magic::css! {
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
     .modal__actions { gap: 8; }
-    // 버튼을 오른쪽으로 — `justify: end`(주축 정렬).
-    ".modal__actions--end" { justify: end; }
+
+    .modal__actions--end { justify: end; }
     .modal__button { bg: surface_alt; color: text; padding: 8 12; radius: 6; cursor: pointer; }
     .modal__button:hover { bg: primary; color: on_primary; }
     .modal__button:active { bg: surface; border-width: 1; border-color: border; }
@@ -205,7 +202,8 @@ mod tests {
             !s.is_empty()
                 && !s.starts_with('-')
                 && !s.ends_with('-')
-                && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         };
         let (rest, modifier) = match name.split_once("--") {
             Some((rest, m)) => (rest, Some(m)),
@@ -215,9 +213,7 @@ mod tests {
             Some((b, e)) => (b, Some(e)),
             None => (rest, None),
         };
-        word(block)
-            && element.map(word).unwrap_or(true)
-            && modifier.map(word).unwrap_or(true)
+        word(block) && element.map(word).unwrap_or(true) && modifier.map(word).unwrap_or(true)
     }
 
     /// `shell.rs`의 리터럴 `class="…"` 값들 (표현식 class는 별도 검증).
