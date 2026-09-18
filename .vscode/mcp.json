@@ -5,7 +5,8 @@
   //
   // command가 `scripts/edev-mcp.sh`인 이유:
   //   - VS Code Server(SSH)에는 DISPLAY가 없어서 Xvfb를 대신 띄워야 합니다.
-  //   - MCP 클라이언트의 cwd가 무엇이든 `.edev.toml`을 찾도록 `--cwd`를 고정합니다.
+  //   - MCP 클라이언트의 cwd가 무엇이든 `.edev-gui.toml`을 찾도록 `--cwd`/`--config`를
+  //     고정합니다.
   //   - stdout은 JSON-RPC 전용이므로 진단 메시지는 모두 stderr로 보냅니다.
   "servers": {
     "eguidev-freedf": {

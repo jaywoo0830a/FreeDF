@@ -8,6 +8,8 @@
       "type": "shell",
       "command": "scripts/edev-run.sh",
       "args": [
+        "--config",
+        ".edev-gui.toml",
         "eval",
         "scripts/design-shot.luau",
         "--out-dir",
@@ -25,6 +27,8 @@
       "type": "shell",
       "command": "scripts/edev-run.sh",
       "args": [
+        "--config",
+        ".edev-gui.toml",
         "eval",
         "scripts/design-audit.luau",
         "--out-dir",
@@ -40,7 +44,7 @@
       "label": "edev: 위젯 트리 덤프",
       "type": "shell",
       "command": "scripts/edev-run.sh",
-      "args": ["dump"],
+      "args": ["--config", ".edev-gui.toml", "dump"],
       "presentation": { "reveal": "always", "panel": "shared" },
       "problemMatcher": []
     },
@@ -48,7 +52,7 @@
       "label": "edev: 픽스처 목록",
       "type": "shell",
       "command": "scripts/edev-run.sh",
-      "args": ["fixtures"],
+      "args": ["--config", ".edev-gui.toml", "fixtures"],
       "presentation": { "reveal": "always", "panel": "shared" },
       "problemMatcher": []
     },
@@ -64,7 +68,7 @@
       "label": "edev: 스모크 스위트",
       "type": "shell",
       "command": "scripts/edev-run.sh",
-      "args": ["smoke"],
+      "args": ["--config", ".edev-gui.toml", "smoke"],
       "group": "test",
       "presentation": { "reveal": "always", "panel": "shared" },
       "problemMatcher": []
@@ -73,7 +77,7 @@
       "label": "edev: 스모크 + 실패 번들",
       "type": "shell",
       "command": "scripts/edev-run.sh",
-      "args": ["smoke", "--bundle"],
+      "args": ["--config", ".edev-gui.toml", "smoke", "--bundle"],
       "group": "test",
       "presentation": { "reveal": "always", "panel": "shared" },
       "problemMatcher": []

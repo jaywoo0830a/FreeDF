@@ -7,8 +7,9 @@
 #
 #   1) DISPLAY가 없으면 Xvfb 가상 디스플레이를 띄웁니다. VS Code Server(SSH)의
 #      확장 호스트에는 DISPLAY가 없어서 eframe/glow가 뜨지 못합니다.
-#   2) `--cwd`로 워크스페이스 루트를 고정합니다. MCP 클라이언트가 서버를 어떤
-#      cwd로 띄우더라도 EDEV가 `.edev.toml`을 찾을 수 있습니다.
+#   2) `--cwd`/`--config`로 워크스페이스 루트와 freedf-gui 런처(`.edev-gui.toml`)를
+#      고정합니다. MCP 클라이언트가 서버를 어떤 cwd로 띄우더라도 EDEV가 설정을
+#      찾습니다. (구 앱 freedf의 `.edev.toml`은 레거시 — 쓰지 않습니다.)
 #
 # 사용(MCP 클라이언트 설정에 넣는 값):
 #   command = "<repo>/scripts/edev-mcp.sh"
@@ -69,4 +70,6 @@ SUBCOMMAND="${1:-mcp}"
 shift || true
 
 # stdin/stdout은 프로토콜이므로 절대 만지지 않고 그대로 물려줍니다.
-exec edev "$SUBCOMMAND" --cwd "$ROOT" "$@"
+# 런처는 freedf-gui(`.edev-gui.toml`)가 기본 — `EDEV_CONFIG`로 덮어쓸 수 있습니다.
+CONFIG="${EDEV_CONFIG:-.edev-gui.toml}"
+exec edev --config "$CONFIG" "$SUBCOMMAND" --cwd "$ROOT" "$@"

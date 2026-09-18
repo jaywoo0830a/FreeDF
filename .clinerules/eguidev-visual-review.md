@@ -46,7 +46,8 @@ return {
 경로를 씁니다. 터미널에서는:
 
 ```bash
-scripts/edev-run.sh eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
+scripts/edev-run.sh --config .edev-gui.toml eval scripts/design-audit.luau \
+  --out-dir tmp/eguidev-screenshots
 ```
 
 `--out-dir`에 JPEG가 저장되고 JSON의 `images[].file`에 절대 경로가 실립니다.
