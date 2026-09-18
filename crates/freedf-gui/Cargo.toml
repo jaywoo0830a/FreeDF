@@ -27,7 +27,7 @@ egui.workspace = true
 # UI는 전부 elm-magic(view!)으로 그린다 — egui 어댑터가 Element 트리를 위젯으로 렌더.
 elm-magic.workspace = true
 elm-magic-egui.workspace = true
-# Phase 1 (docs/freedf-gui-migration.md) — 저장소/동기화/PDF/설정 서비스 계층 공유.
+# 저장소/동기화/PDF/설정 서비스 계층 공유.
 freedf-services = { path = "../freedf-services" }
 # Phase 2 — 캔버스: 잉크 메시(freedf-canvas) + 모델/저장소/변환(freedf-core).
 freedf-canvas = { path = "../freedf-canvas" }

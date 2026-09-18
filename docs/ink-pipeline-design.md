@@ -217,7 +217,6 @@ test result: ok. 8 passed; 0 failed
 
 ## 6. 다이어그램
 
-정적(클래스) / 동적(시퀀스) 다이어그램 원천과 렌더 결과:
-- `docs/write-pipeline.md` — 설명 + SVG 참조
-- `docs/write-pipeline-class.svg` — 정적 클래스(InkPipeline, Association)
-- `docs/write-pipeline-sequence.svg` — 동적 시퀀스(down/drag/up + freeze)
+정적(클래스) / 동적(시퀀스) 다이어그램 원천과 렌더 결과는 저장소 이력에서만 볼 수
+있습니다(문서/이미지 삭제). 파이프라인 계약은 위 §1~§5의 타입과 테스트가 유일한
+출처입니다.

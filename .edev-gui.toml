@@ -4,7 +4,7 @@
 #   scripts/edev-run.sh --config .edev-gui.toml dump
 #   scripts/edev-run.sh --config .edev-gui.toml smoke
 #
-# 계약 id는 `docs/freedf-gui-migration.md` Phase 3 참고:
+# 계약 id는 `docs/eguidev-automation.md` 참고:
 #   freedf-gui.root · gui.<버튼 라벨 슬러그> · canvas.surface
 
 [app]

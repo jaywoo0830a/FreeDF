@@ -1668,8 +1668,7 @@ impl FreeDfApp {
             tool_settings_open: false,
             // 테스트 훅: `FREEDF_SETTINGS=1`이면 시작할 때 설정 창을 열고,
             // `FREEDF_SETTINGS_TAB=<slug>`로 특정 탭을 고릅니다.
-            // (창/팝업 클릭에 의존하지 않고 자동화가 결정적으로 도달하게 합니다 —
-            //  docs/UI-SYSTEM.md · smoketest/50_settings.luau 참고.)
+            // (창/팝업 클릭에 의존하지 않고 자동화가 결정적으로 도달하게 합니다.)
             #[cfg(feature = "dev-automation")]
             settings_open: std::env::var_os("FREEDF_SETTINGS").is_some(),
             #[cfg(not(feature = "dev-automation"))]
@@ -1697,7 +1696,7 @@ impl FreeDfApp {
             debug_hud,
             // 테스트 훅: `FREEDF_UI_GALLERY=1`이면 시작할 때 갤러리를 엽니다.
             // (egui 팝업 안 항목은 자동화가 클릭할 수 없어서, 메뉴 대신 이 경로로
-            //  컴포넌트 계약 스캔을 돌립니다 — docs/UI-SYSTEM.md 참고.)
+            //  컴포넌트 계약 스캔을 돌립니다.)
             #[cfg(feature = "dev-automation")]
             ui_gallery: {
                 let mut g = crate::ui::gallery::Gallery::new();

@@ -1,402 +1,106 @@
-# eguidev — AI/에이전트가 FreeDF GUI를 직접 보고 조작하기
+# eguidev — freedf-gui 자동화 계약 (최소 문서)
 
-[eguidev](https://github.com/cortesi/eguidev)는 egui 앱용 인프로세스 자동화
-라이브러리입니다(Playwright의 GUI판). 화면 픽셀이 아니라 **실제 위젯 상태**를
-읽고, 좌표 기반 입력을 앱의 이벤트 루프에 주입합니다. 이 문서는 FreeDF에서
-그걸 어떻게 켜고 쓰는지 설명합니다.
-
-## 왜 포크를 쓰는가
-
-| 항목 | 상황 |
-|---|---|
-| FreeDF | `egui 0.36.1` |
-| crates.io `eguidev 0.1.0` (릴리스) | `egui ^0.35` — **호환 불가** |
-| 포크의 `0.1.0` / `main` 브랜치 | egui 0.36 ✓ 이지만 지금 **빌드 불가**: ① `Cargo.toml`에 `ruau`/`tmcp` 키가 중복(머지 사고) ② 비공개 `ruau-script-api`를 `automation/mod.rs`·`mcp.rs`·`script_docs.rs`에서 import |
-| 포크의 `freedf-egui036` (커밋 `84ab2da`) | ✅ FreeDF와 함께 검증된 리비전 |
-
-> **`0.1.0` 브랜치로 갈아타지 마세요.** 그 브랜치는 최신 upstream 상태라 기능은
-> 더 많지만(recording, `script_docs`, 뷰포트 스크린샷 포맷 옵션 등), 비공개
-> 크레이트 `ruau-script-api`에 하드 의존합니다. 공개 `ruau`(0.4.0)에는
-> `ScriptApiQuery` / `ScriptApiResponse` / `ScriptApiMode` / `ScriptApiErrorKind`
-> 가 없어서 단순한 `use` 경로 수정으로는 해결되지 않습니다(심(shim) 크레이트나
-> 해당 4곳의 공개 API 백포트가 필요). 워크스페이스 핀은 아래 SHA를 유지하세요.
-
-그래서 리비전을 고정한 포크를 씁니다:
-**https://github.com/jaywoo0830a/eguidev**, 브랜치 `freedf-egui036`.
-
-포크가 바꾼 것은 세 가지뿐이고, 앱이 쓰는 API는 upstream과 같습니다.
-
-1. 베이스 = upstream `a439da6` (2026-08-26) — **비공개 `ruau-script-api` 도입 직전**
-   커밋이면서 egui 0.36을 쓰는 마지막 지점.
-2. `ruau` / `tmcp`의 로컬 경로 의존성을 **같은 시점의 공개 저장소 리비전**으로 교체.
-3. 비공개 ruau에만 있던 `ModuleBinding::LibraryOverride` 사용 2곳 제거.
-
-커밋 `84ab2da60b36fa5f4235c0792b78e5535b95700a`를 **SHA 고정**합니다. 브랜치는
-누구든 옮기거나 지울 수 있으므로 워크스페이스 핀은 항상 SHA로 두세요. (실제로
-포크의 브랜치 목록에서 `freedf-egui036`이 사라져 커밋 객체로만 도달 가능한 적이
-있습니다. 그때도 SHA fetch는 성공했습니다 — 확인 방법:
-`git fetch <repo> 84ab2da…`.)
-
+[eguidev](https://github.com/cortesi/eguidev)는 egui 앱용 인프로세스 자동화입니다.
+화면 픽셀을 긁지 않고 **실제 위젯 상태**를 읽으며, 앱이 직접 프레임을 캡처해
+이미지를 돌려줍니다. 이 문서는 freedf-gui(`crates/freedf-gui`)에 필요한 것만
+남긴 최소 계약입니다. freedf(구 앱)는 컴파일만 유지하는 레거시라 자동화 계약을
+더 이상 문서화하지 않습니다.
 
 ## 켜기
 
 ```bash
-# 1) EDEV CLI (포크에서 설치 — 브랜치는 옮겨질 수 있으므로 rev로 고정)
+# EDEV CLI — 포크를 SHA로 고정 (브랜치는 옮겨질 수 있음)
 cargo install --git https://github.com/jaywoo0830a/eguidev \
               --rev 84ab2da60b36fa5f4235c0792b78e5535b95700a edev
 
-# 2) 계측이 켜진 FreeDF 실행
-cargo run -p freedf --features dev-automation
+# 계측이 켜진 freedf-gui (기본 빌드에는 포함되지 않음)
+cargo run -p freedf-gui --features dev-automation
 ```
 
-`dev-automation`은 **기본 빌드에 포함되지 않습니다**. 그리고 기능을 켜도
-EDEV가 `EGUIDEV_MCP_ADDR`을 주입하지 않은 실행에서는 `DevMcp`가 inert라
-서버가 뜨지 않습니다 — 평소 `cargo run`은 동작/성능이 그대로입니다.
-
-## 헤드리스(Linux 서버/CI)
-
-eframe/glow는 디스플레이가 필요하므로 Xvfb 위에서 돌립니다:
+`EGUIDEV_MCP_ADDR`가 없는 실행에서는 계측이 inert라 서버가 뜨지 않습니다 — 평소
+실행은 동작/성능이 그대로입니다. 헤드리스 Linux는 `scripts/edev-run.sh`가 Xvfb와
+소프트웨어 GL(`LIBGL_ALWAYS_SOFTWARE=1`)을 대신 설정합니다.
 
 ```bash
-sudo apt-get install -y xvfb libxcb1 libxkbcommon-x11-0 libxcursor1 \
-                        libxrandr2 libxi6 libgl1-mesa-dri
-
-scripts/edev-run.sh dump        # 위젯 트리 텍스트 덤프
-scripts/edev-run.sh eval tmp/probe.luau --out-dir tmp/out
-scripts/edev-run.sh smoke       # smoketest/ 스위트
+scripts/edev-run.sh --config .edev-gui.toml dump            # 위젯 트리 텍스트
+scripts/edev-run.sh --config .edev-gui.toml smoke           # smoketest-gui/ 스위트
+scripts/edev-run.sh --config .edev-gui.toml eval tmp/probe.luau --out-dir tmp/out
 ```
 
-`scripts/edev-run.sh`는 Xvfb를 띄우고 `LIBGL_ALWAYS_SOFTWARE=1`로 소프트웨어
-GL을 쓰게 한 뒤 `edev`를 실행합니다. 이미 `DISPLAY`가 있으면 그대로 씁니다.
+`edev-run.sh`는 `flock`으로 실행을 **직렬화**합니다. edev는 실제 창을 쓰므로 두
+인스턴스를 동시에 돌리면 서로의 프레임/스크린샷을 깨뜨립니다.
 
-## 계측 지점(자동화 계약 id)
+## 계약 id (`crates/freedf-gui`, 런처 `.edev-gui.toml`)
 
-id는 **스크립트가 의존하는 공개 계약**입니다. 라벨을 바꿔도 id는 유지하세요.
-
-| id | 대상 |
-|---|---|
-| `freedf.root` | 루트 뷰포트 프레임 스코프 (뷰포트 이름은 eguidev가 암묵적으로 `root`로 둡니다 — `name_viewport`로 다시 지정하면 예약어라 계측 결함이 됩니다) |
-| `toolbar.hide_ui` / `.settings` | Row 1 워크스페이스 |
-| `toolbar.more` | Row 1 `More` 오버플로 버튼 (오버레이를 여는 유일한 입구) |
-| `toolbar.undo` / `.redo` / `.clear_page` | Row 1 편집 이력 |
-| `toolbar.save_edits` / `.load_edits` | Row 1 파일 |
-| `toolbar.panel.library` / `.outline` / `.bookmarks` / `.palette` | Row 1 패널 토글 |
-| `toolbar.insert_page` / `.delete_page` | Row 2 페이지 |
-| `toolbar.tool.pen` / `.fountain` / `.highlighter` / `.eraser` / `.pan` | Row 3 도구 선택기 |
-| `tabs.new_note` / `.open_pdf` | 탭바 버튼 |
-| `tabs.tab.<n>` | 탭 n개 (0-based) |
-| `canvas.surface` | 페이지를 그리는 캔버스 영역 (painter 영역) |
-| `toast.stack` | 토스트 스택 사각형 (우측 하단) — "무엇을 덮고 있는지" 측정용 |
-| `toast.dismiss.<id>` | 토스트 닫기 버튼 (`<id>`는 토스트의 안정 키) |
-
-### **freedf-gui** 계약 (Phase 3 — `crates/freedf-gui`, 런처 `.edev-gui.toml`)
+id는 **스크립트가 의존하는 공개 계약**입니다. 라벨은 바꿔도 id는 유지하고,
+한 프레임에 같은 id를 두 번 등록하지 마세요(자동화가 멈춥니다).
 
 | id | 대상 |
 |---|---|
 | `freedf-gui.root` | 루트 프레임 스코프 |
-| `gui.<라벨 슬러그>` | 어댑터(elm-magic)가 그린 버튼/탭 — 라벨 소문자+공백→`_`. 같은 라벨이 한 프레임에 두 번 이상이면 `.<n>` 접미사 (`gui.untitled`, `gui.untitled.1`) |
-| `canvas.surface` | 잉크 캔버스 영역 (freedf와 동일 이름) |
+| `gui.<라벨 슬러그>` | 어댑터(elm-magic)가 그린 버튼/탭 — 라벨 소문자 + 공백→`_`(`save_edits`). 같은 라벨이 한 프레임에 두 번 이상이면 `.<n>` 접미사 (`gui.untitled`, `gui.untitled.1`) |
+| `canvas.surface` | 잉크 캔버스 영역 |
 
-셸 툴바/리본의 스모크 검증 id (`smoketest-gui/10_launch_gui.luau`):
+`smoketest-gui/10_launch_gui.luau`가 검증하는 툴바/리본 id:
 `gui.sidebar` · `gui.new_tab` · `gui.close_tab` · `gui.bookmark` · `gui.bookmarks` ·
 `gui.outline` · `gui.zoom_in` · `gui.zoom_out` · `gui.fit` · `gui.prev_page` ·
 `gui.next_page` · `gui.open_pdf` · `gui.clear_ink` · `gui.about` · `gui.fountain` ·
 `gui.highlighter` · `gui.eraser` · `gui.red` · `gui.blue` · `canvas.surface`.
-잉크 리본의 **활성** 항목(Pen/Black/Medium 등)은 Button이 아닌 Strong으로 그려지므로
-계약 id가 없다 — 비활성 상태 버튼의 id만 계약이다.
 
-### `More` 오버레이 메뉴 (`menu.*`)
-
-오버레이 항목은 **메뉴가 열려 있을 때만** 존재합니다(닫혀 있으면 위젯 자체가
-없으므로 `wait`/`expect`가 타임아웃됩니다 — 먼저 `toolbar.more`를 클릭하세요).
+리본의 **활성** 항목(Pen/Black/Medium 등)은 Button이 아닌 `<Strong>`으로 그려지므로
+id가 없습니다 — 비활성 상태 버튼의 id만 계약입니다. 같은 이유로 설정 모달의 현재
+활성 프리셋도 id가 없습니다.
 
 | id | 대상 |
 |---|---|
-| `menu.page.align.left` / `.center` / `.right` | 페이지 정렬 3-세그먼트 (선택 상태 있음) |
-| `menu.view.media_panel` | 미디어 패널 토글 |
-| `menu.lookup.dictionary` | 사전 오버레이 토글 |
-| `menu.input.focus_dwell` | 커서 머문 시간에 창 포커스 (토글) |
-| `menu.input.focus_settings` | 그 행의 ⚙ 설정 (트레일링) |
-| `menu.input.macros` / `.gamepad` | 설정 창 열기 |
-| `menu.server.media` | 미디어 서버 설정 창 |
-| `menu.maintenance.clear.<cache>` | 캐시별 정리 (`download_cache`, `canvas_cache` … `all_caches()`에 등록하면 자동 추가) |
-| `menu.diag.debug_hud` | 디버그 HUD 토글 |
-| `menu.diag.ui_gallery` | 컴포넌트 갤러리 열기 (**dev-automation 빌드에만** 존재, 사람용 입구) |
+| `gui.undo` · `gui.redo` | 편집 행 — 되돌리기/다시 실행 |
+| `gui.save_edits` · `gui.load_edits` | 편집 행 — 문서 주석 저장/불러오기 |
+| `gui.settings` | 설정 모달 열기 |
+| `gui.off` · `gui.light` · `gui.normal` · `gui.strong` | 스무딩 프리셋(1€ 필터 강도 0 / 0.25 / 0.4 / 0.7) — 모달이 열려 있을 때만 존재 |
 
-#### 메뉴 기하 계약 (실측 고정)
+> 프리셋 라벨은 리본 굵기(`gui.medium`)와 겹치지 않게 고릅니다(0.4 = `Normal`).
 
-`smoketest/30_more_menu.luau`가 회귀 검증하는 값입니다.
+## 스크립트 (`script_eval`)
 
-| 항목 | 값 | 왜 |
-|---|---|---|
-| 팝업 폭 | 304pt (`ui.set_min_width/max_width`) | 팝업은 내용에 맞춰 커지므로 상한이 없으면 행이 팝업을 밀어냄(실측 594pt) |
-| 행 높이 | 28pt (`tokens::target::ROW`) | 한 가지 높이 — 행마다 키가 달라 보이던 문제 방지 |
-| 행 간격 | 8pt (`style.spacing.item_spacing.y`) | 행 rect는 **겹치면 안 됨** |
-| 좌측 레일 | 하나 | 들여쓰기 흔들림 방지 |
-| 토글 상태 | 행 오른쪽 스위치 트랙 | 명령 행과 토글 행이 똑같이 보이던 어포던스 회귀 방지 |
-
-#### `ui::kit` 컴포넌트의 계약 위반도 여기서 잡힙니다
-
-`eguidev.root:layout_issues()`는 두 종류를 구분해 읽어야 합니다.
-
-* **완전 포함**(예: 트레일링 ⚙가 자기 행 안에 있음) = 정상 중첩.
-* **부분 겹침**(예: 행 높이 28pt인데 다음 행이 22pt 뒤에 시작) = **결함**.
-  아래 행이 위 행의 하단 클릭 영역을 훔칩니다. `30_more_menu.luau`가 이 판정을
-  자동화해 두었습니다(실제로 `Row`의 커서 버그를 이 방법으로 찾았습니다).
-
-### 컴포넌트 갤러리 (`gallery.*`)
-
-`dev-automation` 빌드에서 `FREEDF_UI_GALLERY=1`로 시작하면 열립니다(테스트 훅).
-전체 목록은 [`docs/UI-SYSTEM.md`](UI-SYSTEM.md)를 보세요.
-
-| id | 대상 |
-|---|---|
-| `gallery.button.primary` / `.secondary` / `.ghost` / `.danger` | 버튼 변형 |
-| `gallery.button.disabled` / `.selected` / `.icon` | 버튼 상태 |
-| `gallery.button.size.small` / `.medium` / `.touch` | 크기 등급 (계약: ≥24 / ≥28 / ≥32) |
-| `gallery.icon_button.small` / `.medium` / `.touch` / `.disabled` | 아이콘 버튼 |
-| `gallery.toggle.inline` / `gallery.toggle.row` | 토글 (인라인 · 행) |
-| `gallery.segment.left` / `.center` / `.right` | 배타 선택 (선택 상태 노출) |
-| `gallery.row.action` / `.radio` / `.trailing` / `.trailing.button` / `.disabled` | 행 변형 |
-
-메뉴 항목의 **계층 리듬**(모든 행 같은 높이 · 같은 좌측 레일)은
-`smoketest/30_more_menu.luau`가 회귀 검증합니다.
-
-계측은 두 경로로만 합니다: **`ui::kit` 컴포넌트**(내장 — 호출부는 `test_id`만
-넘김) 또는 `crates/freedf/src/app/dev.rs`의 얇은 헬퍼. 헬퍼마다 기능이 꺼졌을
-때의 no-op 분기를 함께 제공하므로 호출부에 `#[cfg]`가 필요 없습니다.
-
-> `ui::kit`을 쓰는 화면은 **계측을 빠뜨릴 수 없습니다**: `Row`/`Button`/`Toggle` 등이
-> 그려질 때 [`crate::ui::a11y::finish`]가 `dev::tag_*`를 **내장 호출**합니다
-> (예전에 "오버레이 전체가 무계측"이던 사고의 재발 방지). 키트를 직접 쓰지 않는
-> 커스텀 위젯만 아래 헬퍼를 씁니다.
-
-| 헬퍼 | 쓰는 곳 |
-|---|---|
-| `tag_button_with(ui, id, label, add)` | 커스텀 버튼을 그리면서 등록 (탭바 New Note / Open PDF) |
-| `tag_button(ui, id, label, &resp)` | 이미 얻은 `Response`를 버튼으로 등록 (툴바 `icon_button`) |
-| `tag_selected_button(ui, id, label, &resp, selected)` | 선택 상태가 있는 버튼 (도구 선택기) |
-| `tag_toggle(ui, id, label, &resp, value)` | 토글 (패널 표시/숨김) |
-| `tag(ui, id, add)` | 역할을 모르는 커스텀 위젯 (탭 제목 라벨) |
-| `publish_rect(ui, id, rect)` | painter로 그린 영역 (페이지 캔버스) |
-
-주의: **한 프레임에 같은 id를 두 번 등록하면 안 됩니다** — eguidev가 중복 id를
-계측 결함으로 잡고 자동화를 멈춥니다. 그래서 그리기와 등록은
-`tag_button_with`/`tag`처럼 한 번에 하는 헬퍼를 쓰고, `tag_button`은 이미
-`Response`를 가진 경우에만 씁니다.
-
-```rust
-// 커스텀 버튼: 그리기 + 등록을 한 번에
-let resp = crate::app::dev::tag_button_with(ui, "tabs.new_note", "New Note", |ui| {
-    ui.button("New Note")
-});
-// 이미 얻은 Response 등록
-let resp = icon_button(ui, /* ... */);
-crate::app::dev::tag_button(ui, "toolbar.undo", "Undo", &resp);
-// 선택 상태가 있는 버튼 / 토글
-crate::app::dev::tag_selected_button(ui, "toolbar.tool.pen", label, &resp, selected);
-crate::app::dev::tag_toggle(ui, "toolbar.panel.library", "Library", &resp, self.show_library);
-// painter로 그린 영역
-crate::app::dev::publish_rect(ui, "canvas.surface", rect);
-```
-
-## 스크립트
-
-스크립트는 샌드박스에서 도는 strict Luau이며, 전역은 `eguidev` 하나뿐입니다.
-전체 API는 `edev docs`가 반환합니다.
-
-```lua
-eguidev.wait_viewport({ name = "root" })
-eguidev.widget("toolbar.tool.eraser"):click()
-eguidev.widget("toolbar.tool.eraser"):wait({ selected = true })
-return { screenshot = eguidev.root:screenshot() }   -- 이미지 블록으로 반환
-```
-
-`edev smoke`는 `smoketest/`의 각 `.luau`를 **순차로** 실행합니다. 현재:
-
-- `10_launch.luau` — 창이 뜨고 탭바·3단 툴바·캔버스가 그려지는지 + 스크린샷
-- `20_ink_tool_picker.luau` — 실제 클릭으로 도구 선택이 바뀌는지
-- `30_more_menu.luau` — `More` 오버레이의 열림/닫힘 · 항목 존재 · 높이/레일 통일 ·
-  **부분 겹침 없음**(`layout_issues`)
-- `40_ui_gallery.luau` — 컴포넌트 갤러리 계약 스캔 (갤러리가 닫혀 있으면 skip →
-  `scripts/ui-gallery-check.sh`가 `FREEDF_UI_GALLERY=1`로 열어서 돌립니다)
-
-전체 검증은 **한 명령**입니다(순차 실행이 `flock`으로 강제됩니다):
-
-```bash
-./scripts/test-all.sh            # 헤드리스 계약 → 스모크 → 갤러리 → 기본 프로필 컴파일
-```
-
-> **동시에 두 개를 돌리지 마세요.** `edev`는 실제 창을 쓰므로 서로의 프레임/스크린샷을
-> 깨뜨립니다(실측: 동시 실행 시 `10_launch` 스크린샷 타임아웃). `scripts/edev-run.sh`가
-> `flock`으로 직렬화하므로 어떤 호출 순서로도 안전합니다.
-
-## MCP로 에이전트에 연결
-
-```toml
-[mcp_servers.freedf-edev]
-command = "edev"
-args = ["mcp"]
-```
-
-에이전트는 `start`/`stop`/`restart`/`status` 뒤에 앱이 제공하는 `script_api`,
-`script_eval`로 **한 번의 호출에 준비·조작·검증·보고**를 끝냅니다.
-
-## 알아 둘 점
-
-- **종료 확인 창**: FreeDF는 종료 시 "Save before quitting?" 창을 띄우지만,
-  자동화 실행에서는 그 창을 건너뜁니다(`dev::automation_active()`). 그러지
-  않으면 EDEV의 정상 종료가 유예 시간을 넘겨 강제 종료됩니다.
-- **픽스처 없음**: 아직 `eguidev.fixture(...)`로 등록한 베이스라인이 없어
-  스크립트는 앱의 시작 상태에서 출발합니다. 상태 리셋이 필요한 시나리오가
-  생기면 `DevMcp::fixtures(...)` + `on_fixture_ui(...)`를 추가하세요.
-- **DB 흐름**: Sync v3 서버가 없으면 앱은 "first run setup" 창과 함께
-  disconnected 폴백으로 시작합니다. 노트/PDF를 여는 시나리오를 자동화하려면
-  `server.json`에 도달 가능한 서버를 설정해야 합니다.
-- **PDFium**: 없어도 GUI는 뜹니다(지연 로드). PDF 렌더링 검증에는 실행 파일
-  옆에 `libpdfium.so` / `pdfium.dll`이 필요합니다.
-- **렌더러**: glow를 쓰세요. wgpu 백엔드는 특정 조합에서 자동화 중 유휴 프레임이
-  멈춥니다.
-- **팝업 안 항목은 자동화가 클릭할 수 없습니다**: egui 팝업(`menu_button`) 내부
-  위젯은 interaction-ready로 판정되지 않습니다(실측: `wait({actionable=true})`
-  타임아웃, 팝업 밖 위젯은 정상). 그래서
-  * 메뉴 스모크는 **구조 검증**만 합니다(`30_more_menu.luau`).
-  * 팝업 밖에서 열 수 있는 경로는 **환경변수 테스트 훅**을 씁니다
-    (`FREEDF_UI_GALLERY=1` → 갤러리 창 → 계약 스캔).
-  * `Window`의 내장 스크롤은 `scroll_into_view()` 대상이 아닙니다 — 갤러리 스캔은
-    초기 가시 영역의 컴포넌트로 상호작용을 검증합니다.
-- **메뉴 항목을 누르면 메뉴가 닫힙니다**: egui 팝업의 기본 동작이라, 연속으로
-  두 항목을 조작하려면 그 사이에 메뉴를 다시 열어야 합니다. 항목의 상태 변화를
-  확인하려면 **다시 열어서** 읽으세요(`smoketest/30_more_menu.luau` 5번 단계).
-- **앱 세션당 첫 클릭은 창 활성화에 소비됩니다**: 앱을 띄운 뒤 곧바로
-  `widget:click()`을 하면 그 클릭이 사라집니다(실측: 1번째 클릭 무시, 2번째부터
-  정상 — 그래서 `10_launch`는 클릭이 없고, `20_ink_tool_picker`는 첫 클릭 결과를
-  단언하지 않습니다). 시나리오 시작 시 **"열릴 때까지 재시도"**하거나 워밍업
-  클릭을 한 번 넣으세요. `smoketest/30_more_menu.luau`가 재시도 패턴을 씁니다.
-- **팝업은 다음 프레임에 그려집니다**: 메뉴 항목(`menu.*`)은 `toolbar.more`를
-  클릭한 **다음** 프레임부터 존재합니다. 클릭 직후 바로 `expect`하지 말고
-  `widget(id):wait({ present = true })`로 기다리세요. 전역 `eguidev.wait(function() … end)`는
-  이 앱에서 조기 종료(관측 1프레임)하므로 위젯 수준 대기가 안전합니다.
-- **오버레이는 입력을 통과해야 합니다**: 화면 위에 뜨는 `egui::Area`는 기본이
-  `interactable: true`라서 **아래 위젯의 클릭을 삼킵니다**. 토스트가 우측 상단에
-  있던 시절에는 `More`/`Settings`가 눌리지 않았습니다 — 오버레이는 포인터가
-  자기 위에 있을 때만 인터랙티브하게 두세요(`ui/toast.rs` 참고).
-
-## 화면 캡처와 디자인 리뷰 (에이전트가 "직접 보게" 하기)
-
-화면을 긁는 대신 **앱이 프레임을 캡처해 이미지로 돌려줍니다**. 같은 스크립트가
-두 경로로 동작합니다.
-
-| 경로 | 이미지가 가는 곳 | 용도 |
-|---|---|---|
-| CLI `edev eval … --out-dir DIR` | `DIR/*.jpg` 파일 + JSON의 `images[].file` | 사람이 파일을 열어보거나, 에이전트가 파일을 직접 읽을 때 |
-| MCP `script_eval` | 응답의 **이미지 콘텐츠 블록** | 에이전트가 도구 결과에서 바로 봄 |
-
-준비된 스크립트:
-
-```bash
-# 뷰포트 전체(또는 --arg widget=canvas.surface 로 위젯 크롭) 캡처
-scripts/edev-run.sh eval scripts/design-shot.luau --out-dir tmp/eguidev-screenshots
-
-# 이미지 + 측정값(위젯 기하 / 레이아웃 문제 / 팔레트 / WCAG 대비) 한 번에
-scripts/edev-run.sh eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
-
-# More 오버레이를 열고 캡처 + 행 기하/레이아웃 문제 (메뉴 리디자인 리뷰용)
-scripts/edev-run.sh eval scripts/menu-shot.luau --out-dir tmp/eguidev-screenshots
-
-# 갤러리 계약 스캔(갤러리를 열어서) — test-all의 3단계
-scripts/ui-gallery-check.sh
-```
-
-`design-audit.luau`가 돌려주는 것:
-
-| 키 | 내용 |
-|---|---|
-| `image` | 프레임 캡처(에이전트가 직접 봄) |
-| `widgets` | 보이는 위젯의 id/역할/라벨/사각형/활성 상태 |
-| `layout_issues` | eguidev 판정: overlap / clipping / overflow / zero_size / text_truncation / offscreen |
-| `small_targets` | 클릭 대상인데 24pt 미만인 컨트롤 |
-| `disabled` | 비활성 어포던스 목록 |
-| `palette` | 화면 그리드 샘플링 색 빈도(테마 일관성·강조색 비중) |
-| `contrast` | 위젯별 배경(최빈색) vs 전경(최대 편차) WCAG 대비비 + `aa_body`/`aa_ui` |
-
-주의: `contrast.distinct == false`면 그 위젯 안에서 글자/아이콘 픽셀이 잡히지
-않았다는 뜻입니다(수치 대신 이미지를 보고 판단). `layout_issues`는 **같은 부모를
-공유하는 형제** 사이의 판정만 하므로, 레이어를 넘는 겹침(예: 토스트가 툴바를
-덮는 경우)은 이미지로 판단해야 합니다.
-
-MCP 반환값은 `ImageRef`가 **반환 테이블에서 도달 가능**해야 이미지 블록이 됩니다:
+샌드박스에서 도는 strict Luau이고 전역은 `eguidev` 하나뿐입니다(파일/네트워크
+접근 없음). 준비 → 캡처 → 측정을 한 번의 호출로 끝냅니다.
 
 ```lua
 eguidev.root:wait_capture()
 return {
-  image = eguidev.root:screenshot(),
-  tree = eguidev.dump_text({ fields = "core" }),
+  image = eguidev.root:screenshot(),          -- 응답에 이미지 블록으로 포함
+  tree  = eguidev.dump_text({ fields = "core" }),
 }
 ```
 
-## VS Code / Cline 설정
+`ImageRef`가 **반환 테이블에서 도달 가능**해야 이미지 블록이 됩니다.
 
-이 저장소에 필요한 설정은 이미 들어 있습니다.
-
-| 파일 | 역할 |
+| 스크립트 | 목적 |
 |---|---|
-| `.vscode/mcp.json` | VS Code 네이티브 MCP 클라이언트용 서버 등록 |
-| `.vscode/tasks.json` | 캡처/감사/덤프/스모크 작업 (Tasks: Run Task) |
-| `.vscode/settings.json` | `*.luau` 연결, `target/`·`.edev-instances` 제외, clippy 검사, 터미널 GL 환경 |
-| `.clinerules/eguidev-visual-review.md` | Cline에게 "추측 대신 캡처하라"는 규칙과 API 요약 |
-| `scripts/edev-mcp.sh` | MCP stdio 래퍼(Xvfb + `--cwd` 고정, stdout은 프로토콜 전용) |
-
-### Cline
-
-Cline은 전역 설정 파일을 씁니다(VS Code Server 기준):
-
-```
-~/.vscode-server/data/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
-```
-
-데스크톱 VS Code라면 `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`.
-
-```json
-{
-  "mcpServers": {
-    "eguidev-freedf": {
-      "type": "stdio",
-      "command": "/absolute/path/to/FreeDF/scripts/edev-mcp.sh",
-      "args": ["mcp"],
-      "env": { "LIBGL_ALWAYS_SOFTWARE": "1", "FREEDF_RENDERER": "glow" },
-      "disabled": false,
-      "autoApprove": ["start", "stop", "restart", "status", "script_api", "script_eval", "app_close"],
-      "timeout": 300
-    }
-  }
-}
-```
-
-`autoApprove`는 선택입니다. `script_eval`을 빼면 캡처마다 승인 버튼을 눌러야
-합니다(샌드박스 Luau는 파일/네트워크 접근이 없습니다).
-
-### 왜 `command`가 `edev`가 아니라 래퍼인가
-
-1. VS Code Server(SSH)의 확장 호스트에는 **`DISPLAY`가 없습니다**. 래퍼가 Xvfb를
-   대신 띄웁니다.
-2. MCP 클라이언트의 cwd가 워크스페이스가 아닐 수 있어 `.edev.toml`을 못 찾습니다.
-   래퍼가 `--cwd`로 저장소 루트를 고정합니다.
-3. MCP stdio는 **stdout이 곧 JSON-RPC**입니다. 래퍼는 진단을 stderr로만 보냅니다.
-
-### 에이전트 사용 흐름
-
-```
-start          → 앱 준비(헤드리스 Xvfb)
-script_eval    → 캡처/측정 (이미지 블록이 응답에 포함)
-script_api     → 등록된 진단 provider 읽기
-stop           → 정리
-```
-
-터미널에서 바로 확인:
+| `scripts/design-shot.luau` | 뷰포트 전체 또는 `widget` 인자 위젯 크롭 캡처 |
+| `scripts/design-audit.luau` | 이미지 + 위젯 기하 + 레이아웃 문제 + 팔레트 + WCAG 대비 |
 
 ```bash
-scripts/edev-run.sh smoke                              # 회귀
-scripts/edev-run.sh eval scripts/design-shot.luau --out-dir tmp/eguidev-screenshots
-scripts/edev-mcp.sh mcp                                # MCP 서버(stdio) 직접 띄우기
+scripts/edev-run.sh --config .edev-gui.toml eval scripts/design-audit.luau \
+  --out-dir tmp/eguidev-screenshots
 ```
+
+`design-audit.luau` 반환 키: `image` · `widgets`(id/역할/라벨/사각형/활성) ·
+`layout_issues`(overlap/clipping/overflow/zero_size/text_truncation/offscreen) ·
+`small_targets`(24pt 미만 클릭 대상) · `disabled` · `palette`(화면 색 빈도) ·
+`contrast`(WCAG 대비비 + `aa_body`/`aa_ui`). `contrast.distinct == false`면 글자
+픽셀이 안 잡힌 것이므로 수치 대신 이미지를 보고 판단합니다.
+
+## 알아 둘 점
+
+- **렌더러**: glow를 쓰세요(`FREEDF_RENDERER=glow`). wgpu 백엔드는 특정 조합에서
+  자동화 중 유휴 프레임이 멈춥니다.
+- **MCP**: `scripts/edev-mcp.sh`가 stdio 래퍼입니다(Xvfb + `--cwd` 고정, stdout은
+  프로토콜 전용). VS Code/Cline 설정은 `.vscode/mcp.json`에 있고, 에이전트 규칙은
+  `.clinerules/eguidev-visual-review.md`입니다.
+- **`.edev-instances/`는 EDEV 소유 상태**입니다 — 읽지도, 편집하지도, 지우지도
+  마세요.
+- **테스트는 코어/GUI가 나눠 갖습니다**: 코어 규약(필터·지우기 히트 기하·이력
+  역연산·JSON 왕복)은 `freedf-core`가, 그 API를 어느 문서에 몇 단계로 부르는지는
+  `crates/freedf-gui/tests/`가 검증합니다. 픽셀 판단이 필요한 경우에만 캡처를
+  씁니다.

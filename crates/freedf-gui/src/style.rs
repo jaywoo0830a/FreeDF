@@ -2,7 +2,7 @@
 //!
 //! 이 파일이 freedf-gui의 **유일한 스타일 출처**다. freedf-theme(egui
 //! `Style`/`Visuals` 설치기) 의존은 0 — 셸의 모든 시각적 결정은 아래 `css!`
-//! 규칙과 [`palette`]에 있다 (docs/freedf-gui-migration.md Phase 3).
+//! 규칙과 [`palette`]에 있다 (BEM 이름은 `tests/style_tests.rs`가 강제한다).
 //!
 //! ## 구성
 //!

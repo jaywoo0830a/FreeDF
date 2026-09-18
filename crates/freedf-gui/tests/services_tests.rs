@@ -1,7 +1,6 @@
 //! 서비스 계층 연결 확인 — `src/main.rs`의 `#[cfg(test)]` 모듈에서 이동했습니다.
 //!
-//! freedf-gui가 `freedf-services`(서버/저장소/PDF/설정)를 직접 쓸 수 있는지
-//! (Phase 1 — docs/freedf-gui-migration.md).
+//! freedf-gui가 `freedf-services`(서버/저장소/PDF/설정)를 직접 쓸 수 있는지.
 
 /// freedf-services 계층이 이 크레이트에서 그대로 쓰인다.
 #[test]

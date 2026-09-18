@@ -1,6 +1,6 @@
 --!strict
 -- freedf-gui 셸 스모크 — 창이 뜨고 계약 위젯(툴바 버튼 · 캔버스)이 등록되는지 확인.
--- (Phase 3 계측 인프라 검증 — docs/freedf-gui-migration.md)
+-- (계측 인프라 검증 — docs/eguidev-automation.md)
 eguidev.root:expect({ frame_at_least = 1 })
 
 -- 툴바 버튼 (어댑터가 그린 버튼이 `gui.<라벨 슬러그>` id로 등록된다)

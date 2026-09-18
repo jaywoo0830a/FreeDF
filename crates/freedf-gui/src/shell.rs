@@ -188,9 +188,8 @@ elm_magic::view! {
                     <Text class="statusbar__toast">"{toast}"</Text>
                 }}
             </Row>
-            // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs,
-            // docs/freedf-gui-migration.md Phase 2). 위젯 트리 밖의 상태는
-            // canvas 모듈의 UI-스레드 엔진이 소유한다.
+            // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs Phase 2).
+            // 위젯 트리 밖의 상태는 canvas 모듈의 UI-스레드 엔진이 소유한다.
             // 주의: `<Raw>`는 class를 `vec![]`로 고정해 BEM 클래스를 줄 수 없다 — 캔버스 색은 `canvas.rs`의 팔레트 토큰이 담당한다.
             <Raw>|ui: &mut eframe::egui::Ui| {
                 crate::canvas::paint(ui);
@@ -282,7 +281,7 @@ pub fn render_shell(ui: &mut eframe::egui::Ui, ctx: &mut elm_magic::Ctx) {
     // 스타일 해석 자체는 elm-magic 코어의 몫이라 freedf-gui는 값을 옮기기만 한다.
     let pass =
         elm_magic_egui::render_with_palette(ui, &tree, &mut ctx.arena, &crate::style::palette());
-    // ── eguidev 계약 등록 (Phase 3 — docs/freedf-gui-migration.md) ──
+    // ── eguidev 계약 등록 (Phase 3 — docs/eguidev-automation.md) ──
     // 어댑터가 그린 버튼/탭을 계약 id로 등록. id 규칙: `gui.<라벨 슬러그>`,
     // 같은 라벨이 한 프레임에 두 번 이상 나오면 `.<n>` 접미사 (이름 없는 탭 둘 →
     // `gui.untitled`, `gui.untitled.1` — eguidev 중복 id 결함 방지).

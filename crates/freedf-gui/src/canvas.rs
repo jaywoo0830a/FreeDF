@@ -1,5 +1,7 @@
-//! 캔버스 — `<Raw>` 경계 뒤의 명령형 egui 렌더/입력 (Phase 2~3,
-//! docs/freedf-gui-migration.md).
+//! 캔버스 — `<Raw>` 경계 뒤의 명령형 egui 렌더/입력 (Phase 2~3).
+//!
+//! 잉크 파이프라인 규약은 `docs/ink-pipeline-design.md`, 계측 id 계약은
+//! `docs/eguidev-automation.md`를 본다.
 //!
 //! **탭 = 문서**. 캔버스 엔진이 문서(`Doc`: 저장소·페이지·뷰·PDF)를 소유하고,
 //! 위젯 트리(elm-magic)는 탭 이름/활성만 읽어 가며 커맨드(`canvas::add_tab()` 등)
