@@ -34,14 +34,7 @@ pub fn normalize(colors: Vec<[u8; 4]>) -> Vec<[u8; 4]> {
 /// `&'static str` 표로 둔다: 셸(`view!`)의 클로저가 **복사만** 하게 하려는 것
 /// (문자열을 빌리면 클로저가 `'static`을 못 만족해 매크로 생성 코드가 깨진다).
 pub const LABELS: [&str; SWATCHES] = [
-    "Swatch 1",
-    "Swatch 2",
-    "Swatch 3",
-    "Swatch 4",
-    "Swatch 5",
-    "Swatch 6",
-    "Swatch 7",
-    "Swatch 8",
+    "Swatch 1", "Swatch 2", "Swatch 3", "Swatch 4", "Swatch 5", "Swatch 6", "Swatch 7", "Swatch 8",
 ];
 
 /// 인덱스 → 스와치 라벨 (범위 밖이면 빈 문자열).

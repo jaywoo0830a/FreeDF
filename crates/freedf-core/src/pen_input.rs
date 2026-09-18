@@ -583,11 +583,7 @@ mod otd_ipc {
             return std::net::TcpStream::connect(rest).ok().map(Conn::Tcp);
         }
         // 파일 경로 = 유닉스 소켓 (Windows에서는 네임드 파이프 경로).
-        if let Ok(f) = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(ep)
-        {
+        if let Ok(f) = std::fs::OpenOptions::new().read(true).write(true).open(ep) {
             return Some(Conn::Pipe(f));
         }
         #[cfg(unix)]

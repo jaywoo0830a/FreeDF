@@ -934,7 +934,10 @@ fn device_tilt_feeds_the_mesher() {
     })
     .unwrap();
     let ctx = egui::Context::default();
-    paint_frame(&ctx, vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))]);
+    paint_frame(
+        &ctx,
+        vec![egui::Event::PointerMoved(egui::pos2(300.0, 300.0))],
+    );
     with(|c| {
         assert!(
             c.tilt_magnitude() > 0.0,

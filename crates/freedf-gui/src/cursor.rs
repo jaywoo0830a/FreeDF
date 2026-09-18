@@ -59,7 +59,11 @@ pub fn hysteresis(
     } else {
         1
     };
-    let shown = if counter >= stable_frames { want } else { shown };
+    let shown = if counter >= stable_frames {
+        want
+    } else {
+        shown
+    };
     (counter, shown)
 }
 
@@ -221,11 +225,7 @@ fn paint_nib(painter: &egui::Painter, pos: Pos2, time: f32, spec: &CursorSpec, f
         ));
         painter.circle_stroke(pos + dir * (5.0 * cs), 1.1 * cs, Stroke::new(1.0, dark));
         let gx = (time * 3.0).sin() * (1.2 * cs);
-        painter.circle_filled(
-            pos + dir * (2.5 * cs) + perp * gx,
-            1.1 * cs,
-            Color32::WHITE,
-        );
+        painter.circle_filled(pos + dir * (2.5 * cs) + perp * gx, 1.1 * cs, Color32::WHITE);
     } else {
         // 볼 — 방사형 그라데이션 팬(어두운 림 → 밝은 코어) + 회전 반사점.
         let mut bm = egui::Mesh::default();
@@ -342,4 +342,3 @@ fn donut_ring_mesh(c: Pos2, r: f32, hole: f32, segments: usize, color: Color32) 
     }
     m
 }
-
