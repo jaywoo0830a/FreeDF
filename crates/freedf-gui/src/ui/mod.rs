@@ -9,7 +9,7 @@
 //!
 //! - [`atoms`] — 버튼/제목/행/탭 같은 최소 단위
 //! - [`layout`] — 영역(블록) 컨테이너 (`{children}` 통과)
-//! - [`icons`] — Phosphor 글리프 + 라벨/슬러그 규칙 (마크업·테스트·계약 id의 공통 출처)
+//! - [`icons`] — Heroicons(iconflow) 글리프 + 라벨/슬러그 규칙 (마크업·테스트·계약 id의 공통 출처)
 
 pub mod atoms;
 pub mod icons;

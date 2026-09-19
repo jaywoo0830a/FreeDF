@@ -1822,7 +1822,6 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
- "egui_phosphor_icons",
  "eguidev",
  "eguidev_runtime",
  "elm-magic",
@@ -1830,6 +1829,7 @@ dependencies = [
  "freedf-canvas",
  "freedf-core",
  "freedf-services",
+ "iconflow",
  "serde",
  "serde_json",
 ]
@@ -2331,6 +2331,12 @@ checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
 ]
+
+[[package]]
+name = "iconflow"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdea0c209457d8685cf6f1aae4eabc71d69f3c6ee6bb1fab0861a52251763936"
 
 [[package]]
 name = "icu_collections"

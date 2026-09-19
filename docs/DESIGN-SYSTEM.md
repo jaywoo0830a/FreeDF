@@ -142,7 +142,7 @@
 
 ## 4. 타이포 스케일
 
-폰트는 이미 고정: Inter(라틴) → Asta Sans(한글) → Phosphor(아이콘).
+폰트는 이미 고정: Inter(라틴) → Asta Sans(한글) → **Heroicons Outline**(아이콘, iconflow).
 
 | 역할 | size | weight | line-height | color | 클래스 |
 |---|---|---|---|---|---|
@@ -152,6 +152,27 @@
 | 패널 항목 | 13 | normal | 1.4 | `text_dim` (hover `text`) | `.panel__item` |
 | 섹션 라벨 | 12 | bold | 1.2 | `text_dim` + uppercase + ls 0.6 | `.section__title` |
 | 메타 · 상태 | **12** | normal | 1.3 | `text_dim` | `.statusbar__text` |
+
+### 4.1 아이콘 — iconflow **Heroicons Outline** 하나만
+
+아이콘은 이모지도, 레거시 `freedf`가 쓰는 Phosphor(`egui_phosphor_icons`)도 아니다.
+**iconflow 1.0.0의 Heroicons Outline 팩**만 쓴다(`Cargo.toml`의 `pack-heroicons` 피처).
+
+| 항목 | 값 | 근거 |
+|---|---|---|
+| 라이브러리 | `iconflow = "1.0.0"` (MIT) | `Cargo.toml` — `all-packs`(15MiB)가 아니라 **팩 하나만** |
+| 팩 · 스타일 · 크기 | `Pack::Heroicons` · `Style::Outline` · `Size::Regular` | `ui/icons.rs`의 상수 3개가 유일한 출처 |
+| 어휘 | `ui::icons::ICONS` — (라벨, Heroicons 이름) 표 | 라벨만 계약 id의 출처. 이름은 이 파일 안에만 있다 |
+| 폰트 등록 | 비례/고정 패밀리 **폴백 끝**에 `Heroicons Outline` | elm-magic CSS는 `proportional`/`monospace`만 노출 → named family 선택 불가 |
+| 검증 | `tests/icons_tests.rs` (7건) | 어휘 전량 해석 + PUA + 슬러그 불변 + 폰트 스택에 Phosphor 없음 |
+
+> **Filled와 Outline을 같이 넣지 않는 이유**: 두 변형은 코드포인트가 **같다**
+> (실측 318/324 아이콘). 폴백 스택에 둘 다 넣으면 앞에 온 쪽만 그려지므로
+> 스타일은 하나로 고정한다. 스타일을 바꾸려면 `ui/icons.rs`의 `STYLE` 한 줄이다.
+>
+> **광학 크기**: Heroicons의 24px 그리드 글리프는 Phosphor보다 광학적으로 조금 작고
+> 가늘다(캡처 비교: `tmp/design-1100` vs `tmp/design-icons`). 헤어라인 디자인과는
+> 맞지만, 더 크게 보이게 하려면 글리프 전용 폰트 크기가 필요하다(§11.3).
 
 ## 5. 형태 (radius · border · shadow · opacity)
 
@@ -399,9 +420,10 @@ elm_magic::css! {
 | `Section` `Heading` `Note` `PanelRow` `Empty` | `.section__title` `.___` `.text` `.panel__row/__item/__empty` | ✗ (Button 아님) |
 | `StatusText` `StatusToast` | `.statusbar__text` / `__toast` | ✗ (자동화 `assert_text` 대상) |
 
-- **`ui/icons.rs`는 라벨 문자열을 바꾸지 않는다**(C1). 아이콘 글리프만 교체했다:
-  스와치 글리프를 `CIRCLE`(윤곽선) → **`DOT`(채워진 점)** 으로 바꿔 감사의 중심 픽셀
-  샘플링이 원 안쪽(바탕색 혼합)을 잡던 오측정을 없앴다(§9.3).
+- **`ui/icons.rs`는 라벨 문자열을 바꾸지 않는다**(C1). 바뀐 것은 **글리프 공급원**뿐이다:
+  레거시 Phosphor(`egui_phosphor_icons`) → **iconflow Heroicons Outline**(§4.1).
+  라벨은 여전히 `"글리프 텍스트"`라 슬러그(=계약 id)가 그대로다 — `tests/icons_tests.rs`가
+  `gui.new_tab`/`gui.swatch_2`/`gui.clear_ink` 등을 고정한다.
 - 상태 문자열은 `shell.rs`에서 **분리**했다: 좌측 `status`(또는 토스트),
   이어서 `StatusMeta`의 `canvas_status`(§6 트리).
 
@@ -416,7 +438,7 @@ elm_magic::css! {
 | 크롬이 먹는 세로 | 390px (창의 54%) | **246px** (34%) | −144 |
 | 바 개수 | 5 (navbar/toolbar/ribbon/tabs/statusbar) | **4** (TopBar/InkBar/ViewBar/Statusbar) | tabs 인라인 |
 | 보더 박스 | 6 | **0** (그림자는 모달만) | 배경 단차로 구획 |
-| `contrast` `aa_body:false` | **4건** (`gui.sidebar` 4.47 …) | **2건**(§9.3 아티팩트) | 이론값은 전부 통과 |
+| `contrast` `aa_body:false` | **4건** (`gui.sidebar` 4.47 …) | **0건** — 아이콘 교체 후(§9.3) | 최소 4.7 |
 | `layout_issues` | `{}` @1100 / offscreen @900 | **`{}` 양쪽** | ✓ |
 | `small_targets` | `{}` | **`{}`** | ✓ (28px) |
 | CSS 셀렉터 수 | 41 | **45** | 문서 갱신 |
@@ -435,34 +457,39 @@ FREEDF_GUI_SIZE=900x600 scripts/edev-run.sh --config .edev-gui.toml eval scripts
 
 # 계약 회귀 / 테스트
 scripts/edev-run.sh --config .edev-gui.toml smoke     # [PASS]
-cargo test -p freedf-gui --locked                     # 69 통과
+cargo test -p freedf-gui --locked                     # 76 통과
 cargo test -p freedf-gui --test elm_magic_bugs        # elm-magic 버그 최소 재현 3건
+cargo test -p freedf-gui --test icons_tests           # 아이콘 계약 7건
+cargo tree -p freedf-gui | grep -ci phosphor          # 0 — 레거시 아이콘 미참조
 cargo check -p freedf-gui --features dev-automation
-cargo check -p freedf                                 # 레거시 기본 빌드 유지
+cargo check -p freedf                                 # 레거시 기본 빌드 유지(Phosphor 그대로)
 ```
 
 - **`FREEDF_GUI_SIZE=WxH`** 를 `main.rs`에 추가했다(기존 `FREEDF_RENDERER`/
   `FREEDF_GUI_PPP`와 같은 방식, 기본 1100×720 — 동작 변화 없음). eguidev에는 창
   리사이즈 API가 없어 이 오버라이드가 좁은 창 검증의 유일한 수단이다.
-- `Cargo.lock` 변경 0줄(`--locked` 유지).
+- `Cargo.lock` — 아이콘 교체로 `iconflow 1.0.0`이 추가됐다(+7줄). 그 외 드리프트 0
+  (`--locked` 유지).
 
-### 9.3 남은 `aa_body:false` 2건은 측정 아티팩트다
+### 9.3 대비 — 아이콘 교체로 아티팩트 2건이 **사라졌다**
 
-| id | 실측 | 원인 | 이론값 |
+감사 `contrast`는 위젯 내부를 9×5 격자로 훑어 **최빈색=배경 / 최대 휘도차=전경**으로
+잡는다. 그래서 글리프가 얇아지면(윤곽선) 격자점이 **획 위에** 떨어질 확률이 오히려
+높아지고, 이전에 글리프 가장자리(안티에일리어싱 혼합색)를 집어 오측정되던 두 항목이
+교체 후에는 **순수 글자색**을 집는다.
+
+| id | Phosphor(이전) | Heroicons Outline(현재) | 이론값 |
 |---|---|---|---|
-| `gui.swatch_1` | fg `#6994f1` / bg `#2563eb` = **1.75** | 활성 칩의 중심 픽셀이 **글자/글리프의 안티에일리어싱 가장자리**에 걸려 흰색과 액센트가 섞였다 | 흰 글자 on `#2563EB` = **5.17** ✓ |
-| `gui.pressure` | fg `#cddbfa` / bg `#2563eb` = **3.72** | 같은 이유(게이지 글리프 가장자리) | 5.17 ✓ |
+| `gui.swatch_1` | fg `#6994f1` / bg `#2563eb` = **1.75** ✗ | fg `#fbfcff` / bg `#2563eb` = **5.04** ✓ | 흰 글자 on `#2563EB` = 5.17 |
+| `gui.pressure` | fg `#cddbfa` / bg `#2563eb` = **3.72** ✗ | fg `#f0f4fe` / bg `#2563eb` = **4.7** ✓ | 5.17 |
 
-같은 행의 같은 스타일인 `gui.medium`(5.17), `gui.sidebar`(5.12), `gui.untitled`(4.91)은
-**순수 흰 픽셀**이 잡혀 통과한다 — 즉 스타일이 아니라 **샘플 지점**의 문제다.
-`docs/eguidev-automation.md`가 명시하듯 `contrast`는 렌더 픽셀에서 나오므로 경계값은
-이미지와 함께 판단한다(캡처: `tmp/design-1100/design-audit-img_0.jpg`).
+교체 후 25개 항목이 **전부 `aa_body: true`**이고 최소값은 4.7(`gui.pressure`)이다
+(`gui.medium` 4.87, `gui.sidebar` 4.9, `gui.untitled` 5.17). 즉 이전의 "AA 2건 실패"는
+스타일 문제가 아니라 **샘플 지점 문제**였음이 교체 실측으로 확인됐다.
+
 `900×600`의 `canvas.surface` 항목은 `distinct:false`(흰 종이가 캔버스를 채워 단일 색)라
-감사가 수치를 못 만든 경우다.
-
-> 개선 여지: 스와치 글리프를 `DOT`으로 바꿔 *비활성* 칩의 오측정(3.81)은 없앴다.
-> 활성 칩의 잔여 아티팩트는 어댑터가 `id`/`title` prop을 갖게 되면(§11.2-3)
-> 아이콘 없는 라벨로 정리할 수 있다.
+감사가 수치를 못 만든 경우다 — 경계값은 이미지와 함께 판단한다
+(캡처: `tmp/design-icons/design-audit-img_0.jpg`).
 
 ## 10. 단계별 실행 결과 (P0~P4 완료)
 
@@ -483,7 +510,9 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 | `wrap: true`가 무효였다(C10) | CSS에서 전부 제거하고 2줄 구성으로 대체 |
 | `justify: end`·`width: fill` 스페이서가 레이아웃을 창 밖으로 팽창시켰다(C11) | 스페이서 컴포넌트·CSS 삭제, 우측 정렬 포기 |
 | 1줄 툴바가 900px에서 6개 버튼을 화면 밖으로 밀어냈다 | 2줄 툴바(§3.2) — 대가는 캔버스 26px |
-| 스와치 글리프 `CIRCLE`이 대비를 오측정시켰다 | `DOT`으로 교체(§9.3) |
+| 스와치 글리프 `CIRCLE`이 대비를 오측정시켰다 | `DOT`으로 교체 → 이후 아이콘 계열 전체를 교체(§9.3) |
+| 레거시 Phosphor를 freedf-gui가 계속 참조하고 있었다 | `iconflow` Heroicons Outline으로 교체, 어휘 표 재작성 + `tests/icons_tests.rs` |
+| Heroicons `Filled`/`Outline`이 코드포인트를 공유했다 | 폰트 스택에 **한 스타일만** 등록(§4.1) — 둘 다 넣으면 뒤쪽이 죽는다 |
 | `save_edits`/`load_edits`를 TopBar에 두면 900px에서 넘친다 | ViewBar 2줄의 문서 그룹으로 이동 |
 | `draw_paper`가 단색 1px 경계만 그렸다 | 3겹 그림자로 근사(blur 없음) |
 
@@ -503,6 +532,12 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 - **`wrap: true`를 다시 넣는 것**(C10) — 무효라서 "줄바꿈된다"는 착각만 만든다.
 - **`justify: end`/`width: fill` 스페이서로 우측 정렬하는 것**(C11) — 레이아웃을
   창 밖으로 팽창시킨다.
+- **`freedf-gui`에서 레거시 Phosphor(`egui_phosphor_icons`)를 참조하는 것** — 아이콘은
+  `iconflow` Heroicons Outline 하나만 쓴다(§4.1). 아이콘 전용 의존을 추가하면
+  `cargo tree -p freedf-gui | grep -ci phosphor`가 0이 아니게 된다.
+- **`Filled`와 `Outline`을 같은 폰트 스택에 넣는 것** — 코드포인트가 같아 뒤쪽이 죽는다.
+- **어휘 표(`ICONS`) 밖에서 아이콘 이름을 쓰는 것** — 이름 오타는 조용히 "아이콘 없음"이
+  된다. 새 아이콘이 필요하면 표에 추가하고 `tests/icons_tests.rs`가 훑게 한다.
 - **한 줄에 항목을 몰아넣는 것** — 행 폭 예산(1100px에서 사용 폭 1084)을 넘기면
   조용히 offscreen이 된다. 넘칠 것 같으면 **줄을 나눈다**.
 
@@ -516,6 +551,7 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 | 4 | 테마 | **다크 고정** | 장시간 PDF 읽기 정책. 라이트는 토큰 14슬롯 때문에 팔레트 2벌이 필요(P5) |
 | 5 | 상태 스트립 위치 | **캔버스 위 유지** | C4 + `assert_text` 계약(§6.3). 우측 정렬은 C11로 불가 → 좌측 흐름으로 확정 |
 | 6 | 우측 정렬 | **포기** | C11. 그룹 순서 + 헤어라인으로 위계를 만든다 |
+| 7 | 아이콘 공급원 | **iconflow Heroicons Outline 하나** | 레거시 Phosphor를 freedf-gui에서 제거(레거시 `freedf`는 그대로). `Filled`/`Outline`이 코드포인트를 공유해 스타일은 하나로 고정(§4.1) |
 
 ### 11.3 남은 작업 (P5 후보)
 
@@ -524,6 +560,7 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 | 진짜 "Fit" | 지금 `zoom_fit()`은 `ViewTransform::default()`(줌 100%)다. A4(842pt) > 캔버스(475)라 페이지 하단이 잘린다 — 캔버스 크기에서 맞춤 배율을 계산하는 기능이 필요(`shell_tests`의 "줌 100%" 기대값도 함께 수정) |
 | 스와치 색 노출 | 칩이 자기 **잉크 색**을 보여주지 않는다(글리프는 글자색). 인스턴스별 색은 CSS로 불가 → 어댑터 기능 필요 |
 | 좁은 창(<900px) | 2줄로도 900px 미만은 넘칠 수 있다. 3줄 전환 또는 스크롤/오버플로가 필요 |
+| 글리프 광학 크기 | Heroicons 24px 그리드 글리프는 Phosphor보다 작고 가늘게 보인다(§4.1). 글리프만 키우려면 라벨과 분리된 폰트 크기가 필요 |
 | 테마 | 라이트 팔레트 2벌 |
 
 ### 11.4 다음 문서

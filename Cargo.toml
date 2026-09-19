@@ -24,9 +24,14 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 egui = "0.36"
-# Phosphor 아이콘 — freedf(레거시)와 **같은 라이브러리**. 아이콘은 이모지가 아니라
-# 이 폰트의 글리프(U+E000 대역)로 그린다 (freedf-gui `src/fonts.rs`가 폴백으로 설치).
+# Phosphor 아이콘 — **레거시 `freedf` 크레이트 전용**. 새 GUI(`freedf-gui`)는
+# iconflow의 Heroicons만 쓰므로 이 의존을 참조하지 않는다 (아이콘은 이모지가 아니라
+# 폰트 글리프(U+E000 대역)로 그린다).
 egui_phosphor_icons = { version = "0.5", default-features = false }
+# iconflow — 14개 아이콘 팩을 한 API로 제공하는 아이콘 라이브러리 (MIT).
+# `freedf-gui`는 **Heroicons Outline** 팩만 켠다(다른 팩은 피처로 컴파일 제외).
+# 팩을 켜야 그 팩의 TTF가 임베드된다 — `all-packs`는 15MiB라 쓰지 않는다.
+iconflow = { version = "1.0.0", default-features = false, features = ["pack-heroicons"] }
 # eframe 0.36 기본 렌더러는 wgpu(DX12) — 일부 Windows에서 시작 시 0xc0000005 크래시.
 # 호환성이 좋은 OpenGL(glow) 백엔드를 기본으로 사용하되, GPU 오프로드를 원하면
 # `FREEDF_RENDERER=wgpu` 환경 변수로 DirectX 12 백엔드를 선택할 수 있습니다.
