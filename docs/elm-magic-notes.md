@@ -39,6 +39,21 @@ freedf-gui는 UI를 전부 `elm_magic::view!` + `elm_magic::css!`로 그린다. 
   `max_rect`를 재설정해 **부모를 창 밖으로 팽창**시킨다(캔버스 폭 1754 > 창 1100,
   루트 rect 1241로 측정됨). 그룹은 왼쪽부터 차례로 흐르고 위계는 순서와
   `.bar__sep` 헤어라인으로 만든다.
+
+### 1.1 최소 재현 (실측값 — `tests/elm_magic_bugs.rs`)
+
+창 800×600 고정, 어댑터만 직접 호출(`frame` → `render_with_palette`).
+
+| # | 재현 | 측정 | 고쳐지면 |
+|---|---|---|---|
+| 1 | 폭 **300** 컨테이너에 200px 버튼 3개 + `wrap: true` | 버튼 3개가 **모두 y=0**(한 줄), x = 0 / 204 / **408–608** | 2·3번이 다음 줄로 내려가고 608이 사라진다 |
+| 2 | 폭 300 안의 **콘텐츠 크기** 자식 Row에 `justify: end` | 버튼이 `[0,0]–[100,20]` (x=0) | 자식이 부모 폭을 받아 x≈200에 붙는다 |
+| 3 | 폭 **780**(창 800) 컨테이너에 `width: fill` + 100px 버튼 | 스페이서가 780을 전부 먹어 버튼이 **x=784**(컨테이너 밖), 루트 `max_rect` 폭 **884 > 800** | 스페이서가 680만 차지하고 루트는 800을 유지한다 |
+
+> 3번의 두 증상은 순서가 있다: ① fill이 뒤 형제 자리를 비우지 않아 형제가 밀려나고,
+> ② 밀려난 형제가 **창을 넘을 때만** 조상 `max_rect`가 팽창한다(창 안이면 팽창 없음).
+> freedf-gui에서 캔버스 폭이 1754까지 간 것은 ①(여러 행의 overflow)과 ②(fill 스페이서
+> 3개)가 겹친 결과다.
 - 시작 자기등록은 **플랫폼별 섹션**으로 돈다: MSVC `.CRT$XCU`,
   Apple `__DATA,__mod_init_func`, ELF `.init_array`. 여기에 더해 `main()`이
   `elm_magic::style::init_styles()`를 한 번 부른다(멱등 — 섹션이 안 도는 환경의 안전판).
@@ -67,14 +82,19 @@ freedf-gui는 UI를 전부 `elm_magic::view!` + `elm_magic::css!`로 그린다. 
 
 ## 3. 검증 (freedf-gui 쪽)
 
-- `cargo test -p freedf-gui` — 66개 (셸/캔버스/펜/커서/팔레트/스타일).
+- `cargo test -p freedf-gui` — **69개** (셸/캔버스/펜/커서/팔레트/스타일 + elm-magic 재현 3).
   `shell_tests::tab_click_selects`와 `settings_modal_selects_smoothing`이 **값 prop
   회귀 지점**이다 (`key=` 없이 통과해야 한다).
+- **버그 최소 재현**: `crates/freedf-gui/tests/elm_magic_bugs.rs` — 이 문서 §1에서
+  실측으로 확인한 3건을 어댑터만 직접 호출해 재현한다(창 800×600 고정). 단언이
+  "현재(버그 있는) 동작"을 잠그므로, elm-magic이 고치면 그 테스트가 깨진다.
 - 시각/레이아웃 감사:
   `scripts/edev-run.sh --config .edev-gui.toml eval scripts/design-audit.luau --out-dir tmp/out`
-  — `layout_issues` 0건, 계약 id(`gui.*`, `canvas.surface`) 전부 등록, `small_targets`
-  0건(버튼/탭 `min-height`), `contrast` AA 통과.
+  — `layout_issues` **0건**(1100×720 **및** `FREEDF_GUI_SIZE=900x600`), 계약 id
+  (`gui.*`, `canvas.surface`) 전부 등록, `small_targets` 0건(컨트롤 `min-height: 28`),
+  캔버스 856×475 / 656×355.
 - 감사 수치 읽기 주의: `contrast`는 렌더된 픽셀 샘플이라 안티에일리어싱 때문에 이론값보다
-  낮게 나온다. 흰 글자 on `#0d6efd`(`.btn--on`/`.swatch--on`)는 이론 4.5:1, 실측
-  4.3–4.47:1로 AA 경계선이다 — Bootstrap `btn-primary`와 같은 값이고, 더 어둡게 하려면
-  `Token::Primary`를 낮춰야 하는데 그러면 navbar 브랜드 글자 대비가 함께 떨어진다.
+  낮게 나온다. 흰 글자 on `#2563EB`(`.btn--on`/`.swatch--on`)는 이론 **5.17:1**이고,
+  실측은 샘플 지점에 따라 1.75~5.17로 흔들린다(같은 스타일인데 `gui.medium`은 5.17,
+  `gui.swatch_1`은 글리프 가장자리에 걸려 1.75) — 경계값은 이미지와 함께 판단한다
+  (`docs/DESIGN-SYSTEM.md` §9.3).

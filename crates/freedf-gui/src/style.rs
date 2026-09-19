@@ -48,6 +48,9 @@
 //! 조용히 화면 밖으로 나간다: 감사 `layout_issues`의 `offscreen`이 그 감지기다.
 //! 그룹 사이 헤어라인(`.bar__sep`)과 `gap`만으로 위계를 만든다.
 //!
+//! 위 3건의 **최소 재현**은 `crates/freedf-gui/tests/elm_magic_bugs.rs`에 있다
+//! (어댑터만 직접 호출, 창 800×600 고정, 실측값이 주석에 있다).
+//!
 //! ## 예외 — egui 네이티브 위젯
 //!
 //! `<Raw>`(캔버스 painter)·`<Input>`·창 크롬·스크롤바는 egui가 직접 그린다.

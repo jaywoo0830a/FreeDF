@@ -55,11 +55,16 @@
   `elm-magic-egui` 어댑터가 **읽지 않는다**(0.7.4 소스 확인). 행은 항상 단일 줄이고,
   넘친 항목은 조용히 화면 밖으로 나간다 — 감사 `layout_issues`의 `offscreen`이 감지기다.
   → 행의 항목 수를 **폭 예산 안에** 유지해야 하고, 넘치면 **줄을 나눠**야 한다(§6).
+  최소 재현: `crates/freedf-gui/tests/elm_magic_bugs.rs` → `wrap_true_is_ignored`.
 - **C11 — 우측 정렬 수단이 없다.** `.…__end { justify: end }`는 콘텐츠 크기 자식
   Row에서 무효(before 캡처: About이 x≈760에서 멈춤)이고, `width: fill` 스페이서는
-  `set_max_width`가 커서 기준으로 `max_rect`를 재설정해 **부모를 창 밖으로 팽창**시킨다
-  (실측: 캔버스 폭 1754 > 창 1100, 루트 rect 1241). → 그룹은 왼쪽부터 차례로 흐르고,
-  위계는 **순서와 헤어라인**(`.bar__sep`)으로 만든다.
+  ① **뒤 형제 자리를 비우지 않아** 형제를 컨테이너 밖으로 밀고 ② 밀린 형제가 **창을
+  넘을 때만** 조상 `max_rect`를 창 밖까지 팽창시킨다(실측: 캔버스 폭 1754 > 창 1100,
+  루트 rect 1241). → 그룹은 왼쪽부터 차례로 흐르고, 위계는 **순서와
+  헤어라인**(`.bar__sep`)으로 만든다.
+  최소 재현: `crates/freedf-gui/tests/elm_magic_bugs.rs` →
+  `justify_end_on_content_sized_child_does_nothing`,
+  `width_fill_pushes_siblings_out_and_inflates_parent`.
 
 ## 2. 브랜드 팔레트 (14슬롯 — C3)
 
@@ -416,7 +421,7 @@ elm_magic::css! {
 | `small_targets` | `{}` | **`{}`** | ✓ (28px) |
 | CSS 셀렉터 수 | 41 | **45** | 문서 갱신 |
 | 사이드바 | 캔버스 **위**(전폭 캔버스) | 캔버스 **옆**(폭 224, full height) | 진짜 사이드바 |
-| 회귀 | — | `cargo test` **66 통과**, 스모크 **`[PASS]`** | ✓ |
+| 회귀 | — | `cargo test` **69 통과**(+재현 3), 스모크 **`[PASS]`** | ✓ |
 
 ### 9.2 재현 명령
 
@@ -430,7 +435,8 @@ FREEDF_GUI_SIZE=900x600 scripts/edev-run.sh --config .edev-gui.toml eval scripts
 
 # 계약 회귀 / 테스트
 scripts/edev-run.sh --config .edev-gui.toml smoke     # [PASS]
-cargo test -p freedf-gui --locked                     # 66 통과
+cargo test -p freedf-gui --locked                     # 69 통과
+cargo test -p freedf-gui --test elm_magic_bugs        # elm-magic 버그 최소 재현 3건
 cargo check -p freedf-gui --features dev-automation
 cargo check -p freedf                                 # 레거시 기본 빌드 유지
 ```
