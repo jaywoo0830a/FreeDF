@@ -98,6 +98,26 @@ pub fn shell_state() -> ShellState {
     }
 }
 
+/// 설정 창의 사실 목록 — 계산은 `view!` **밖**에서 끝낸다(모듈 문서: 본문에는
+/// 단순한 `let`만 둔다). 0.8 `<For>`가 한 줄씩 `IntoView`로 그린다.
+pub fn settings_facts(
+    st: &ShellState,
+    tool: &str,
+    color: &str,
+    width: &str,
+    smoothing: &str,
+) -> Vec<String> {
+    vec![
+        format!("도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}"),
+        String::from("스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)."),
+        format!(
+            "펜 입력 {} · 틸트 {} · 필압 {}",
+            st.pen_source, st.pen_tilt, st.pressure_text
+        ),
+        format!("팔레트 {}", st.swatch_list),
+    ]
+}
+
 elm_magic::view! {
     pub fn Shell(
         sidebar_open = true,
@@ -130,6 +150,8 @@ elm_magic::view! {
         // 스무딩 프리셋 — 설정 창 표시/선택용 (코어 `InkPipeline` 강도).
         let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
+        // 설정 창 사실 목록 — 문장 조립은 `settings_facts`(view! 밖)에서 끝낸다.
+        let facts = settings_facts(&st, &tool, &color, &width, &smoothing);
         <App>
             // ── chrome: 상단 크롬 **한 판** ────────────────────────
             // 바마다 라운드 카드를 쌓지 않는다 — 구획은 헤어라인(`Rule`)이 만든다.
@@ -140,7 +162,9 @@ elm_magic::view! {
                 <TopBar>
                     <Brand text="FreeDF" />
                     <TabStrip>
-                        {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
+                        <For each={tab_names} as={t}>
+                            <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />
+                        </For>
                     </TabStrip>
                     <Nav>
                         <Btn text="New Tab" on_click={input = String::new(), modal = ShellModal::NewTab} />
@@ -166,7 +190,9 @@ elm_magic::view! {
                     </BarGroup>
                     <Sep />
                     <BarGroup>
-                        {st.swatch_items.clone().into_iter().map(|item| <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
+                        <For each={st.swatch_items.clone()} as={item}>
+                            <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />
+                        </For>
                     </BarGroup>
                 </ToolBar>
                 <ToolBar>
@@ -220,11 +246,12 @@ elm_magic::view! {
             // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
             // 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
             <Statusbar>
-                {if toast.is_empty() {
+                <If when={toast.is_empty()}>
                     <StatusText text={status.clone()} />
-                } else {
+                <Else>
                     <StatusToast text={toast.clone()} />
-                }}
+                </Else>
+                </If>
                 <StatusMeta>
                     <StatusText text={canvas_status.clone()} />
                 </StatusMeta>
@@ -235,38 +262,46 @@ elm_magic::view! {
             // `.app__body { height: fill }`이 행 높이를 확정하므로 사이드바도
             // `height: fill`로 캔버스와 같은 높이를 갖는다(진짜 사이드바).
             <Row class="app__body">
-                {if sidebar_open {
+                <If when={sidebar_open}>
                     <Panel>
                         <PanelHead text="Library" />
-                        {sections.iter().map(|s| <PanelRow text={s.clone()} on_click={status = format!("{} panel (placeholder)", s)} />)}
+                        <PanelList>
+                            <For each={sections.clone()} as={s}>
+                                <PanelRow text={s.clone()} on_click={status = format!("{} panel (placeholder)", s)} />
+                            </For>
+                        </PanelList>
                     </Panel>
-                } else {
-                    <Text class="app__hidden">""</Text>
-                }}
-                {if bookmarks_open {
+                </If>
+                <If when={bookmarks_open}>
                     <Panel>
                         <PanelHead text="Bookmarks" />
-                        {if bookmarks.is_empty() {
+                        <If when={bookmarks.is_empty()}>
                             <Empty text="북마크 없음 — Bookmark 버튼으로 추가" />
-                        } else {
-                            bookmarks.iter().map(|p| <PanelRow text="페이지 {p}" on_click={crate::canvas::go_to_page(p)} />)
-                        }}
+                        <Else>
+                            <PanelList>
+                                <For each={bookmarks.clone()} as={p}>
+                                    <PanelRow text="페이지 {p}" on_click={crate::canvas::go_to_page(p)} />
+                                </For>
+                            </PanelList>
+                        </Else>
+                        </If>
                     </Panel>
-                } else {
-                    <Text class="app__hidden">""</Text>
-                }}
-                {if outline_open {
+                </If>
+                <If when={outline_open}>
                     <Panel>
                         <PanelHead text="Outline" />
-                        {if outline_entries.is_empty() {
+                        <If when={outline_entries.is_empty()}>
                             <Empty text="PDF를 열면 목차가 표시됩니다" />
-                        } else {
-                            outline_entries.iter().map(|e| <PanelRow text={e.title.clone()} on_click={crate::canvas::go_to_page(e.page)} />)
-                        }}
+                        <Else>
+                            <PanelList>
+                                <For each={outline_entries.clone()} as={e}>
+                                    <PanelRow text={e.title.clone()} on_click={crate::canvas::go_to_page(e.page)} />
+                                </For>
+                            </PanelList>
+                        </Else>
+                        </If>
                     </Panel>
-                } else {
-                    <Text class="app__hidden">""</Text>
-                }}
+                </If>
                 // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs) ──
                 // 위젯 트리 밖의 상태는 canvas 모듈의 UI-스레드 엔진이 소유한다.
                 // `<Raw>`는 class를 받지 않는다 — 캔버스 색은 canvas.rs의 리터럴.
@@ -275,69 +310,85 @@ elm_magic::view! {
                 }</Raw>
             </Row>
             // ── 모달 — 하나만 열린다 ───────────────────────────────
-            {match modal {
-                ShellModal::None => <Text class="app__hidden">""</Text>,
-                ShellModal::NewTab => <Dialog title="New Tab" on_close={modal = ShellModal::None}>
-                    <Group>
-                        <Note text="Tab name:" />
-                        <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
-                    </Group>
-                    <Actions>
-                        <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
-                    </Actions>
-                </Dialog>,
-                ShellModal::OpenPdf => <Dialog title="Open PDF" on_close={modal = ShellModal::None}>
-                    <Group>
-                        <Note text="PDF file path:" />
-                        <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
-                    </Group>
-                    <Actions>
-                        <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
-                    </Actions>
-                </Dialog>,
-                ShellModal::ClearInk => <Dialog title="Clear Ink" on_close={modal = ShellModal::None}>
-                    <Note text="Remove all ink on this page?" />
-                    <Actions>
-                        <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::clear_ink()} />
-                    </Actions>
-                </Dialog>,
-                ShellModal::CloseConfirm => <Dialog title="Close Tab" on_close={modal = ShellModal::None}>
-                    <Note text="Close this tab?" />
-                    <Actions>
-                        <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::close_tab()} />
-                    </Actions>
-                </Dialog>,
-                ShellModal::About => <Dialog title="About" on_close={modal = ShellModal::None}>
-                    <Heading text="FreeDF GUI" />
-                    <Note text="elm-magic shell — every widget above is a view! element" />
-                    <BtnPrimary text="OK" on_click={modal = ShellModal::None} />
-                </Dialog>,
-                ShellModal::Settings => <Dialog title="Settings" on_close={modal = ShellModal::None}>
-                    <Heading text="잉크 기본값" />
-                    // 사실 목록은 **한 덩어리**다 — 블록 사이 12가 아니라 묶음 안 4로.
-                    <Group>
-                        <Note text="도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}" />
-                        <Note text="스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)." />
-                        <Note text="펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}" />
-                        <Note text="팔레트 {st.swatch_list}" />
-                    </Group>
-                    <Presets>
-                        <BtnOn text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
-                        <BtnOn text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
-                        <BtnOn text="Normal" on={smoothing == "Normal"} on_click={crate::canvas::select_smoothing("Normal")} />
-                        <BtnOn text="Strong" on={smoothing == "Strong"} on_click={crate::canvas::select_smoothing("Strong")} />
-                    </Presets>
-                    <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
-                    <Actions>
-                        <BtnGhost text="Close" on_click={modal = ShellModal::None} />
-                        <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />
-                    </Actions>
-                </Dialog>,
-            }}
+            // 0.8 `<Switch>`: `match` 대신 태그로 분기한다(래퍼 노드를 만들지 않는다).
+            // 어느 분기도 맞지 않으면 `<Default>` — `None`이 여기서 빈 자리표시가 된다.
+            <Switch on={modal}>
+                <Case when={ShellModal::NewTab}>
+                    <Dialog title="New Tab" on_close={modal = ShellModal::None}>
+                        <Group>
+                            <Note text="Tab name:" />
+                            <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                        </Group>
+                        <Actions>
+                            <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
+                            <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                        </Actions>
+                    </Dialog>
+                </Case>
+                <Case when={ShellModal::OpenPdf}>
+                    <Dialog title="Open PDF" on_close={modal = ShellModal::None}>
+                        <Group>
+                            <Note text="PDF file path:" />
+                            <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                        </Group>
+                        <Actions>
+                            <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
+                            <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                        </Actions>
+                    </Dialog>
+                </Case>
+                <Case when={ShellModal::ClearInk}>
+                    <Dialog title="Clear Ink" on_close={modal = ShellModal::None}>
+                        <Note text="Remove all ink on this page?" />
+                        <Actions>
+                            <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
+                            <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::clear_ink()} />
+                        </Actions>
+                    </Dialog>
+                </Case>
+                <Case when={ShellModal::CloseConfirm}>
+                    <Dialog title="Close Tab" on_close={modal = ShellModal::None}>
+                        <Note text="Close this tab?" />
+                        <Actions>
+                            <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
+                            <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::close_tab()} />
+                        </Actions>
+                    </Dialog>
+                </Case>
+                <Case when={ShellModal::About}>
+                    <Dialog title="About" on_close={modal = ShellModal::None}>
+                        <Heading text="FreeDF GUI" />
+                        <Note text="elm-magic shell — every widget above is a view! element" />
+                        <BtnPrimary text="OK" on_click={modal = ShellModal::None} />
+                    </Dialog>
+                </Case>
+                <Case when={ShellModal::Settings}>
+                    <Dialog title="Settings" on_close={modal = ShellModal::None}>
+                        <Heading text="잉크 기본값" />
+                        // 사실 목록은 **한 덩어리**다 — 블록 사이 16이 아니라 묶음 안 6으로.
+                        // 목록은 `<For>` + `IntoView` — 문장은 `settings_facts`가 만든다.
+                        <Group>
+                            <For each={facts} as={fact}>
+                                <Note text={fact.clone()} />
+                            </For>
+                        </Group>
+                        <Presets>
+                            <BtnOn text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
+                            <BtnOn text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
+                            <BtnOn text="Normal" on={smoothing == "Normal"} on_click={crate::canvas::select_smoothing("Normal")} />
+                            <BtnOn text="Strong" on={smoothing == "Strong"} on_click={crate::canvas::select_smoothing("Strong")} />
+                        </Presets>
+                        <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
+                        <Actions>
+                            <BtnGhost text="Close" on_click={modal = ShellModal::None} />
+                            <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />
+                        </Actions>
+                    </Dialog>
+                </Case>
+                <Default>
+                    <Text class="app__hidden">""</Text>
+                </Default>
+            </Switch>
         </App>
     }
 }

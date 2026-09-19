@@ -67,8 +67,9 @@
 //!
 //! ## `justify`는 쓰고, `wrap`은 쓰지 않는다 (실측)
 //!
-//! `justify: end`는 먹는다 — `.topbar__end { width: fill; justify: end }`로 앱 명령
-//! (Settings/About)이 상단 바 오른쪽 끝에 붙는다.
+//! `justify: end`는 먹는다 — `.topbar__end { flex-grow: 1; justify: end }`로 앱 명령
+//! (Settings/About)이 상단 바 오른쪽 끝에 붙는다. 0.8.1에서는 `width: fill` 대신
+//! `flex-grow: 1`을 쓴다(어댑터가 둘을 같은 배분으로 처리한다).
 //!
 //! `wrap: true`는 **우리 트리에서는 동작하지 않는다**(실측): 도구 줄의 항목이 부모
 //! 폭을 넘어도 줄바꿈하지 않고 그대로 뻗어, 루트가 창 밖으로 팽창하고(1100px 창에서
@@ -77,6 +78,33 @@
 //!
 //! 캔버스가 남은 세로를 전부 먹으므로(`<Raw>`가 `available_size()`를 소비) 정보
 //! 스트립은 캔버스 **위**에 온다 — 순서를 바꾸면 스트립 높이가 0이 된다.
+//!
+//! ## 0.8.1 확장 속성 — 쓰는 것과 못 쓰는 것 (실측)
+//!
+//! elm-magic 0.8.1은 CSS 속성을 62개로 늘렸다. 이 파일이 실제로 쓰는 것:
+//!
+//! | 속성 | 쓰는 곳 | 이유 |
+//! |---|---|---|
+//! | `flex-grow: 1` | `.topbar__end` · `.statusbar__meta` | 남는 폭을 먹는다(`width: fill`과 같은 배분) |
+//! | `white-space: nowrap` + `text-overflow: ellipsis` + `max-lines: 1` | 상태 문장 · 패널 항목 | 긴 문장을 **자른다** — 넘치면 창을 민다 |
+//! | `overflow: hidden` | `.chrome` · `.panel` · `.panel__list` | 라운드 모서리 밖으로 새지 않게 |
+//! | `pointer-events: none` | 헤어라인 · 섹션 제목 | 장식은 클릭 대상이 아니다 |
+//! | `margin-top`/`margin-bottom` | `.bar__sep` | 세로 헤어라인을 30(= 컨트롤 높이)에 맞춘다 |
+//! | `border-width`/`border-color` + `:focus` | `.modal__input` | 테두리를 항상 두고 색만 바꾼다(크기 고정) |
+//!
+//! 못 쓰는 것과 그 이유:
+//!
+//! - `align-self: center` — 교차축이 아직 무한한 줄에서는 **가용 높이를 통째로 먹는다**.
+//!   실측: `.bar__sep`에 걸었더니 잉크 줄이 300px로 부풀어 편집 줄이 y=402로 밀렸다
+//!   (정상 y=105). 세로 정렬이 필요하면 마진으로 맞춘다.
+//! - `overflow: auto/scroll` — 어댑터가 `ScrollArea`를 id salt 없이 만든다. 패널을 둘
+//!   이상 열면 egui가 **ID 충돌 경고를 화면에 그리고** 스크롤 상태를 공유한다(실측:
+//!   Library + Bookmarks 동시 열림). 그래서 목록은 `overflow: hidden`으로 자른다.
+//! - `border-*-width`(개별) — 어댑터가 **최댓값 하나**로 그린다(사방 동일). 한쪽만
+//!   선을 긋는 용도로는 못 쓴다.
+//! - `rotate` — egui `TSTransform`에 회전이 없어 반영되지 않는다(어댑터 문서).
+//! - `width`/`height`는 여전히 **내용 상자**다(0.7과 같다) — `.panel { width: 216;
+//!   padding: 12 8 }`의 바깥 폭은 232다.
 //!
 //! ## 예외 — egui 네이티브 위젯
 //!
@@ -107,7 +135,8 @@ elm_magic::css! {
     // `width: fill`은 **루트 바로 아래**에서만 쓴다: 여기서 폭이 확정되어야 안쪽의
     // 가로 헤어라인(`.bar__rule`)이 가용 폭을 물고 판을 창 밖으로 늘리지 않는다.
     // 패딩은 세로 8 / 가로 6 — 가로는 줄 폭 예산에 들어가므로 6으로 눌러 둔다.
-    .chrome { width: fill; bg: surface; radius: 10; padding: 8 6; gap: 8; }
+    // `overflow: hidden` — 라운드 모서리(10) 밖으로 자식 바탕이 새지 않게 자른다.
+    .chrome { width: fill; bg: surface; radius: 10; padding: 8 6; gap: 8; overflow: hidden; }
 
     // ── topbar — 브랜드 · 탭 · 문서/앱 명령 ─────────────────────
     // `min-height`는 컨트롤 높이(30)와 **같다** — 다르면 30짜리 버튼이 행 위쪽에 붙어
@@ -117,8 +146,10 @@ elm_magic::css! {
     // 글자로 쓰지 않는다(액센트 "텍스트"의 슬롯이 `info`인 이유).
     .topbar__brand { color: info; font-size: 17; weight: bold; letter-spacing: 0.4; }
     .topbar__nav { gap: 4; }
-    // 우측 그룹 — 남는 폭을 받아(`width: fill`) 오른쪽으로 민다(`justify: end`).
-    .topbar__end { width: fill; justify: end; gap: 4; }
+    // 우측 그룹 — 남는 폭을 받아(`flex-grow: 1`) 오른쪽으로 민다(`justify: end`).
+    // 0.8 `flex-grow`는 어댑터에서 `width: fill`과 같은 배분을 한다(교차축도 함께
+    // 채운다). 의도가 "남는 폭을 먹는다"이므로 `fill` 대신 `flex-grow`로 쓴다.
+    .topbar__end { flex-grow: 1; justify: end; gap: 4; }
 
     // ── tabs — 문서 탭 칩 ───────────────────────────────────────
     // 스트립에 배경을 깔지 않는다 — 크롬 위에 크롬을 겹치지 않는다.
@@ -136,11 +167,14 @@ elm_magic::css! {
     // 그래서 각 줄을 **좁은 창(900px)에서도 넘지 않는 폭**으로 유지한다(각 줄 ≤ 730).
     .bar { gap: 6; padding: 0 2; }
     .bar__group { gap: 4; }
-    // 그룹 구분 헤어라인 — 22 + 마진 4×2 = 30. 컨트롤 높이(30)와 **정확히** 같아야
-    // 중심이 맞는다. 마진을 키우면 줄 폭이 900px 창에서 예산을 넘는다 — 높이로 맞춘다.
-    .bar__sep { width: 1; height: 22; margin: 4 0; bg: border; }
+    // 그룹 구분 헤어라인 — 높이 22 + 개별 마진 4/4 = 30(컨트롤 높이와 같다).
+    // 0.8 `margin-top`/`margin-bottom`을 쓴다. `align-self: center`는 **쓰지 않는다**:
+    // 이 줄의 교차축(세로)이 아직 무한이라 가용 높이를 통째로 먹어 행이 300px로
+    // 부풀었다(실측: 잉크 줄 y=67 → 편집 줄 y=402). 마진은 행 높이를 고정한다.
+    // `pointer-events: none` — 장식이라 클릭/커서 대상이 아니다.
+    .bar__sep { width: 1; height: 22; margin-top: 4; margin-bottom: 4; bg: border; pointer-events: none; }
     // 크롬 안의 가로 헤어라인 — 판을 늘리지 않고 구획만 만든다.
-    .bar__rule { width: fill; height: 1; bg: border; }
+    .bar__rule { width: fill; height: 1; bg: border; pointer-events: none; }
 
     // ── btn — 버튼 하나 + 상태 + 변형 ───────────────────────────
     // 기본 버튼은 **바탕이 없다**: 크롬에 버튼 20개가 각각 상자를 그리면
@@ -178,7 +212,8 @@ elm_magic::css! {
 
     // ── 텍스트 ──────────────────────────────────────────────────
     // 섹션 라벨은 작고 흐린 대문자 라벨 (Bootstrap form-label 결).
-    .section__title { color: text_dim; font-size: 11; weight: bold; letter-spacing: 0.8; text-transform: uppercase; }
+    // 장식이라 클릭 대상이 아니다 — `pointer-events: none`.
+    .section__title { color: text_dim; font-size: 11; weight: bold; letter-spacing: 0.8; text-transform: uppercase; pointer-events: none; }
     .modal__title { color: text; font-size: 16; weight: bold; }
     .text { color: text_dim; }
 
@@ -191,15 +226,23 @@ elm_magic::css! {
     // 버튼의 시작선이 맞는다.
     // 주의: elm-magic CSS의 `width`/`height`는 **내용 상자**다 — 216 + 패딩 8×2 = 바깥
     // 232다(실측: 패널 상자가 x=8..240). 폭을 바꾸면 캔버스 폭이 그만큼 따라 움직인다.
-    .panel { width: 216; bg: surface; radius: 10; padding: 12 8; gap: 6; height: fill; }
+    .panel { width: 216; bg: surface; radius: 10; padding: 12 8; gap: 6; height: fill; overflow: hidden; }
     // 패널 머리 — 제목 + 헤어라인. 제목만 떠 있으면 첫 행과 구분되지 않는다.
     // 좌우 패딩 8 = 행 패딩 8 — 제목과 첫 행의 글자가 같은 x(24)에서 시작한다.
     .panel__head { gap: 6; padding: 0 8; }
-    .panel__rule { width: fill; height: 1; bg: border; }
+    .panel__rule { width: fill; height: 1; bg: border; pointer-events: none; }
+    // 목록은 판 안에서 **잘린다**(`overflow: hidden`). 스크롤(`overflow: auto`)을 쓰면
+    // 어댑터가 egui `ScrollArea`를 id salt 없이 만들어(0.8.1 `render_el`: `ScrollArea::
+    // vertical()`만 호출) 패널을 둘 이상 열 때 **ID가 충돌**한다 — 화면에 egui 디버그
+    // 경고("Second use of ScrollArea ID …")가 뜨고 스크롤 상태를 공유한다(실측:
+    // Library + Bookmarks 동시 열림). 스크롤이 필요해지면 패널을 하나만 열거나
+    // 어댑터에 id salt를 넣은 뒤 되돌린다.
+    .panel__list { height: fill; gap: 6; overflow: hidden; }
     // 행 높이는 컨트롤과 같다(6+18+6 = 30). 다르면 패널만 커져 크롬과 어긋난다.
     .panel__row { radius: 6; padding: 6 8; min-height: 30; }
     .panel__row:hover { bg: surface_alt; }
-    .panel__item { color: text_dim; font-size: 13; cursor: pointer; }
+    // 긴 제목은 **자른다** — 줄바꿈하면 행 높이가 흔들리고 목록 리듬이 깨진다.
+    .panel__item { color: text_dim; font-size: 13; cursor: pointer; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
     .panel__empty { color: text_dim; font-size: 12; padding: 6 8; }
 
     // ── statusbar — 캔버스 위 정보 스트립 ───────────────────────
@@ -208,10 +251,14 @@ elm_magic::css! {
     // 줄어든다. 상태 문자열은 값 목록으로 읽히게 `gap`으로만 나눈다.
     // 좌우 패딩 16 = 인셋 8 + 항목 패딩 8 — 이 스트립만 **항목 상자가 없어서**
     // (글자가 곧 항목이다) 크롬·패널의 글자 시작선(x=24)에 맞추려면 16이 필요하다.
-    .statusbar { padding: 0 16; min-height: 26; gap: 16; }
-    .statusbar__text { color: text_dim; font-size: 12; }
-    .statusbar__meta { color: text_dim; font-size: 12; }
-    .statusbar__toast { color: warn; font-size: 12; }
+    // `width: fill` — 이 스트립은 창 폭을 전부 쓴다. 그래야 오른쪽 메타를 끝으로 밀 수
+    // 있다(`.statusbar__meta`의 `flex-grow: 1` + `justify: end`).
+    .statusbar { width: fill; padding: 0 16; min-height: 26; gap: 16; }
+    // 상태 문장은 길이를 우리가 정하지 못한다(파일 이름/오류). **한 줄로 자른다** —
+    // 자르지 않으면 긴 문장이 스트립을 넘어 창을 밀어낸다(0.7의 fill 팽창과 같은 결과).
+    .statusbar__text { color: text_dim; font-size: 12; max-width: 520; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
+    .statusbar__meta { color: text_dim; font-size: 12; flex-grow: 1; justify: end; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
+    .statusbar__toast { color: warn; font-size: 12; max-width: 520; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
 
     // ── modal ──────────────────────────────────────────────────
     // 그림자는 모달에만 쓴다 — 나머지 구획은 배경 단차로 만든다.
@@ -221,11 +268,13 @@ elm_magic::css! {
     .modal { bg: surface; radius: 12; padding: 20; gap: 16; shadow: 0 8 24; shadow-color: shadow; }
     // 블록 안의 묶음 — 라벨↔필드, 설정의 사실 목록 (사다리 6).
     .modal__group { gap: 6; }
-    // `<Input>`은 egui가 직접 그린다 — CSS는 커서와 **패딩**만 지정한다.
+    // `<Input>`은 egui가 직접 그린다 — CSS는 커서/패딩/**테두리**만 지정한다.
     // 어댑터가 egui의 `interact_size`를 0으로 리셋하므로(실측: egui 스타일로는 높이가
-    // 안 변한다) 필드 높이는 CSS 패딩이 만든다: 글자 18 + 6×2 = 30 = 컨트롤 높이.
-    // 좌우 8도 컨트롤과 같은 값이라 필드와 버튼의 글자 시작선이 맞는다.
-    .modal__input { cursor: text; padding: 6 8; }
+    // 안 변한다) 필드 높이는 CSS가 만든다: 글자 18 + 5×2 + 테두리 1×2 = 30 = 컨트롤 높이.
+    // 테두리는 **항상** 두고 색만 바꾼다(`:focus`) — 나타났다 사라지면 필드가 2px
+    // 커졌다 작아지며 아래 액션 행이 흔들린다.
+    .modal__input { cursor: text; padding: 5 8; border-width: 1; border-color: border; }
+    .modal__input:focus { border-color: primary; }
     // 액션 행은 **오른쪽 정렬**이다. 실측: elm-magic 모달 창은 내용보다 넓어서 밀
     // 공간이 있다(액션 행의 첫 버튼이 plain 행보다 223px 오른쪽으로 밀린다) —
     // `justify: end`는 밀 공간이 있는 컨테이너에서 정상 동작한다.

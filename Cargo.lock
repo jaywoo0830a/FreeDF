@@ -1451,9 +1451,9 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elm-magic"
-version = "0.7.6"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9edb59d548309852b84f920fe7c579d64858e417d05cecadf8905a874efa5f3c"
+checksum = "245ba9ce48a485945ca6b8fd1d74a2b43ec30646e447173359894363e79efa7b"
 dependencies = [
  "elm-magic-macros",
  "enum_dispatch",
@@ -1461,9 +1461,9 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-egui"
-version = "0.7.6"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99b38ee3635654083174e93d911d12f459f0a8b4c09fa75ae39005c26163f60b"
+checksum = "ea24497858acc19da6ad426560197987fe1f00a43e17862c67cc02480796e20a"
 dependencies = [
  "egui",
  "elm-magic",
@@ -1471,9 +1471,9 @@ dependencies = [
 
 [[package]]
 name = "elm-magic-macros"
-version = "0.7.6"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "099742e0cd858321a60385fde509eb77b4a879ac7b73e7473aeea0a4daebb9f5"
+checksum = "d5c7f58d1ca06f61445a7369d6fcbfe2a6f935e151285298cde3be456de823a1"
 
 [[package]]
 name = "emath"

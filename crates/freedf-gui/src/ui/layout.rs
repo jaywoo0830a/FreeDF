@@ -56,7 +56,8 @@ elm_magic::view! {
 
     /// 상단 바의 앱 명령 그룹 (`.topbar__end`) — 오른쪽 끝에 붙는다.
     ///
-    /// `.topbar__end { width: fill; justify: end }` — 남는 폭을 받아 오른쪽으로 민다.
+    /// `.topbar__end { flex-grow: 1; justify: end }` — 남는 폭을 받아 오른쪽으로 민다
+    /// (0.8 `flex-grow`는 `width: fill`과 같은 배분을 한다: 어댑터 `widget_size`).
     pub fn TopEnd() {
         <Row class="topbar__end">{children}</Row>
     }
@@ -103,6 +104,15 @@ elm_magic::view! {
             <Strong class="section__title">"{l}"</Strong>
             <Col class="panel__rule" />
         </Col>
+    }
+
+    /// 패널의 목록 (`.panel__list`) — 행이 판 밖으로 흘러나오지 않게 자른다.
+    ///
+    /// **스크롤이 아니다**(`overflow: hidden`): 0.8 `overflow: auto`는 어댑터에서
+    /// egui `ScrollArea`가 되는데 id salt가 없어 패널을 둘 이상 열면 ID가 충돌한다
+    /// (실측 — `style.rs`의 `.panel__list` 주석 참고).
+    pub fn PanelList() {
+        <Col class="panel__list">{children}</Col>
     }
 
     /// 정보 스트립 (`.statusbar`) — 캔버스 **위**에 온다.
