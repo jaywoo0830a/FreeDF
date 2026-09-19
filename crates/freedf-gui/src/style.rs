@@ -79,7 +79,9 @@ elm_magic::css! {
     // ── chrome — 상단 크롬 전체를 **한 판**으로 묶는다 ──────────
     // 바마다 라운드 카드를 쌓으면 같은 판이 3~4장 겹쳐 보인다(투박함의 주원인).
     // 크롬은 이 한 판이고, 안쪽 구획은 헤어라인(`.bar__rule`)이 만든다.
-    .chrome { bg: surface; radius: 10; padding: 6; gap: 6; }
+    // `width: fill`은 **루트 바로 아래**에서만 쓴다: 여기서 폭이 확정되어야 안쪽의
+    // 가로 헤어라인(`.bar__rule`)이 가용 폭을 물고 판을 창 밖으로 늘리지 않는다.
+    .chrome { width: fill; bg: surface; radius: 10; padding: 6; gap: 6; }
 
     // ── topbar — 브랜드 · 탭 · 문서/앱 명령 ─────────────────────
     .topbar { gap: 10; padding: 0 2; min-height: 30; }
@@ -106,9 +108,9 @@ elm_magic::css! {
     // 그래서 각 줄을 **좁은 창(900px)에서도 넘지 않는 폭**으로 유지한다(각 줄 ≤ 730).
     .bar { gap: 4; padding: 0 2; }
     .bar__group { gap: 2; }
-    // 그룹 구분 헤어라인 — 높이 16 + 상하 마진 5 = 컨트롤 높이 26과 같아
-    // 행의 위쪽 정렬에서도 세로 가운데에 온다.
-    .bar__sep { width: 1; height: 16; margin: 5 0; bg: border; }
+    // 그룹 구분 헤어라인 — 높이 16 + 상하 마진 4 = 24(컨트롤 높이 26에서 1px 차).
+    // 마진을 5로 키우면 줄 폭이 900px 창에서 예산을 넘는다(각 줄 예산 ~845).
+    .bar__sep { width: 1; height: 16; margin: 4 0; bg: border; }
     // 크롬 안의 가로 헤어라인 — 판을 늘리지 않고 구획만 만든다.
     .bar__rule { width: fill; height: 1; bg: border; }
 
@@ -153,9 +155,11 @@ elm_magic::css! {
     .text { color: text_dim; }
 
     // ── panel — 사이드바(라이브러리/북마크/목차) ─────────────────
+    // 폭은 **고정**이다(216). 내용 크기로 두면 안쪽 가로 헤어라인(`.panel__rule`)이
+    // 가용 폭을 다 먹어 패널이 화면 폭을 전부 차지한다(실측: 캔버스 폭 0).
     // `height: fill` — 캔버스와 같은 높이를 갖는다. 캔버스가 `.app__body` 안에
-    // 있으므로 Row 높이가 확정되어 이 값이 안전하다(폴백 배치에서는 금지).
-    .panel { bg: surface; radius: 10; padding: 6; gap: 2; min-width: 208; height: fill; }
+    // 있으므로 Row 높이가 확정되어 이 값이 안전하다.
+    .panel { width: 216; bg: surface; radius: 10; padding: 6; gap: 2; height: fill; }
     // 패널 머리 — 제목 + 헤어라인. 제목만 떠 있으면 첫 행과 구분되지 않는다.
     .panel__head { gap: 4; padding: 4; }
     .panel__rule { width: fill; height: 1; bg: border; }
@@ -178,20 +182,23 @@ elm_magic::css! {
     .modal { bg: surface; radius: 12; padding: 16; gap: 12; shadow: 0 8 24; shadow-color: shadow; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
+    // 액션/프리셋 행 — 둘 다 왼쪽부터 흐른다. 모달은 내용 크기라 `justify: end`가
+    // 밀 공간을 못 찾는다(실측) — 위계는 버튼 **순서**가 만든다(닫기 → 주 동작).
     .modal__actions { gap: 8; }
-    .modal__actions--end { justify: end; }
 }
 
 /// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값. **14슬롯이 전부**다.
 ///
-/// 값·대비·역할의 근거는 `docs/DESIGN-SYSTEM.md` §2다. 요약하면 중성 슬레이트
-/// 4단(`background` < `surface` < `surface_alt` < `border`) + 단일 액센트
-/// (`primary` = `#2563EB`, 흰 글자 대비 5.17)이고, 구획은 보더가 아니라 이 단차가
-/// 만든다. 색을 늘릴 수 없으므로(토큰 14슬롯이 상한) 새 역할이 필요하면 슬롯을
-/// 재배치하고 **문서를 함께** 고친다.
+/// 중성 슬레이트 4단(`background` < `surface` < `surface_alt` < `border`) + 단일
+/// 액센트(`primary` = `#2563EB`)이고, 구획은 보더가 아니라 이 단차가 만든다.
+/// 색을 늘릴 수 없으므로(토큰 14슬롯이 상한) 새 역할이 필요하면 슬롯을 재배치한다.
 ///
-/// 사용 규칙(§2.1): `primary`는 본문 크기 텍스트로 쓰지 않고(on `surface` 3.37),
-/// `error`도 텍스트로 쓰지 않는다(3.22) — 위험 동작은 채움으로 표현한다.
+/// 사용 규칙(대비는 실측값):
+/// - `primary`를 **글자**로 쓰지 않는다 — on `surface` 3.37:1이라 큰 글자만 허용된다.
+///   액센트 글자가 필요하면 `info`(6.08)를 쓴다. `primary`는 채움과 헤어라인에만.
+/// - `error`도 글자로 쓰지 않는다(3.22) — 위험 동작은 **채움**으로 표현한다
+///   (`bg: error` + `color: on_primary` = 5.40).
+/// - `text_dim`은 `border` 바탕 위에 쓰지 않는다(4.47) — 호버 바탕 위 글자는 `text`.
 pub fn palette() -> Palette {
     Palette::dark()
         .with(Token::Primary, Color::rgb(0x25, 0x63, 0xeb))

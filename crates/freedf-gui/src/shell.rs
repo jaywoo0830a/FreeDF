@@ -153,7 +153,7 @@ elm_magic::view! {
                     </TopEnd>
                 </TopBar>
                 <Rule />
-                // ── 잉크 줄 (2줄): 도구·색 / 굵기·필압·편집 ──────────
+                // ── 잉크 줄 (3밴드): 재료 / 문서 편집 / 보기·패널 ─────
                 // 줄은 명시적으로 나눈다(`wrap`은 이 트리에서 동작하지 않는다 —
                 // style.rs 모듈 문서). 도구(하나만 켜짐)는 액센트 채움, 굵기/필압
                 // (여럿이 켜질 수 있음)은 조용한 선택(`BtnSel`)이다.
@@ -181,10 +181,19 @@ elm_magic::view! {
                         <Btn text="Undo" on_click={crate::canvas::undo()} />
                         <Btn text="Redo" on_click={crate::canvas::redo()} />
                     </BarGroup>
+                    <Sep />
+                    <BarGroup>
+                        <Btn text="Save Edits" on_click={crate::canvas::save_edits()} />
+                        <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
+                        <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
+                    </BarGroup>
+                    <Sep />
+                    <BarGroup>
+                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
+                    </BarGroup>
                 </ToolBar>
                 <Rule />
-                // ── 보기/문서 줄 (2줄): 줌·페이지·저장 / 패널·정리 ────
-                // 파괴 동작(Clear Ink)은 마지막 줄 끝에 헤어라인으로 떼어 둔다.
+                // ── 보기/패널 줄: 줌·페이지 / 패널 토글 ───────────────
                 <ToolBar>
                     <BarGroup>
                         <Btn text="Zoom In" on_click={crate::canvas::zoom_in()} />
@@ -198,20 +207,9 @@ elm_magic::view! {
                     </BarGroup>
                     <Sep />
                     <BarGroup>
-                        <Btn text="Save Edits" on_click={crate::canvas::save_edits()} />
-                        <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
-                        <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
-                    </BarGroup>
-                </ToolBar>
-                <ToolBar>
-                    <BarGroup>
                         <BtnSel text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
                         <BtnSel text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
                         <BtnSel text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
-                    </BarGroup>
-                    <Sep />
-                    <BarGroup>
-                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
                     </BarGroup>
                 </ToolBar>
             </Chrome>
@@ -325,8 +323,8 @@ elm_magic::view! {
                     </Presets>
                     <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
                     <Actions>
-                        <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />
                         <BtnGhost text="Close" on_click={modal = ShellModal::None} />
+                        <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />
                     </Actions>
                 </Dialog>,
             }}

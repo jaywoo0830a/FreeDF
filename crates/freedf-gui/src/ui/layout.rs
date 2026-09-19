@@ -125,9 +125,13 @@ elm_magic::view! {
         <Modal class="modal" title={title} on_close={on_close()}>{children}</Modal>
     }
 
-    /// 모달의 액션 행 — 오른쪽 정렬 (Bootstrap `modal-footer` 결).
+    /// 모달의 액션 행 — 버튼은 **왼쪽부터 차례로** 흐른다.
+    ///
+    /// 모달은 내용 크기라서 남는 폭이 없다 — `justify: end`를 걸어도 밀 공간이
+    /// 없어(실측) 오른쪽 정렬이 되지 않는다. 그래서 위계는 **순서**로 만든다:
+    /// 닫는 동작(`BtnGhost`)이 먼저, 주 동작(`BtnPrimary`)이 **마지막**이다.
     pub fn Actions() {
-        <Row class="modal__actions modal__actions--end">{children}</Row>
+        <Row class="modal__actions">{children}</Row>
     }
 
     /// 모달의 프리셋 행 — 왼쪽 정렬 (설정 창의 선택지 나열).
