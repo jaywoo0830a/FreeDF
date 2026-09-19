@@ -182,9 +182,11 @@ elm_magic::css! {
     .modal { bg: surface; radius: 12; padding: 16; gap: 12; shadow: 0 8 24; shadow-color: shadow; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
-    // 액션/프리셋 행 — 둘 다 왼쪽부터 흐른다. 모달은 내용 크기라 `justify: end`가
-    // 밀 공간을 못 찾는다(실측) — 위계는 버튼 **순서**가 만든다(닫기 → 주 동작).
+    // 액션 행은 **오른쪽 정렬**이다. 실측: elm-magic 모달 창은 내용보다 넓어서 밀
+    // 공간이 있다(액션 행의 첫 버튼이 plain 행보다 223px 오른쪽으로 밀린다) —
+    // `justify: end`는 밀 공간이 있는 컨테이너에서 정상 동작한다.
     .modal__actions { gap: 8; }
+    .modal__actions--end { justify: end; }
 }
 
 /// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값. **14슬롯이 전부**다.
