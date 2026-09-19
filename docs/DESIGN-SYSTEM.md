@@ -160,19 +160,31 @@
 
 | 항목 | 값 | 근거 |
 |---|---|---|
-| 라이브러리 | `iconflow = "1.0.0"` (MIT) | `Cargo.toml` — `all-packs`(15MiB)가 아니라 **팩 하나만** |
-| 팩 · 스타일 · 크기 | `Pack::Heroicons` · `Style::Outline` · `Size::Regular` | `ui/icons.rs`의 상수 3개가 유일한 출처 |
-| 어휘 | `ui::icons::ICONS` — (라벨, Heroicons 이름) 표 | 라벨만 계약 id의 출처. 이름은 이 파일 안에만 있다 |
-| 폰트 등록 | 비례/고정 패밀리 **폴백 끝**에 `Heroicons Outline` | elm-magic CSS는 `proportional`/`monospace`만 노출 → named family 선택 불가 |
-| 검증 | `tests/icons_tests.rs` (7건) | 어휘 전량 해석 + PUA + 슬러그 불변 + 폰트 스택에 Phosphor 없음 |
+| 라이브러리 | `iconflow` **2.1.0** (MIT) — crates.io 미발행이라 태그 `v2.1.0`의 커밋 SHA 고정 | `Cargo.toml`. 문서의 `version = "2.1"`은 아직 배포본이 없다 |
+| 피처 | `pack-heroicons` **하나만** | `all-packs`는 15MiB — README의 "enable only the packs you need" |
+| 팩 · 스타일 · 크기 | `Pack::Heroicons` · `Style::Outline` · `Size::Regular` | FAQ대로 Heroicons에 `Style::Regular`는 없다 |
+| 공식 API 경로 | 콜드: `list(PACK)` + **`resolve_all`** → 워밍: **인덱스**로 조회 | FAQ가 이름 키 `HashMap` 메모를 권장 경로에서 제외한다 |
+| 폰트 등록 | 공식 egui 예제대로 `fonts()` 전량을 `font_data` + `FontFamily::Name`에 등록 | `fonts.rs` |
+| 셸 폴백 스택 | **Heroicons → Inter → Asta Sans** (아이콘이 **맨 앞**) | 아래 "Inter 가로채기" 참조 |
+| 어휘 | `ui::icons::ICONS` — (라벨, Heroicons 이름) 표 43개 | 라벨만 계약 id의 출처 |
+| 검증 | `tests/icons_tests.rs` (9건) + `scripts/icon-audit.luau` | 해석·중복·슬러그·폰트 스택·잉크 분포 |
 
-> **Filled와 Outline을 같이 넣지 않는 이유**: 두 변형은 코드포인트가 **같다**
-> (실측 318/324 아이콘). 폴백 스택에 둘 다 넣으면 앞에 온 쪽만 그려지므로
-> 스타일은 하나로 고정한다. 스타일을 바꾸려면 `ui/icons.rs`의 `STYLE` 한 줄이다.
+> **Inter가 아이콘을 가로챈다(실측)**: Inter는 PUA에 **745개**(U+E000..U+F6C3) 글리프를
+> 갖고 있어 Heroicons의 324개 중 **238개**를 덮는다(`pencil` U+E0F5 등). 폴백 스택에서
+> 아이콘을 **뒤에 두면** 그 238개가 Inter 글리프로 그려져 "연필이 얇은 막대"처럼 보인다
+> — 아이콘 크기 불균일·아이콘 누락처럼 보이던 **진짜 원인**이다. Heroicons 폰트는 PUA만
+> 덮으므로(라틴·한글·공백 없음) **맨 앞**에 두면 라틴/한글은 그대로 Inter/Asta가 담당한다.
 >
-> **광학 크기**: Heroicons의 24px 그리드 글리프는 Phosphor보다 광학적으로 조금 작고
-> 가늘다(캡처 비교: `tmp/design-1100` vs `tmp/design-icons`). 헤어라인 디자인과는
-> 맞지만, 더 크게 보이게 하려면 글리프 전용 폰트 크기가 필요하다(§11.3).
+> **Filled와 Outline을 같이 넣지 않는 이유**: 두 변형은 코드포인트가 **같다**
+> (실측 318/324). 폴백 스택에 둘 다 넣으면 앞에 온 쪽만 그려진다.
+>
+> **광학 크기(실측)**: Heroicons는 24px 그리드 안에서 의미상 작은 도형을 정말 작게
+> 그린다(`minus` 0.9px ~ `paint-brush` 12.4px, 표준편차 2.25). 그래서 어휘는 **잉크
+> 박스가 비슷한 실루엣**으로 고른다 — `minus`→`minus-circle`, `chevron-left`→`arrow-left`,
+> `x-mark`→`x-circle`. 결과: 어휘 39개의 잉크 높이 표준편차 **0.85**(폰트 기준),
+> 렌더 픽셀 기준 **ink_h sd 0.90 / ink_w sd 0.75** (`scripts/icon-audit.luau`).
+> 스타일 변형(`Filled`/`Mini`/`Tiny`)을 바꿔도 해결되지 않는다(실측 sd 2.17~2.33 — 작은
+> 도형은 모든 변형에서 작다).
 
 ## 5. 형태 (radius · border · shadow · opacity)
 
@@ -433,12 +445,12 @@ elm_magic::css! {
 
 | 지표 | before (실측) | after (실측) | 판정 |
 |---|---|---|---|
-| 캔버스 @1100×720 | 1080×**320** @(10,390) | 856×**475** @(236,237) | 높이 **+155** (면적 +18%) |
-| 캔버스 @900×600 | 450×**258** (✗ C5) | 656×**355** | ✓ (+97, ≥300) |
+| 캔버스 @1100×720 | 1080×**320** @(10,390) | 856×**477** @(236,237) | 높이 **+157** (면적 +18%) |
+| 캔버스 @900×600 | 450×**258** (✗ C5) | 656×**357** | ✓ (+99, ≥300) |
 | 크롬이 먹는 세로 | 390px (창의 54%) | **246px** (34%) | −144 |
 | 바 개수 | 5 (navbar/toolbar/ribbon/tabs/statusbar) | **4** (TopBar/InkBar/ViewBar/Statusbar) | tabs 인라인 |
 | 보더 박스 | 6 | **0** (그림자는 모달만) | 배경 단차로 구획 |
-| `contrast` `aa_body:false` | **4건** (`gui.sidebar` 4.47 …) | **0건** — 아이콘 교체 후(§9.3) | 최소 4.7 |
+| `contrast` `aa_body:false` | **4건** (`gui.sidebar` 4.47 …) | **1건**(활성 탭 4.09 — AA 아티팩트, §9.3) | 나머지 24건 통과(최소 4.5) |
 | `layout_issues` | `{}` @1100 / offscreen @900 | **`{}` 양쪽** | ✓ |
 | `small_targets` | `{}` | **`{}`** | ✓ (28px) |
 | CSS 셀렉터 수 | 41 | **45** | 문서 갱신 |
@@ -457,10 +469,12 @@ FREEDF_GUI_SIZE=900x600 scripts/edev-run.sh --config .edev-gui.toml eval scripts
 
 # 계약 회귀 / 테스트
 scripts/edev-run.sh --config .edev-gui.toml smoke     # [PASS]
-cargo test -p freedf-gui --locked                     # 76 통과
+cargo test -p freedf-gui --locked                     # 78 통과
 cargo test -p freedf-gui --test elm_magic_bugs        # elm-magic 버그 최소 재현 3건
-cargo test -p freedf-gui --test icons_tests           # 아이콘 계약 7건
+cargo test -p freedf-gui --test icons_tests           # 아이콘 계약 9건
 cargo tree -p freedf-gui | grep -ci phosphor          # 0 — 레거시 아이콘 미참조
+# 아이콘 광학 크기(렌더 픽셀) — ink_h/ink_w 분포와 아이콘 없는 버튼
+scripts/edev-run.sh --config .edev-gui.toml eval scripts/icon-audit.luau --out-dir tmp/icon-audit
 cargo check -p freedf-gui --features dev-automation
 cargo check -p freedf                                 # 레거시 기본 빌드 유지(Phosphor 그대로)
 ```
@@ -471,25 +485,30 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 - `Cargo.lock` — 아이콘 교체로 `iconflow 1.0.0`이 추가됐다(+7줄). 그 외 드리프트 0
   (`--locked` 유지).
 
-### 9.3 대비 — 아이콘 교체로 아티팩트 2건이 **사라졌다**
+### 9.3 대비 — 감사 그리드를 촘촘하게 바꾼 뒤의 실측
 
-감사 `contrast`는 위젯 내부를 9×5 격자로 훑어 **최빈색=배경 / 최대 휘도차=전경**으로
-잡는다. 그래서 글리프가 얇아지면(윤곽선) 격자점이 **획 위에** 떨어질 확률이 오히려
-높아지고, 이전에 글리프 가장자리(안티에일리어싱 혼합색)를 집어 오측정되던 두 항목이
-교체 후에는 **순수 글자색**을 집는다.
+감사 `contrast`는 위젯 내부를 격자로 훑어 **최빈색=배경 / 최대 휘도차=전경**으로 잡는다.
+원래 9×5 고정이었는데 **넓은 위젯에서 얇은 획을 놓쳐** 대비를 과소측정했다(실측:
+`gui.bookmarks`가 2.51로 오측정 — 같은 행 같은 스타일의 `gui.outline`은 11.68 ✓).
+그래서 격자를 위젯 크기에 맞춰 촘촘하게(최대 48×24) 바꿨고, 그 결과:
 
-| id | Phosphor(이전) | Heroicons Outline(현재) | 이론값 |
+| id | 이전(9×5) | 현재(적응형) | 이론값 |
 |---|---|---|---|
-| `gui.swatch_1` | fg `#6994f1` / bg `#2563eb` = **1.75** ✗ | fg `#fbfcff` / bg `#2563eb` = **5.04** ✓ | 흰 글자 on `#2563EB` = 5.17 |
-| `gui.pressure` | fg `#cddbfa` / bg `#2563eb` = **3.72** ✗ | fg `#f0f4fe` / bg `#2563eb` = **4.7** ✓ | 5.17 |
+| `gui.bookmarks` | 2.51 ✗ (오측정) | **12.35** ✓ | `#e6e8ec` on `#22262f` = 12.35 |
+| `gui.pressure` | 4.7 | **5.17** ✓ | 흰 글자 on `#2563EB` = 5.17 |
+| `gui.medium` | 4.87 | **5.17** ✓ | 5.17 |
+| `gui.swatch_1` | 5.04 | **5.13** ✓ | 5.17 |
+| `gui.untitled` | 통과 | **4.09** ✗ | 5.17 |
 
-교체 후 25개 항목이 **전부 `aa_body: true`**이고 최소값은 4.7(`gui.pressure`)이다
-(`gui.medium` 4.87, `gui.sidebar` 4.9, `gui.untitled` 5.17). 즉 이전의 "AA 2건 실패"는
-스타일 문제가 아니라 **샘플 지점 문제**였음이 교체 실측으로 확인됐다.
+남은 1건(`gui.untitled`, 활성 탭)은 **AA 아티팩트**다: 14px 일반 굵기 흰 글자가
+안티에일리어싱 때문에 최대 `#dbe5fc`까지만 도달한다(굵은 글씨인 `gui.medium`/
+`gui.pressure`는 순수 흰색 `#ffffff`가 잡혀 5.17 ✓). WCAG는 **지정 색**으로 계산하므로
+이론값 5.17 ✓ — 렌더 픽셀 기준 측정의 한계다. (활성 탭을 `weight: bold`로 바꾸면
+측정도 통과하지만 타이포 스케일(§4)을 바꾸는 결정이라 하지 않았다.)
 
 `900×600`의 `canvas.surface` 항목은 `distinct:false`(흰 종이가 캔버스를 채워 단일 색)라
 감사가 수치를 못 만든 경우다 — 경계값은 이미지와 함께 판단한다
-(캡처: `tmp/design-icons/design-audit-img_0.jpg`).
+(캡처: `tmp/design-final/design-audit-img_0.jpg`).
 
 ## 10. 단계별 실행 결과 (P0~P4 완료)
 
@@ -512,7 +531,11 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
 | 1줄 툴바가 900px에서 6개 버튼을 화면 밖으로 밀어냈다 | 2줄 툴바(§3.2) — 대가는 캔버스 26px |
 | 스와치 글리프 `CIRCLE`이 대비를 오측정시켰다 | `DOT`으로 교체 → 이후 아이콘 계열 전체를 교체(§9.3) |
 | 레거시 Phosphor를 freedf-gui가 계속 참조하고 있었다 | `iconflow` Heroicons Outline으로 교체, 어휘 표 재작성 + `tests/icons_tests.rs` |
+| **Inter의 PUA 745개가 아이콘 238개를 가로챘다** | 폴백 스택에서 Heroicons를 **맨 앞**으로(§4.1) — "크기 불균일·아이콘 누락"의 **진짜 원인** |
+| `minus`(0.9px)·`equals`(5.2px)·`chevron`(5.3px)·`x-mark`(7.9px)가 너무 작았다 | 잉크 박스가 비슷한 이름으로 재선정(`*-circle`/`arrow-*`) — sd 2.25 → **0.85** |
+| 설정 창 프리셋 4개(`Off`/`Light`/`Normal`/`Strong`)에 아이콘이 없었다 | 어휘에 추가(`no-symbol`/`sun`/`scale`/`bolt`) |
 | Heroicons `Filled`/`Outline`이 코드포인트를 공유했다 | 폰트 스택에 **한 스타일만** 등록(§4.1) — 둘 다 넣으면 뒤쪽이 죽는다 |
+| 문서의 `iconflow = "2.1"`이 crates.io에 없었다(1.0.0만 발행) | 태그 `v2.1.0` 커밋 SHA로 고정 + 공식 API(`resolve_all`/named family)로 정리 |
 | `save_edits`/`load_edits`를 TopBar에 두면 900px에서 넘친다 | ViewBar 2줄의 문서 그룹으로 이동 |
 | `draw_paper`가 단색 1px 경계만 그렸다 | 3겹 그림자로 근사(blur 없음) |
 
@@ -536,6 +559,11 @@ cargo check -p freedf                                 # 레거시 기본 빌드 
   `iconflow` Heroicons Outline 하나만 쓴다(§4.1). 아이콘 전용 의존을 추가하면
   `cargo tree -p freedf-gui | grep -ci phosphor`가 0이 아니게 된다.
 - **`Filled`와 `Outline`을 같은 폰트 스택에 넣는 것** — 코드포인트가 같아 뒤쪽이 죽는다.
+- **아이콘 폰트를 Inter `뒤`에 두는 것** — Inter의 PUA 745개가 Heroicons 324개 중 238개를
+  가로채 아이콘이 엉뚱한 글리프로 그려진다(§4.1 실측). 스택은 항상
+  `Heroicons → Inter → Asta Sans` — `tests/icons_tests.rs`가 순서를 고정한다.
+- **`resolve_all` 대신 이름 키 `HashMap` 메모를 만드는 것** — iconflow FAQ가 권장하지 않는
+  경로다. 콜드에 `resolve_all`(1회) + 워밍은 **인덱스**로 읽는다(§4.1).
 - **어휘 표(`ICONS`) 밖에서 아이콘 이름을 쓰는 것** — 이름 오타는 조용히 "아이콘 없음"이
   된다. 새 아이콘이 필요하면 표에 추가하고 `tests/icons_tests.rs`가 훑게 한다.
 - **한 줄에 항목을 몰아넣는 것** — 행 폭 예산(1100px에서 사용 폭 1084)을 넘기면

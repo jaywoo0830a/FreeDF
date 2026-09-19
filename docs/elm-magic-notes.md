@@ -82,7 +82,8 @@ freedf-gui는 UI를 전부 `elm_magic::view!` + `elm_magic::css!`로 그린다. 
 
 ## 3. 검증 (freedf-gui 쪽)
 
-- `cargo test -p freedf-gui` — **69개** (셸/캔버스/펜/커서/팔레트/스타일 + elm-magic 재현 3).
+- `cargo test -p freedf-gui` — **78개** (셸/캔버스/펜/커서/팔레트/스타일 + elm-magic 재현 3
+  + 아이콘 계약 9).
   `shell_tests::tab_click_selects`와 `settings_modal_selects_smoothing`이 **값 prop
   회귀 지점**이다 (`key=` 없이 통과해야 한다).
 - **버그 최소 재현**: `crates/freedf-gui/tests/elm_magic_bugs.rs` — 이 문서 §1에서

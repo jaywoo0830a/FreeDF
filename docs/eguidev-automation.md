@@ -103,6 +103,7 @@ return {
 |---|---|
 | `scripts/design-shot.luau` | 뷰포트 전체 또는 `widget` 인자 위젯 크롭 캡처 |
 | `scripts/design-audit.luau` | 이미지 + 위젯 기하 + 레이아웃 문제 + 팔레트 + WCAG 대비 |
+| `scripts/icon-audit.luau` | 버튼 글리프의 **광학 크기**(잉크 bbox) 분포 — 아이콘 일관성 판정 |
 
 ```bash
 scripts/edev-run.sh --config .edev-gui.toml eval scripts/design-audit.luau \

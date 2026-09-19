@@ -9,7 +9,9 @@
 --   * `small_targets`  — 클릭 대상인데 24pt 미만인 컨트롤(터치/접근성 지적)
 --   * `disabled`       — 비활성 상태로 보이는 어포던스(사용자가 헷갈리는 지점)
 --   * `palette`        — 화면을 그리드 샘플링한 색 사용 빈도(테마 일관성)
---   * `contrast`       — 위젯 중심 픽셀과 그 위젯 모서리 픽셀의 WCAG 대비비
+--   * `contrast`       — 위젯 내부 격자의 WCAG 대비비(최빈색=배경, 최대 휘도차=전경).
+--                        격자 밀도는 위젯 크기에 맞춰 늘어난다(최대 48×24) — 고정
+--                        9×5는 넓은 위젯에서 얇은 획을 놓쳐 대비를 과소측정한다.
 --
 -- 사용:
 --   edev eval scripts/design-audit.luau --out-dir tmp/eguidev-screenshots
@@ -156,7 +158,11 @@ for index, sample in ipairs(samples) do
     local ok, result = pcall(function()
         local widget = eguidev.widget(sample.id)
         local positions: { { x: number, y: number } } = {}
-        local cols, lines = 9, 5
+        -- 그리드 밀도는 위젯 크기에 맞춘다 — 9×5 고정이면 **넓은 위젯에서 얇은 획을
+        -- 놓쳐** 대비를 과소측정한다(실측: 넓은 "Bookmarks" 버튼이 2.51로 오측정,
+        -- 같은 행 같은 스타일의 "Outline"은 11.68). 넓으면 촘촘히 훑는다.
+        local cols = math.max(9, math.min(48, math.floor(sample.width / 6)))
+        local lines = math.max(5, math.min(24, math.floor(sample.height / 4)))
         for iy = 0, lines - 1 do
             for ix = 0, cols - 1 do
                 table.insert(positions, {
