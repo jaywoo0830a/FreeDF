@@ -1,175 +1,187 @@
-//! freedf-gui 스타일 — **elm-magic 0.7 CSS 속성만**으로 정의한다.
+//! freedf-gui 스타일 — **elm-magic CSS 속성만**으로 정의한다 (단일 스타일 출처).
 //!
-//! 이 파일이 freedf-gui의 **유일한 스타일 출처**다. freedf-theme(egui
-//! `Style`/`Visuals` 설치기) 의존은 0 — 셸의 모든 시각적 결정은 아래 `css!`
-//! 규칙과 [`palette`]에 있다.
+//! 설계 사양은 `docs/DESIGN-SYSTEM.md`다. 이 파일은 그 사양의 구현이고, 사양과
+//! 어긋나면 **문서를 먼저** 고친다(문서 = 단일 진실).
 //!
-//! ## 구성
+//! ## 컨셉 — Quiet chrome, loud canvas
 //!
-//! - [`palette`] — Bootstrap 5 **다크** 테마의 색 계열(`--bs-body-bg` /
-//!   `--bs-secondary-bg` / `--bs-border-color` …)을 elm-magic 토큰 14종에 매핑한다.
-//!   어댑터가 `render_with_palette`로 받아 CSS의 색 토큰(`bg: surface`)을 실제
-//!   색으로 바꾼다. 브랜드 색을 바꾸려면 `Token::Primary` 한 줄만 고치면 된다.
-//! - `css!` 규칙 — **BEM 클래스 셀렉터만** 쓴다. 태그 셀렉터(`Button { … }`,
-//!   `.modal Strong`)는 **금지**다: 어느 요소에 어떤 스타일이 붙는지는 셸의
-//!   `class="…"`가 정하고, CSS는 그 클래스만 본다. 상태는 `:hover` `:active`로
-//!   잇는다. **컴파일타임에 검증된다** — 모르는 속성/값, 깨진 셀렉터는 컴파일 에러.
+//! 크롬(바·패널)은 중성 슬레이트 4단의 **배경 단차**로 구획하고 보더를 쓰지 않는다.
+//! 액센트는 하나(`primary`)이며 선택/활성 상태에만 나타난다. 캔버스가 주인공이다.
 //!
-//! ## BEM 규칙 (하이브리드 CSS)
+//! ## 색 — 토큰 14슬롯이 상한
 //!
-//! - 블록: `app` `navbar` `toolbar` `ribbon` `panel` `tabs` `statusbar` `modal` —
-//!   화면의 독립 영역. 단독 클래스로도 완결된다.
-//! - 요소: `블록__이름` (`navbar__brand`, `panel__item`) — 블록에만 의미가 있는
-//!   부분. 요소를 중첩해 `블록__a__b`로 쓰지 않는다.
-//! - 수정자: `블록__요소--이름` (`tabs__item--active`, `btn--danger`) — 기본
-//!   클래스와 **함께** 붙여 차이만 덮는다. 그래서 버튼 색/호버/크기는 `.btn` 혼자
-//!   소유하고, 블록은 배치(`gap`/`padding`)만 정한다.
+//! elm-magic CSS의 색 값은 **토큰 이름만** 받는다(`bg: #fff`는 컴파일 에러).
+//! 그래서 팔레트는 [`Token`] 14슬롯에 역할을 배정하는 방식이고, 새 색이 필요하면
+//! 슬롯을 재배치해야 한다. 대비는 전부 계산값이다(`docs/DESIGN-SYSTEM.md` §2).
 //!
-//! 크기 규칙: 클릭 대상은 최소 24px(`min-height`) — 감사 `small_targets` 기준이다.
-//! `Button`/`Tab`도 0.7.4부터 CSS `padding`/`min-height`를 그대로 반영한다.
+//! ## BEM
 //!
-//! ## 간격 스케일 (Bootstrap `$spacer` 결)
+//! 셀렉터는 **BEM 클래스뿐**이다(태그 셀렉터 금지 — `tests/style_tests.rs`가 강제).
+//! 블록: `app` `topbar` `tabs` `inkbar` `viewbar` `panel` `statusbar` `modal`
+//! `btn` `swatch`. 수정자는 기본 클래스와 **함께** 붙여 차이만 덮는다
+//! (`tabs__item--active`, `btn--danger`).
 //!
-//! 2 · 4 · 6 · 8 · 10 · 12 · 16 · 24px만 쓴다. 영역 간격은 10(루트 `gap`),
-//! 그룹 내부는 3–6, 버튼 안쪽은 `4 8`(Bootstrap `btn-sm`)에 `min-height: 24`를
-//! 더한 값이다. 임의 값(7, 13 …)은 넣지 않는다 — 리듬이 흐트러진다.
+//! ## 간격 스케일 — 4px 베이스
 //!
-//! 세로 예산 주의: 크롬(navbar/toolbar/ribbon/tabs/패널/statusbar)이 창 높이를
-//! 먹으면 캔버스가 줄어든다. `tests/canvas_tests.rs`와 스모크가 "캔버스 높이 300px
-//! 이상"을 요구하므로, 간격을 키울 때는 감사(`layout_issues`의 offscreen + 캔버스
-//! 높이)를 다시 확인한다.
+//! 4 · 8 · 12 · 16 · 24px만 쓴다(`docs/DESIGN-SYSTEM.md` §3). 그룹 내부는 3–4,
+//! 그룹 사이는 12, 바 좌우 패딩은 8, 모달 패딩은 16이다. 임의 값(5, 7, 10 …)은
+//! 넣지 않는다 — 리듬이 흐트러진다.
 //!
-//! `tests/style_tests.rs`의 `selectors_use_bem_classes_only` /
-//! `shell_markup_classes_are_registered`가 이 규칙을 회귀 방지한다.
+//! ## 세로 예산
 //!
-//! ## 예외 하나 — egui 네이티브 위젯
+//! 크롬 1줄 합계는 184px(`docs/DESIGN-SYSTEM.md` §6.2)이고 캔버스가 남은 높이를
+//! 전부 받는다. 컨트롤 `min-height: 28`은 감사 `small_targets`(24pt) 기준을 넘긴다.
+//! 간격을 키울 때는 감사(`layout_issues` + 캔버스 높이)를 다시 확인한다.
 //!
-//! elm-magic CSS는 `Col` `Row` `Text` `Strong` `Button` `Tab` `Modal` 등
-//! **어휘 태그**에만 닿는다. `<Raw>`(캔버스 painter)·`<Input>`(텍스트 편집)·
-//! 창 크롬·스크롤바는 egui가 직접 그리므로 [`install_egui_visuals`]가 최소한만
-//! 설정한다 — 색은 팔레트 토큰에서 가져와 출처는 여전히 하나다.
+//! ## 우측 정렬과 `wrap`은 쓰지 않는다 (실측)
+//!
+//! 두 가지가 elm-magic 0.7.4에서 **동작하지 않는다**:
+//!
+//! 1. `.…__end { justify: end }` — 콘텐츠 크기 자식 Row에서는 효과가 없다
+//!    (before 캡처에서 About이 x≈760에 멈춤 — 1100px 창의 우측 끝이 아님).
+//! 2. `width: fill` 스페이서 — `available_width()`가 행의 남은 폭이 아니라
+//!    커서 기준으로 `max_rect`를 재설정해 **부모 max_rect를 창 밖으로 팽창**시킨다
+//!    (실측: 캔버스 폭 1754 > 창 1100 → 캔버스가 화면 밖까지 커짐).
+//!
+//! `wrap: true`는 어댑터가 **읽지 않는다**(`ResolvedStyle.wrap`은 파싱만 되고
+//! 사용처가 없다) — 행은 항상 단일 줄이다. 그래서 한 행의 항목이 창 폭을 넘으면
+//! 조용히 화면 밖으로 나간다: 감사 `layout_issues`의 `offscreen`이 그 감지기다.
+//! 그룹 사이 헤어라인(`.bar__sep`)과 `gap`만으로 위계를 만든다.
+//!
+//! ## 예외 — egui 네이티브 위젯
+//!
+//! `<Raw>`(캔버스 painter)·`<Input>`·창 크롬·스크롤바는 egui가 직접 그린다.
+//! [`install_egui_visuals`]가 그 최소 설정만 담당하고 색은 같은 팔레트에서 온다.
+//! 캔버스 스테이지/종이 색은 CSS 밖이라 **리터럴**을 쓴다([`stage_color`] 등).
 
 use eframe::egui;
 use elm_magic::style::{Color, Palette, Token};
 
-// 셸의 시각 언어 — 전부 CSS 속성이다 (elm-magic 0.7이 실제로 렌더한다).
-//
-// 위 모듈 문서의 BEM/간격 규칙을 따른다: 셀렉터는 BEM 클래스뿐이고, 태그
-// 셀렉터는 한 줄도 없다. 치수는 2·4·6·8·10·12·16·24 스케일만 쓴다.
 elm_magic::css! {
     // ── app — 창 루트 ───────────────────────────────────────────
-    // 배경/글자색/기본 글자 크기가 여기서 정해지고 **상속**된다.
+    // 배경/글자색/기본 크기가 여기서 정해지고 **상속**된다.
     // `padding`은 창 방어 여백(Windows 최대화 시 좌우 밀림) 겸용이다.
-    .app { bg: background; color: text; font-size: 14; padding: 10; gap: 10; }
-    // 본문 행(패널들 + 탭 스트립) — 루트의 가로 분할.
+    .app { bg: background; color: text; font-size: 14; padding: 8; gap: 8; }
+    // 본문 행(패널 + 캔버스) — 남은 세로를 전부 받는다. 캔버스가 이 행의
+    // 마지막 자식이라 `height: fill`이 없으면 행 높이가 콘텐츠에 끌려간다.
     // 주의: 행에 `align: center`를 걸면 egui 교차축 정렬이 "가용 높이 전체" 기준이
     // 되어 각 행이 남은 세로를 다 먹는다(실측: 캔버스 높이 0). 그래서 쓰지 않는다.
-    .app__body { gap: 12; }
+    .app__body { gap: 12; height: fill; }
     // 빈 자리표시를 **그리지 않게** 한다 — display:none은 공간도 차지하지 않는다.
     .app__hidden { display: none; }
 
-    // ── navbar — 상단 바 ────────────────────────────────────────
-    // 브랜드 + 명령 그룹. 좁은 창에서는 **줄바꿈**한다(`wrap`) — 넘친 오른쪽
-    // 명령(Settings/About)이 화면 밖으로 잘리던 문제를 막는다.
-    .navbar { bg: surface; border-width: 1; border-color: border; radius: 10; padding: 6 10; gap: 12; wrap: true; }
-    .navbar__brand { color: primary; font-size: 18; weight: bold; letter-spacing: 0.4; }
-    .navbar__nav { gap: 6; wrap: true; }
-    .navbar__end { gap: 6; justify: end; wrap: true; }
+    // ── topbar — 브랜드 · 탭 · 문서/앱 명령 ─────────────────────
+    // 브랜드 + 탭 + 문서 명령 + 앱 명령. `wrap`은 무효라(모듈 문서) 한 줄 고정이다 —
+    // 항목이 넘치면 감사 `offscreen`이 잡으므로 항목 수를 예산 안에 유지한다.
+    .topbar { bg: surface; radius: 8; padding: 6 8; gap: 12; }
+    .topbar__brand { color: primary; font-size: 20; weight: bold; letter-spacing: 0.2; }
+    .topbar__nav { gap: 4; }
+    .topbar__end { gap: 4; }
 
-    // ── toolbar — 보기/이동 명령 행 ─────────────────────────────
-    .toolbar { bg: background; border-width: 1; border-color: border; radius: 10; padding: 4 8; gap: 8; wrap: true; }
-    // 명령 그룹 — 바탕을 한 단계 밝게 해 "한 덩어리"로 읽히게 한다.
-    .toolbar__group { bg: surface; radius: 8; padding: 3; gap: 3; }
+    // ── tabs — 문서 탭 스트립 (TopBar 안) ───────────────────────
+    // 활성 탭은 **액센트 채움** — 어느 문서에 있는지 한눈에 보이게 한다.
+    .tabs { bg: background; radius: 6; padding: 3; gap: 4; }
+    .tabs__item { bg: surface_alt; color: text_dim; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
+    .tabs__item:hover { bg: border; color: text; }
+    .tabs__item--active { bg: primary; color: on_primary; weight: bold; }
 
-    // ── ribbon — 잉크 도구/색/굵기 ──────────────────────────────
-    .ribbon { bg: surface_alt; radius: 10; padding: 4 8; gap: 8; wrap: true; }
-    // 도구 그룹 — 리본 바탕(surface_alt)보다 어두운 판을 깔아 경계를 만든다.
-    .ribbon__group { bg: background; radius: 8; padding: 3; gap: 3; }
+    // ── inkbar — 도구·색(1줄) + 편집·굵기(2줄) ──────────────────
+    // **2줄 고정**: elm-magic 행은 줄바꿈하지 않으므로(모듈 문서) 한 줄에 몰면
+    // 좁은 창에서 화면 밖으로 나간다(실측: 900px에서 thick/pressure offscreen).
+    // 줄을 나눠 두면 900px에서도 각 줄이 폭 안에 들어간다.
+    .inkbar { bg: surface; radius: 8; padding: 4 8; gap: 3; }
+    .inkbar__line { gap: 12; }
+    .inkbar__group { gap: 3; }
+
+    // ── viewbar — 보기/이동(1줄) + 문서 동작(2줄) ───────────────
+    .viewbar { bg: surface; radius: 8; padding: 3 8; gap: 3; }
+    .viewbar__line { gap: 12; }
+    .viewbar__group { gap: 3; }
+
+    // ── bar 요소 — 그룹 구분 헤어라인 ──────────────────────────
+    .bar__sep { width: 1; height: 20; bg: border; }
 
     // ── btn — 버튼 하나 + 상태 + 변형 ───────────────────────────
     // 색/호버/눌림은 `.btn` 혼자 소유하고, 변형은 차이만 덮는다.
-    // 크기: Bootstrap `btn-sm`의 결(`padding: 4 8`) + 클릭 대상 최소 높이 고정
-    // (`min-height: 24` — 감사 `small_targets` 기준). 0.7.4부터 `Button`도 CSS
-    // `padding`/`min-height`를 그대로 반영한다. 리본에 항목이 11개라 가로 패딩은
-    // `btn-sm`(8)을 넘기지 않는다 — 넘기면 1100px 창에서 줄이 넘친다(실측).
-    .btn { bg: surface_alt; color: text; border-width: 1; border-color: border; radius: 6; padding: 4 8; min-height: 24; cursor: pointer; }
-    .btn:hover { bg: primary; color: on_primary; border-color: primary; }
-    .btn:active { bg: surface; color: text; }
-    // 선택 상태 (Bootstrap `.active`).
-    .btn--on { bg: primary; color: on_primary; border-color: primary; weight: bold; }
-    // 파괴적 동작 (Bootstrap `.btn-danger`) — 호버도 따로 잡아야
-    // `.btn:hover`(명시도 높음)에 덮이지 않는다.
-    .btn--danger { bg: error; color: on_primary; border-color: error; }
-    .btn--danger:hover { bg: error; color: on_primary; border-color: error; }
-    // 보조 동작 (취소/닫기) — 바탕을 죽이고 글자만 남긴다.
-    .btn--ghost { bg: background; color: text_dim; border-color: border; }
-    .btn--ghost:hover { bg: surface_alt; color: text; border-color: border; }
+    // 크기: `padding: 4 10` + `min-height: 28`(감사 small_targets 24pt 기준).
+    .btn { bg: surface_alt; color: text; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
+    .btn:hover { bg: border; color: text; }
+    .btn:active { bg: primary; color: on_primary; }
+    // 선택 상태 (Bootstrap `.active` 결).
+    .btn--on { bg: primary; color: on_primary; weight: bold; }
+    // 파괴적 동작 — **채움**으로 표현한다(`error`는 본문 텍스트 대비가 3.22라
+    // 텍스트 색으로 쓰지 않는다: docs/DESIGN-SYSTEM.md §2.1).
+    .btn--danger { bg: error; color: on_primary; }
+    .btn--danger:hover { bg: error; color: on_primary; }
+    // 보조 동작(취소/닫기/설정/정보) — 바탕을 죽이고 글자만 남긴다.
+    .btn--ghost { bg: background; color: text_dim; }
+    .btn--ghost:hover { bg: surface_alt; color: text; }
 
     // ── swatch — 즐겨찾기 색 칩 ─────────────────────────────────
-    .swatch { bg: surface_alt; color: text; border-width: 1; border-color: border; radius: 6; padding: 4 8; min-height: 24; cursor: pointer; }
-    .swatch:hover { bg: primary; color: on_primary; border-color: primary; }
-    .swatch--on { bg: primary; color: on_primary; border-color: primary; weight: bold; }
+    // 글자색은 `text`다(`text_dim`이면 surface_alt 위에서 5.83 이론값이지만
+    // 원형 글리프의 안티에일리어싱 때문에 감사 실측이 3.81로 떨어진다 — 실측 기록:
+    // docs/DESIGN-SYSTEM.md §9.3).
+    .swatch { bg: surface_alt; color: text; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
+    .swatch:hover { bg: border; color: text; }
+    .swatch--on { bg: primary; color: on_primary; weight: bold; }
 
-    // ── 제목/본문 텍스트 ────────────────────────────────────────
-    // 섹션 제목은 작고 흐린 대문자 라벨 (Bootstrap form-label 결).
+    // ── 텍스트 ──────────────────────────────────────────────────
+    // 섹션 라벨은 작고 흐린 대문자 라벨 (Bootstrap form-label 결).
     .section__title { color: text_dim; font-size: 12; weight: bold; letter-spacing: 0.6; text-transform: uppercase; }
-    // 모달 본문 제목 (Bootstrap `modal-title` 결) — 태그 셀렉터 대신 클래스.
     .modal__title { color: text; font-size: 16; weight: bold; }
     .text { color: text_dim; }
 
-    // ── panel — 사이드바/북마크/목차 ────────────────────────────
-    // 주의: `height: fill` 금지 — 수평 Row 안의 Col에 가용 높이를 강제하면 Row가
-    // 남은 세로를 다 먹어 캔버스 높이가 0이 된다(실측: 캔버스에 획이 기록되지 않음).
-    .panel { bg: surface; border-width: 1; border-color: border; radius: 10; padding: 8; gap: 6; min-width: 200; }
+    // ── panel — 사이드바(라이브러리/북마크/목차) ─────────────────
+    // `height: fill` — 캔버스와 같은 높이를 갖는다. 캔버스가 `.app__body` 안에
+    // 있으므로 Row 높이가 확정되어 이 값이 안전하다(폴백 배치에서는 금지).
+    .panel { bg: surface; radius: 8; padding: 8; gap: 4; min-width: 200; height: fill; }
     .panel__row { radius: 6; padding: 6 8; }
     .panel__row:hover { bg: surface_alt; }
-    .panel__item { color: text_dim; cursor: pointer; }
-    .panel__empty { color: text_dim; font-size: 13; }
+    .panel__item { color: text_dim; font-size: 13; cursor: pointer; }
+    .panel__empty { color: text_dim; font-size: 12; }
 
-    // ── tabs — 문서 탭 스트립 ───────────────────────────────────
-    // 활성 탭은 **탭**처럼 보여야 한다: 파란 알약 대신 바탕 + 파란 경계선 + 굵은
-    // 글자 (Bootstrap `nav-tabs`의 활성 결).
-    .tabs { bg: background; border-width: 1; border-color: border; radius: 10; padding: 4; gap: 4; wrap: true; }
-    .tabs__item { bg: surface; color: text_dim; border-width: 1; border-color: border; radius: 6; padding: 5 12; min-height: 26; cursor: pointer; }
-    .tabs__item:hover { color: text; border-color: primary; }
-    .tabs__item--active { bg: surface_alt; color: text; border-color: primary; weight: bold; }
-
-    // ── statusbar — 상태줄/토스트 ───────────────────────────────
-    .statusbar { bg: surface; border-width: 1; border-color: border; radius: 10; padding: 4 12; gap: 10; wrap: true; }
-    .statusbar__text { color: text_dim; font-size: 13; }
-    .statusbar__toast { color: warn; font-size: 13; }
+    // ── statusbar — 캔버스 위 정보 스트립 ───────────────────────
+    // 캔버스가 남은 공간을 전부 먹으므로(C4) 이 스트립은 캔버스 **위**에 온다.
+    .statusbar { bg: background; radius: 6; padding: 2 8; gap: 12; }
+    .statusbar__text { color: text_dim; font-size: 12; }
+    .statusbar__meta { color: text_dim; font-size: 12; }
+    .statusbar__toast { color: warn; font-size: 12; }
 
     // ── modal ──────────────────────────────────────────────────
-    .modal { bg: surface; border-width: 1; border-color: border; radius: 12; padding: 16; gap: 10; shadow: 0 8 24; }
+    // 그림자는 모달에만 쓴다 — 나머지 구획은 배경 단차로 만든다.
+    .modal { bg: surface; radius: 12; padding: 16; gap: 12; shadow: 0 8 24; shadow-color: shadow; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
     .modal__actions { gap: 8; }
     .modal__actions--end { justify: end; }
 }
 
-/// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값.
+/// 팔레트 — CSS 색 토큰(`bg: surface` 등)의 값. **14슬롯이 전부**다.
 ///
-/// Bootstrap 5 다크 테마의 색 계열에 맞춘 값이다 (`--bs-body-bg` `#212529` /
-/// `--bs-tertiary-bg` `#2b3035` / `--bs-secondary-bg` `#343a40` /
-/// `--bs-border-color` `#495057` / `--bs-body-color` `#dee2e6` /
-/// `--bs-primary` `#0d6efd`). 브랜드 색을 바꾸려면 `Token::Primary` 한 줄만
-/// 고치면 된다 — 앱의 모든 파랑(버튼 호버, 활성 탭, 캔버스 커서)이 따라온다.
+/// 값·대비·역할의 근거는 `docs/DESIGN-SYSTEM.md` §2다. 요약하면 중성 슬레이트
+/// 4단(`background` < `surface` < `surface_alt` < `border`) + 단일 액센트
+/// (`primary` = `#2563EB`, 흰 글자 대비 5.17)이고, 구획은 보더가 아니라 이 단차가
+/// 만든다. 색을 늘릴 수 없으므로(토큰 14슬롯이 상한) 새 역할이 필요하면 슬롯을
+/// 재배치하고 **문서를 함께** 고친다.
+///
+/// 사용 규칙(§2.1): `primary`는 본문 크기 텍스트로 쓰지 않고(on `surface` 3.37),
+/// `error`도 텍스트로 쓰지 않는다(3.22) — 위험 동작은 채움으로 표현한다.
 pub fn palette() -> Palette {
     Palette::dark()
-        .with(Token::Primary, Color::rgb(0x0d, 0x6e, 0xfd))
+        .with(Token::Primary, Color::rgb(0x25, 0x63, 0xeb))
         .with(Token::OnPrimary, Color::rgb(0xff, 0xff, 0xff))
-        .with(Token::Background, Color::rgb(0x21, 0x25, 0x29))
-        .with(Token::Surface, Color::rgb(0x2b, 0x30, 0x35))
-        .with(Token::SurfaceAlt, Color::rgb(0x34, 0x3a, 0x40))
-        .with(Token::Border, Color::rgb(0x49, 0x50, 0x57))
-        .with(Token::Text, Color::rgb(0xde, 0xe2, 0xe6))
-        .with(Token::TextDim, Color::rgb(0xad, 0xb5, 0xbd))
-        .with(Token::Info, Color::rgb(0x0d, 0xca, 0xf0))
-        .with(Token::Success, Color::rgb(0x19, 0x87, 0x54))
-        .with(Token::Warn, Color::rgb(0xff, 0xc1, 0x07))
-        // 흰 글자와의 대비: #dc3545는 4.2:1(#dc3545)로 AA에 못 미친다 — 한 단계 어두운
-        // Bootstrap danger 강조색(#b02a37)을 쓴다 (5.9:1).
-        .with(Token::Error, Color::rgb(0xb0, 0x2a, 0x37))
+        .with(Token::Background, Color::rgb(0x0f, 0x11, 0x15))
+        .with(Token::Surface, Color::rgb(0x17, 0x1a, 0x21))
+        .with(Token::SurfaceAlt, Color::rgb(0x22, 0x26, 0x2f))
+        .with(Token::Border, Color::rgb(0x33, 0x39, 0x44))
+        .with(Token::Text, Color::rgb(0xe6, 0xe8, 0xec))
+        .with(Token::TextDim, Color::rgb(0x9b, 0xa1, 0xac))
+        .with(Token::Error, Color::rgb(0xc4, 0x31, 0x4b))
+        .with(Token::Warn, Color::rgb(0xff, 0xb2, 0x24))
+        .with(Token::Success, Color::rgb(0x30, 0xa4, 0x6c))
+        .with(Token::Info, Color::rgb(0x3e, 0x9b, 0xff))
+        .with(Token::Shadow, Color::rgba(0x00, 0x00, 0x00, 0x96))
+        .with(Token::Overlay, Color::rgba(0x0f, 0x11, 0x15, 0xbe))
 }
 
 /// CSS 색 토큰 → egui 색 (어댑터가 쓰는 변환과 같은 규칙).
@@ -188,14 +200,20 @@ pub fn clear_color() -> [f32; 4] {
     token_color(Token::Background).to_normalized_gamma_f32()
 }
 
-/// 캔버스 스테이지 바탕 — 페이지 뒤 영역 (`<Raw>`가 직접 칠한다).
+/// 캔버스 스테이지 — 페이지 뒤 영역. `background`(#0F1115)보다 **한 단계 아래**
+/// 리터럴이라 캔버스 영역이 창 여백과 구분된다 (CSS 밖 painter 색).
 pub fn stage_color() -> egui::Color32 {
-    token_color(Token::SurfaceAlt)
+    egui::Color32::from_rgb(0x0b, 0x0d, 0x11)
 }
 
-/// 페이지(흰 종이) 테두리/그림자 — CSS 밖(painter)에서 쓰는 캔버스 전용 색.
+/// 페이지(흰 종이) 테두리 — 종이 윤곽을 또렷하게 만드는 어두운 헤어라인.
 pub fn page_border_color() -> egui::Color32 {
-    token_color(Token::Border)
+    egui::Color32::from_rgb(0x0a, 0x0b, 0x0e)
+}
+
+/// 페이지 그림자 — `draw_paper`가 겹으로 근사한다(egui painter에는 blur가 없다).
+pub fn paper_shadow_color() -> egui::Color32 {
+    egui::Color32::from_rgb(0x00, 0x00, 0x00)
 }
 
 /// elm-magic CSS가 닿지 않는 **egui 네이티브 위젯**의 최소 설정.

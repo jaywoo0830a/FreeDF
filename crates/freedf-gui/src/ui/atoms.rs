@@ -1,6 +1,13 @@
 //! atoms — 셸의 최소 컴포넌트. **태그는 의미만** 갖고 스타일은 전부
 //! `style.rs`(BEM 클래스 CSS)가 가져간다.
 //!
+//! ## 라벨은 계약이다 (건드리지 말 것)
+//!
+//! 버튼 `text`는 eguidev 계약 id의 근거다(`gui.<라벨 슬러그>` — `shell::render_shell`).
+//! `ButtonEl`에는 `id`/`tooltip` prop이 없어(elm-magic 0.7.4) **아이콘 전용 버튼이
+//! 불가능**하다. 라벨 문구를 바꾸면 id가 바뀌고 스모크·문서가 깨진다 —
+//! `docs/DESIGN-SYSTEM.md` §1 C1을 먼저 읽어라.
+//!
 //! 컴포넌트는 세 가지만 책임진다:
 //! 1. 의미 태그(`Button` `Strong` `Text` `Row` `Tab` `Modal` …) 선택
 //! 2. 아이콘 + 라벨 문자열 조합(`crate::ui::label`)과 상태 → BEM 수정자 매핑
@@ -99,5 +106,18 @@ elm_magic::view! {
     pub fn TabItem(text: String = String::new(), active: bool = false, on_click: fn()) {
         let l = crate::ui::label(&text);
         <Tab class={if active { "tabs__item tabs__item--active" } else { "tabs__item" }} active={active} on_click={on_click()}>"{l}"</Tab>
+    }
+
+    /// 정보 스트립의 상태 텍스트 (`.statusbar__text`) — 좌측/메타 공용.
+    ///
+    /// 캔버스가 남은 공간을 먹어 스트립이 캔버스 **위**에 오므로, 상태 문자열은
+    /// painter가 아니라 이 트리 노드가 소유한다(자동화 `assert_text` 계약).
+    pub fn StatusText(text: String = String::new()) {
+        <Text class="statusbar__text">"{text}"</Text>
+    }
+
+    /// 정보 스트립의 토스트 (`.statusbar__toast`) — 3초짜리 알림 문구.
+    pub fn StatusToast(text: String = String::new()) {
+        <Text class="statusbar__toast">"{text}"</Text>
     }
 }

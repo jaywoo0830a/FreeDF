@@ -973,8 +973,9 @@ impl Canvas {
         let (rect, _resp) = ui.allocate_exact_size(avail, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
 
-        // 캔버스 바탕 — 스테이지 색도 CSS 팔레트 토큰에서 온다(`style::stage_color`
-        // = `surface_alt`). 칠하지 않으면 창 클리어 색이 드러나 검정으로 보인다.
+        // 캔버스 바탕 — 스테이지 색은 CSS 밖 리터럴(`style::stage_color` =
+        // `#0B0D11`, 앱 바탕보다 한 단계 아래). 칠하지 않으면 창 클리어 색이
+        // 드러나 캔버스 영역이 창 여백과 구분되지 않는다.
         let stage_bg = crate::style::stage_color();
         painter.rect_filled(rect, 0.0, stage_bg);
 
@@ -1050,12 +1051,19 @@ impl Canvas {
 
     fn draw_paper(&self, painter: &egui::Painter, origin: egui::Pos2) {
         let rect = self.doc_ref().page_rect(origin);
-        // 종이 경계/그림자 색도 팔레트 토큰(`border`) — 캔버스는 CSS 밖(painter)이라
-        // style.rs가 색을 제공하고 여기서는 옮기기만 한다.
-        let border = crate::style::page_border_color();
-        painter.rect_filled(rect.expand(1.0), 2.0, border);
+        // 종이 그림자 — egui painter에는 blur가 없어 **확장 사각형 3겹**으로
+        // 근사한다(가장 넓고 옅은 것부터). 색은 CSS 밖 리터럴이다(style.rs).
+        let shadow = crate::style::paper_shadow_color();
+        for (expand, alpha) in [(7.0, 18.0), (5.0, 30.0), (3.0, 48.0)] {
+            painter.rect_filled(rect.expand(expand), 2.0, shadow.gamma_multiply(alpha));
+        }
         painter.rect_filled(rect, 0.0, egui::Color32::WHITE);
-        painter.rect_stroke(rect, 0.0, (1.0, border), egui::StrokeKind::Outside);
+        painter.rect_stroke(
+            rect,
+            0.0,
+            (1.0, crate::style::page_border_color()),
+            egui::StrokeKind::Outside,
+        );
     }
 
     fn draw_pdf(&self, painter: &egui::Painter, origin: egui::Pos2) {

@@ -30,13 +30,22 @@ freedf-gui는 UI를 전부 `elm_magic::view!` + `elm_magic::css!`로 그린다. 
 
 - 셀렉터는 **BEM 클래스뿐**이다(태그 셀렉터 금지) — `tests/style_tests.rs`의
   `selectors_use_bem_classes_only`가 강제한다.
+- **`wrap: true`는 무효다**(실측). `ResolvedStyle.wrap`은 파싱만 되고
+  `elm-magic-egui` 어댑터에 사용처가 없다 — 행은 항상 **단일 줄**이고, 폭을 넘긴
+  항목은 조용히 화면 밖으로 나간다(감사 `layout_issues`의 `offscreen`이 감지기).
+  freedf-gui는 그래서 `wrap`을 쓰지 않고 **줄을 명시적으로 나눈다**(`.inkbar__line`).
+- **우측 정렬 수단이 없다**(실측). `.…__end { justify: end }`는 콘텐츠 크기 자식
+  Row에서 무효이고, `width: fill` 스페이서는 `set_max_width`가 커서 기준으로
+  `max_rect`를 재설정해 **부모를 창 밖으로 팽창**시킨다(캔버스 폭 1754 > 창 1100,
+  루트 rect 1241로 측정됨). 그룹은 왼쪽부터 차례로 흐르고 위계는 순서와
+  `.bar__sep` 헤어라인으로 만든다.
 - 시작 자기등록은 **플랫폼별 섹션**으로 돈다: MSVC `.CRT$XCU`,
   Apple `__DATA,__mod_init_func`, ELF `.init_array`. 여기에 더해 `main()`이
   `elm_magic::style::init_styles()`를 한 번 부른다(멱등 — 섹션이 안 도는 환경의 안전판).
 - `Button`/`Tab`도 CSS `padding`/`height`/`min-height`를 그대로 반영한다.
-  클릭 대상은 `min-height: 24`(감사 `small_targets` 기준).
+  클릭 대상은 `min-height: 28`(감사 `small_targets` 기준 24를 넘긴다).
 - 등록 진단: `FREEDF_GUI_STYLE_DIAG=1`로 실행하면 등록된 셀렉터 수를 찍는다
-  (기대값 **41**, 0이면 CSS가 하나도 적용되지 않는다는 뜻).
+  (기대값 **45**, 0이면 CSS가 하나도 적용되지 않는다는 뜻).
 
 
 ## 2. 이력 — 고쳐져서 **지운** 우회 (0.7.2 / 0.7.4)

@@ -29,7 +29,7 @@ fn main() -> eframe::Result {
             _ => eframe::Renderer::Glow,
         },
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 720.0])
+            .with_inner_size(window_size())
             .with_title("FreeDF GUI (elm-magic)"),
         ..Default::default()
     };
@@ -67,6 +67,31 @@ fn main() -> eframe::Result {
             Ok(Box::new(Host::default()))
         }),
     )
+}
+
+/// 창 기본 크기 — `FREEDF_GUI_SIZE=WxH`(예: `900x600`)가 있으면 그 값.
+///
+/// 디자인 감사가 **좁은 창의 캔버스 예산**을 확인할 때 쓴다
+/// (`docs/DESIGN-SYSTEM.md` §9.2 — 900×600에서도 캔버스 높이 ≥300px).
+/// 형식이 틀리거나 값이 너무 작으면 기본값으로 조용히 떨어진다.
+fn window_size() -> [f32; 2] {
+    const DEFAULT: [f32; 2] = [1100.0, 720.0];
+    let Ok(raw) = std::env::var("FREEDF_GUI_SIZE") else {
+        return DEFAULT;
+    };
+    let parse = |s: &str| {
+        s.trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| (320.0..=8192.0).contains(v))
+    };
+    match raw.split_once(['x', 'X']) {
+        Some((w, h)) => match (parse(w), parse(h)) {
+            (Some(w), Some(h)) => [w, h],
+            _ => DEFAULT,
+        },
+        None => DEFAULT,
+    }
 }
 
 /// eframe 호스트 — elm-magic의 상태 아레나(`Ctx`)를 프레임 간에 유지한다.

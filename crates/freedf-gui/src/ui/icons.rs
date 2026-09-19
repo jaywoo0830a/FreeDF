@@ -56,8 +56,10 @@ pub fn icon(text: &str) -> &'static str {
         "Clear Ink" => ph::TRASH.0,
         "Settings" => ph::GEAR.0,
         "About" => ph::INFO.0,
-        // 색 스와치 — 색마다 다른 글리프가 아니라 하나의 원 (색은 CSS가 칠한다).
-        _ if text.starts_with("Swatch ") => ph::CIRCLE.0,
+        // 색 스와치 — 색마다 다른 글리프가 아니라 하나의 **채워진 점** (색은 CSS가 칠한다).
+        // `CIRCLE`(윤곽선)을 쓰면 감사가 위젯 중심 픽셀에서 원 **안쪽**(= 바탕색 혼합)을
+        // 샘플해 대비가 1.75로 오측정된다 — 채워진 점은 중심이 글자색이라 정확히 측정된다.
+        _ if text.starts_with("Swatch ") => ph::DOT.0,
         _ => "",
     }
 }

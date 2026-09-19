@@ -41,23 +41,39 @@ id는 **스크립트가 의존하는 공개 계약**입니다. 라벨은 바꿔�
 | `gui.<라벨 슬러그>` | 어댑터(elm-magic)가 그린 버튼/탭 — 라벨 소문자 + 공백→`_`(`save_edits`). 같은 라벨이 한 프레임에 두 번 이상이면 `.<n>` 접미사 (`gui.untitled`, `gui.untitled.1`) |
 | `canvas.surface` | 잉크 캔버스 영역 |
 
-`smoketest-gui/10_launch_gui.luau`가 검증하는 툴바/리본 id:
-`gui.sidebar` · `gui.new_tab` · `gui.close_tab` · `gui.bookmark` · `gui.bookmarks` ·
-`gui.outline` · `gui.zoom_in` · `gui.zoom_out` · `gui.fit` · `gui.prev_page` ·
-`gui.next_page` · `gui.open_pdf` · `gui.clear_ink` · `gui.about` · `gui.fountain` ·
-`gui.highlighter` · `gui.eraser` · `gui.swatch_1` … `gui.swatch_3` · `gui.pressure` ·
-`canvas.surface`.
+`smoketest-gui/10_launch_gui.luau`가 검증하는 계약 id(바 이름: TopBar → InkBar 1·2줄
+→ ViewBar 1·2줄 → Statusbar):
+`gui.new_tab` · `gui.close_tab` · `gui.open_pdf` · `gui.settings` · `gui.about` ·
+`gui.undo` · `gui.redo` · `gui.save_edits` · `gui.load_edits` · `gui.zoom_in` ·
+`gui.zoom_out` · `gui.fit` · `gui.prev_page` · `gui.next_page` · `gui.pen` ·
+`gui.fountain` · `gui.highlighter` · `gui.eraser` · `gui.swatch_1` … `gui.swatch_3` ·
+`gui.thin` · `gui.medium` · `gui.thick` · `gui.pressure` · `gui.sidebar` ·
+`gui.bookmarks` · `gui.outline` · `gui.bookmark` · `gui.clear_ink` ·
+`canvas.surface`(+ 탭 `gui.untitled`).
+
+배치(디자인 사양 `docs/DESIGN-SYSTEM.md` §6.1):
+
+| 바 | 항목 |
+|---|---|
+| TopBar (1줄) | 브랜드 · 탭 · New/Close/Open PDF · Settings/About |
+| InkBar 1줄 | Pen/Fountain/Highlighter/Eraser · Swatch 1-3 |
+| InkBar 2줄 | Undo/Redo · Thin/Medium/Thick/Pressure |
+| ViewBar 1줄 | Zoom In/Out/Fit/Prev/Next Page |
+| ViewBar 2줄 | Save/Load Edits · Bookmark · Clear Ink · Sidebar/Bookmarks/Outline |
+| Statusbar | 상태 텍스트(자동화 `assert_text` 대상 — painter가 아니라 트리 노드) |
 
 **팔레트 스와치**: 라벨 `Swatch N`(1-기반)이 곧 id입니다(`gui.swatch_N`). 목록은
 `freedf-services::settings`의 즐겨찾기 색(`MAX_FAVORITE_COLORS` = 8 상한, 기본
-3색 Black/Red/Blue)에서 오고, 활성 스와치도 **Button**이라 id가 있습니다
-(다른 활성 항목과 달리 `<Strong>`이 아닌 `ribbon__button--on` 수정자를 씁니다).
+3색 Black/Red/Blue)에서 옵니다. 활성 스와치도 **Button**이라 id가 있습니다
+(`.swatch--on` 수정자 — `<Strong>`이 아닙니다).
+
+**활성 상태 항목도 id가 있습니다**: `BtnOn`은 `<Strong>`이 아니라 `Button` +
+`.btn--on` 수정자로 그려집니다 — `gui.medium`(굵기 Medium), `gui.sidebar`,
+`gui.pressure`가 그대로 등록됩니다(감사 실측: `gui.medium` ratio 5.17로 측정됨).
 
 `gui.pressure`는 필압 반영 토글입니다(장치 스트림이 없으면 값은 명목 1.0).
-
-리본의 다른 **활성** 항목(Pen/Medium 등)은 Button이 아닌 `<Strong>`으로 그려지므로
-id가 없습니다 — 비활성 상태 버튼의 id만 계약입니다. 같은 이유로 설정 모달의 현재
-활성 프리셋도 id가 없습니다.
+Settings 모달의 스무딩 프리셋(`gui.off`/`light`/`normal`/`strong`)은 모달이 열려
+있을 때만 존재합니다 — 리본 굵기 라벨(`gui.medium`)과 겹치지 않게 고른 이름입니다.
 
 | id | 대상 |
 |---|---|

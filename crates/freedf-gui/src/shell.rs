@@ -1,10 +1,18 @@
 //! 셸 — `elm_magic::view!` 트리. **하이브리드 구조**: 시맨틱 태그 + 재사용 컴포넌트.
 //!
-//! 이 파일은 "무엇을 어디에 두는가"만 표현한다:
+//! 이 파일은 "무엇을 어디에 두는가"만 표현한다 (설계: `docs/DESIGN-SYSTEM.md` §6):
 //!
-//! - 영역은 [`crate::ui::layout`] 컴포넌트(`Navbar`/`Toolbar`/`Ribbon`/`Panel`/…)
-//! - 항목은 [`crate::ui::atoms`] 컴포넌트(`Btn`/`BtnOn`/`Swatch`/`PanelRow`/…)
+//! - 영역은 [`crate::ui::layout`] 컴포넌트(`TopBar`/`InkBar`/`ViewBar`/`Panel`/…)
+//! - 항목은 [`crate::ui::atoms`] 컴포넌트(`Btn`/`BtnOn`/`Swatch`/`StatusText`/…)
 //! - 클래스 이름은 컴포넌트가 갖고, **스타일은 전부 `style.rs` CSS**가 갖는다
+//!
+//! ## 자식 순서 = 배치 순서 (캔버스가 마지막)
+//!
+//! `App`의 자식 순서가 곧 위→아래 배치다:
+//! `TopBar`(44) → `InkBar` → `ViewBar` → `Statusbar`(22) → `Row.app__body`(fill).
+//! 캔버스 `<Raw>`는 `.app__body`의 **마지막 자식**이다 — `canvas::paint_ui`가
+//! `ui.available_size()`를 전부 소비하므로 같은 컨테이너에서 뒤에 형제를 두면
+//! 그 형제는 0px가 된다(C4). 그래서 정보 스트립은 캔버스 **위**에 온다.
 //!
 //! `view!` 본문 주의: 제네릭 타입 표기(`Vec<(A,B)>`)나 복잡한 `if` 식을 문장으로
 //! 쓰면 매크로 파서가 태그로 오인한다(실측). 그래서 계산은 [`shell_state`]에서
@@ -117,69 +125,102 @@ elm_magic::view! {
         let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
         <App>
-            // ── navbar: 브랜드 + 명령 ───────────────────────────────
-            <Navbar>
+            // ── topbar: 브랜드 · 탭 · 문서 열기/닫기 · 앱 명령 ─────
+            // 탭이 상단 바 **안**에 인라인으로 들어온다(브라우저 결).
+            // 그룹은 왼쪽부터 차례로 흐른다 — `justify: end`는 콘텐츠 크기 자식에서
+            // 무효이고 `width: fill` 스페이서는 부모 `max_rect`를 창 밖으로
+            // 팽창시킨다(실측: 캔버스 폭 1754 > 창 1100). 그래서 우측 정렬을 쓰지
+            // 않는다 — 그룹 순서와 헤어라인으로 위계를 만든다.
+            // 편집/저장 명령은 아래 바에 있다: 여기 두면 900px 창에서 넘친다.
+            <TopBar>
                 <Brand text="FreeDF" />
+                <TabStrip>
+                    {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
+                </TabStrip>
                 <Nav>
                     <Btn text="New Tab" on_click={input = String::new(), modal = ShellModal::NewTab} />
                     <Btn text="Close Tab" on_click={modal = ShellModal::CloseConfirm} />
                     <Btn text="Open PDF" on_click={input = String::new(), modal = ShellModal::OpenPdf} />
                 </Nav>
-                <NavEnd>
-                    <Btn text="Undo" on_click={crate::canvas::undo()} />
-                    <Btn text="Redo" on_click={crate::canvas::redo()} />
-                    <Btn text="Save Edits" on_click={crate::canvas::save_edits()} />
-                    <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
-                    <Btn text="Settings" on_click={modal = ShellModal::Settings} />
-                    <Btn text="About" on_click={modal = ShellModal::About} />
-                </NavEnd>
-            </Navbar>
-            // ── toolbar: 보기/이동 + 패널 토글 (그룹 = btn-group) ────
-            <Toolbar>
-                <ToolbarGroup>
-                    <Btn text="Zoom In" on_click={crate::canvas::zoom_in()} />
-                    <Btn text="Zoom Out" on_click={crate::canvas::zoom_out()} />
-                    <Btn text="Fit" on_click={crate::canvas::zoom_fit()} />
-                    <Btn text="Prev Page" on_click={crate::canvas::page_prev()} />
-                    <Btn text="Next Page" on_click={crate::canvas::page_next()} />
-                </ToolbarGroup>
-                <ToolbarGroup>
-                    <BtnOn text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
-                    <BtnOn text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
-                    <BtnOn text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
-                    <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
-                </ToolbarGroup>
-                <ToolbarGroup>
-                    <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
-                </ToolbarGroup>
-            </Toolbar>
-            // ── ribbon: 잉크 도구/색/굵기/필압 (그룹 = 도구 묶음) ───
-            <Ribbon>
-                <Section text="Ink" />
-                <RibbonGroup>
-                    <BtnOn text="Pen" on={tool == "Pen"} on_click={crate::canvas::select_tool("Pen")} />
-                    <BtnOn text="Fountain" on={tool == "Fountain"} on_click={crate::canvas::select_tool("Fountain")} />
-                    <BtnOn text="Highlighter" on={tool == "Highlighter"} on_click={crate::canvas::select_tool("Highlighter")} />
-                    <BtnOn text="Eraser" on={tool == "Eraser"} on_click={crate::canvas::select_tool("Eraser")} />
-                </RibbonGroup>
-                <RibbonGroup>
-                    {st.swatch_items.clone().into_iter().map(|item| <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
-                </RibbonGroup>
-                <RibbonGroup>
-                    <BtnOn text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
-                    <BtnOn text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
-                    <BtnOn text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
-                    <BtnOn text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
-                </RibbonGroup>
-            </Ribbon>
-            // ── tabs: 문서 탭 스트립 (캔버스 바로 위 — 브라우저 배치) ──
-            // 탭은 캔버스 엔진이 소유 — 매 프레임 읽어 렌더만 한다.
-            <TabStrip>
-                {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
-            </TabStrip>
-            // ── 본문: 패널들 ────────────────────────────────────────
-            // 참고: 캔버스 <Raw>는 이 Row **밖**(루트 Col 직접 자식)에 둔다 —
-            // egui에서 수평 Row 안의 수직 Col은 컨텐츠 높이만 가용 높이로 받는다.
+                <TopEnd>
+                    <BtnGhost text="Settings" on_click={modal = ShellModal::Settings} />
+                    <BtnGhost text="About" on_click={modal = ShellModal::About} />
+                </TopEnd>
+            </TopBar>
+            // ── inkbar: 1줄 = 그리기 재료(도구·색) / 2줄 = 편집·굵기 ──
+            // 줄을 명시적으로 나눈다 — elm-magic 행은 줄바꿈하지 않으므로 한 줄에
+            // 몰면 좁은 창에서 화면 밖으로 나간다(실측: 900px에서 thick/pressure).
+            <InkBar>
+                <InkLine>
+                    <InkGroup>
+                        <BtnOn text="Pen" on={tool == "Pen"} on_click={crate::canvas::select_tool("Pen")} />
+                        <BtnOn text="Fountain" on={tool == "Fountain"} on_click={crate::canvas::select_tool("Fountain")} />
+                        <BtnOn text="Highlighter" on={tool == "Highlighter"} on_click={crate::canvas::select_tool("Highlighter")} />
+                        <BtnOn text="Eraser" on={tool == "Eraser"} on_click={crate::canvas::select_tool("Eraser")} />
+                    </InkGroup>
+                    <Sep />
+                    <InkGroup>
+                        {st.swatch_items.clone().into_iter().map(|item| <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
+                    </InkGroup>
+                </InkLine>
+                <InkLine>
+                    <InkGroup>
+                        <Btn text="Undo" on_click={crate::canvas::undo()} />
+                        <Btn text="Redo" on_click={crate::canvas::redo()} />
+                    </InkGroup>
+                    <Sep />
+                    <InkGroup>
+                        <BtnOn text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
+                        <BtnOn text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
+                        <BtnOn text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
+                        <BtnOn text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
+                    </InkGroup>
+                </InkLine>
+            </InkBar>
+            // ── viewbar: 1줄 = 보기/이동 / 2줄 = 문서 동작·패널 토글 ──
+            <ViewBar>
+                <ViewLine>
+                    <ViewGroup>
+                        <Btn text="Zoom In" on_click={crate::canvas::zoom_in()} />
+                        <Btn text="Zoom Out" on_click={crate::canvas::zoom_out()} />
+                        <Btn text="Fit" on_click={crate::canvas::zoom_fit()} />
+                        <Btn text="Prev Page" on_click={crate::canvas::page_prev()} />
+                        <Btn text="Next Page" on_click={crate::canvas::page_next()} />
+                    </ViewGroup>
+                </ViewLine>
+                <ViewLine>
+                    <ViewGroup>
+                        <Btn text="Save Edits" on_click={crate::canvas::save_edits()} />
+                        <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
+                        <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
+                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
+                    </ViewGroup>
+                    <Sep />
+                    <ViewGroup>
+                        <BtnOn text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
+                        <BtnOn text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
+                        <BtnOn text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
+                    </ViewGroup>
+                </ViewLine>
+            </ViewBar>
+            // ── statusbar: 상태/토스트(좌) + 문서 메타(우) ──────────
+            // 캔버스가 남은 공간을 전부 먹으므로(C4) 이 스트립은 캔버스 **위**에
+            // 온다. 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
+            <Statusbar>
+                {if toast.is_empty() {
+                    <StatusText text={status.clone()} />
+                } else {
+                    <StatusToast text={toast.clone()} />
+                }}
+                <StatusMeta>
+                    <StatusText text={canvas_status.clone()} />
+                </StatusMeta>
+            </Statusbar>
+            // ── body: 사이드바 + 캔버스 (남은 세로 전부) ────────────
+            // 캔버스 `<Raw>`는 이 행의 **마지막 자식**이다 — `available_size()`를
+            // 전부 먹으므로 뒤에 형제를 두면 그 형제는 0px가 된다(C4).
+            // `.app__body { height: fill }`이 행 높이를 확정하므로 사이드바도
+            // `height: fill`로 캔버스와 같은 높이를 갖는다(진짜 사이드바).
             <Row class="app__body">
                 {if sidebar_open {
                     <Panel>
@@ -213,21 +254,13 @@ elm_magic::view! {
                 } else {
                     <Text class="app__hidden">""</Text>
                 }}
+                // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs) ──
+                // 위젯 트리 밖의 상태는 canvas 모듈의 UI-스레드 엔진이 소유한다.
+                // `<Raw>`는 class를 받지 않는다 — 캔버스 색은 canvas.rs의 리터럴.
+                <Raw>|ui: &mut eframe::egui::Ui| {
+                    crate::canvas::paint(ui);
+                }</Raw>
             </Row>
-            // ── statusbar: 상태/토스트 ──────────────────────────────
-            <Statusbar>
-                {if toast.is_empty() {
-                    <Text class="statusbar__text">"{status} · {canvas_status}"</Text>
-                } else {
-                    <Text class="statusbar__toast">"{toast}"</Text>
-                }}
-            </Statusbar>
-            // ── 캔버스 — <Raw> 경계: 잉크 렌더/입력은 명령형 egui (canvas.rs) ──
-            // 위젯 트리 밖의 상태는 canvas 모듈의 UI-스레드 엔진이 소유한다.
-            // `<Raw>`는 class를 받지 않는다 — 캔버스 색은 canvas.rs의 팔레트 토큰.
-            <Raw>|ui: &mut eframe::egui::Ui| {
-                crate::canvas::paint(ui);
-            }</Raw>
             // ── 모달 — 하나만 열린다 ───────────────────────────────
             {match modal {
                 ShellModal::None => <Text class="app__hidden">""</Text>,
