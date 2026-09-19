@@ -66,7 +66,7 @@ elm_magic::view! {
         <Row class="tabs">{children}</Row>
     }
 
-    /// 도구 줄 (`.bar`) — 창이 좁아지면 **스스로 접힌다**(`wrap`).
+    /// 도구 줄 (`.bar`) — 한 줄이 한 줄이다(`wrap`은 이 트리에서 동작하지 않는다).
     ///
     /// 잉크 줄(도구·색·굵기·편집)과 보기 줄(줌·페이지·문서·패널)이 같은 컴포넌트를
     /// 쓴다 — 둘은 내용만 다르고 생김새는 같다.
@@ -79,7 +79,7 @@ elm_magic::view! {
         <Row class="bar__group">{children}</Row>
     }
 
-    /// 그룹 구분 세로 헤어라인 (`.bar__sep`) — 1×16px, 상하 마진 5.
+    /// 그룹 구분 세로 헤어라인 (`.bar__sep`) — 1×18px, 상하 마진 4 (= 컨트롤 높이 26).
     pub fn Sep() {
         <Col class="bar__sep" />
     }
@@ -137,5 +137,14 @@ elm_magic::view! {
     /// 모달의 프리셋 행 — 왼쪽 정렬 (설정 창의 선택지 나열).
     pub fn Presets() {
         <Row class="modal__actions">{children}</Row>
+    }
+
+    /// 모달 안에서 **붙어 있어야 하는 것들의 묶음** (`.modal__group`, `gap` 4).
+    ///
+    /// 모달의 `gap` 12는 **블록 사이** 값이라, 라벨과 그 필드(또는 한 덩어리인 사실
+    /// 목록)를 그냥 나란히 두면 서로 다른 블록처럼 12px씩 떨어진다 — 붙어 있어야 하는
+    /// 것은 이 컴포넌트로 묶는다. 안쪽은 4(사다리), 블록 사이는 12가 유지된다.
+    pub fn Group() {
+        <Col class="modal__group">{children}</Col>
     }
 }

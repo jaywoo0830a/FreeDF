@@ -28,18 +28,39 @@
 //! `btn` `swatch`. 수정자는 기본 클래스와 **함께** 붙여 차이만 덮는다
 //! (`tabs__item--active`, `btn--danger`).
 //!
-//! ## 간격 스케일 — 4px 베이스
+//! ## 간격 사다리 — 2 · 4 · 6 · 8 · 12 · 16
 //!
-//! 4 · 8 · 12 · 16 · 24px만 쓴다. 칩 사이는 2–4(한 묶음으로 읽히게), 그룹 사이는
-//! 헤어라인 + `gap` 4, 판 안쪽 패딩은 6, 모달 패딩은 16이다. 예외는 `padding: 4 8`
-//! (컨트롤 좌우)과 `margin: 5 0`(세로 헤어라인 높이 16 + 5 + 5 = 컨트롤 높이 26)
-//! 둘뿐이다.
+//! 여백은 **한 사다리**만 쓴다. 단계가 올라갈수록 큰 덩어리를 나눈다:
+//!
+//! | 값 | 쓰는 곳 |
+//! |---|---|
+//! | 2 | 한 묶음 안의 칩 (`bar__group` · `topbar__nav` · `topbar__end` · 패널 행) |
+//! | 4 | 묶음 사이(`bar`) · 탭 사이(`tabs`) · 모달 묶음(`modal__group`) · 헤어라인 상하 마진 |
+//! | 6 | 판 **안**에서 행 사이(`chrome`) · 판 안쪽 패딩 |
+//! | 8 | 판 **사이**(`app` · `app__body`) · 컨트롤 좌우 패딩 · 모달 액션 사이 |
+//! | 12 | 정보 스트립의 값 사이(`statusbar`) · 모달 블록 사이 |
+//! | 16 | 모달 안쪽 패딩 |
+//!
+//! 사다리에 없는 값(10·5 등)은 쓰지 않는다 — 단계가 하나 늘면 계층이 흐려진다.
+//!
+//! 크기 사다리도 하나다: **컨트롤 높이 26**(`btn`·`swatch`·`tabs__item`·`panel__row`)
+//! 이고 도구 줄의 행 높이도 26이다(감사 `small_targets` 24pt 기준을 넘긴다). 세로
+//! 헤어라인은 18 + 마진 4×2 = 26이라 컨트롤과 **정확히 같은 높이**로 중심이 맞는다.
+//!
+//! ## 왼쪽 인셋 — 글자는 모두 24
+//!
+//! 크롬(6 + 2) · 패널(8) · 정보 스트립(16)의 **글자**가 모두 x=24에서 시작한다. 크롬과
+//! 패널은 항목 상자(16) + 항목 패딩(8)이 만들고, 정보 스트립은 항목 상자가 없어
+//! 좌우 패딩이 그 8을 대신한다(글자가 곧 항목이다). 판마다 시작선이 다르면 세로로
+//! 나란한 목록(상태 문자열 ↔ 패널 행 ↔ 캔버스)이 어긋나 보인다.
+//!
+//! 실측 확인: 패널 행의 첫 잉크 x=24(`sample_pixels`), 크롬 버튼 상자 x=16 + 패딩 8.
 //!
 //! ## 세로 예산
 //!
-//! 크롬은 도구 줄이 접히는 만큼 늘어난다(`.bar { wrap: true }`) — 캔버스가 남은
-//! 높이를 전부 받는다. 컨트롤 `min-height: 26`은 감사 `small_targets`(24pt) 기준을
-//! 넘긴다. 간격을 키울 때는 감사(`layout_issues` + 캔버스 높이)를 다시 확인한다.
+//! 크롬은 도구 줄 수만큼 늘어난다(`.bar` 줄은 명시적으로 나눈다 — 아래 `wrap` 항목).
+//! 캔버스가 남은 높이를 전부 받는다. 간격을 키울 때는 감사(`layout_issues` + 캔버스
+//! 높이)를 다시 확인한다.
 //!
 //! ## `justify`는 쓰고, `wrap`은 쓰지 않는다 (실측)
 //!
@@ -84,7 +105,9 @@ elm_magic::css! {
     .chrome { width: fill; bg: surface; radius: 10; padding: 6; gap: 6; }
 
     // ── topbar — 브랜드 · 탭 · 문서/앱 명령 ─────────────────────
-    .topbar { gap: 10; padding: 0 2; min-height: 30; }
+    // `min-height`는 컨트롤 높이(26)와 **같다** — 30으로 두면 26짜리 버튼이 행 위쪽에
+    // 붙어 아래 헤어라인까지의 여백만 4px 커진다(실측: 행 사이 6인데 여기만 10).
+    .topbar { gap: 8; padding: 0 2; min-height: 26; }
     // 브랜드는 `info`(surface 위 6.08:1) — `primary`는 14px 본문 대비 3.37이라
     // 글자로 쓰지 않는다(액센트 "텍스트"의 슬롯이 `info`인 이유).
     .topbar__brand { color: info; font-size: 17; weight: bold; letter-spacing: 0.4; }
@@ -108,9 +131,10 @@ elm_magic::css! {
     // 그래서 각 줄을 **좁은 창(900px)에서도 넘지 않는 폭**으로 유지한다(각 줄 ≤ 730).
     .bar { gap: 4; padding: 0 2; }
     .bar__group { gap: 2; }
-    // 그룹 구분 헤어라인 — 높이 16 + 상하 마진 4 = 24(컨트롤 높이 26에서 1px 차).
-    // 마진을 5로 키우면 줄 폭이 900px 창에서 예산을 넘는다(각 줄 예산 ~845).
-    .bar__sep { width: 1; height: 16; margin: 4 0; bg: border; }
+    // 그룹 구분 헤어라인 — 18 + 마진 4×2 = 26. 컨트롤 높이(26)와 **정확히** 같아야
+    // 중심이 맞는다(16+4×2=24는 1px 어긋난다). 마진을 5로 키우면 26이 되지만 줄 폭이
+    // 900px 창에서 예산을 넘는다(각 줄 예산 ~845) — 높이로 맞춘다.
+    .bar__sep { width: 1; height: 18; margin: 4 0; bg: border; }
     // 크롬 안의 가로 헤어라인 — 판을 늘리지 않고 구획만 만든다.
     .bar__rule { width: fill; height: 1; bg: border; }
 
@@ -159,11 +183,16 @@ elm_magic::css! {
     // 가용 폭을 다 먹어 패널이 화면 폭을 전부 차지한다(실측: 캔버스 폭 0).
     // `height: fill` — 캔버스와 같은 높이를 갖는다. 캔버스가 `.app__body` 안에
     // 있으므로 Row 높이가 확정되어 이 값이 안전하다.
-    .panel { width: 216; bg: surface; radius: 10; padding: 6; gap: 2; height: fill; }
+    // 패딩 8: 크롬(6 + 2)과 같은 인셋이라 패널 행과 크롬 버튼의 시작선이 맞는다.
+    // 주의: elm-magic CSS의 `width`/`height`는 **내용 상자**다 — 216 + 패딩 8×2 = 바깥
+    // 232다(실측: 패널 상자가 x=8..240). 폭을 바꾸면 캔버스 폭이 그만큼 따라 움직인다.
+    .panel { width: 216; bg: surface; radius: 10; padding: 8; gap: 2; height: fill; }
     // 패널 머리 — 제목 + 헤어라인. 제목만 떠 있으면 첫 행과 구분되지 않는다.
-    .panel__head { gap: 4; padding: 4; }
+    // 좌우 패딩 8 = 행 패딩 8 — 제목과 첫 행의 글자가 같은 x(24)에서 시작한다.
+    .panel__head { gap: 4; padding: 0 8; }
     .panel__rule { width: fill; height: 1; bg: border; }
-    .panel__row { radius: 6; padding: 5 8; min-height: 28; }
+    // 행 높이는 컨트롤과 같다(4+18+4 = 26). 28로 두면 패널만 2px 커져 크롬과 어긋난다.
+    .panel__row { radius: 6; padding: 4 8; min-height: 26; }
     .panel__row:hover { bg: surface_alt; }
     .panel__item { color: text_dim; font-size: 13; cursor: pointer; }
     .panel__empty { color: text_dim; font-size: 12; padding: 4 8; }
@@ -172,14 +201,21 @@ elm_magic::css! {
     // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
     // 바탕을 깔지 않는다 — 앱 바탕(`background`)이 곧 스트립이고, 판이 하나
     // 줄어든다. 상태 문자열은 값 목록으로 읽히게 `gap`으로만 나눈다.
-    .statusbar { padding: 0 6; min-height: 22; gap: 12; }
+    // 좌우 패딩 16 = 인셋 8 + 항목 패딩 8 — 이 스트립만 **항목 상자가 없어서**
+    // (글자가 곧 항목이다) 크롬·패널의 글자 시작선(x=24)에 맞추려면 16이 필요하다.
+    .statusbar { padding: 0 16; min-height: 22; gap: 12; }
     .statusbar__text { color: text_dim; font-size: 12; }
     .statusbar__meta { color: text_dim; font-size: 12; }
     .statusbar__toast { color: warn; font-size: 12; }
 
     // ── modal ──────────────────────────────────────────────────
     // 그림자는 모달에만 쓴다 — 나머지 구획은 배경 단차로 만든다.
+    // 모달의 `gap` 12는 **블록 사이**다(제목 / 필드 / 프리셋 / 액션). 라벨과 그 필드처럼
+    // 붙어 있어야 하는 것은 `.modal__group`(gap 4)으로 묶는다 — 그러지 않으면 라벨이
+    // 자기 필드에서 12px 떨어져 다음 블록처럼 읽힌다.
     .modal { bg: surface; radius: 12; padding: 16; gap: 12; shadow: 0 8 24; shadow-color: shadow; }
+    // 블록 안의 묶음 — 라벨↔필드, 설정의 사실 목록 (사다리 4).
+    .modal__group { gap: 4; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서만 지정(나머지는 Visuals).
     .modal__input { cursor: text; }
     // 액션 행은 **오른쪽 정렬**이다. 실측: elm-magic 모달 창은 내용보다 넓어서 밀

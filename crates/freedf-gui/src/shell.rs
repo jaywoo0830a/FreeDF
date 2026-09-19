@@ -275,16 +275,20 @@ elm_magic::view! {
             {match modal {
                 ShellModal::None => <Text class="app__hidden">""</Text>,
                 ShellModal::NewTab => <Dialog title="New Tab" on_close={modal = ShellModal::None}>
-                    <Note text="Tab name:" />
-                    <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                    <Group>
+                        <Note text="Tab name:" />
+                        <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                    </Group>
                     <Actions>
                         <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                         <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
                     </Actions>
                 </Dialog>,
                 ShellModal::OpenPdf => <Dialog title="Open PDF" on_close={modal = ShellModal::None}>
-                    <Note text="PDF file path:" />
-                    <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                    <Group>
+                        <Note text="PDF file path:" />
+                        <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                    </Group>
                     <Actions>
                         <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                         <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
@@ -311,10 +315,13 @@ elm_magic::view! {
                 </Dialog>,
                 ShellModal::Settings => <Dialog title="Settings" on_close={modal = ShellModal::None}>
                     <Heading text="잉크 기본값" />
-                    <Note text="도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}" />
-                    <Note text="스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)." />
-                    <Note text="펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}" />
-                    <Note text="팔레트 {st.swatch_list}" />
+                    // 사실 목록은 **한 덩어리**다 — 블록 사이 12가 아니라 묶음 안 4로.
+                    <Group>
+                        <Note text="도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}" />
+                        <Note text="스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)." />
+                        <Note text="펜 입력 {st.pen_source} · 틸트 {st.pen_tilt} · 필압 {st.pressure_text}" />
+                        <Note text="팔레트 {st.swatch_list}" />
+                    </Group>
                     <Presets>
                         <BtnOn text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
                         <BtnOn text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
