@@ -98,23 +98,24 @@ pub fn shell_state() -> ShellState {
     }
 }
 
-/// 설정 창의 사실 목록 — 계산은 `view!` **밖**에서 끝낸다(모듈 문서: 본문에는
-/// 단순한 `let`만 둔다). 0.8 `<For>`가 한 줄씩 `IntoView`로 그린다.
+/// 설정 창의 사실 목록 — (라벨, 값) 쌍. 계산은 `view!` **밖**에서 끝낸다
+/// (모듈 문서: 본문에는 단순한 `let`만 둔다). 0.8 `<For>`가 한 줄씩 그린다.
 pub fn settings_facts(
     st: &ShellState,
     tool: &str,
     color: &str,
     width: &str,
     smoothing: &str,
-) -> Vec<String> {
+) -> Vec<(String, String)> {
     vec![
-        format!("도구 {tool} · 색상 {color} · 굵기 {width} · 스무딩 {smoothing}"),
-        String::from("스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)."),
-        format!(
-            "펜 입력 {} · 틸트 {} · 필압 {}",
-            st.pen_source, st.pen_tilt, st.pressure_text
-        ),
-        format!("팔레트 {}", st.swatch_list),
+        (String::from("도구"), String::from(tool)),
+        (String::from("색상"), String::from(color)),
+        (String::from("굵기"), String::from(width)),
+        (String::from("스무딩"), String::from(smoothing)),
+        (String::from("펜 입력"), st.pen_source.clone()),
+        (String::from("틸트"), String::from(st.pen_tilt)),
+        (String::from("필압"), String::from(st.pressure_text)),
+        (String::from("팔레트"), st.swatch_list.clone()),
     ]
 }
 
@@ -152,6 +153,10 @@ elm_magic::view! {
         let toast = crate::canvas::toast().unwrap_or_default();
         // 설정 창 사실 목록 — 문장 조립은 `settings_facts`(view! 밖)에서 끝낸다.
         let facts = settings_facts(&st, &tool, &color, &width, &smoothing);
+        // 패널 머리의 개수 배지 — 목록 길이를 문자열로 만들어 prop에 바로 넘긴다.
+        let sections_count = sections.len().to_string();
+        let bookmarks_count = bookmarks.len().to_string();
+        let outline_count = outline_entries.len().to_string();
         <App>
             // ── chrome: 상단 크롬 **한 판** ────────────────────────
             // 바마다 라운드 카드를 쌓지 않는다 — 구획은 헤어라인(`Rule`)이 만든다.
@@ -242,29 +247,15 @@ elm_magic::view! {
                     </BarGroup>
                 </ToolBar>
             </Chrome>
-            // ── statusbar: 상태/토스트(좌) + 문서 메타(우) ──────────
-            // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
-            // 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
-            <Statusbar>
-                <If when={toast.is_empty()}>
-                    <StatusText text={status.clone()} />
-                <Else>
-                    <StatusToast text={toast.clone()} />
-                </Else>
-                </If>
-                <StatusMeta>
-                    <StatusText text={canvas_status.clone()} />
-                </StatusMeta>
-            </Statusbar>
             // ── body: 사이드바 + 캔버스 (남은 세로 전부) ────────────
             // 캔버스 `<Raw>`는 이 행의 **마지막 자식**이다 — `available_size()`를
-            // 전부 먹으므로 뒤에 형제를 두면 그 형제는 0px가 된다.
+            // 전부 먹으므로 같은 컨테이너에서 뒤에 형제를 두면 그 형제는 0px가 된다.
             // `.app__body { height: fill }`이 행 높이를 확정하므로 사이드바도
             // `height: fill`로 캔버스와 같은 높이를 갖는다(진짜 사이드바).
             <Row class="app__body">
                 <If when={sidebar_open}>
                     <Panel>
-                        <PanelHead text="Library" />
+                        <PanelHead text="Library" count={sections_count} />
                         <PanelList>
                             <For each={sections.clone()} as={s}>
                                 <PanelRow text={s.clone()} on_click={status = format!("{} panel (placeholder)", s)} />
@@ -274,7 +265,7 @@ elm_magic::view! {
                 </If>
                 <If when={bookmarks_open}>
                     <Panel>
-                        <PanelHead text="Bookmarks" />
+                        <PanelHead text="Bookmarks" count={bookmarks_count} />
                         <If when={bookmarks.is_empty()}>
                             <Empty text="북마크 없음 — Bookmark 버튼으로 추가" />
                         <Else>
@@ -289,13 +280,13 @@ elm_magic::view! {
                 </If>
                 <If when={outline_open}>
                     <Panel>
-                        <PanelHead text="Outline" />
+                        <PanelHead text="Outline" count={outline_count} />
                         <If when={outline_entries.is_empty()}>
                             <Empty text="PDF를 열면 목차가 표시됩니다" />
                         <Else>
                             <PanelList>
                                 <For each={outline_entries.clone()} as={e}>
-                                    <PanelRow text={e.title.clone()} on_click={crate::canvas::go_to_page(e.page)} />
+                                    <PanelRow text={e.title.clone()} meta={e.page.to_string()} on_click={crate::canvas::go_to_page(e.page)} />
                                 </For>
                             </PanelList>
                         </Else>
@@ -309,6 +300,23 @@ elm_magic::view! {
                     crate::canvas::paint(ui);
                 }</Raw>
             </Row>
+            // ── statusbar: 상태/토스트(좌) + 문서 메타(우) — **창 하단** ─────
+            // `.app__body { height: fill }`이 남은 세로를 받고, 이 스트립은 그 **뒤**
+            // 형제라 자기 높이(26)만 갖는다: 0.8.1 어댑터의 `apply_size`는 `fill`
+            // 예산에서 **뒤 형제의 몫을 먼저 뺀다**(0.7의 "뒤에 두면 0px" 문제는
+            // 0.8.1에서 사라졌다 — 실측: 스트립 y=682, 캔버스 h=456).
+            // 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
+            <Statusbar>
+                <If when={toast.is_empty()}>
+                    <StatusText text={status.clone()} />
+                <Else>
+                    <StatusToast text={toast.clone()} />
+                </Else>
+                </If>
+                <StatusMeta>
+                    <StatusText text={canvas_status.clone()} />
+                </StatusMeta>
+            </Statusbar>
             // ── 모달 — 하나만 열린다 ───────────────────────────────
             // 0.8 `<Switch>`: `match` 대신 태그로 분기한다(래퍼 노드를 만들지 않는다).
             // 어느 분기도 맞지 않으면 `<Default>` — `None`이 여기서 빈 자리표시가 된다.
@@ -319,6 +327,7 @@ elm_magic::view! {
                             <Note text="Tab name:" />
                             <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
                         </Group>
+                        <ModalRule />
                         <Actions>
                             <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                             <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
@@ -331,6 +340,7 @@ elm_magic::view! {
                             <Note text="PDF file path:" />
                             <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
                         </Group>
+                        <ModalRule />
                         <Actions>
                             <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                             <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
@@ -339,7 +349,8 @@ elm_magic::view! {
                 </Case>
                 <Case when={ShellModal::ClearInk}>
                     <Dialog title="Clear Ink" on_close={modal = ShellModal::None}>
-                        <Note text="Remove all ink on this page?" />
+                        <Warn text="Remove all ink on this page?" />
+                        <ModalRule />
                         <Actions>
                             <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                             <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::clear_ink()} />
@@ -348,7 +359,8 @@ elm_magic::view! {
                 </Case>
                 <Case when={ShellModal::CloseConfirm}>
                     <Dialog title="Close Tab" on_close={modal = ShellModal::None}>
-                        <Note text="Close this tab?" />
+                        <Warn text="Close this tab?" />
+                        <ModalRule />
                         <Actions>
                             <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
                             <BtnDanger text="Delete" on_click={modal = ShellModal::None, crate::canvas::close_tab()} />
@@ -359,19 +371,23 @@ elm_magic::view! {
                     <Dialog title="About" on_close={modal = ShellModal::None}>
                         <Heading text="FreeDF GUI" />
                         <Note text="elm-magic shell — every widget above is a view! element" />
-                        <BtnPrimary text="OK" on_click={modal = ShellModal::None} />
+                        <ModalRule />
+                        <Actions>
+                            <BtnPrimary text="OK" on_click={modal = ShellModal::None} />
+                        </Actions>
                     </Dialog>
                 </Case>
                 <Case when={ShellModal::Settings}>
                     <Dialog title="Settings" on_close={modal = ShellModal::None}>
                         <Heading text="잉크 기본값" />
-                        // 사실 목록은 **한 덩어리**다 — 블록 사이 16이 아니라 묶음 안 6으로.
-                        // 목록은 `<For>` + `IntoView` — 문장은 `settings_facts`가 만든다.
-                        <Group>
+                        // 사실 목록은 **라벨/값 표**다 — 라벨 폭을 고정해 값이 세로로
+                        // 정렬된다(산문 4줄보다 훑기 쉽다). 0.8 `<For>` + `<Fact>`.
+                        <Facts>
                             <For each={facts} as={fact}>
-                                <Note text={fact.clone()} />
+                                <Fact label={fact.0.clone()} value={fact.1.clone()} />
                             </For>
-                        </Group>
+                        </Facts>
+                        <Note text="스무딩은 코어 `InkPipeline`의 1€ 필터 강도입니다 (Off = 원본 좌표)." />
                         <Presets>
                             <BtnOn text="Off" on={smoothing == "Off"} on_click={crate::canvas::select_smoothing("Off")} />
                             <BtnOn text="Light" on={smoothing == "Light"} on_click={crate::canvas::select_smoothing("Light")} />
@@ -379,6 +395,7 @@ elm_magic::view! {
                             <BtnOn text="Strong" on={smoothing == "Strong"} on_click={crate::canvas::select_smoothing("Strong")} />
                         </Presets>
                         <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
+                        <ModalRule />
                         <Actions>
                             <BtnGhost text="Close" on_click={modal = ShellModal::None} />
                             <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />

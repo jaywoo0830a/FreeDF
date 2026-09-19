@@ -116,11 +116,36 @@ elm_magic::view! {
     }
 
     /// 패널의 클릭 가능한 행 — 행 전체가 클릭 영역 (`.panel__row`).
-    pub fn PanelRow(text: String = String::new(), on_click: fn()) {
+    ///
+    /// `meta`는 오른쪽 끝의 보조 값이다(목차의 페이지 번호). 비어 있으면 그리지
+    /// 않는다(`<If>`) — 라벨만 있는 행과 값이 있는 행이 같은 컴포넌트를 쓴다.
+    /// 라벨이 `flex-grow: 1`이라 값이 행 끝에 붙는다.
+    pub fn PanelRow(text: String = String::new(), meta: String = String::new(), on_click: fn()) {
         let l = crate::ui::label(&text);
-        <Row class="panel__row" on_click={on_click()}>
+        <Row class={if meta.is_empty() { "panel__row" } else { "panel__row panel__row--meta" }} on_click={on_click()}>
             <Text class="panel__item">"{l}"</Text>
+            <If when={!meta.is_empty()}>
+                <Row class="panel__spacer" />
+                <Text class="panel__meta">"{meta}"</Text>
+            </If>
         </Row>
+    }
+
+    /// 설정 창의 사실 한 줄 — 라벨(흐림) + 값(밝음) (`.modal__fact`).
+    ///
+    /// 라벨 폭을 고정해 값이 세로로 정렬된다 — 산문 4줄보다 훑기 쉽다.
+    pub fn Fact(label: String = String::new(), value: String = String::new()) {
+        <Row class="modal__fact">
+            <Text class="modal__fact-label">"{label}"</Text>
+            <Text class="modal__fact-value">"{value}"</Text>
+        </Row>
+    }
+
+    /// 확인 모달의 경고 문장 — `warn` 색 (`.modal__warn`).
+    ///
+    /// 되돌릴 수 없는 동작(잉크 지우기/탭 닫기)의 질문 줄에만 쓴다.
+    pub fn Warn(text: String = String::new()) {
+        <Text class="modal__warn">"{text}"</Text>
     }
 
     /// 패널의 빈 상태 안내문 (`.panel__empty`).

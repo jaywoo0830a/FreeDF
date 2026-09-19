@@ -212,7 +212,8 @@ elm_magic::css! {
 
     // ── 텍스트 ──────────────────────────────────────────────────
     // 섹션 라벨은 작고 흐린 대문자 라벨 (Bootstrap form-label 결).
-    // 장식이라 클릭 대상이 아니다 — `pointer-events: none`.
+    // 장식이라 클릭 대상이 아니다 — `pointer-events: none`. 오른쪽 값(개수 배지)은
+    // 같은 줄의 스페이서가 밀어낸다(텍스트 노드는 늘어나지 않는다 — `.panel__spacer`).
     .section__title { color: text_dim; font-size: 11; weight: bold; letter-spacing: 0.8; text-transform: uppercase; pointer-events: none; }
     .modal__title { color: text; font-size: 16; weight: bold; }
     .text { color: text_dim; }
@@ -227,9 +228,17 @@ elm_magic::css! {
     // 주의: elm-magic CSS의 `width`/`height`는 **내용 상자**다 — 216 + 패딩 8×2 = 바깥
     // 232다(실측: 패널 상자가 x=8..240). 폭을 바꾸면 캔버스 폭이 그만큼 따라 움직인다.
     .panel { width: 216; bg: surface; radius: 10; padding: 12 8; gap: 6; height: fill; overflow: hidden; }
-    // 패널 머리 — 제목 + 헤어라인. 제목만 떠 있으면 첫 행과 구분되지 않는다.
-    // 좌우 패딩 8 = 행 패딩 8 — 제목과 첫 행의 글자가 같은 x(24)에서 시작한다.
+    // 패널 머리 — 제목(남는 폭) + 개수 배지, 그 아래 헤어라인.
+    // 제목이 `flex-grow: 1`이라 배지가 오른쪽 끝에 붙는다(실측: 0.8.1 `natural_size`가
+    // `flex-grow` 있는 노드를 가변으로 본다 — 텍스트 노드에도 먹는다).
     .panel__head { gap: 6; padding: 0 8; }
+    .panel__head-row { gap: 8; }
+    // 개수 배지 — 목록이 몇 개인지 제목 옆에서 바로 읽힌다.
+    .panel__badge { color: text_dim; font-size: 11; bg: surface_alt; radius: 4; padding: 1 6; }
+    // 빈 스페이서 — 남는 폭을 먹어 배지/값을 줄 끝으로 민다. **텍스트 노드는
+    // `flex-grow`로 늘어나지 않는다**(실측: 제목에 걸었더니 배지가 글자 바로 뒤에 붙었다).
+    // 늘어나는 쪽은 컨테이너여야 한다.
+    .panel__spacer { flex-grow: 1; }
     .panel__rule { width: fill; height: 1; bg: border; pointer-events: none; }
     // 목록은 판 안에서 **잘린다**(`overflow: hidden`). 스크롤(`overflow: auto`)을 쓰면
     // 어댑터가 egui `ScrollArea`를 id salt 없이 만들어(0.8.1 `render_el`: `ScrollArea::
@@ -242,8 +251,13 @@ elm_magic::css! {
     .panel__row { radius: 6; padding: 6 8; min-height: 30; }
     .panel__row:hover { bg: surface_alt; }
     // 긴 제목은 **자른다** — 줄바꿈하면 행 높이가 흔들리고 목록 리듬이 깨진다.
-    .panel__item { color: text_dim; font-size: 13; cursor: pointer; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
-    .panel__empty { color: text_dim; font-size: 12; padding: 6 8; }
+    // 색은 `text`다: 행 전체가 클릭 영역이라 흐린 회색보다 읽히는 편이 낫다.
+    .panel__item { color: text; font-size: 13; cursor: pointer; white-space: nowrap; text-overflow: ellipsis; max-lines: 1; }
+    // 값이 있는 행은 라벨 폭을 묶어 둔다 — 그러지 않으면 긴 제목이 값을 밀어낸다.
+    .panel__row--meta .panel__item { max-width: 150; }
+    // 행 끝의 보조 값 — 목차의 페이지 번호. 라벨보다 한 단계 작고 흐리다.
+    .panel__meta { color: text_dim; font-size: 11; }
+    .panel__empty { color: text_dim; font-size: 12; padding: 6 8; width: fill; text-align: center; }
 
     // ── statusbar — 캔버스 위 정보 스트립 ───────────────────────
     // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
@@ -266,8 +280,18 @@ elm_magic::css! {
     // 붙어 있어야 하는 것은 `.modal__group`(gap 6)으로 묶는다 — 그러지 않으면 라벨이
     // 자기 필드에서 16px 떨어져 다음 블록처럼 읽힌다.
     .modal { bg: surface; radius: 12; padding: 20; gap: 16; shadow: 0 8 24; shadow-color: shadow; }
-    // 블록 안의 묶음 — 라벨↔필드, 설정의 사실 목록 (사다리 6).
+    // 블록 안의 묶음 — 라벨↔필드, 확인 모달의 질문↔액션 (사다리 6).
     .modal__group { gap: 6; }
+    // 사실 표 — 라벨/값 행 (설정 창). 행 사이 4, 라벨 폭 고정으로 값이 정렬된다.
+    .modal__facts { gap: 4; }
+    .modal__fact { gap: 8; }
+    .modal__fact-label { color: text_dim; font-size: 12; width: 68; }
+    .modal__fact-value { color: text; font-size: 13; }
+    // 푸터 구분선 — 본문과 액션을 가른다. 헤어라인 하나로 "여기서부터 조작부"를
+    // 알린다(모달 안에서 액션이 본문에 섞여 보이던 문제).
+    .modal__rule { width: fill; height: 1; bg: border; pointer-events: none; }
+    // 되돌릴 수 없는 동작의 질문 줄 — `warn` 색.
+    .modal__warn { color: warn; }
     // `<Input>`은 egui가 직접 그린다 — CSS는 커서/패딩/**테두리**만 지정한다.
     // 어댑터가 egui의 `interact_size`를 0으로 리셋하므로(실측: egui 스타일로는 높이가
     // 안 변한다) 필드 높이는 CSS가 만든다: 글자 18 + 5×2 + 테두리 1×2 = 30 = 컨트롤 높이.
@@ -382,11 +406,19 @@ fn visuals() -> egui::Visuals {
     let mut v = egui::Visuals::dark();
     v.dark_mode = true;
     // 창/패널/입력 바탕 — `.app`(background)과 어긋나지 않게.
-    v.window_fill = surface;
+    // `window_fill`은 모달의 **제목 띠**에 쓰인다(아래 주석) — 한 단계 밝은
+    // `surface_alt`로 두어 "헤더 밴드 + 본문"이라는 의도된 2단이 된다.
+    v.window_fill = surface_alt;
     v.panel_fill = background;
     v.extreme_bg_color = surface_alt;
     v.faint_bg_color = surface_alt;
-    v.window_stroke = egui::Stroke::new(1.0, border);
+    // 모달의 **제목 띠**도 egui가 그린다: 어댑터는 제목 프레임을 따로 주지 않아
+    // `Frame::window(&style)`이 쓰인다(0.8.1 `window.rs`: `title_frame.unwrap_or_else`).
+    // 그래서 여기 값이 곧 그 띠의 바탕/테두리/모서리다 — 우리 CSS 판(surface,
+    // radius 12, 그림자)과 겹치지 않게 테두리·그림자를 끄고 모서리만 맞춘다.
+    v.window_stroke = egui::Stroke::NONE;
+    v.window_shadow = egui::Shadow::NONE;
+    v.window_corner_radius = egui::CornerRadius::same(12);
     // Divider(`ui.separator()`)가 쓰는 색.
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, border);
     v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, text);

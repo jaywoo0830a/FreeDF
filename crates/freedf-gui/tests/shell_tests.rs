@@ -125,7 +125,11 @@ fn settings_modal_opens_and_closes() {
     let mut app = elm_magic::mount!(Shell);
     app.click(&label("Settings"));
     app.assert_text("잉크 기본값");
-    app.assert_text("도구 Pen · 색상 Black · 굵기 Medium");
+    // 사실 표는 **라벨/값이 다른 노드**다(라벨 폭을 고정해 값이 세로로 정렬된다) —
+    // 한 줄로 붙여 쓰던 산문 시절과 달리 각각을 단언한다.
+    app.assert_text("도구");
+    app.assert_text("Pen");
+    app.assert_text("팔레트");
     app.click(&label("Close"));
     app.assert_hidden("Save as default");
 }
@@ -258,11 +262,13 @@ fn settings_modal_selects_smoothing() {
     with(|c| *c = Canvas::default());
     let mut app = elm_magic::mount!(Shell);
     app.click(&label("Settings"));
-    app.assert_text("스무딩 Off");
+    // 사실 표의 라벨/값 쌍이 붙어 있는지로 본다 — `\\n`은 두 노드가 이웃이라는 뜻이다
+    // (`text()`가 노드를 `\\n`으로 잇는다). 값만 보면 프리셋 버튼("Off")과 구분되지 않는다.
+    app.expect_text("스무딩\nOff");
     app.click(&label("Strong"));
-    app.expect_text("스무딩 Strong");
+    app.expect_text("스무딩\nStrong");
     app.click(&label("Off"));
-    app.expect_text("스무딩 Off");
+    app.expect_text("스무딩\nOff");
 }
 
 /// 탭 id는 **이름이 아니라 id**로 찾는다 — 기본 탭("Untitled")이 먼저 오기 때문.

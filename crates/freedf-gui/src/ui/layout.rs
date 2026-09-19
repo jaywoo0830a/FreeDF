@@ -95,15 +95,32 @@ elm_magic::view! {
         <Col class="panel">{children}</Col>
     }
 
-    /// 패널 머리 (`.panel__head`) — 제목 + 헤어라인.
+    /// 패널 머리 (`.panel__head`) — 제목 + 개수 배지 + 헤어라인.
     ///
-    /// 제목만 떠 있으면 첫 행과 구분되지 않는다 — 헤어라인이 목록의 시작을 만든다.
-    pub fn PanelHead(text: String = String::new()) {
+    /// `count`가 비어 있으면 배지를 그리지 않는다(`<If>`). 제목이 `flex-grow: 1`로
+    /// 남는 폭을 먹어 배지가 오른쪽 끝에 붙는다.
+    pub fn PanelHead(text: String = String::new(), count: String = String::new()) {
         let l = crate::ui::label(&text);
         <Col class="panel__head">
-            <Strong class="section__title">"{l}"</Strong>
+            <Row class="panel__head-row">
+                <Strong class="section__title">"{l}"</Strong>
+                <Row class="panel__spacer" />
+                <If when={!count.is_empty()}>
+                    <Text class="panel__badge">"{count}"</Text>
+                </If>
+            </Row>
             <Col class="panel__rule" />
         </Col>
+    }
+
+    /// 모달의 사실 목록 (`.modal__facts`) — 라벨/값 행을 한 덩어리로 묶는다.
+    pub fn Facts() {
+        <Col class="modal__facts">{children}</Col>
+    }
+
+    /// 모달의 구획 헤어라인 (`.modal__rule`) — 본문과 액션(푸터)을 가른다.
+    pub fn ModalRule() {
+        <Col class="modal__rule" />
     }
 
     /// 패널의 목록 (`.panel__list`) — 행이 판 밖으로 흘러나오지 않게 자른다.
