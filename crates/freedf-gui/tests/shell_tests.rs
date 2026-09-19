@@ -280,5 +280,8 @@ fn tab_click_uses_id_not_first_entry() {
     app.click(&label("beta"));
     assert_eq!(freedf_gui::canvas::active_tab_id(), beta_id);
     let tree = app.render_tree();
-    assert!(tree.contains("Tab \"beta\" active") || tree.contains("beta\" active"), "tree:\n{tree}");
+    assert!(
+        tree.contains("Tab \"beta\" active") || tree.contains("beta\" active"),
+        "tree:\n{tree}"
+    );
 }

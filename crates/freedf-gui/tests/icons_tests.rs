@@ -41,7 +41,10 @@ fn every_vocabulary_label_resolves_to_an_outline_glyph() {
     for (label, name) in ICONS {
         let glyph = icons::icon(label);
         assert_ne!(glyph, '\0', "{label} → {name}: 팩에 없는 이름이다");
-        assert!(is_pua(glyph), "{label} → {name}: PUA 글리프가 아니다 ({glyph:?})");
+        assert!(
+            is_pua(glyph),
+            "{label} → {name}: PUA 글리프가 아니다 ({glyph:?})"
+        );
 
         // iconflow에 직접 물어본 값과 같아야 한다(스타일/크기 고정 확인).
         let expected = try_icon(Pack::Heroicons, name, Style::Outline, Size::Regular)
@@ -62,7 +65,10 @@ fn every_vocabulary_label_resolves_to_an_outline_glyph() {
 fn vocabulary_labels_are_unique() {
     let mut seen = std::collections::BTreeSet::new();
     for (label, _) in ICONS {
-        assert!(seen.insert(*label), "라벨 중복: {label} (뒤 항목이 앞을 가린다)");
+        assert!(
+            seen.insert(*label),
+            "라벨 중복: {label} (뒤 항목이 앞을 가린다)"
+        );
     }
 }
 
@@ -155,10 +161,13 @@ fn labels_keep_their_contract_slugs() {
         ("Thin", "thin"),
         ("Strong", "strong"),
     ] {
-        assert_eq!(icons::slug(&icons::label(label)), slug, "{label} id가 바뀌었다");
+        assert_eq!(
+            icons::slug(&icons::label(label)),
+            slug,
+            "{label} id가 바뀌었다"
+        );
     }
 }
-
 
 #[test]
 fn fonts_register_official_named_families_and_heroicons_fallback() {
@@ -213,4 +222,3 @@ fn fonts_register_official_named_families_and_heroicons_fallback() {
         }
     }
 }
-

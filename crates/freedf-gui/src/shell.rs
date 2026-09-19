@@ -1,29 +1,35 @@
 //! 셸 — `elm_magic::view!` 트리. **하이브리드 구조**: 시맨틱 태그 + 재사용 컴포넌트.
 //!
-//! 이 파일은 "무엇을 어디에 두는가"만 표현한다 (설계: `docs/DESIGN-SYSTEM.md` §6):
+//! 이 파일은 "무엇을 어디에 두는가"만 표현한다:
 //!
-//! - 영역은 [`crate::ui::layout`] 컴포넌트(`TopBar`/`InkBar`/`ViewBar`/`Panel`/…)
-//! - 항목은 [`crate::ui::atoms`] 컴포넌트(`Btn`/`BtnOn`/`Swatch`/`StatusText`/…)
+//! - 영역은 [`crate::ui::layout`] 컴포넌트(`Chrome`/`TopBar`/`ToolBar`/`Panel`/…)
+//! - 항목은 [`crate::ui::atoms`] 컴포넌트(`Btn`/`BtnOn`/`BtnSel`/`Swatch`/`StatusText`/…)
 //! - 클래스 이름은 컴포넌트가 갖고, **스타일은 전부 `style.rs` CSS**가 갖는다
 //!
 //! ## 자식 순서 = 배치 순서 (캔버스가 마지막)
 //!
 //! `App`의 자식 순서가 곧 위→아래 배치다:
-//! `TopBar`(44) → `InkBar` → `ViewBar` → `Statusbar`(22) → `Row.app__body`(fill).
+//! `Chrome`(TopBar → Rule → 잉크 줄 → Rule → 보기 줄) → `Statusbar` →
+//! `Row.app__body`(fill).
 //! 캔버스 `<Raw>`는 `.app__body`의 **마지막 자식**이다 — `canvas::paint_ui`가
 //! `ui.available_size()`를 전부 소비하므로 같은 컨테이너에서 뒤에 형제를 두면
-//! 그 형제는 0px가 된다(C4). 그래서 정보 스트립은 캔버스 **위**에 온다.
+//! 그 형제는 0px가 된다. 그래서 정보 스트립은 캔버스 **위**에 온다.
+//!
+//! ## 위계는 두 단계다
+//!
+//! 하나만 켜지는 도구는 액센트 채움([`BtnOn`]), 여럿이 켜질 수 있는 토글(굵기/필압/
+//! 패널)은 조용한 선택([`BtnSel`])이다. 파괴 동작만 `BtnDanger`, 모달의 주 동작은
+//! `BtnPrimary`다 — 이 배분이 "무엇이 켜져 있는가"를 색 없이도 읽히게 한다.
 //!
 //! `view!` 본문 주의: 제네릭 타입 표기(`Vec<(A,B)>`)나 복잡한 `if` 식을 문장으로
 //! 쓰면 매크로 파서가 태그로 오인한다(실측). 그래서 계산은 [`shell_state`]에서
 //! 끝내고 본문에는 단순한 `let`만 둔다.
 //!
-//! ## elm-magic 0.7.4 — 값 prop은 살아 있는 prop
+//! ## 값 prop은 살아 있는 prop
 //!
 //! 자식 컴포넌트의 값 prop(`on`/`active`/`text`)은 부모가 새 값을 넘기면 화면이
-//! 따라온다 (0.7.4에서 수정 — 그 전에는 마운트 시점 값에 고정됐다). 자식이 그
-//! 매개변수를 직접 쓰면 그때부터는 자식의 상태가 되지만(`Arena::slot_dirty`),
-//! 셸의 컴포넌트는 값을 표시만 하므로 키 같은 우회가 필요 없다.
+//! 따라온다. 자식이 그 매개변수를 직접 쓰면 그때부터는 자식의 상태가 되지만
+//! (`Arena::slot_dirty`), 셸의 컴포넌트는 값을 표시만 하므로 키 우회가 필요 없다.
 
 use crate::ui;
 use crate::ui::*;
@@ -125,87 +131,93 @@ elm_magic::view! {
         let smoothing = crate::canvas::smoothing_name();
         let toast = crate::canvas::toast().unwrap_or_default();
         <App>
-            // ── topbar: 브랜드 · 탭 · 문서 열기/닫기 · 앱 명령 ─────
-            // 탭이 상단 바 **안**에 인라인으로 들어온다(브라우저 결).
-            // 그룹은 왼쪽부터 차례로 흐른다 — `justify: end`는 콘텐츠 크기 자식에서
-            // 무효이고 `width: fill` 스페이서는 부모 `max_rect`를 창 밖으로
-            // 팽창시킨다(실측: 캔버스 폭 1754 > 창 1100). 그래서 우측 정렬을 쓰지
-            // 않는다 — 그룹 순서와 헤어라인으로 위계를 만든다.
-            // 편집/저장 명령은 아래 바에 있다: 여기 두면 900px 창에서 넘친다.
-            <TopBar>
-                <Brand text="FreeDF" />
-                <TabStrip>
-                    {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
-                </TabStrip>
-                <Nav>
-                    <Btn text="New Tab" on_click={input = String::new(), modal = ShellModal::NewTab} />
-                    <Btn text="Close Tab" on_click={modal = ShellModal::CloseConfirm} />
-                    <Btn text="Open PDF" on_click={input = String::new(), modal = ShellModal::OpenPdf} />
-                </Nav>
-                <TopEnd>
-                    <BtnGhost text="Settings" on_click={modal = ShellModal::Settings} />
-                    <BtnGhost text="About" on_click={modal = ShellModal::About} />
-                </TopEnd>
-            </TopBar>
-            // ── inkbar: 1줄 = 그리기 재료(도구·색) / 2줄 = 편집·굵기 ──
-            // 줄을 명시적으로 나눈다 — elm-magic 행은 줄바꿈하지 않으므로 한 줄에
-            // 몰면 좁은 창에서 화면 밖으로 나간다(실측: 900px에서 thick/pressure).
-            <InkBar>
-                <InkLine>
-                    <InkGroup>
+            // ── chrome: 상단 크롬 **한 판** ────────────────────────
+            // 바마다 라운드 카드를 쌓지 않는다 — 구획은 헤어라인(`Rule`)이 만든다.
+            // 크롬 계층: TopBar → Rule → 도구 줄 → Rule → 보기 줄.
+            <Chrome>
+                // ── topbar: 브랜드 · 탭 · 문서 명령 · 앱 명령(오른쪽 끝) ──
+                // 앱 명령은 `.topbar__end`의 `justify: end`로 오른쪽 끝에 붙는다.
+                <TopBar>
+                    <Brand text="FreeDF" />
+                    <TabStrip>
+                        {tab_names.iter().map(|t| <TabItem text={t.1.clone()} active={t.0 == active_id} on_click={crate::canvas::select_tab(t.0)} />)}
+                    </TabStrip>
+                    <Nav>
+                        <Btn text="New Tab" on_click={input = String::new(), modal = ShellModal::NewTab} />
+                        <Btn text="Close Tab" on_click={modal = ShellModal::CloseConfirm} />
+                        <Btn text="Open PDF" on_click={input = String::new(), modal = ShellModal::OpenPdf} />
+                    </Nav>
+                    <TopEnd>
+                        <BtnGhost text="Settings" on_click={modal = ShellModal::Settings} />
+                        <BtnGhost text="About" on_click={modal = ShellModal::About} />
+                    </TopEnd>
+                </TopBar>
+                <Rule />
+                // ── 잉크 줄 (2줄): 도구·색 / 굵기·필압·편집 ──────────
+                // 줄은 명시적으로 나눈다(`wrap`은 이 트리에서 동작하지 않는다 —
+                // style.rs 모듈 문서). 도구(하나만 켜짐)는 액센트 채움, 굵기/필압
+                // (여럿이 켜질 수 있음)은 조용한 선택(`BtnSel`)이다.
+                <ToolBar>
+                    <BarGroup>
                         <BtnOn text="Pen" on={tool == "Pen"} on_click={crate::canvas::select_tool("Pen")} />
                         <BtnOn text="Fountain" on={tool == "Fountain"} on_click={crate::canvas::select_tool("Fountain")} />
                         <BtnOn text="Highlighter" on={tool == "Highlighter"} on_click={crate::canvas::select_tool("Highlighter")} />
                         <BtnOn text="Eraser" on={tool == "Eraser"} on_click={crate::canvas::select_tool("Eraser")} />
-                    </InkGroup>
+                    </BarGroup>
                     <Sep />
-                    <InkGroup>
+                    <BarGroup>
                         {st.swatch_items.clone().into_iter().map(|item| <Swatch text={item.label.clone()} on={item.on} on_click={crate::canvas::select_swatch(item.index)} />)}
-                    </InkGroup>
-                </InkLine>
-                <InkLine>
-                    <InkGroup>
+                    </BarGroup>
+                </ToolBar>
+                <ToolBar>
+                    <BarGroup>
+                        <BtnSel text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
+                        <BtnSel text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
+                        <BtnSel text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
+                        <BtnSel text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
+                    </BarGroup>
+                    <Sep />
+                    <BarGroup>
                         <Btn text="Undo" on_click={crate::canvas::undo()} />
                         <Btn text="Redo" on_click={crate::canvas::redo()} />
-                    </InkGroup>
-                    <Sep />
-                    <InkGroup>
-                        <BtnOn text="Thin" on={width == "Thin"} on_click={crate::canvas::select_width("Thin")} />
-                        <BtnOn text="Medium" on={width == "Medium"} on_click={crate::canvas::select_width("Medium")} />
-                        <BtnOn text="Thick" on={width == "Thick"} on_click={crate::canvas::select_width("Thick")} />
-                        <BtnOn text="Pressure" on={st.pressure} on_click={crate::canvas::toggle_pressure()} />
-                    </InkGroup>
-                </InkLine>
-            </InkBar>
-            // ── viewbar: 1줄 = 보기/이동 / 2줄 = 문서 동작·패널 토글 ──
-            <ViewBar>
-                <ViewLine>
-                    <ViewGroup>
+                    </BarGroup>
+                </ToolBar>
+                <Rule />
+                // ── 보기/문서 줄 (2줄): 줌·페이지·저장 / 패널·정리 ────
+                // 파괴 동작(Clear Ink)은 마지막 줄 끝에 헤어라인으로 떼어 둔다.
+                <ToolBar>
+                    <BarGroup>
                         <Btn text="Zoom In" on_click={crate::canvas::zoom_in()} />
                         <Btn text="Zoom Out" on_click={crate::canvas::zoom_out()} />
                         <Btn text="Fit" on_click={crate::canvas::zoom_fit()} />
+                    </BarGroup>
+                    <Sep />
+                    <BarGroup>
                         <Btn text="Prev Page" on_click={crate::canvas::page_prev()} />
                         <Btn text="Next Page" on_click={crate::canvas::page_next()} />
-                    </ViewGroup>
-                </ViewLine>
-                <ViewLine>
-                    <ViewGroup>
+                    </BarGroup>
+                    <Sep />
+                    <BarGroup>
                         <Btn text="Save Edits" on_click={crate::canvas::save_edits()} />
                         <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
                         <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
-                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
-                    </ViewGroup>
+                    </BarGroup>
+                </ToolBar>
+                <ToolBar>
+                    <BarGroup>
+                        <BtnSel text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
+                        <BtnSel text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
+                        <BtnSel text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
+                    </BarGroup>
                     <Sep />
-                    <ViewGroup>
-                        <BtnOn text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
-                        <BtnOn text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
-                        <BtnOn text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
-                    </ViewGroup>
-                </ViewLine>
-            </ViewBar>
+                    <BarGroup>
+                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
+                    </BarGroup>
+                </ToolBar>
+            </Chrome>
             // ── statusbar: 상태/토스트(좌) + 문서 메타(우) ──────────
-            // 캔버스가 남은 공간을 전부 먹으므로(C4) 이 스트립은 캔버스 **위**에
-            // 온다. 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
+            // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
+            // 상태 문자열은 트리 노드가 소유한다(자동화 assert_text 계약).
             <Statusbar>
                 {if toast.is_empty() {
                     <StatusText text={status.clone()} />
@@ -218,13 +230,13 @@ elm_magic::view! {
             </Statusbar>
             // ── body: 사이드바 + 캔버스 (남은 세로 전부) ────────────
             // 캔버스 `<Raw>`는 이 행의 **마지막 자식**이다 — `available_size()`를
-            // 전부 먹으므로 뒤에 형제를 두면 그 형제는 0px가 된다(C4).
+            // 전부 먹으므로 뒤에 형제를 두면 그 형제는 0px가 된다.
             // `.app__body { height: fill }`이 행 높이를 확정하므로 사이드바도
             // `height: fill`로 캔버스와 같은 높이를 갖는다(진짜 사이드바).
             <Row class="app__body">
                 {if sidebar_open {
                     <Panel>
-                        <Section text="Library" />
+                        <PanelHead text="Library" />
                         {sections.iter().map(|s| <PanelRow text={s.clone()} on_click={status = format!("{} panel (placeholder)", s)} />)}
                     </Panel>
                 } else {
@@ -232,7 +244,7 @@ elm_magic::view! {
                 }}
                 {if bookmarks_open {
                     <Panel>
-                        <Section text="Bookmarks" />
+                        <PanelHead text="Bookmarks" />
                         {if bookmarks.is_empty() {
                             <Empty text="북마크 없음 — Bookmark 버튼으로 추가" />
                         } else {
@@ -244,7 +256,7 @@ elm_magic::view! {
                 }}
                 {if outline_open {
                     <Panel>
-                        <Section text="Outline" />
+                        <PanelHead text="Outline" />
                         {if outline_entries.is_empty() {
                             <Empty text="PDF를 열면 목차가 표시됩니다" />
                         } else {
@@ -269,7 +281,7 @@ elm_magic::view! {
                     <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
                     <Actions>
                         <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <Btn text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
+                        <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::add_tab(if input.trim().is_empty() { String::from("Untitled") } else { input.clone() })} />
                     </Actions>
                 </Dialog>,
                 ShellModal::OpenPdf => <Dialog title="Open PDF" on_close={modal = ShellModal::None}>
@@ -277,7 +289,7 @@ elm_magic::view! {
                     <Input class="modal__input" value={input.clone()} on_change={input = _} on_enter={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
                     <Actions>
                         <BtnGhost text="Cancel" on_click={modal = ShellModal::None} />
-                        <Btn text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
+                        <BtnPrimary text="OK" on_click={modal = ShellModal::None, crate::canvas::open_pdf(input.clone())} />
                     </Actions>
                 </Dialog>,
                 ShellModal::ClearInk => <Dialog title="Clear Ink" on_close={modal = ShellModal::None}>
@@ -297,7 +309,7 @@ elm_magic::view! {
                 ShellModal::About => <Dialog title="About" on_close={modal = ShellModal::None}>
                     <Heading text="FreeDF GUI" />
                     <Note text="elm-magic shell — every widget above is a view! element" />
-                    <Btn text="OK" on_click={modal = ShellModal::None} />
+                    <BtnPrimary text="OK" on_click={modal = ShellModal::None} />
                 </Dialog>,
                 ShellModal::Settings => <Dialog title="Settings" on_close={modal = ShellModal::None}>
                     <Heading text="잉크 기본값" />
@@ -313,7 +325,7 @@ elm_magic::view! {
                     </Presets>
                     <Note text="현재 리본 상태를 기본값으로 저장합니다 — 다음 실행 때 자동 복원." />
                     <Actions>
-                        <Btn text="Save as default" on_click={crate::canvas::save_defaults()} />
+                        <BtnPrimary text="Save as default" on_click={crate::canvas::save_defaults()} />
                         <BtnGhost text="Close" on_click={modal = ShellModal::None} />
                     </Actions>
                 </Dialog>,

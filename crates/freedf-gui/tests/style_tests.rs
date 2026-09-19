@@ -79,7 +79,9 @@ fn literal_classes(src: &str) -> Vec<String> {
 /// 정규화한다)는 각 클래스가 BEM이어야 하고, 태그 이름이 섞이면 안 된다.
 fn is_bem_classes(part: &str) -> bool {
     part.starts_with('.')
-        && part.split('.').all(|s| s.is_empty() || is_bem(&format!(".{s}")))
+        && part
+            .split('.')
+            .all(|s| s.is_empty() || is_bem(&format!(".{s}")))
         && part.split('.').any(|s| !s.is_empty())
 }
 

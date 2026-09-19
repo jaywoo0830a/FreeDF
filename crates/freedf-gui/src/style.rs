@@ -1,55 +1,58 @@
 //! freedf-gui 스타일 — **elm-magic CSS 속성만**으로 정의한다 (단일 스타일 출처).
 //!
-//! 설계 사양은 `docs/DESIGN-SYSTEM.md`다. 이 파일은 그 사양의 구현이고, 사양과
-//! 어긋나면 **문서를 먼저** 고친다(문서 = 단일 진실).
+//! 마크업(`shell.rs`/`ui/*`)은 BEM 클래스 이름만 붙이고, 폭·여백·색·글자 크기는
+//! 전부 이 파일이 정한다.
 //!
 //! ## 컨셉 — Quiet chrome, loud canvas
 //!
-//! 크롬(바·패널)은 중성 슬레이트 4단의 **배경 단차**로 구획하고 보더를 쓰지 않는다.
-//! 액센트는 하나(`primary`)이며 선택/활성 상태에만 나타난다. 캔버스가 주인공이다.
+//! 1. **크롬은 한 판**(`.chrome`)이다. 바마다 라운드 카드를 쌓으면 같은 판이
+//!    3~4장 겹쳐 보인다. 안쪽 구획은 헤어라인(`.bar__rule`)이 만든다.
+//! 2. **버튼은 바탕이 없다**(`.btn`). 버튼 20개가 각각 상자를 그리면 격자처럼
+//!    보인다 — 호버에서 떠오르고, 눌림에서만 액센트가 스친다.
+//! 3. **액센트는 의미가 있을 때만** 나타난다: 켜진 도구(`.btn--on`) · 주 동작
+//!    (`.btn--primary`) · 위험 동작(`.btn--danger`) · 토스트.
+//! 4. **선택은 두 단계**다 — 도구처럼 하나만 켜지는 것은 채움(`--on`), 굵기/필압/
+//!    패널처럼 여럿이 켜질 수 있는 것은 떠오른 바탕 + 액센트 헤어라인(`--sel`).
 //!
 //! ## 색 — 토큰 14슬롯이 상한
 //!
 //! elm-magic CSS의 색 값은 **토큰 이름만** 받는다(`bg: #fff`는 컴파일 에러).
 //! 그래서 팔레트는 [`Token`] 14슬롯에 역할을 배정하는 방식이고, 새 색이 필요하면
-//! 슬롯을 재배치해야 한다. 대비는 전부 계산값이다(`docs/DESIGN-SYSTEM.md` §2).
+//! 슬롯을 재배치해야 한다. 액센트를 **글자**로 쓸 때는 `info`(surface 위 6.08:1)를
+//! 쓰고, `primary`는 채움과 헤어라인(UI 구성요소 기준 3.0)에만 쓴다.
 //!
 //! ## BEM
 //!
 //! 셀렉터는 **BEM 클래스뿐**이다(태그 셀렉터 금지 — `tests/style_tests.rs`가 강제).
-//! 블록: `app` `topbar` `tabs` `inkbar` `viewbar` `panel` `statusbar` `modal`
+//! 블록: `app` `chrome` `topbar` `tabs` `bar` `panel` `statusbar` `modal`
 //! `btn` `swatch`. 수정자는 기본 클래스와 **함께** 붙여 차이만 덮는다
 //! (`tabs__item--active`, `btn--danger`).
 //!
 //! ## 간격 스케일 — 4px 베이스
 //!
-//! 4 · 8 · 12 · 16 · 24px만 쓴다(`docs/DESIGN-SYSTEM.md` §3). 그룹 내부는 3–4,
-//! 그룹 사이는 12, 바 좌우 패딩은 8, 모달 패딩은 16이다. 임의 값(5, 7, 10 …)은
-//! 넣지 않는다 — 리듬이 흐트러진다.
+//! 4 · 8 · 12 · 16 · 24px만 쓴다. 칩 사이는 2–4(한 묶음으로 읽히게), 그룹 사이는
+//! 헤어라인 + `gap` 4, 판 안쪽 패딩은 6, 모달 패딩은 16이다. 예외는 `padding: 4 8`
+//! (컨트롤 좌우)과 `margin: 5 0`(세로 헤어라인 높이 16 + 5 + 5 = 컨트롤 높이 26)
+//! 둘뿐이다.
 //!
 //! ## 세로 예산
 //!
-//! 크롬 1줄 합계는 184px(`docs/DESIGN-SYSTEM.md` §6.2)이고 캔버스가 남은 높이를
-//! 전부 받는다. 컨트롤 `min-height: 28`은 감사 `small_targets`(24pt) 기준을 넘긴다.
-//! 간격을 키울 때는 감사(`layout_issues` + 캔버스 높이)를 다시 확인한다.
+//! 크롬은 도구 줄이 접히는 만큼 늘어난다(`.bar { wrap: true }`) — 캔버스가 남은
+//! 높이를 전부 받는다. 컨트롤 `min-height: 26`은 감사 `small_targets`(24pt) 기준을
+//! 넘긴다. 간격을 키울 때는 감사(`layout_issues` + 캔버스 높이)를 다시 확인한다.
 //!
-//! ## 우측 정렬과 `wrap`은 쓰지 않는다 (실측)
+//! ## `justify`는 쓰고, `wrap`은 쓰지 않는다 (실측)
 //!
-//! 두 가지가 elm-magic 0.7.4에서 **동작하지 않는다**:
+//! `justify: end`는 먹는다 — `.topbar__end { width: fill; justify: end }`로 앱 명령
+//! (Settings/About)이 상단 바 오른쪽 끝에 붙는다.
 //!
-//! 1. `.…__end { justify: end }` — 콘텐츠 크기 자식 Row에서는 효과가 없다
-//!    (before 캡처에서 About이 x≈760에 멈춤 — 1100px 창의 우측 끝이 아님).
-//! 2. `width: fill` 스페이서 — `available_width()`가 행의 남은 폭이 아니라
-//!    커서 기준으로 `max_rect`를 재설정해 **부모 max_rect를 창 밖으로 팽창**시킨다
-//!    (실측: 캔버스 폭 1754 > 창 1100 → 캔버스가 화면 밖까지 커짐).
+//! `wrap: true`는 **우리 트리에서는 동작하지 않는다**(실측): 도구 줄의 항목이 부모
+//! 폭을 넘어도 줄바꿈하지 않고 그대로 뻗어, 루트가 창 밖으로 팽창하고(1100px 창에서
+//! root w=1171) 캔버스가 0크기·offscreen이 된다. 그래서 도구 줄은 **명시적으로
+//! 나누고**, 각 줄을 좁은 창에서도 넘지 않는 폭(≤730px)으로 유지한다.
 //!
-//! `wrap: true`는 어댑터가 **읽지 않는다**(`ResolvedStyle.wrap`은 파싱만 되고
-//! 사용처가 없다) — 행은 항상 단일 줄이다. 그래서 한 행의 항목이 창 폭을 넘으면
-//! 조용히 화면 밖으로 나간다: 감사 `layout_issues`의 `offscreen`이 그 감지기다.
-//! 그룹 사이 헤어라인(`.bar__sep`)과 `gap`만으로 위계를 만든다.
-//!
-//! 위 3건의 **최소 재현**은 `crates/freedf-gui/tests/elm_magic_bugs.rs`에 있다
-//! (어댑터만 직접 호출, 창 800×600 고정, 실측값이 주석에 있다).
+//! 캔버스가 남은 세로를 전부 먹으므로(`<Raw>`가 `available_size()`를 소비) 정보
+//! 스트립은 캔버스 **위**에 온다 — 순서를 바꾸면 스트립 높이가 0이 된다.
 //!
 //! ## 예외 — egui 네이티브 위젯
 //!
@@ -69,83 +72,103 @@ elm_magic::css! {
     // 마지막 자식이라 `height: fill`이 없으면 행 높이가 콘텐츠에 끌려간다.
     // 주의: 행에 `align: center`를 걸면 egui 교차축 정렬이 "가용 높이 전체" 기준이
     // 되어 각 행이 남은 세로를 다 먹는다(실측: 캔버스 높이 0). 그래서 쓰지 않는다.
-    .app__body { gap: 12; height: fill; }
+    .app__body { gap: 8; height: fill; }
     // 빈 자리표시를 **그리지 않게** 한다 — display:none은 공간도 차지하지 않는다.
     .app__hidden { display: none; }
 
+    // ── chrome — 상단 크롬 전체를 **한 판**으로 묶는다 ──────────
+    // 바마다 라운드 카드를 쌓으면 같은 판이 3~4장 겹쳐 보인다(투박함의 주원인).
+    // 크롬은 이 한 판이고, 안쪽 구획은 헤어라인(`.bar__rule`)이 만든다.
+    .chrome { bg: surface; radius: 10; padding: 6; gap: 6; }
+
     // ── topbar — 브랜드 · 탭 · 문서/앱 명령 ─────────────────────
-    // 브랜드 + 탭 + 문서 명령 + 앱 명령. `wrap`은 무효라(모듈 문서) 한 줄 고정이다 —
-    // 항목이 넘치면 감사 `offscreen`이 잡으므로 항목 수를 예산 안에 유지한다.
-    .topbar { bg: surface; radius: 8; padding: 6 8; gap: 12; }
-    .topbar__brand { color: primary; font-size: 20; weight: bold; letter-spacing: 0.2; }
-    .topbar__nav { gap: 4; }
-    .topbar__end { gap: 4; }
+    .topbar { gap: 10; padding: 0 2; min-height: 30; }
+    // 브랜드는 `info`(surface 위 6.08:1) — `primary`는 14px 본문 대비 3.37이라
+    // 글자로 쓰지 않는다(액센트 "텍스트"의 슬롯이 `info`인 이유).
+    .topbar__brand { color: info; font-size: 17; weight: bold; letter-spacing: 0.4; }
+    .topbar__nav { gap: 2; }
+    // 우측 그룹 — 남는 폭을 받아(`width: fill`) 오른쪽으로 민다(`justify: end`).
+    .topbar__end { width: fill; justify: end; gap: 2; }
 
-    // ── tabs — 문서 탭 스트립 (TopBar 안) ───────────────────────
-    // 활성 탭은 **액센트 채움** — 어느 문서에 있는지 한눈에 보이게 한다.
-    .tabs { bg: background; radius: 6; padding: 3; gap: 4; }
-    .tabs__item { bg: surface_alt; color: text_dim; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
-    .tabs__item:hover { bg: border; color: text; }
-    .tabs__item--active { bg: primary; color: on_primary; weight: bold; }
+    // ── tabs — 문서 탭 칩 ───────────────────────────────────────
+    // 스트립에 배경을 깔지 않는다 — 크롬 위에 크롬을 겹치지 않는다.
+    // 활성 탭은 **떠오른 바탕 + 액센트 헤어라인**이다. 파란 채움은 "지금 켜진
+    // 도구" 하나에만 남긴다(활성 표시가 동시에 5개씩 파랗던 문제).
+    .tabs { gap: 4; }
+    .tabs__item { color: text_dim; radius: 6; padding: 4 8; min-height: 26; cursor: pointer; }
+    .tabs__item:hover { bg: surface_alt; color: text; }
+    .tabs__item--active { bg: surface_alt; color: text; weight: bold; border-width: 1; border-color: primary; }
 
-    // ── inkbar — 도구·색(1줄) + 편집·굵기(2줄) ──────────────────
-    // **2줄 고정**: elm-magic 행은 줄바꿈하지 않으므로(모듈 문서) 한 줄에 몰면
-    // 좁은 창에서 화면 밖으로 나간다(실측: 900px에서 thick/pressure offscreen).
-    // 줄을 나눠 두면 900px에서도 각 줄이 폭 안에 들어간다.
-    .inkbar { bg: surface; radius: 8; padding: 4 8; gap: 3; }
-    .inkbar__line { gap: 12; }
-    .inkbar__group { gap: 3; }
-
-    // ── viewbar — 보기/이동(1줄) + 문서 동작(2줄) ───────────────
-    .viewbar { bg: surface; radius: 8; padding: 3 8; gap: 3; }
-    .viewbar__line { gap: 12; }
-    .viewbar__group { gap: 3; }
-
-    // ── bar 요소 — 그룹 구분 헤어라인 ──────────────────────────
-    .bar__sep { width: 1; height: 20; bg: border; }
+    // ── bar — 도구 줄 ───────────────────────────────────────────
+    // 줄은 **명시적으로 나눈다**. 실측: `wrap: true`는 우리 트리에서 줄바꿈을
+    // 만들지 못했다 — 노드가 부모 폭을 넘어 루트가 창 밖으로 팽창하고(1100px 창에서
+    // root w=1171) 뒤 항목(Redo/Clear Ink)과 캔버스가 offscreen/0크기가 된다.
+    // 그래서 각 줄을 **좁은 창(900px)에서도 넘지 않는 폭**으로 유지한다(각 줄 ≤ 730).
+    .bar { gap: 4; padding: 0 2; }
+    .bar__group { gap: 2; }
+    // 그룹 구분 헤어라인 — 높이 16 + 상하 마진 5 = 컨트롤 높이 26과 같아
+    // 행의 위쪽 정렬에서도 세로 가운데에 온다.
+    .bar__sep { width: 1; height: 16; margin: 5 0; bg: border; }
+    // 크롬 안의 가로 헤어라인 — 판을 늘리지 않고 구획만 만든다.
+    .bar__rule { width: fill; height: 1; bg: border; }
 
     // ── btn — 버튼 하나 + 상태 + 변형 ───────────────────────────
-    // 색/호버/눌림은 `.btn` 혼자 소유하고, 변형은 차이만 덮는다.
-    // 크기: `padding: 4 10` + `min-height: 28`(감사 small_targets 24pt 기준).
-    .btn { bg: surface_alt; color: text; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
-    .btn:hover { bg: border; color: text; }
+    // 기본 버튼은 **바탕이 없다**: 크롬에 버튼 20개가 각각 상자를 그리면
+    // 격자처럼 보인다. 호버에서 떠오르고, 눌림에서만 액센트가 스친다.
+    // 크기: `padding: 4 8` + `min-height: 26`(감사 small_targets 24pt 기준).
+    .btn { color: text; radius: 6; padding: 4 8; min-height: 26; cursor: pointer; }
+    .btn:hover { bg: surface_alt; color: text; }
     .btn:active { bg: primary; color: on_primary; }
-    // 선택 상태 (Bootstrap `.active` 결).
+    // 주 동작 — 화면에 하나뿐인 액션(모달 OK / 기본값 저장).
+    .btn--primary { bg: primary; color: on_primary; weight: bold; }
+    .btn--primary:hover { bg: primary; color: on_primary; }
+    // 켜짐(도구) — 액센트 채움. 한 줄에 하나만 켜지는 것에 쓴다.
     .btn--on { bg: primary; color: on_primary; weight: bold; }
+    .btn--on:hover { bg: primary; color: on_primary; }
+    // 켜짐(토글: 굵기/필압/패널) — **떠오른 바탕 + 액센트 헤어라인**.
+    // 채움보다 한 단계 조용해서 "도구 켜짐"과 위계가 갈린다.
+    .btn--sel { bg: surface_alt; color: text; weight: bold; border-width: 1; border-color: primary; }
+    .btn--sel:hover { bg: surface_alt; color: text; }
     // 파괴적 동작 — **채움**으로 표현한다(`error`는 본문 텍스트 대비가 3.22라
-    // 텍스트 색으로 쓰지 않는다: docs/DESIGN-SYSTEM.md §2.1).
+    // 텍스트 색으로 쓰지 않는다).
     .btn--danger { bg: error; color: on_primary; }
     .btn--danger:hover { bg: error; color: on_primary; }
-    // 보조 동작(취소/닫기/설정/정보) — 바탕을 죽이고 글자만 남긴다.
-    .btn--ghost { bg: background; color: text_dim; }
+    // 보조 동작(설정/정보/취소) — 글자만 남긴다.
+    .btn--ghost { color: text_dim; }
     .btn--ghost:hover { bg: surface_alt; color: text; }
 
     // ── swatch — 즐겨찾기 색 칩 ─────────────────────────────────
-    // 글자색은 `text`다(`text_dim`이면 surface_alt 위에서 5.83 이론값이지만
-    // 원형 글리프의 안티에일리어싱 때문에 감사 실측이 3.81로 떨어진다 — 실측 기록:
-    // docs/DESIGN-SYSTEM.md §9.3).
-    .swatch { bg: surface_alt; color: text; radius: 6; padding: 4 10; min-height: 28; cursor: pointer; }
-    .swatch:hover { bg: border; color: text; }
-    .swatch--on { bg: primary; color: on_primary; weight: bold; }
+    // 글자색은 `text`다 — `text_dim`은 surface_alt 위 이론값 5.83이지만 원형
+    // 글리프의 안티에일리어싱 때문에 실측이 3.81로 떨어진다.
+    // 켜짐은 `.btn--sel`과 같은 문법(떠오른 바탕 + 액센트 헤어라인)이다.
+    .swatch { color: text; radius: 6; padding: 4 8; min-height: 26; cursor: pointer; }
+    .swatch:hover { bg: surface_alt; color: text; }
+    .swatch--on { bg: surface_alt; color: text; weight: bold; border-width: 1; border-color: primary; }
+    .swatch--on:hover { bg: surface_alt; color: text; }
 
     // ── 텍스트 ──────────────────────────────────────────────────
     // 섹션 라벨은 작고 흐린 대문자 라벨 (Bootstrap form-label 결).
-    .section__title { color: text_dim; font-size: 12; weight: bold; letter-spacing: 0.6; text-transform: uppercase; }
+    .section__title { color: text_dim; font-size: 11; weight: bold; letter-spacing: 0.8; text-transform: uppercase; }
     .modal__title { color: text; font-size: 16; weight: bold; }
     .text { color: text_dim; }
 
     // ── panel — 사이드바(라이브러리/북마크/목차) ─────────────────
     // `height: fill` — 캔버스와 같은 높이를 갖는다. 캔버스가 `.app__body` 안에
     // 있으므로 Row 높이가 확정되어 이 값이 안전하다(폴백 배치에서는 금지).
-    .panel { bg: surface; radius: 8; padding: 8; gap: 4; min-width: 200; height: fill; }
-    .panel__row { radius: 6; padding: 6 8; }
+    .panel { bg: surface; radius: 10; padding: 6; gap: 2; min-width: 208; height: fill; }
+    // 패널 머리 — 제목 + 헤어라인. 제목만 떠 있으면 첫 행과 구분되지 않는다.
+    .panel__head { gap: 4; padding: 4; }
+    .panel__rule { width: fill; height: 1; bg: border; }
+    .panel__row { radius: 6; padding: 5 8; min-height: 28; }
     .panel__row:hover { bg: surface_alt; }
     .panel__item { color: text_dim; font-size: 13; cursor: pointer; }
-    .panel__empty { color: text_dim; font-size: 12; }
+    .panel__empty { color: text_dim; font-size: 12; padding: 4 8; }
 
     // ── statusbar — 캔버스 위 정보 스트립 ───────────────────────
-    // 캔버스가 남은 공간을 전부 먹으므로(C4) 이 스트립은 캔버스 **위**에 온다.
-    .statusbar { bg: background; radius: 6; padding: 2 8; gap: 12; }
+    // 캔버스가 남은 공간을 전부 먹으므로 이 스트립은 캔버스 **위**에 온다.
+    // 바탕을 깔지 않는다 — 앱 바탕(`background`)이 곧 스트립이고, 판이 하나
+    // 줄어든다. 상태 문자열은 값 목록으로 읽히게 `gap`으로만 나눈다.
+    .statusbar { padding: 0 6; min-height: 22; gap: 12; }
     .statusbar__text { color: text_dim; font-size: 12; }
     .statusbar__meta { color: text_dim; font-size: 12; }
     .statusbar__toast { color: warn; font-size: 12; }
