@@ -19,7 +19,7 @@
 //!
 //! `wrap: true`는 이 트리에서 줄바꿈을 만들지 못한다(실측 — `style.rs` 모듈 문서).
 //! 그래서 [`ToolBar`] 한 줄이 한 줄이고, 각 줄은 **좁은 창에서도 넘지 않는 폭**으로
-//! 유지한다. [`BarGroup`]은 "같은 뜻의 칩"을 붙여 두는 의미 묶음(안쪽 `gap` 2)이고,
+//! 유지한다. [`BarGroup`]은 "같은 뜻의 칩"을 붙여 두는 의미 묶음(안쪽 `gap` 4)이고,
 //! 묶음 사이는 헤어라인 [`Sep`]이 나눈다.
 //!
 //! ## 컴포넌트마다 `view!`를 나누지 않는다
@@ -74,12 +74,12 @@ elm_magic::view! {
         <Row class="bar">{children}</Row>
     }
 
-    /// 도구 줄의 의미 묶음 (`.bar__group`) — 안쪽 `gap` 2로 붙여 둔다.
+    /// 도구 줄의 의미 묶음 (`.bar__group`) — 안쪽 `gap` 4로 붙여 둔다.
     pub fn BarGroup() {
         <Row class="bar__group">{children}</Row>
     }
 
-    /// 그룹 구분 세로 헤어라인 (`.bar__sep`) — 1×18px, 상하 마진 4 (= 컨트롤 높이 26).
+    /// 그룹 구분 세로 헤어라인 (`.bar__sep`) — 1×22px, 상하 마진 4 (= 컨트롤 높이 30).
     pub fn Sep() {
         <Col class="bar__sep" />
     }

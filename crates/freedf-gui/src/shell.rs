@@ -153,7 +153,7 @@ elm_magic::view! {
                     </TopEnd>
                 </TopBar>
                 <Rule />
-                // ── 잉크 줄 (3밴드): 재료 / 문서 편집 / 보기·패널 ─────
+                // ── 잉크 줄 (3밴드): 재료 / 굵기·편집 / 보기·패널·위험 ──
                 // 줄은 명시적으로 나눈다(`wrap`은 이 트리에서 동작하지 않는다 —
                 // style.rs 모듈 문서). 도구(하나만 켜짐)는 액센트 채움, 굵기/필압
                 // (여럿이 켜질 수 있음)은 조용한 선택(`BtnSel`)이다.
@@ -187,10 +187,6 @@ elm_magic::view! {
                         <Btn text="Load Edits" on_click={crate::canvas::load_edits()} />
                         <Btn text="Bookmark" on_click={crate::canvas::toggle_bookmark()} />
                     </BarGroup>
-                    <Sep />
-                    <BarGroup>
-                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
-                    </BarGroup>
                 </ToolBar>
                 <Rule />
                 // ── 보기/패널 줄: 줌·페이지 / 패널 토글 ───────────────
@@ -210,6 +206,13 @@ elm_magic::view! {
                         <BtnSel text="Sidebar" on={sidebar_open} on_click={sidebar_open = !sidebar_open} />
                         <BtnSel text="Bookmarks" on={bookmarks_open} on_click={bookmarks_open = !bookmarks_open} />
                         <BtnSel text="Outline" on={outline_open} on_click={outline_open = !outline_open} />
+                    </BarGroup>
+                    // 위험 동작은 **편집 묶음에서 떼어** 마지막 줄 끝에 둔다: 편집 버튼
+                    // 바로 옆에 붙어 있으면 오클릭 위험이 크고, 편집 줄 폭이 900px 창에서
+                    // 여유 8px밖에 없어(실측) 이 줄이 숨통을 틔운다.
+                    <Sep />
+                    <BarGroup>
+                        <BtnDanger text="Clear Ink" on_click={modal = ShellModal::ClearInk} />
                     </BarGroup>
                 </ToolBar>
             </Chrome>
